@@ -66,7 +66,7 @@ All requests after the login carry `Authorization: Bearer <token>`. `tdlap` come
 milliseconds on the cash register endpoint, or as `dd/mm/yyyy`; Crove reads the date in Vietnam's time zone. `tthai` 1
 to 6 are the states the Excel export words ("Hóa đơn mới" to "Hóa đơn đã bị hủy").
 
-Open points for the supervised trial (owner and the partner's accountant, #61):
+Open points for the supervised trial (the owner, with the owner's own company's account or the partner's accountant, #61; the steps and the table in which the findings are recorded are in [the runbook](../runbooks/tax-portal-first-run.md), issue #1100):
 
 - Whether the 2026 redesign kept these paths under `/api` on port 443, and whether the September 2026 change added a
   request header Crove does not send (tool authors mention "a new request identifier").

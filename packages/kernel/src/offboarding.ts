@@ -19,7 +19,7 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 // words of the row's own columns. The snapshot reads as the system actor, so only tables an owner may read in full
 // belong here.
 export const EXPORT_TABLES = {
-  'kernel.tenant': { from: 'crove_kernel.tenant', omit: ['inbound_token'] },
+  'kernel.tenant': { from: 'crove_kernel.tenant', omit: ['inbound_token', 'conversation_token'] },
   'kernel.tenant_member': { from: 'crove_kernel.tenant_member', omit: [] },
   // Who held which built-in role (#1279), org-wide or for one legal entity.
   'kernel.role_assignment': { from: 'crove_kernel.role_assignment', omit: [] },
@@ -42,7 +42,22 @@ export const EXPORT_TABLES = {
   'kernel.availability_rule': { from: 'crove_kernel.availability_rule', omit: [] },
   'kernel.calendar_event': { from: 'crove_kernel.calendar_event', omit: [] },
   // Connected channel accounts (ADR-0025). Their sealed tokens (crove_kernel.credential) are secrets and stay out.
-  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: [] },
+  // The keyed hash of the Meta user who granted a connection (Meta's data deletion callback) is the deployment's, not the org's.
+  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash'] },
+  // Which members use which channels (#2303), and the conversation core (CV6, #2305): the customers' comments and messages, the
+  // identities they wrote under, the org's internal notes on them and its retention. Read marks are per-member state and stay out.
+  'kernel.channel_access': { from: 'crove_kernel.channel_access', omit: [] },
+  'kernel.conversation_setting': { from: 'crove_kernel.conversation_setting', omit: [] },
+  'kernel.conversation_identity': { from: 'crove_kernel.conversation_identity', omit: [] },
+  'kernel.conversation': { from: 'crove_kernel.conversation', omit: [] },
+  'kernel.conversation_message': { from: 'crove_kernel.conversation_message', omit: [] },
+  // A customer's image: its metadata only (the bytes stay in the store under conversation/<org_id>/, which an export never copies, and the
+  // platform's address is personal data that is gone once the bytes are stored).
+  'kernel.conversation_attachment': { from: 'crove_kernel.conversation_attachment', omit: ['source_url'] },
+  // Vy's drafts that are still in play (a live draft's text, the lengths of the ones a person used) and the org's saved replies (#2310).
+  'kernel.conversation_draft': { from: 'crove_kernel.conversation_draft', omit: [] },
+  'kernel.saved_reply': { from: 'crove_kernel.saved_reply', omit: [] },
+  'kernel.conversation_note': { from: 'crove_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
   // are keyed by the deployment.
   'kernel.mail_message': { from: 'crove_kernel.mail_message', omit: [] },
@@ -55,6 +70,9 @@ export const EXPORT_TABLES = {
   'finance.journal_entry': { from: 'crove_finance.journal_entry', omit: ['search'] },
   'finance.journal_line': { from: 'crove_finance.journal_line', omit: [] },
   'finance.vendor_account_rule': { from: 'crove_finance.vendor_account_rule', omit: [] },
+  // Learned bank-line rules (#2402): which party a statement line's words point at. The keyed hash is org-bound and of no use outside
+  // the deployment, so the export leaves it out.
+  'finance.bank_party_rule': { from: 'crove_finance.bank_party_rule', omit: ['key_hash'] },
   // Learned account rules with their provenance (#1399).
   'finance.categorization_rule': { from: 'crove_finance.categorization_rule', omit: [] },
   // The org's sub-accounts (#319): journal lines name them by code.
@@ -72,6 +90,11 @@ export const EXPORT_TABLES = {
   'crm.event_type': { from: 'crove_crm.event_type', omit: [] },
   // Visitors' bookings (#1318); the request token's hash is the visitor's credential and stays out.
   'crm.booking': { from: 'crove_crm.booking', omit: ['request_token_sha256'] },
+  // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
+  // no credential (that is crove_kernel.credential, which no export reads) and no personal data.
+  'ads.ad_account': { from: 'crove_ads.ad_account', omit: [] },
+  'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
+  'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
   // Notes (#1671, ADR-0037 §6): the shared notes and their links, which the system context's row policies let the
   // snapshot read, without their folded search words; private notes stay out, and private_count records how many
   // each author had (crove_notes.private_counts(), a definer that answers counts only).

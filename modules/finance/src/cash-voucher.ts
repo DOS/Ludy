@@ -12,8 +12,8 @@
 //   more than it checks; applied migrations are never edited). The entry is this transaction's because this command
 //   writes it right after the insert, for a voucher id the database has just generated.
 // - finance.vouchers.list: the posted vouchers, page by page, with their reversal when their entry was reversed.
-// - finance.vouchers.cash: the posted phiếu thu or phiếu chi of a date range, with their lines, for the MISA SME
-//   export (#657).
+// - finance.vouchers.cash: the posted phiếu thu, phiếu chi, giấy báo Có or giấy báo Nợ of a date range, with their
+//   lines, for the MISA SME export (#657).
 // A voucher is corrected by reversing its entry (finance.journal.reverse); it keeps its number and shows as reversed.
 // A bank voucher may be made from a bank statement line (#326, bank-match.ts): it then names the line (bankLineId),
 // follows it (account, date, direction, amount) and settles it; both commands check that, and the database holds it.
@@ -23,6 +23,7 @@ import {
   VOUCHER_COMMAND,
   VOUCHER_KIND,
   VOUCHER_PAGE_SIZE,
+  isInflow,
   voucherCode,
   zCashVoucherProposal,
   zCashVoucherRequest,
@@ -30,15 +31,16 @@ import {
   zLocalDate,
   zVoucherCursor,
   zVoucherType,
+  type BankMatchedBy,
   type CashVoucherPage,
   type CashVoucherProposal,
   type VoucherType,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { journalIsBalanced } from '@crove/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
-import { checkBankLineVoucher, lockBankLine } from './bank-match.ts';
+import { checkBankLineVoucher, lineMatchFor, lockBankLine, readParties, type StoredBankLine } from './bank-match.ts';
 import {
   VOUCHER_LABELS,
   VOUCHER_SOURCE,
@@ -49,7 +51,9 @@ import {
   voucherTotal,
   type VoucherProblem,
 } from './domain/cash-voucher.ts';
-import { postJournalEntry } from './ledger.ts';
+import { HISTORY_WINDOW, amountCheck } from './domain/anomaly.ts';
+import { learnFromVoucher } from './bank-rules.ts';
+import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
 import type { CashVoucher } from './misa.ts';
@@ -89,6 +93,44 @@ async function checkVoucher(ctx: QueryContext, voucher: { type: VoucherType; cas
   await assertUsableAccounts(ctx, [voucher.cashAccount, ...voucher.lines.map((l) => l.account)]);
 }
 
+// The match recorded on a voucher made from a bank line: `suggested` only when the matcher, run now on the line, suggests this very
+// party for this very reason (the invoice kept only if it is one of the party's open invoices of the line's amount), so
+// a request cannot label its own choice as the suggestion; anything else is the person's own choice.
+async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId: string | null, claimed: BankMatchedBy | undefined): Promise<BankMatchedBy> {
+  if (claimed?.kind !== 'suggested' || !partyId) return { kind: 'manual' };
+  // The open-balance reason only decides when no stronger one exists, so its costly query runs only for a claim of it.
+  const { made, invoices } = await lineMatchFor(ctx, line, { status: 'open' }, await readParties(ctx), claimed.reason === 'balance');
+  const suggested = made.suggested;
+  if (!suggested || suggested.party.id !== partyId || suggested.reason !== claimed.reason) return { kind: 'manual' };
+  const named = claimed.invoice;
+  const invoice = named && invoices.some((i) => i.partyId === partyId && i.series === named.series && i.number === named.number) ? named : undefined;
+  return { kind: 'suggested', reason: suggested.reason, ...(invoice ? { invoice } : {}) };
+}
+
+// The amounts of the party's last payment vouchers in force (cash payments and bank debits, not reversed) in one legal
+// entity, newest first: what its next payment is compared with (#2419). Only the voucher's own entity, whoever asks: a
+// caller who reads several entities must not put another entity's payments into a flag the first entity's members read.
+async function paymentHistory(ctx: QueryContext, partyId: string, legalEntityId: string): Promise<string[]> {
+  const { rows } = await sql<{ amount: string }>`
+    SELECT v.amount::text AS amount
+    FROM crove_finance.cash_voucher v
+    JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+    WHERE v.org_id = ${ctx.orgId} AND v.legal_entity_id = ${legalEntityId} AND v.party_id = ${partyId} AND v.voucher_type IN ('cash_payment', 'bank_debit')
+      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
+    ORDER BY v.voucher_date DESC, v.id DESC
+    LIMIT ${HISTORY_WINDOW}`.execute(ctx.trx);
+  return rows.map((r) => r.amount);
+}
+
+// The warnings of a voucher when it is asked for (#2419): a payment far from what the party is usually paid. A receipt, a
+// voucher with no party and a party with fewer earlier payments than the rule needs raise none. Judged once, when the
+// voucher is asked for: payments posted after that, and payments with no party, are not part of it.
+async function voucherChecks(ctx: QueryContext, type: VoucherType, partyId: string | null, total: string, legalEntityId: string) {
+  if (partyId === null || (type !== 'cash_payment' && type !== 'bank_debit')) return [];
+  const flag = amountCheck(total, await paymentHistory(ctx, partyId, legalEntityId), 'payment');
+  return flag ? [flag] : [];
+}
+
 export const prepareVoucher = defineCommand({
   name: 'finance.voucher.prepare',
   input: zCashVoucherRequest,
@@ -101,6 +143,8 @@ export const prepareVoucher = defineCommand({
     // The legal entity whose books the voucher goes to (#1280): a bank line's own, else the one resolved for the caller.
     // It is stored with the proposal, so the approver posts it there.
     let legalEntityId: string;
+    // How the party of a voucher made from a bank line was found (#2385).
+    let matchedBy: BankMatchedBy | undefined;
     if (input.bankLineId) {
       // One voucher proposal per line at a time: a second request for the line waits here for the first to commit,
       // then sees its proposal.
@@ -110,10 +154,12 @@ export const prepareVoucher = defineCommand({
       // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
       // another entity's lines).
       legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
+      matchedBy = await verifiedMatch(ctx, line, partyId, input.matchedBy);
     } else {
       legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     }
     const party = partyId ? await findParty(ctx, partyId, false) : null;
+    const checks = await voucherChecks(ctx, input.type, partyId, voucherTotal(input.lines), legalEntityId);
     const built: CashVoucherProposal = {
       type: input.type,
       date: input.date,
@@ -123,7 +169,9 @@ export const prepareVoucher = defineCommand({
       description: input.description.trim(),
       lines: input.lines.map((l) => ({ account: l.account, amount: l.amount, ...(l.memo?.trim() ? { memo: l.memo.trim() } : {}) })),
       total: voucherTotal(input.lines),
+      ...(checks.length > 0 ? { checks } : {}),
       ...(input.bankLineId ? { bankLineId: input.bankLineId } : {}),
+      ...(matchedBy ? { matchedBy } : {}),
       legalEntityId,
     };
     // The payload is stored as the proposal and parsed again with this schema when it is approved
@@ -161,6 +209,8 @@ export const recordVoucher = defineCommand({
     // database checks it once more under the line's lock when the voucher is inserted. The voucher is in the line's
     // legal entity (#1280), else in the one stored with the proposal (resolved again, so the approver must see it).
     let legalEntityId: string;
+    // The text of the bank line a person's own choice of party was made from (#2402), kept to teach a rule below.
+    let taughtBy: { description: string; counterpartyAccount: string | null } | null = null;
     if (payload.bankLineId) {
       const line = await checkBankLineVoucher(
         ctx,
@@ -171,6 +221,7 @@ export const recordVoucher = defineCommand({
       // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
       // another entity's lines).
       legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
+      if (payload.matchedBy?.kind === 'manual') taughtBy = { description: line.description, counterpartyAccount: line.counterpartyAccount };
     } else {
       legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
     }
@@ -207,7 +258,7 @@ export const recordVoucher = defineCommand({
     const code = voucherCode(payload.type, voucher.number);
     // The party as it is now (its name may have changed since the voucher was asked for).
     const described = { description: payload.description, party: party ? { name: party.name } : null };
-    const journalEntryId = await postJournalEntry(ctx, {
+    const journalEntryId = await postNewEntry(ctx, {
       entryDate: payload.date,
       description: voucherEntryDescription(code, described),
       sourceType: VOUCHER_SOURCE,
@@ -226,7 +277,9 @@ export const recordVoucher = defineCommand({
         memo: j.memo,
       })),
     });
-    ctx.audit({ voucher_type: payload.type, number: voucher.number, amount: total, lines: payload.lines.length, legal_entity_id: legalEntityId });
+    // The person chose the party themselves for a bank line: the line's words now point at it (#2402).
+    const learned = taughtBy !== null && party ? await learnFromVoucher(ctx, { voucherId: voucher.id, partyId: party.id, legalEntityId, ...taughtBy }) : null;
+    ctx.audit({ voucher_type: payload.type, number: voucher.number, amount: total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(learned?.text ? { learned_bank_rule: learned.text } : {}), ...(learned?.account ? { learned_bank_account_rule: learned.account } : {}) });
     await ctx.activity('finance.cash_voucher', voucher.id, 'voucher.recorded', `Ghi sổ ${VOUCHER_LABELS[payload.type].toLowerCase()} ${code}`);
     await ctx.emit('finance.voucher.recorded', { voucherId: voucher.id, journalEntryId, type: payload.type, number: voucher.number });
     return { voucherId: voucher.id, journalEntryId, code };
@@ -298,15 +351,16 @@ export const vouchersList = defineQuery({
   },
 });
 
-// The cash vouchers of one type for the MISA SME export (GET /api/export/misa/receipts.xlsx and payments.xlsx,
-// #657), oldest first, with their lines as posted: every line of the voucher's entry but the cash line. A voucher
-// whose entry was reversed is left out: it is no longer in Crove's books. At most `limit` vouchers.
+// The cash or bank vouchers of one type for the MISA SME export (GET /api/export/misa/receipts.xlsx, payments.xlsx,
+// bank-receipts.xlsx and bank-payments.xlsx, #657), oldest first, with their lines as posted: every line of the
+// voucher's entry but the cash or bank line. A voucher whose entry was reversed is left out: it is no longer in Crove's
+// books. At most `limit` vouchers.
 export const cashVouchers = defineQuery({
   name: 'finance.vouchers.cash',
   input: z.object({
     from: zLocalDate.optional(),
     to: zLocalDate.optional(),
-    type: z.enum(['cash_receipt', 'cash_payment']),
+    type: zVoucherType,
     limit: z.number().int().positive().max(JOURNAL_EXPORT_LIMIT).optional(),
     legalEntityId: zId.optional(),
   }),
@@ -323,6 +377,7 @@ export const cashVouchers = defineQuery({
       .select([
         'v.voucher_type',
         'v.number',
+        'v.number_period',
         'v.voucher_date',
         'v.cash_account',
         'v.person_name',
@@ -360,16 +415,17 @@ export const cashVouchers = defineQuery({
     const byEntry = new Map<string, CashVoucher['lines']>();
     const cashAccountOf = new Map(vouchers.map((v) => [v.entry_id, v.cash_account]));
     for (const l of lines) {
-      // The cash line carries the total; a voucher line never posts to the voucher's own cash account.
+      // The cash (or bank) line carries the total; a voucher line never posts to the voucher's own cash or bank account.
       if (l.account_code === cashAccountOf.get(l.entry_id)) continue;
       const list = byEntry.get(l.entry_id) ?? [];
-      // A receipt's lines are credits, a payment's debits; the other side is 0.
-      list.push({ lineNo: l.line_no, account: l.account_code, amount: input.type === 'cash_receipt' ? l.credit : l.debit, memo: l.memo });
+      // A receipt's (or báo Có's) lines are credits, a payment's (or báo Nợ's) debits; the other side is 0.
+      list.push({ lineNo: l.line_no, account: l.account_code, amount: isInflow(input.type) ? l.credit : l.debit, memo: l.memo });
       byEntry.set(l.entry_id, list);
     }
     return vouchers.map((v) => ({
       type: input.type,
       code: voucherCode(v.voucher_type, v.number),
+      numberPeriod: v.number_period,
       date: v.voucher_date,
       cashAccount: v.cash_account,
       party: v.party_name !== null ? { name: v.party_name, taxCode: v.party_tax_code, address: v.party_address } : null,

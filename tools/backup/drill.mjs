@@ -27,10 +27,11 @@
 //   7. tears everything down (containers, volumes, networks, the images, the temporary directory).
 // No AI endpoint: e-invoice XML is read without AI. Plain Node (26+), no dependencies; needs docker and bash.
 //
-//   node tools/backup/drill.mjs [--storage s3|local] [--restore-storage s3|local] [--seal on|off] [--keep]
+//   node tools/backup/drill.mjs [--storage s3|local] [--restore-storage s3|local] [--seal on|off] [--wal on|off] [--keep]
 // --storage s3 (default) runs the stack of docker-compose.split.yml (api and worker, files in MinIO), like a pilot
 // on an S3-compatible bucket; local runs the all-in-one stack with the files volume. --restore-storage (default: the
 // same) picks the scratch stack's; local adds tools/backup/scratch.compose.yml, as the monthly restore test does.
+// --wal off skips the point-in-time restore drill that follows (tools/backup/wal-drill.mjs, #2120).
 // --seal off uploads the runs unsealed. --keep leaves everything running for a look (tear down with
 // `docker compose -p <project> down -v`).
 // Environment: DRILL_PREFIX (default crove-drill; names the compose projects, the target, its network and the image
@@ -52,10 +53,15 @@ const STORAGE = option('--storage', 's3');
 const RESTORE_STORAGE = option('--restore-storage', STORAGE);
 const SEAL = option('--seal', 'on');
 const KEEP = args.includes('--keep');
+// After the backup and restore drill, the point-in-time restore drill of tools/backup/wal-drill.mjs (#2120), unless off.
+const WAL = option('--wal', 'on');
+if (!['on', 'off'].includes(WAL)) throw new Error('--wal is on or off');
 if (!['s3', 'local'].includes(STORAGE) || !['s3', 'local'].includes(RESTORE_STORAGE)) throw new Error('--storage and --restore-storage are s3 or local');
 if (!['on', 'off'].includes(SEAL)) throw new Error('--seal is on or off');
 const PREFIX = process.env.DRILL_PREFIX ?? 'crove-drill';
 if (!/^[a-z][a-z0-9-]{0,30}$/.test(PREFIX)) throw new Error('DRILL_PREFIX is lower-case letters, digits and -');
+// The drill removes volumes, networks and images by this name: a prefix without `drill` (a mistyped `crove`) could be a stack.
+if (!PREFIX.includes('drill')) throw new Error('DRILL_PREFIX must contain "drill", so it can never name a real stack');
 const TAG = PREFIX;
 const BASH = process.env.DRILL_BASH ?? 'bash';
 const MC_IMAGE = 'pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372';
@@ -571,6 +577,9 @@ async function main() {
   const raised = report.reseeded.find((r) => r.orgId === seeded.orgId && r.docType === 'finance.journal_voucher');
   assert(raised?.archivedHigh === '1', `the NVK series was raised above the archived number 1 (${JSON.stringify(raised)})`);
   assert(report.problems.length === 0 && report.needFloor.length === 0, `the archive matches the restored database (${JSON.stringify(report.problems)})`);
+  // The lost rows are acknowledged in the archive (#2020), so the nightly verification excuses them and nothing else.
+  assert(typeof report.acknowledged === 'string' && report.acknowledged.startsWith('restores/v1/'), `the restore is acknowledged (${report.acknowledged})`);
+  assert(report.lostRefs.some(([, ref]) => ref === `journal:${seeded.orgId}:${late.entryId}`), 'the acknowledgement names the lost entry');
   log(`archive check: ${report.beyond.length} batch(es) after the backup point; the entry, the voucher and ${lost.allocations.length} number allocation(s) named as lost; the NVK series raised above 1`);
   await time('verify through the API', async () => {
     await ready(DST);
@@ -578,6 +587,17 @@ async function main() {
   });
 
   const rto = timings['restore (restore.sh s3:latest, until /readyz is green)'] + timings['verify through the API'];
+  // The point-in-time restore (#2120) has a database and a bucket of its own: it runs after the stacks above are gone.
+  if (WAL === 'on') {
+    teardown();
+    await time('point-in-time restore drill (wal-drill.mjs)', async () => {
+      const result = spawnSync(process.execPath, [`${ROOT}tools/backup/wal-drill.mjs`], {
+        stdio: 'inherit',
+        env: { ...process.env, DRILL_PREFIX: `${PREFIX}-wal`.slice(0, 31) },
+      });
+      assert(result.status === 0, `the point-in-time restore drill failed (exit ${result.status})`);
+    });
+  }
   console.log('\n[drill] timings (seconds):');
   for (const [name, seconds] of Object.entries(timings)) console.log(`  ${name.padEnd(56)} ${seconds.toFixed(1)}`);
   console.log(`  ${'restore and verify (the RTO part)'.padEnd(56)} ${rto.toFixed(1)}`);

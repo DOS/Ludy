@@ -28,7 +28,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   const slug = await test.step('create the first org', async () => {
     const created = await createOrg(page, 'Công ty E2E');
-    await expect(page.getByRole('heading', { name: 'Hộp thư chứng từ' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });
 
@@ -44,8 +44,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     for (const step of ['Bước 1. Tải hóa đơn lên', 'Bước 2. Kiểm tra và duyệt', 'Bước 3. Xuất Excel cho kế toán']) {
       await expect(page.getByRole('heading', { name: step })).toBeVisible();
     }
-    await page.getByRole('link', { name: '← Hộp thư chứng từ' }).click();
-    await expect(page.getByRole('heading', { name: 'Hộp thư chứng từ' })).toBeVisible();
+    await page.getByRole('link', { name: '← Chứng từ chờ duyệt' }).click();
+    await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
   });
 
   await test.step('upload the e-invoice and wait for the proposal', async () => {
@@ -53,7 +53,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(page.getByText('einvoice-basic.xml')).toBeVisible();
     // The worker reads the XML and raises the proposal; the Inbox polls every few seconds.
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText('Đã có đề xuất')).toBeVisible();
+    // The file says its proposal waits for a person, in the proposal's words (#2009). The upload panel's chips are
+    // walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
+    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
   });
 
   await test.step('open the proposal and approve it', async () => {
@@ -86,6 +88,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // The Inbox says what the approval did, in its button's verb (#1384).
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
+    // Posted now: the file says so, no longer waiting (#2009).
+    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Đã ghi sổ');
     await page.getByRole('tab', { name: 'Đã ghi sổ' }).click();
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible();
   });

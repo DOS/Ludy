@@ -4,7 +4,33 @@ import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryAlertGate } from '../src/alert-gate.ts';
 import { alertPayload, deliverAlert } from '../src/alert.ts';
-import { EXIT, checkAuth, evaluateHealth, initialAuthState, loadProberConfig, parseProberArgs, probeOnce, runProber, type HealthSnapshot, type ProberConfig } from '../src/prober.ts';
+import { createS3Client } from '@crove/kernel-runtime';
+import {
+  EXIT,
+  checkAuth,
+  checkVerifyMarker,
+  describeMarkerCheck,
+  evaluateHealth,
+  initialAuthState,
+  loadProberConfig,
+  parseProberArgs,
+  probeOnce,
+  proberArchiveStore,
+  runProber,
+  walSegmentsPending,
+  type HealthSnapshot,
+  type ProberConfig,
+  type Thresholds,
+  type WalArchive,
+} from '../src/prober.ts';
+import type { AlertGate } from '../src/alert-gate.ts';
+import { archiveKey, type ArchiveS3Sender, type ArchiveStore } from '../src/worm.ts';
+
+// The real client, with its calls recorded: the prober's wiring of timeouts is checked on what it hands the factory.
+vi.mock('@crove/kernel-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@crove/kernel-runtime')>();
+  return { ...actual, createS3Client: vi.fn(actual.createS3Client) };
+});
 
 const SECRET_HOOK = 'https://hooks.example.test/services/T000/B000/secret-token-123';
 const SECRET_PING = 'https://hc.example.test/ping/secret-check-456';
@@ -21,6 +47,10 @@ const healthy: HealthSnapshot = {
   dead_letter_count: 0,
   worker_heartbeat_age_seconds: 12,
   notify_queue_usage: 0,
+  archive_verify_age_seconds: null,
+  archive_lag_seconds: null,
+  extraction_service_failures: 0,
+  extraction_document_failures: 0,
 };
 const limits = { outboxAgeSeconds: 300, jobAgeSeconds: 900, heartbeatAgeSeconds: 120, deadLetters: 0, notifyQueuePercent: 50 };
 
@@ -105,6 +135,202 @@ describe('health thresholds', () => {
     expect(findings.map((f) => [f.check, f.value, f.threshold])).toEqual([['notify_queue', 0.634, 0.5]]);
     expect(findings[0]?.message).toMatch(/^the NOTIFY queue is 63\.4% full \(limit 50%\): a listening session has stopped reading/);
     expect(loadProberConfig({ PROBER_MAX_NOTIFY_QUEUE_PERCENT: '80' }).thresholds.notifyQueuePercent).toBe(80);
+    // A limit left empty in an .env is not set: the default, where it used to read 0 and turn the check off (#2098).
+    expect(loadProberConfig({ PROBER_MAX_OUTBOX_AGE_SECONDS: '', PROBER_MAX_JOB_AGE_SECONDS: ' ', PROBER_MAX_ARCHIVE_VERIFY_AGE_SECONDS: '' }).thresholds).toMatchObject({
+      outboxAgeSeconds: 300,
+      jobAgeSeconds: 900,
+      archiveVerifyAgeSeconds: 93_600,
+    });
+    expect(loadProberConfig({ PROBER_MAX_OUTBOX_AGE_SECONDS: '0' }).thresholds.outboxAgeSeconds).toBe(0);
+    // The same for the counts and percentages: an empty .env line is the default, not a check turned off.
+    expect(
+      loadProberConfig({ PROBER_MAX_NOTIFY_QUEUE_PERCENT: '', PROBER_MAX_EXTRACTION_FAILURES: ' ', PROBER_MAX_DEAD_LETTERS: '', PROBER_EXTRACTION_WINDOW_SECONDS: '', ALERT_REPEAT_MINUTES: '', PROBER_AUTH_MISSES: '' }),
+    ).toMatchObject({
+      thresholds: { notifyQueuePercent: 50, extractionFailures: 2, deadLetters: 0, extractionWindowSeconds: 3600 },
+      repeatSeconds: 3600,
+      authMisses: 2,
+    });
+  });
+
+  // #2120: the database's own WAL archiving. A finished segment waiting, or archive_command failing, for longer than the
+  // limit is a finding; an idle database (the segment being written is the only one after the last push) is not.
+  describe('WAL archiving lag (#2120)', () => {
+    const wal = (patch: Partial<WalArchive> = {}): WalArchive => ({
+      last_archived_wal: '000000010000000000000010',
+      current_wal: '000000010000000000000011',
+      since_archived_seconds: 30,
+      failing: false,
+      ...patch,
+    });
+    const walLimits = { ...limits, walArchiveAgeSeconds: 600 };
+    const checks = (w: WalArchive | undefined, t: Thresholds = walLimits) => evaluateHealth(w ? { ...healthy, wal_archive: w } : healthy, t, 300);
+
+    it('counts the finished segments not yet archived', () => {
+      expect(walSegmentsPending(wal())).toBe(0);
+      expect(walSegmentsPending(wal({ current_wal: '000000010000000000000014' }))).toBe(3);
+      // Across a log boundary (256 segments of 16 MB), and a new timeline after a promotion.
+      expect(walSegmentsPending(wal({ last_archived_wal: '0000000100000001000000FF', current_wal: '000000010000000200000001' }))).toBe(1);
+      expect(walSegmentsPending(wal({ last_archived_wal: '000000010000000000000010', current_wal: '000000020000000000000013' }))).toBe(2);
+      // Nothing archived yet: every segment before the one being written waits. A standby has no WAL of its own to push.
+      expect(walSegmentsPending(wal({ last_archived_wal: null, current_wal: '000000010000000000000003' }))).toBe(3);
+      expect(walSegmentsPending(wal({ current_wal: null }))).toBe(0);
+      // What archive_command pushed last can be a base backup's label (`<segment>.<offset>.backup`: the segment's own
+      // position) or a timeline history file (no position: the check cannot tell, and the age and failing flag still speak).
+      expect(walSegmentsPending(wal({ last_archived_wal: '000000010000000000000010.00000028.backup', current_wal: '000000010000000000000013' }))).toBe(2);
+      expect(walSegmentsPending(wal({ last_archived_wal: '00000002.history' }))).toBe(0);
+      expect(walSegmentsPending(wal({ last_archived_wal: 'not a segment' }))).toBe(0);
+      // Segments of another size: 64 MiB segments are 64 to a log file.
+      expect(walSegmentsPending(wal({ segment_bytes: 67_108_864, last_archived_wal: '00000001000000000000003F', current_wal: '000000010000000100000001' }))).toBe(1);
+    });
+
+    it('reports archiving that has pushed nothing for longer than the limit while segments wait', () => {
+      const behind = wal({ current_wal: '000000010000000000000014', since_archived_seconds: 900 });
+      expect(checks(behind)).toEqual([
+        {
+          check: 'wal_archive',
+          value: 900,
+          threshold: 600,
+          message:
+            'WAL archiving has not pushed a segment for 900 s (limit 600 s; 3 finished segment(s) waiting): point-in-time recovery stops at the last archived segment, and the database keeps every unarchived segment on its disk (docs/runbooks/backup-and-restore.md, "Point in time recovery")',
+        },
+      ]);
+      expect(checks({ ...behind, failing: true })[0]?.message).toContain('3 finished segment(s) waiting, the last attempt failed');
+    });
+
+    it('reports failing archiving even when only the open segment is left, once past the limit', () => {
+      expect(checks(wal({ failing: true, since_archived_seconds: 900 })).map((f) => f.check)).toEqual(['wal_archive']);
+    });
+
+    it('stays quiet while archiving keeps up, when the database is idle, within the limit, when off, and without archiving', () => {
+      expect(checks(wal())).toEqual([]);
+      // Idle: a long time since the last push, but nothing waiting and nothing failing.
+      expect(checks(wal({ since_archived_seconds: 86_400 }))).toEqual([]);
+      // Waiting, but not for long: a slow upload and a retry fit in the limit.
+      expect(checks(wal({ current_wal: '000000010000000000000014', since_archived_seconds: 600 }))).toEqual([]);
+      expect(checks(wal({ failing: true, since_archived_seconds: 60 }))).toEqual([]);
+      // 0 and a limit left out turn the check off; a database without archive_mode has no snapshot.
+      const behind = wal({ current_wal: '000000010000000000000014', since_archived_seconds: 9000 });
+      expect(checks(behind, { ...limits, walArchiveAgeSeconds: 0 })).toEqual([]);
+      expect(checks(behind, limits)).toEqual([]);
+      expect(checks(undefined)).toEqual([]);
+    });
+
+    it('reports a backlog of finished segments even while pushes keep coming (slower than the database writes)', () => {
+      const slow = wal({ last_archived_wal: '000000010000000000000010', current_wal: '000000010000000000000030', since_archived_seconds: 30 });
+      // 31 segments wait; the last push was 30 s ago, so the age check is quiet.
+      expect(checks(slow, { ...limits, walArchiveAgeSeconds: 600 })).toEqual([]);
+      expect(checks(slow, { ...limits, walArchiveAgeSeconds: 600, walArchivePendingSegments: 20 })).toEqual([
+        {
+          check: 'wal_archive',
+          value: 31,
+          threshold: 20,
+          message:
+            '31 finished WAL segment(s) are waiting to be archived (limit 20): archiving is slower than the database writes, so the recovery point drifts away and unarchived segments pile up on its disk (docs/runbooks/backup-and-restore.md, "Point in time recovery")',
+        },
+      ]);
+      // Below the limit, and with the limit off: quiet. The age finding wins when both hold.
+      expect(checks(wal({ current_wal: '000000010000000000000020' }), { ...limits, walArchivePendingSegments: 20 })).toEqual([]);
+      expect(checks(slow, { ...limits, walArchivePendingSegments: 0 })).toEqual([]);
+      expect(checks({ ...slow, since_archived_seconds: 900 }, { ...limits, walArchiveAgeSeconds: 600, walArchivePendingSegments: 20 }).map((f) => f.threshold)).toEqual([600]);
+    });
+
+    it('reads PROBER_MAX_WAL_PENDING_SEGMENTS, 20 by default, 0 for off', () => {
+      expect(loadProberConfig({}).thresholds.walArchivePendingSegments).toBe(20);
+      expect(loadProberConfig({ PROBER_MAX_WAL_PENDING_SEGMENTS: '5' }).thresholds.walArchivePendingSegments).toBe(5);
+      expect(loadProberConfig({ PROBER_MAX_WAL_PENDING_SEGMENTS: '0' }).thresholds.walArchivePendingSegments).toBe(0);
+    });
+
+    it('reads PROBER_MAX_WAL_ARCHIVE_AGE_SECONDS, 600 by default, 0 for off', () => {
+      expect(loadProberConfig({}).thresholds.walArchiveAgeSeconds).toBe(600);
+      expect(loadProberConfig({ PROBER_MAX_WAL_ARCHIVE_AGE_SECONDS: '120' }).thresholds.walArchiveAgeSeconds).toBe(120);
+      expect(loadProberConfig({ PROBER_MAX_WAL_ARCHIVE_AGE_SECONDS: '0' }).thresholds.walArchiveAgeSeconds).toBe(0);
+    });
+
+    it('alerts once through the prober like every other check, and sends a recovery once archiving is caught up', async () => {
+      const io = capture();
+      const hook = webhook();
+      const cfg = config({ thresholds: walLimits });
+      const behind = { ...healthy, wal_archive: wal({ current_wal: '000000010000000000000014', since_archived_seconds: 900 }) };
+      expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
+      expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
+      expect(hook.calls).toHaveLength(1);
+      expect(hook.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'wal_archive', value: 900, threshold: 600 })]);
+      expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => ({ ...healthy, wal_archive: wal() }) })).toBe(EXIT.ok);
+      expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['wal_archive'] });
+    });
+  });
+
+  it('reports a WORM verification older than its limit and an archive behind its limit, and neither when off or unknown (#1997)', () => {
+    const archive = { ...limits, archiveVerifyAgeSeconds: 93_600, archiveLagSeconds: 3600 };
+    expect(evaluateHealth({ ...healthy, archive_verify_age_seconds: 93_600, archive_lag_seconds: 3600 }, archive, 300)).toEqual([]);
+    expect(evaluateHealth({ ...healthy, archive_verify_age_seconds: 180_000, archive_lag_seconds: 7200 }, archive, 300)).toEqual([
+      {
+        check: 'archive_verify',
+        value: 180_000,
+        threshold: 93_600,
+        message: 'the WORM archive last passed verification 50 h ago (limit 26 h): the nightly verification is not running or keeps failing (docs/runbooks/worm-archive.md)',
+      },
+      {
+        check: 'archive_lag',
+        value: 7200,
+        threshold: 3600,
+        message: 'the oldest audit event not yet in the WORM archive is 7200 s old (limit 3600 s): the archiver is behind or stopped (docs/runbooks/worm-archive.md)',
+      },
+    ]);
+    // 0 turns a check off; null (no batch yet, every row archived) is not a finding.
+    expect(evaluateHealth({ ...healthy, archive_verify_age_seconds: 180_000, archive_lag_seconds: 7200 }, { ...limits, archiveVerifyAgeSeconds: 0, archiveLagSeconds: 0 }, 300)).toEqual([]);
+    expect(evaluateHealth(healthy, archive, 300)).toEqual([]);
+  });
+
+  it('reports document readings that failed at the reading service, never documents that could not be read (#1998)', () => {
+    const extraction = { ...limits, extractionFailures: 2, extractionWindowSeconds: 3600 };
+    expect(evaluateHealth({ ...healthy, extraction_service_failures: 2, extraction_document_failures: 50 }, extraction, 300)).toEqual([]);
+    expect(evaluateHealth({ ...healthy, extraction_service_failures: 3, extraction_document_failures: 0 }, extraction, 300)).toEqual([
+      {
+        check: 'extraction',
+        value: 3,
+        threshold: 2,
+        message:
+          '3 document reading(s) failed every attempt in the last 3600 s (limit 2): the AI provider refuses or does not answer, or the parser sandbox is down (docs/runbooks/incidents.md)',
+      },
+    ]);
+    // 0 turns it off.
+    expect(evaluateHealth({ ...healthy, extraction_service_failures: 30 }, { ...extraction, extractionFailures: 0 }, 300)).toEqual([]);
+    expect(loadProberConfig({}).thresholds).toMatchObject({ extractionFailures: 2, extractionWindowSeconds: 3600 });
+  });
+
+  it('alerts once while readings keep failing at the service, and sends a recovery when they stop (#1998)', async () => {
+    const io = capture();
+    const hook = webhook();
+    const cfg = config({ thresholds: { ...limits, extractionFailures: 2, extractionWindowSeconds: 3600 } });
+    const failing = { ...healthy, extraction_service_failures: 4 };
+    let window: number | undefined;
+    const read = (h: typeof healthy) => async (_url: string, _dl: number, _m?: readonly string[], w?: number) => {
+      window = w;
+      return h;
+    };
+    expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: read(failing) })).toBe(EXIT.unhealthy);
+    expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: read(failing) })).toBe(EXIT.unhealthy);
+    expect(hook.calls).toHaveLength(1);
+    expect(window).toBe(3600);
+    expect(hook.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'extraction', value: 4, threshold: 2 })]);
+    expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: read({ ...healthy, extraction_document_failures: 9 }) })).toBe(EXIT.ok);
+    expect(hook.calls).toHaveLength(2);
+    expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['extraction'] });
+  });
+
+  it('alerts once when the archive falls behind, and sends a recovery when it catches up (#1997)', async () => {
+    const io = capture();
+    const hook = webhook();
+    const cfg = config({ thresholds: { ...limits, archiveVerifyAgeSeconds: 93_600, archiveLagSeconds: 3600 } });
+    const behind = { ...healthy, archive_lag_seconds: 5000 };
+    expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
+    expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
+    expect(hook.calls).toHaveLength(1);
+    expect(hook.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'archive_lag', value: 5000, threshold: 3600 })]);
+    expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => ({ ...healthy, archive_lag_seconds: 620 }) })).toBe(EXIT.ok);
+    expect(hook.calls).toHaveLength(2);
+    expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['archive_lag'] });
   });
 
   it('honors the dead letter limit', () => {
@@ -130,20 +356,30 @@ describe('prober configuration', () => {
         PROBER_MAX_HEARTBEAT_AGE_SECONDS: '62',
         PROBER_MAX_DEAD_LETTERS: '5',
         PROBER_DEAD_LETTER_WINDOW_SECONDS: '600',
+        PROBER_MAX_ARCHIVE_VERIFY_AGE_SECONDS: '7200',
+        PROBER_MAX_ARCHIVE_LAG_SECONDS: '0',
       }),
-    ).toMatchObject({ instance: 'office', thresholds: { outboxAgeSeconds: 60, jobAgeSeconds: 61, heartbeatAgeSeconds: 62, deadLetters: 5 }, deadLetterWindowSeconds: 600 });
+    ).toMatchObject({
+      instance: 'office',
+      thresholds: { outboxAgeSeconds: 60, jobAgeSeconds: 61, heartbeatAgeSeconds: 62, deadLetters: 5, archiveVerifyAgeSeconds: 7200, archiveLagSeconds: 0 },
+      deadLetterWindowSeconds: 600,
+    });
+    expect(loadProberConfig({}).thresholds).toMatchObject({ archiveVerifyAgeSeconds: 93_600, archiveLagSeconds: 3600 });
+    // The archiver's own wait raises the default lag limit, so a long ARCHIVE_LAG_SECONDS never pages forever.
+    expect(loadProberConfig({ ARCHIVE_LAG_SECONDS: '7200' }).thresholds.archiveLagSeconds).toBe(8100);
+    expect(loadProberConfig({ ARCHIVE_LAG_SECONDS: '7200', PROBER_MAX_ARCHIVE_LAG_SECONDS: '600' }).thresholds.archiveLagSeconds).toBe(600);
   });
 
   // #1894: the modules the deployment runs, which health() counts in the job age whatever the workers record.
   it('reads the modules the deployment runs from CROVE_MODULES, as the API does, and hands them to readHealth', async () => {
-    expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
-    expect(loadProberConfig({ CROVE_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
+    expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr']);
+    expect(loadProberConfig({ CROVE_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr']);
     expect(loadProberConfig({ CROVE_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
     expect(() => loadProberConfig({ CROVE_MODULES: 'finanse' })).toThrow(/CROVE_MODULES/);
     const readHealth = vi.fn(async () => healthy);
     const config = { ...loadProberConfig({ CROVE_MODULES: 'finance' }), databaseUrl: 'postgres://prober@db.test/crove' };
     await probeOnce(config, { log: () => {}, error: () => {}, readHealth });
-    expect(readHealth).toHaveBeenCalledWith('postgres://prober@db.test/crove', 3600, ['kernel', 'finance']);
+    expect(readHealth).toHaveBeenCalledWith('postgres://prober@db.test/crove', 3600, ['kernel', 'finance'], 3600);
   });
 
   it('counts dead letters over the --every interval plus 60 s unless the window is set', () => {
@@ -563,5 +799,406 @@ describe('test alert', () => {
       ok: false,
       error: 'webhook at hooks.example.test failed: The operation was aborted due to timeout',
     });
+  });
+});
+
+describe('WORM verification marker (#2082)', () => {
+  const DAY = 86_400_000;
+  const now = new Date('2026-10-30T12:00:00Z');
+  const marker = (verifiedAt: Date) => ({ format: 'crove-verify-marker', version: 1, verifiedAt: verifiedAt.toISOString(), batches: 0, chainSha256: null });
+  // A store holding objects the store wrote at the given times; `failing` makes every read throw, as a refused key does.
+  function storeOf(objects: Record<string, { body: unknown; at: Date }>, failing = false): ArchiveStore {
+    const fail = () => {
+      if (failing) throw new Error('AccessDenied: s3:ListBucketVersions\nnot allowed');
+    };
+    return {
+      put: async () => {
+        throw new Error('the prober never writes');
+      },
+      get: async (key) => {
+        fail();
+        const o = objects[key];
+        return o ? new TextEncoder().encode(typeof o.body === 'string' ? o.body : JSON.stringify(o.body)) : null;
+      },
+      list: async (prefix) => {
+        fail();
+        return Object.keys(objects)
+          .filter((k) => k.startsWith(prefix))
+          .sort();
+      },
+      writtenAt: async (key) => objects[key]?.at ?? null,
+      describe: () => 'memory',
+    };
+  }
+  const settings = { maxAgeSeconds: 93_600, store: { kind: 'local' as const, dir: '/data/archive' } };
+  const fresh = storeOf({ 'verify/v1/20261030T020000Z.json': { body: marker(new Date(now.getTime() - DAY / 2)), at: new Date(now.getTime() - DAY / 2) } });
+  // The marker says it is new; the store wrote it two days ago, and the store's time is the one that counts.
+  const stale = storeOf({ 'verify/v1/20261028T020000Z.json': { body: marker(now), at: new Date(now.getTime() - 2 * DAY) } });
+  // A gate the database's owner forged: it reports every problem as already notified.
+  const forged: AlertGate = { decide: async () => ({ decision: 'suppressed', previousProblem: null, problemSince: null, lastNotifiedAt: null }), settle: async () => {} };
+
+  it('reads the store settings: off by default and at 0, the archive directory, or the bucket with a read-only key of its own', () => {
+    expect(loadProberConfig({}).archiveMarker).toBeUndefined();
+    expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive' }).archiveMarker).toEqual(settings);
+    expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive', PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS: '0' }).archiveMarker).toBeUndefined();
+    // An empty or blank limit is no limit set: the default, never 0, which would turn the check off (#2098).
+    for (const empty of ['', ' ', '\t']) {
+      expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive', PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS: empty }).archiveMarker, JSON.stringify(empty)).toEqual(settings);
+    }
+    expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive', PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS: '7200' }).archiveMarker).toEqual({ ...settings, maxAgeSeconds: 7200 });
+    const s3 = { ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_ENDPOINT: 'https://s3.example.test', S3_FORCE_PATH_STYLE: 'true' };
+    const reader = { PROBER_ARCHIVE_S3_ACCESS_KEY_ID: 'reader', PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: 'r' };
+    expect(loadProberConfig({ ...s3, ...reader }).archiveMarker).toEqual({
+      maxAgeSeconds: 93_600,
+      store: { kind: 's3', bucket: 'archive', region: 'us-east-1', endpoint: 'https://s3.example.test', forcePathStyle: true, accessKeyId: 'reader', secretAccessKey: 'r' },
+    });
+    // Neither of the prober's pair set and no worker key in its environment: the default credential chain, only when the
+    // deployment opts in (#2098).
+    expect(loadProberConfig({ ...s3, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' }).archiveMarker).toEqual({
+      maxAgeSeconds: 93_600,
+      store: { kind: 's3', bucket: 'archive', region: 'us-east-1', endpoint: 'https://s3.example.test', forcePathStyle: true, accessKeyId: undefined, secretAccessKey: undefined },
+    });
+    // Not asked for, it is refused, whatever else the process holds: an instance or task role, AWS_* keys, a profile or a
+    // web identity would all resolve through the SDK's chain to a role the prober cannot tell is read-only.
+    const noChain = {
+      maxAgeSeconds: 93_600,
+      error: expect.stringContaining('set PROBER_ARCHIVE_S3_ACCESS_KEY_ID and PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY to a read-only key, or PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true'),
+    };
+    expect(loadProberConfig(s3).archiveMarker).toEqual(noChain);
+    expect(
+      loadProberConfig({ ...s3, AWS_ACCESS_KEY_ID: 'AKIAAMBIENT', AWS_SECRET_ACCESS_KEY: 'ambient-secret', AWS_PROFILE: 'writer', AWS_WEB_IDENTITY_TOKEN_FILE: '/var/run/token', AWS_ROLE_ARN: 'arn:aws:iam::1:role/w' }).archiveMarker,
+    ).toEqual(noChain);
+    // Only a plain `true` opts in: false, an empty value and a blank one do not.
+    for (const value of ['false', '', '  ']) expect(loadProberConfig({ ...s3, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: value }).archiveMarker, JSON.stringify(value)).toEqual(noChain);
+    // The refusal names no key.
+    expect(JSON.stringify(loadProberConfig({ ...s3, AWS_ACCESS_KEY_ID: 'AKIAAMBIENT', AWS_SECRET_ACCESS_KEY: 'ambient-secret' }).archiveMarker)).not.toMatch(/AKIAAMBIENT|ambient-secret/);
+    // A pair and the opt-in together are two answers to one question.
+    expect(loadProberConfig({ ...s3, ...reader, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' }).archiveMarker).toMatchObject({
+      error: 'PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true and a PROBER_ARCHIVE_S3_* key are both set: use one or the other',
+    });
+    // The opt-in does not make the worker's key usable: with it in the environment and no pair, the check still refuses.
+    expect(loadProberConfig({ ...s3, S3_ACCESS_KEY_ID: 'AKIAWORKERKEY', PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' }).archiveMarker).toMatchObject({ workerKey: true });
+    // A local store reads no bucket, so the opt-in is no matter.
+    expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive', PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' }).archiveMarker).toEqual(settings);
+    // The worker's key in the environment (a prober run from the shared .env) is never used (#2094): with the prober's own
+    // pair it is ignored; without one the check refuses, naming the pair, and never echoes a key.
+    const worker = { S3_ACCESS_KEY_ID: 'AKIAWORKERKEY', S3_SECRET_ACCESS_KEY: 'worker-secret-123' };
+    expect(loadProberConfig({ ...s3, ...worker, ...reader }).archiveMarker).toMatchObject({ store: { accessKeyId: 'reader', secretAccessKey: 'r' } });
+    const refused = loadProberConfig({ ...s3, ...worker }).archiveMarker;
+    expect(refused).toMatchObject({
+      maxAgeSeconds: 93_600,
+      error: expect.stringContaining('S3_ACCESS_KEY_ID (the worker\'s key) is set, but the prober\'s own PROBER_ARCHIVE_S3_ACCESS_KEY_ID and PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY are not'),
+    });
+    expect(JSON.stringify(refused)).not.toContain('AKIAWORKERKEY');
+    expect(JSON.stringify(refused)).not.toContain('worker-secret-123');
+    // The prober's own pair that holds the worker's key id is the worker's key all the same.
+    expect(loadProberConfig({ ...s3, ...worker, PROBER_ARCHIVE_S3_ACCESS_KEY_ID: 'AKIAWORKERKEY', PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: 'r' }).archiveMarker).toMatchObject({
+      error: "PROBER_ARCHIVE_S3_ACCESS_KEY_ID is the worker's S3_ACCESS_KEY_ID: give the prober a key of its own that only reads",
+    });
+    // On a local store the worker's key is no matter.
+    expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive', ...worker }).archiveMarker).toEqual(settings);
+    // A setting the check cannot use is reported as one: the check is disabled and says why (below).
+    expect(loadProberConfig({ ARCHIVE_STORE: 's3' }).archiveMarker).toEqual({ maxAgeSeconds: 93_600, error: 'ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET' });
+    expect(loadProberConfig({ ...s3, PROBER_ARCHIVE_S3_ACCESS_KEY_ID: 'reader' }).archiveMarker).toMatchObject({ error: expect.stringMatching(/PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY/) });
+    expect(loadProberConfig({ ...s3, PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: 'r' }).archiveMarker).toMatchObject({ error: expect.stringMatching(/PROBER_ARCHIVE_S3_ACCESS_KEY_ID/) });
+  });
+
+  it('parses the archive settings apart: a bad one disables only the marker check, never the backup and test alerts (#2094)', async () => {
+    const cases: Array<[Record<string, string>, string]> = [
+      [{ S3_ENDPOINT: 'ftp://s3.example.test' }, 'S3_ENDPOINT'],
+      [{ S3_FORCE_PATH_STYLE: 'maybe' }, 'S3_FORCE_PATH_STYLE'],
+      [{ ARCHIVE_STORE: 'gcs' }, 'ARCHIVE_STORE'],
+      [{ PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS: 'a day' }, 'PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS'],
+      [{ PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'maybe' }, 'PROBER_ARCHIVE_S3_DEFAULT_CHAIN'],
+    ];
+    for (const [bad, field] of cases) {
+      const env = { ALERT_WEBHOOK_URL: SECRET_HOOK, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', ...bad };
+      expect(loadProberConfig(env).archiveMarker).toEqual({ maxAgeSeconds: 93_600, error: `invalid archive settings: ${field}` });
+      const io = capture();
+      const hook = webhook();
+      expect(await runProber(['--backup-failed', 'disk full'], env, { ...io, fetch: hook.fetch })).toBe(EXIT.ok);
+      expect(await runProber(['--test-alert'], env, { ...io, fetch: hook.fetch })).toBe(EXIT.ok);
+      expect(hook.calls).toHaveLength(2);
+    }
+    // The S3 settings are read only for ARCHIVE_STORE=s3: with a local store, or none, a malformed one is no business of the check.
+    expect(loadProberConfig({ ARCHIVE_DIR: '/data/archive', S3_ENDPOINT: 'ftp://x', S3_FORCE_PATH_STYLE: 'maybe' }).archiveMarker).toEqual(settings);
+    expect(loadProberConfig({ S3_ENDPOINT: 'ftp://x' }).archiveMarker).toBeUndefined();
+    // A limit of 0 turns the check off, whatever else is wrong with the archive settings.
+    expect(loadProberConfig({ ARCHIVE_STORE: 'gcs', S3_ENDPOINT: 'ftp://x', PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS: '0' }).archiveMarker).toBeUndefined();
+    // A bad setting of the rest is refused as before.
+    expect(() => loadProberConfig({ ALERT_REPEAT_MINUTES: 'often' })).toThrow(/ALERT_REPEAT_MINUTES/);
+  });
+
+  it('runs the other probes with the check disabled, and the finding names the settings, never their values (#2094)', async () => {
+    const io = capture();
+    const hook = webhook();
+    const env = { PROBER_DATABASE_URL: 'postgres://crove_prober:pw@db:5432/postgres', ALERT_WEBHOOK_URL: SECRET_HOOK, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_ENDPOINT: 'ftp://internal.example.test' };
+    const sick = { ...healthy, worker_heartbeat_age_seconds: 900 };
+    expect(await runProber([], env, { ...io, fetch: hook.fetch, readHealth: async () => sick, now: () => now })).toBe(EXIT.unhealthy);
+    expect(hook.calls).toHaveLength(2);
+    expect(hook.body(0).crove.findings).toEqual([
+      {
+        check: 'archive_marker',
+        value: null,
+        threshold: 93_600,
+        message: 'the prober cannot check the WORM verification marker: invalid archive settings: S3_ENDPOINT (docs/runbooks/worm-archive.md)',
+      },
+    ]);
+    expect(hook.body(1).crove.findings.map((f: { check: string }) => f.check)).toEqual(['heartbeat']);
+    expect(JSON.stringify([io.out, io.err, hook.calls.map((c) => c.init.body)])).not.toContain('internal.example.test');
+  });
+
+  it('says at the start of the loop which store the check reads, and loudly what is wrong when it is disabled (#2094)', async () => {
+    const reader = { PROBER_ARCHIVE_S3_ACCESS_KEY_ID: 'reader', PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: 'r' };
+    const start = async (env: Record<string, string>) => {
+      const io = capture();
+      const stop = new Error('stop');
+      // The start line is the first the loop logs: throwing from it ends the loop for the test.
+      const log = (line: string) => {
+        io.out.push(line);
+        throw stop;
+      };
+      await expect(runProber(['--every', '10'], { PROBER_DATABASE_URL: 'postgres://crove_prober:pw@db:5432/postgres', ...env }, { ...io, log })).rejects.toBe(stop);
+      return { line: io.out[0] ?? '', err: io.err };
+    };
+    expect(await start({})).toMatchObject({ line: expect.stringMatching(/, verification marker check off$/), err: [] });
+    expect((await start({ ARCHIVE_DIR: '/data/archive' })).line).toMatch(/, verification markers from local files in \/data\/archive$/);
+    expect((await start({ ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_ENDPOINT: 'https://s3.example.test', ...reader })).line).toMatch(
+      /, verification markers from s3 bucket archive at s3\.example\.test, with the prober's own key$/,
+    );
+    expect((await start({ ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_REGION: 'ap-southeast-1', PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' })).line).toMatch(
+      /, verification markers from s3 bucket archive at AWS ap-southeast-1, with the default credential chain$/,
+    );
+    // Disabled: the line says so, and a loud error names what is wrong and that the other checks run.
+    const disabled = await start({ ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'archive', S3_ACCESS_KEY_ID: 'AKIAWORKERKEY' });
+    expect(disabled.line).toMatch(/, verification marker check disabled \(ARCHIVE_STORE=s3 and S3_ACCESS_KEY_ID \(the worker's key\) is set/);
+    expect(disabled.err).toEqual([
+      expect.stringMatching(
+        /^\[prober\] ERROR verification marker check disabled \(.*PROBER_ARCHIVE_S3_ACCESS_KEY_ID and PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY are not.*\): the other checks run, and archive_marker is reported on every probe until the settings are fixed$/,
+      ),
+    ]);
+    expect(JSON.stringify(disabled)).not.toContain('AKIAWORKERKEY');
+    // The label of the helper itself.
+    expect(describeMarkerCheck(undefined)).toBe('verification marker check off');
+  });
+
+  it('aborts the calls still waiting when the read runs past its deadline (#2094)', async () => {
+    const s3 = { maxAgeSeconds: 93_600, store: { kind: 's3' as const, bucket: 'archive', region: 'us-east-1', endpoint: undefined, forcePathStyle: false, accessKeyId: undefined, secretAccessKey: undefined } };
+    const calls: Array<{ command: string; signal: AbortSignal | undefined }> = [];
+    // A store that takes each call and answers only when it is aborted.
+    const hung: ArchiveS3Sender = {
+      send: ((command: object, options?: { abortSignal?: AbortSignal }) => {
+        calls.push({ command: command.constructor.name, signal: options?.abortSignal });
+        return new Promise((_, reject) => {
+          options?.abortSignal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        });
+      }) as ArchiveS3Sender['send'],
+    };
+    const finding = await checkVerifyMarker(s3, { archiveClient: hung, markerTimeoutMs: 20 }, now);
+    expect(finding?.message).toBe('the prober could not read the verification marker from the WORM archive store: no answer within 0 s (docs/runbooks/worm-archive.md)');
+    expect(calls.map((c) => c.command)).toEqual(['ListObjectsV2Command']);
+    expect(calls[0]?.signal?.aborted).toBe(true);
+  });
+
+  it('hands the deadline signal to every call of the marker read, the body of the marker included (#2094)', async () => {
+    const s3 = { maxAgeSeconds: 93_600, store: { kind: 's3' as const, bucket: 'archive', region: 'us-east-1', endpoint: undefined, forcePathStyle: false, accessKeyId: undefined, secretAccessKey: undefined } };
+    const key = 'verify/v1/20261030T020000Z.json';
+    const signals: Array<{ command: string; signal: AbortSignal | undefined }> = [];
+    let bodyAborted = false;
+    // The listings answer; the marker's body never arrives until the signal of its own call aborts.
+    const stalled: ArchiveS3Sender = {
+      send: (async (command: object, options?: { abortSignal?: AbortSignal }) => {
+        const name = command.constructor.name;
+        signals.push({ command: name, signal: options?.abortSignal });
+        if (name === 'ListObjectsV2Command') return { Contents: [{ Key: key }], IsTruncated: false };
+        if (name === 'ListObjectVersionsCommand') return { Versions: [{ Key: key, LastModified: new Date(now.getTime() - 3_600_000) }], IsTruncated: false };
+        return {
+          Body: {
+            transformToByteArray: () =>
+              new Promise<Uint8Array>((_, reject) => {
+                options?.abortSignal?.addEventListener('abort', () => {
+                  bodyAborted = true;
+                  reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+                });
+              }),
+          },
+        };
+      }) as ArchiveS3Sender['send'],
+    };
+    const finding = await checkVerifyMarker(s3, { archiveClient: stalled, markerTimeoutMs: 20 }, now);
+    expect(finding?.message).toBe('the prober could not read the verification marker from the WORM archive store: no answer within 0 s (docs/runbooks/worm-archive.md)');
+    expect(signals.map((s) => s.command)).toEqual(['ListObjectsV2Command', 'ListObjectVersionsCommand', 'ListObjectVersionsCommand', 'GetObjectCommand']);
+    // One signal for the whole read, and it is the one that aborted the body.
+    expect(new Set(signals.map((s) => s.signal)).size).toBe(1);
+    expect(bodyAborted).toBe(true);
+  });
+
+  it("builds its S3 client with timeouts and attempts, once per settings, and never takes the worker's key (#2094)", () => {
+    const settings = { kind: 's3' as const, bucket: 'archive', region: 'us-east-1', endpoint: 'http://127.0.0.1:9', forcePathStyle: true, accessKeyId: 'reader', secretAccessKey: 'r' };
+    vi.mocked(createS3Client).mockClear();
+    proberArchiveStore(settings);
+    proberArchiveStore(settings);
+    expect(createS3Client).toHaveBeenCalledTimes(1);
+    expect(createS3Client).toHaveBeenCalledWith(expect.objectContaining({ bucket: 'archive', accessKeyId: 'reader', secretAccessKey: 'r' }), undefined, {
+      connectionTimeoutMs: 5000,
+      requestTimeoutMs: 10_000,
+      maxAttempts: 2,
+    });
+  });
+
+  // #2121: nightly runs are incremental, so a recent marker no longer proves a full pass is still happening: the newest
+  // marker of an incremental run says when the last one was, and the prober alerts when it is past 32 days.
+  it('alerts when the nightly markers are incremental and the last full pass is too old, or on record nowhere', async () => {
+    const recent = new Date(now.getTime() - DAY / 2);
+    const incremental = (lastFullAt: Date | null | undefined) => ({ ...marker(recent), incremental: true, ...(lastFullAt === undefined ? {} : { lastFullAt: lastFullAt === null ? null : lastFullAt.toISOString() }) });
+    const check = (body: unknown) => checkVerifyMarker(settings, { archiveStore: storeOf({ 'verify/v1/20261030T020000Z.json': { body, at: recent } }) }, now);
+    // A full pass 20 days ago, or 32: quiet.
+    expect(await check(incremental(new Date(now.getTime() - 20 * DAY)))).toBeNull();
+    expect(await check(incremental(new Date(now.getTime() - 32 * DAY)))).toBeNull();
+    // 33 days: the monthly full pass has not passed, though the nightly runs keep the heartbeat fresh.
+    expect(await check(incremental(new Date(now.getTime() - 33 * DAY)))).toEqual({
+      check: 'archive_marker',
+      value: 33 * 86_400,
+      threshold: 32 * 86_400,
+      message: 'the last full WORM verification pass was 33 days ago (limit 32): the monthly full verification has not passed since, or never finished (docs/runbooks/worm-archive.md)',
+    });
+    // None on record (no full pass among the newest markers when the run planned).
+    expect(await check(incremental(null))).toMatchObject({ check: 'archive_marker', value: null, message: expect.stringContaining('records no full pass') });
+    expect(await check(incremental(undefined))).toMatchObject({ check: 'archive_marker', value: null });
+    // A marker of a full pass (as every one before #2121) is its own full pass; a lastFullAt that is no date does not read.
+    expect(await check(marker(recent))).toBeNull();
+    expect(await check({ ...incremental(null), lastFullAt: 'last tuesday' })).toMatchObject({ message: expect.stringContaining('cannot be trusted') });
+  });
+
+  it('is quiet while the newest marker is recent by the store, and alerts once when it grows old, through a gate outside the database', async () => {
+    const io = capture();
+    const hook = webhook();
+    const cfg = config({ archiveMarker: settings });
+    const deps = { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, markerGate: memoryAlertGate(3600) };
+    expect(await probeOnce(cfg, { ...deps, archiveStore: fresh })).toBe(EXIT.ok);
+    expect(hook.calls).toEqual([]);
+
+    const statuses: unknown[] = [];
+    const writeStatus = async (_path: string, status: unknown) => {
+      statuses.push(status);
+    };
+    // The database's own gate says it was notified already: the marker alert goes out all the same.
+    expect(await probeOnce({ ...cfg, statusFile: '/data/status/probe.json' }, { ...deps, gate: forged, archiveStore: stale, writeStatus })).toBe(EXIT.unhealthy);
+    expect(hook.calls).toHaveLength(1);
+    expect(hook.body(0).crove.findings).toEqual([
+      {
+        check: 'archive_marker',
+        value: 172_800,
+        threshold: 93_600,
+        message: 'the WORM archive store wrote the newest verification marker 48 h ago (limit 26 h): the nightly verification has not passed since, or never finished (docs/runbooks/worm-archive.md)',
+      },
+    ]);
+    expect(statuses).toEqual([expect.objectContaining({ databaseOk: true, failing: ['archive_marker'] })]);
+    // Once per repeat window, like every alert.
+    expect(await probeOnce(cfg, { ...deps, archiveStore: stale })).toBe(EXIT.unhealthy);
+    expect(hook.calls).toHaveLength(1);
+    // A new marker resolves it.
+    expect(await probeOnce(cfg, { ...deps, archiveStore: fresh })).toBe(EXIT.ok);
+    expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['archive_marker'] });
+  });
+
+  it('alerts when the database cannot be read too, and when the store cannot be read, on one line', async () => {
+    const io = capture();
+    const hook = webhook();
+    const down = async (): Promise<HealthSnapshot> => {
+      throw new Error('connect ECONNREFUSED');
+    };
+    expect(await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: down, now: () => now, archiveStore: stale })).toBe(EXIT.probeFailed);
+    expect(hook.calls.map((_, i) => hook.body(i).crove.findings[0].check)).toEqual(['archive_marker', 'probe']);
+
+    const refused = await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, archiveStore: storeOf({}, true) });
+    expect(refused).toBe(EXIT.unhealthy);
+    expect(hook.body(2).crove.findings[0]).toMatchObject({
+      check: 'archive_marker',
+      value: null,
+      message: 'the prober could not read the verification marker from the WORM archive store: AccessDenied: s3:ListBucketVersions not allowed (docs/runbooks/worm-archive.md)',
+    });
+
+    // A store that never answers holds up neither the database checks nor the status file.
+    const hung: ArchiveStore = { ...storeOf({}), list: () => new Promise<string[]>(() => {}) };
+    const statuses: unknown[] = [];
+    const writeStatus = async (_path: string, status: unknown) => {
+      statuses.push(status);
+    };
+    const sick = { ...healthy, worker_heartbeat_age_seconds: 900 };
+    const code = await probeOnce(config({ archiveMarker: settings, statusFile: '/data/status/probe.json' }), {
+      ...io,
+      fetch: hook.fetch,
+      readHealth: async () => sick,
+      now: () => now,
+      archiveStore: hung,
+      markerTimeoutMs: 20,
+      writeStatus,
+    });
+    expect(code).toBe(EXIT.unhealthy);
+    expect(hook.body(3).crove.findings[0].message).toBe('the prober could not read the verification marker from the WORM archive store: no answer within 0 s (docs/runbooks/worm-archive.md)');
+    expect(hook.body(4).crove.findings.map((f: { check: string }) => f.check)).toEqual(['heartbeat']);
+    expect(statuses).toEqual([expect.objectContaining({ failing: ['heartbeat', 'archive_marker'] })]);
+  });
+
+  it('reports a marker key the store keeps more than one version of, but not one a lifecycle rule expired (#2082)', async () => {
+    const io = capture();
+    const hook = webhook();
+    const versioned = (counts: Record<string, number>): ArchiveStore => ({ ...fresh, versionCounts: async () => new Map(Object.entries(counts)) });
+    const run = (store: ArchiveStore) =>
+      probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, archiveStore: store, markerGate: memoryAlertGate(3600) });
+    const newest = 'verify/v1/20261030T020000Z.json';
+    expect(await run(versioned({ [newest]: 1 }))).toBe(EXIT.ok);
+    expect(await run(versioned({ [newest]: 2, 'verify/v1/20261029T020000Z.json': 2 }))).toBe(EXIT.unhealthy);
+    expect(hook.body(0).crove.findings).toEqual([
+      {
+        check: 'archive_marker',
+        value: null,
+        threshold: 93_600,
+        message:
+          'the WORM archive store keeps more than one version of verification marker verify/v1/20261029T020000Z.json, verify/v1/20261030T020000Z.json: a marker was written over, or deleted and written again (docs/runbooks/worm-archive.md)',
+      },
+    ]);
+    // A marker past its 400 days leaves a delete marker when a lifecycle rule expires it: not a finding.
+    expect(await run(versioned({ [newest]: 1, 'verify/v1/20250901T020000Z.json': 2 }))).toBe(EXIT.ok);
+    expect(hook.calls).toHaveLength(1);
+  });
+
+  it("reports settings it cannot use, and picks the newest marker by the store's time, not by its key", async () => {
+    const io = capture();
+    const hook = webhook();
+    const misconfigured = { maxAgeSeconds: 93_600, error: 'ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET' };
+    expect(await probeOnce(config({ archiveMarker: misconfigured }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now })).toBe(EXIT.unhealthy);
+    expect(hook.body(0).crove.findings[0].message).toBe(
+      'the prober cannot check the WORM verification marker: ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET (docs/runbooks/worm-archive.md)',
+    );
+    // A marker named from a clock that ran a year ahead, written two days ago, and today's, named from the right clock:
+    // today's counts.
+    const skewed = storeOf({
+      'verify/v1/20271030T020000Z.json': { body: marker(now), at: new Date(now.getTime() - 2 * DAY) },
+      'verify/v1/20261030T020000Z.json': { body: marker(now), at: new Date(now.getTime() - DAY / 2) },
+    });
+    expect(await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, archiveStore: skewed })).toBe(EXIT.ok);
+  });
+
+  it('reports a marker it cannot trust, and with no marker yet waits the limit after the first batch and after the probe loop started', async () => {
+    const io = capture();
+    const run = async (store: ArchiveStore, startedAt?: Date) => {
+      const hook = webhook();
+      const code = await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, archiveStore: store, ...(startedAt ? { startedAt } : {}) });
+      return { code, finding: hook.calls.length ? hook.body(0).crove.findings[0] : null };
+    };
+    const twoDays = new Date(now.getTime() - 2 * DAY);
+    const batch = { [archiveKey(1)]: { body: 'a batch', at: twoDays } };
+    // A marker naming a batch the store does not hold.
+    const beyond = await run(storeOf({ ...batch, 'verify/v1/20261030T020000Z.json': { body: { ...marker(now), batches: 2, chainSha256: 'a'.repeat(64) }, at: now } }));
+    expect(beyond.finding?.message).toMatch(/^the newest WORM verification marker verify\/v1\/20261030T020000Z\.json cannot be trusted: it names a chain hash that batch 2/);
+    // No marker, a batch two days old: no verification ever passed.
+    expect((await run(storeOf(batch))).finding?.message).toMatch(/^the WORM archive store holds no verification marker, and wrote its first batch 48 h ago/);
+    // ... unless the probe loop started less than the limit ago (the first nightly run after an upgrade writes one).
+    expect(await run(storeOf(batch), new Date(now.getTime() - DAY))).toEqual({ code: EXIT.ok, finding: null });
+    expect((await run(storeOf(batch), twoDays)).code).toBe(EXIT.unhealthy);
+    // Nothing archived yet: nothing to verify.
+    expect(await run(storeOf({}))).toEqual({ code: EXIT.ok, finding: null });
   });
 });

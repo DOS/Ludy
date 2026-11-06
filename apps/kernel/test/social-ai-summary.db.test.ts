@@ -188,7 +188,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     channels = { fb: await connection(org.orgId, 'facebook_page', owner.userId, 'Trang Bánh Mai 24h'), zalo: await connection(org.orgId, 'zalo_oa', owner.userId, 'Zalo Bí Mật') };
     // The member may use the Facebook page only (#1081).
     await admin((c) =>
-      c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.fb, owner.userId]),
+      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.fb, owner.userId]),
     );
     // The last 30 days: on the page, a post that reports reach and one that does not (an older capture), and one with
     // impressions only; on Zalo, views only. 10 days before the window, one post on the page.

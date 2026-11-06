@@ -22,6 +22,20 @@ export const PROPOSAL_PREPARERS = {
   'finance.journal_voucher.record': 'finance.journal_voucher.prepare',
   'finance.closing.record': 'finance.closing.prepare',
   'finance.depreciation.record': 'finance.depreciation.prepare',
+  // The close of a month of stock (#2513), built from the stock moves for the month named.
+  'finance.stock.close_period': 'finance.stock.prepare_close',
+  // The confirmation of a count of stock (#2513), built from the books for the count named.
+  'finance.stock.count_confirm': 'finance.stock.prepare_count',
+  // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
+  // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
+  'ads.write.enable': 'ads.write.prepare_enable',
+  'ads.account.enable_write': 'ads.account.prepare_enable_write',
+  'ads.cap.set': 'ads.cap.prepare_set',
+  'ads.launches.unblock': 'ads.launches.prepare_unblock',
+  // A drafted campaign submitted for approval (ADR-0043, #2295, W1): the owner or an admin asks, an owner or an admin approves.
+  'ads.campaign.launch': 'ads.campaign.prepare_launch',
+  // A sales e-invoice draft asked to be issued (ADR-0044 point 3, #2502): a member asks, an owner or an admin approves.
+  'finance.einvoice.issue': 'finance.einvoice.prepare_issue',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];
@@ -172,7 +186,7 @@ export const resubmitProposal = defineCommand({
       if (newest?.id !== old.id) {
         throw new DomainError('PROPOSAL_SUPERSEDED', 409, 'Chứng từ này đã có đề xuất mới hơn; hãy mở đề xuất đó', { proposalId: newest?.id ?? null });
       }
-      await refuseWhileReextracting(ctx, old.source_file_id);
+      await refuseWhileReextracting(ctx, old.source_file_id, old.extraction_id);
       // A proposal moved to another entity before #1764 (its payload naming another entity than its own) is not asked
       // for again as it is: read the document again in the entity to book it in.
       const named = zId.safeParse((old.payload as { legalEntityId?: unknown } | null)?.legalEntityId);

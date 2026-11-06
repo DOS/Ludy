@@ -5,6 +5,7 @@ import { StatusLink } from '../components/status-link.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { PageHeader } from '../components/ui.tsx';
 import { getConfig } from '../lib/auth.ts';
+import { crmGuide } from '../lib/crm-guide.ts';
 import { firmGuide } from '../lib/firm-guide.ts';
 import { quickGuide } from '../lib/quick-guide.ts';
 import { supportLink } from '../lib/support.ts';
@@ -16,6 +17,8 @@ export function GuidePage() {
   const t = useTranslations('guide');
   const back = useTranslations('inboxDetail');
   const hasSupport = supportLink(getConfig().supportUrl) !== null;
+  // The CRM guide (#2231) only where the crm module is on.
+  const hasCrm = getConfig().modules.includes('crm');
 
   return (
     <>
@@ -33,6 +36,7 @@ export function GuidePage() {
           {[
             { title: t('title'), steps: quickGuide() },
             { title: t('firmTitle'), steps: firmGuide() },
+            ...(hasCrm ? [{ title: t('crmTitle'), steps: crmGuide() }] : []),
           ].map((guide) => (
             <div key={guide.title}>
               <p className="text-xs text-subtle-foreground">{guide.title}</p>
@@ -78,6 +82,26 @@ export function GuidePage() {
           </Card>
         ))}
       </div>
+      {hasCrm && (
+        <>
+          <div className="mt-10 mb-6">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">{t('crmTitle')}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{t('crmSubtitle')}</p>
+          </div>
+          <div lang="vi" className="grid max-w-3xl gap-4">
+            {crmGuide().map((step) => (
+              <Card key={step.id} id={`guide-${step.id}`} className="block scroll-mt-20 p-5">
+                <h2 className="text-base font-semibold text-foreground">{step.title}</h2>
+                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
+                  {step.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ol>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
       {hasSupport && (
         <p className="mt-6 text-sm text-muted-foreground">
           {t('supportHint')} <SupportLink className="text-link hover:underline" />.

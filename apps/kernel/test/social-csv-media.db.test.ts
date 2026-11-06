@@ -171,7 +171,7 @@ suite('images, labels and a first comment in the CSV import (#1258)', () => {
     );
     const connect = async (displayName: string) => String((await rpc('channels/connectSandbox', owner, { displayName, key: randomUUID() })).body?.connectionId);
     channels = { mine: await connect('Trang của bạn'), hidden: await connect('Trang khác') };
-    await admin((c) => c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, limited.userId, channels.mine, owner.userId]));
+    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, limited.userId, channels.mine, owner.userId]));
     files = {
       menu: await file('Thực đơn.jpg'),
       // The same name as a Mac saves it (decomposed), on another file: two files of one name.

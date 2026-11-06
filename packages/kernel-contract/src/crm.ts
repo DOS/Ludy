@@ -3,7 +3,9 @@
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
-export const EVENT_TYPE_LOCATION_KINDS = ['in_person', 'phone', 'video'] as const;
+// google_meet (C7, #1375): the meeting link is made for each booking through the host's Google connection; the fixed link in the type's location, when one
+// is set, is the fallback.
+export const EVENT_TYPE_LOCATION_KINDS = ['in_person', 'phone', 'video', 'google_meet'] as const;
 export type EventTypeLocationKind = (typeof EVENT_TYPE_LOCATION_KINDS)[number];
 
 // Who hosts a booking (#1373): the lead host alone; one free host of the team (round-robin); or every host together
@@ -85,6 +87,12 @@ export const zBookingRequest = z.strictObject({
 export type BookingRequest = z.infer<typeof zBookingRequest>;
 
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled'] as const;
+// The Google Meet of a booking (C7, #1375): none (the type makes none, or the host cannot), pending (being made: the booking's mails wait for it), ready (the
+// join link is known) or failed (Google gave none: the booking stands and the type's fixed link, if any, is used).
+export const BOOKING_MEETING_STATES = ['none', 'pending', 'ready', 'failed'] as const;
+export type BookingMeetingState = (typeof BOOKING_MEETING_STATES)[number];
+// The only kind of address a Meet link is (the database checks the same).
+export const MEET_URL = /^https:\/\/meet\.google\.com\/(lookup\/)?[a-z0-9-]{3,64}$/;
 export const zBookingStatus = z.strictObject({
   status: z.enum(BOOKING_STATUSES),
   refusal: z.enum(['taken', 'unavailable']).nullable(),
@@ -143,6 +151,8 @@ export const zBookingItem = z.strictObject({
   // Null once a personal-data erasure cleared them.
   visitor: z.strictObject({ name: z.string().nullable(), email: z.string().nullable(), phone: z.string().nullable(), note: z.string().nullable() }),
   partyId: z.string().nullable(),
+  // The Google Meet of the booking (C7, #1375): its state, and the join link once it is ready.
+  meeting: z.strictObject({ state: z.enum(BOOKING_MEETING_STATES), url: z.string().nullable() }),
 });
 export type BookingItem = z.infer<typeof zBookingItem>;
 export const zBookingCancel = z.strictObject({ bookingId: zId });
@@ -156,7 +166,8 @@ export const zBookingSuggestInput = z.strictObject({ eventTypeId: zId, message: 
 export const zSuggestedWindow = z.object({ date: z.string(), from: z.number().int(), to: z.number().int() });
 export const zBookingSuggestion = z.object({
   // Whether the model read the message: false without a message, without an AI endpoint, or when the call failed.
-  ai: z.enum(['used', 'off', 'failed', 'skipped']),
+  // 'budget': the org's AI budget of the month is spent (#2382); the next free slots are still given.
+  ai: z.enum(['used', 'off', 'failed', 'skipped', 'budget']),
   asksForMeeting: z.boolean().nullable(),
   windows: z.array(zSuggestedWindow),
   eventType: z.object({ id: z.string(), slug: z.string(), title: z.string(), durationMin: z.number().int(), active: z.boolean() }),

@@ -12,7 +12,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, ErrorText, fieldErrorId, fieldHintId, Notice, PageHeader, PageSkeleton, Spinner } from '../components/ui.tsx';
+import { DataTable, ErrorText, fieldErrorId, fieldHintId, Notice, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { buildTemplate, canImportOpeningBalance, sheetToRows, type SheetProblem } from '../lib/opening-balance.ts';
@@ -22,7 +22,7 @@ type FileState =
   | { status: 'none' }
   | { status: 'reading' }
   | { status: 'read'; name: string; rows: OpeningBalanceRow[]; extraColumns: boolean }
-  | { status: 'problem'; problem: SheetProblem | XlsxError['reason'] };
+  | { status: 'problem'; problem: SheetProblem | Exclude<XlsxError['reason'], 'macro' | 'formula'> };
 
 function saveBytes(bytes: Uint8Array, filename: string) {
   const blob = new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -87,7 +87,7 @@ function OpeningBalanceForm() {
       setFile(result.ok ? { status: 'read', name: picked.name, rows: result.rows, extraColumns: result.extraColumns } : { status: 'problem', problem: result.problem });
     } catch (error) {
       if (current !== pick.current) return;
-      setFile({ status: 'problem', problem: error instanceof XlsxError ? error.reason : 'not_xlsx' });
+      setFile({ status: 'problem', problem: error instanceof XlsxError && error.reason !== 'macro' && error.reason !== 'formula' ? error.reason : 'not_xlsx' });
     }
   };
 
@@ -242,8 +242,7 @@ function OpeningBalanceForm() {
                     <Alert>
                       <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
                         <span>{t('ready', { lines: data.lines })}</span>
-                        <Button onClick={sendPost} disabled={post.isPending}>
-                          {post.isPending ? <Spinner className="text-current" /> : null}
+                        <Button loading={post.isPending} onClick={sendPost}>
                           {t('post')}
                         </Button>
                       </AlertDescription>

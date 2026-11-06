@@ -288,7 +288,9 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
     expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
-      policy_version: 2,
+      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+      // 7: the confirmation of a count of stock was given its approval policy (#2513, part b; the allowance of 6 or 7 that step one gave is gone).
+      policy_version: 7,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,

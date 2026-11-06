@@ -18,7 +18,7 @@
 // member turned Social emails off. The mail names the post and links to it; nothing secret is in it. A deployment without mail records the mail as not sent and nothing fails.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { isAdProviderId, zId } from '@crove/kernel-contract';
 import { SOCIAL_NOTIFICATION_KINDS, type MemberRole, type SocialNotificationKind } from '@crove/db';
 import { createMailMessage } from '@crove/kernel';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
@@ -161,7 +161,8 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
     }
     case 'kernel.channel.expired': {
       const e = z.object({ connection_id: zId, provider: z.string().max(32) }).safeParse(payload);
-      if (!e.success) return null;
+      // An ad platform's connection is told by the kernel's own notice, which opens the Ads screen (#2219), not Social's channels.
+      if (!e.success || isAdProviderId(e.data.provider)) return null;
       return { kind: 'channel_expired', users: await deciders(ctx), postId: null, connectionId: e.data.connection_id, detail: { provider: e.data.provider } };
     }
     case 'social.post.commented': {

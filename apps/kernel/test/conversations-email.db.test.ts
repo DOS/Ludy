@@ -1,0 +1,608 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Customer email as conversations in Hộp thư on PostgreSQL 17 (#2439, plan docs/plan/conversations.md section 6.7), driven by real MIME messages
+// through the real parser: a mail to the org's conversation address (`<token>+hopthu@domain`) opens a New email conversation and never reaches
+// the invoice reader; a customer's reply joins the thread by the Message-IDs it names and by nothing else (a forged id, a matching subject
+// open a thread of their own); automated mail and mail from the deployment's own domain open nothing; a member's reply is a mail of the kernel
+// pipeline, threaded, whose outcome settles the message; the thread is read as a private message; no mail text reaches an audit row.
+// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { z } from 'zod';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool, type Db } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import type { ExtractClient } from '@crove/extract-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type UsageLimits } from '@crove/kernel';
+import type { ConversationDetail, ConversationListed } from '@crove/kernel-contract';
+import { Runtime, defineQuery, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { processInboundEmail } from '../src/inbound.ts';
+import { inProcessExtract } from './extract-service.ts';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const DOMAIN = 'in.test';
+// The receiving server's name in the Authentication-Results it writes (INBOUND_AUTHSERV_ID).
+const AUTHSERV = 'mx.in.test';
+const suite = ADMIN ? describe : describe.skip;
+const SYSTEM = { type: 'system' as const, component: 'conversations-email-test' };
+// Text no audit row, event or log may hold.
+const SECRET = 'khách hàng Nguyễn Văn Mẫu số 0912345678';
+
+class MemoryStore implements BlobStore {
+  readonly blobs = new Map<string, Uint8Array>();
+  async put(key: string, bytes: Uint8Array) {
+    this.blobs.set(key, bytes);
+    return `content:${sha256Hex(bytes)}`;
+  }
+  async get(key: string) {
+    const bytes = this.blobs.get(key);
+    if (!bytes) throw new Error(`missing ${key}`);
+    return bytes;
+  }
+  async delete(key: string) {
+    this.blobs.delete(key);
+  }
+}
+
+// The part of the org detail this test reads.
+interface OrgDetail {
+  conversationAddress?: string | null;
+  inboundAddress?: string | null;
+}
+
+interface MailParts {
+  from?: string;
+  to: string;
+  subject?: string;
+  messageId?: string;
+  inReplyTo?: string | undefined;
+  references?: string;
+  body?: string;
+  html?: string;
+  headers?: Record<string, string>;
+  date?: string;
+  // What the receiving server says of the sender: 'pass' (the default), 'none' (no header), or 'foreign' (a pass written by another server).
+  auth?: 'pass' | 'none' | 'foreign';
+}
+const fromDomainOf = (from: string | undefined) => /@([a-z0-9.-]+)/i.exec(from ?? 'khach@mau.test')?.[1] ?? 'mau.test';
+// A raw message as a customer's mail server would deliver it.
+function raw(parts: MailParts): Uint8Array {
+  const lines = [
+    `From: ${parts.from ?? 'Khách Mẫu <khach@mau.test>'}`,
+    `To: ${parts.to}`,
+    `Subject: ${parts.subject ?? 'Hỏi giá gạo'}`,
+    `Message-ID: ${parts.messageId ?? `<${randomUUID()}@mau.test>`}`,
+    `Date: ${parts.date ?? new Date().toUTCString()}`,
+    ...(parts.inReplyTo ? [`In-Reply-To: ${parts.inReplyTo}`] : []),
+    ...(parts.references ? [`References: ${parts.references}`] : []),
+    ...(parts.auth === 'none' ? [] : [`Authentication-Results: ${parts.auth === 'foreign' ? 'mx.evil.test' : AUTHSERV}; dkim=pass header.d=${fromDomainOf(parts.from)}; dmarc=pass header.from=${fromDomainOf(parts.from)}`]),
+    ...Object.entries(parts.headers ?? {}).map(([k, v]) => `${k}: ${v}`),
+    'MIME-Version: 1.0',
+  ];
+  if (parts.html !== undefined) {
+    lines.push('Content-Type: text/html; charset=utf-8', 'Content-Transfer-Encoding: 8bit', '', parts.html);
+  } else {
+    lines.push('Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: 8bit', '', parts.body ?? 'Cho tôi hỏi giá gạo ST25.');
+  }
+  return new TextEncoder().encode(lines.join('\r\n'));
+}
+
+suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
+  const dbName = `crove_test_conversations_email_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let pool: pg.Pool;
+  let workerPool: pg.Pool;
+  let db: Db;
+  let rt: Runtime;
+  let worker: Runtime;
+  // Reads the reply mails an org's members could see, as a member's own database context would.
+  let probe: Runtime;
+  let extract: ExtractClient;
+  const store = new MemoryStore();
+  const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+
+  async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end();
+    }
+  }
+  const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
+  const person = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@conversations.test`, name: null });
+
+  interface Org {
+    orgId: string;
+    owner: string;
+    member: string;
+    address: string;
+    document: string;
+  }
+  async function org(): Promise<Org> {
+    const owner = await person('owner');
+    const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
+    const member = await person('member');
+    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await rt.execute('kernel.conversation.address_issue', {}, { actor: asUser(owner), orgId });
+    const detail = await rt.query<OrgDetail>('kernel.org.get', {}, { actor: asUser(owner), orgId });
+    return { orgId, owner, member, address: detail.conversationAddress as string, document: detail.inboundAddress as string };
+  }
+  const exec = <O>(o: Org, user: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(user), orgId: o.orgId });
+  const query = <O>(o: Org, user: string, name: string, input: unknown) => rt.query<O>(name, input, { actor: asUser(user), orgId: o.orgId });
+  const sys = <O>(o: Org, name: string, input: unknown) => worker.execute<O>(name, input, { actor: SYSTEM, orgId: o.orgId });
+
+  // Delivers a raw message to the address, as the mail worker would.
+  async function deliver(to: string, message: Uint8Array, limits?: UsageLimits) {
+    const blobId = newInboundBlobId();
+    await store.put(inboundKey(blobId), message);
+    return processInboundEmail({ runtime: worker, store, domain: DOMAIN, extract, authservId: AUTHSERV, ...(limits ? { limits } : {}) }, { blobId, sha256: sha256Hex(message), sizeBytes: message.byteLength, recipient: to });
+  }
+  const threads = (o: Org) =>
+    rows<{ id: string; status: string; subject: string | null; last_seq: number; external_thread_id: string; kind: string }>(
+      'SELECT id, status, subject, last_seq, external_thread_id, kind FROM crove_kernel.conversation WHERE org_id = $1 ORDER BY created_at, id',
+      [o.orgId],
+    );
+  const messagesOf = (conversationId: string) =>
+    rows<{ seq: number; direction: string; external_message_id: string | null; body: string; send_state: string | null; send_error_code: string | null; email_refs: string[]; tainted: boolean }>(
+      'SELECT seq, direction, external_message_id, body, send_state, send_error_code, email_refs, tainted FROM crove_kernel.conversation_message WHERE conversation_id = $1 ORDER BY seq',
+      [conversationId],
+    );
+  const detail = (o: Org, user: string, id: string) => query<ConversationDetail>(o, user, 'kernel.conversation.get', { conversationId: id });
+
+  beforeAll(async () => {
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const login = (user: string, password: string) => {
+      const url = new URL(adminUrl);
+      url.username = user;
+      url.password = password;
+      return url.toString();
+    };
+    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    db = createDb(pool);
+    const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: DOMAIN })] };
+    rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
+    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registered);
+    extract = inProcessExtract();
+    const mailRows = defineQuery({
+      name: 'test.reply_mail_rows',
+      input: z.object({}),
+      access: ['owner', 'admin', 'member', 'viewer'],
+      handler: async (ctx) => (await ctx.trx.selectFrom('crove_kernel.mail_message').select(['to_address', 'subject']).where('source', '=', 'kernel.conversation.reply').execute()).length,
+    });
+    probe = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [mailRows] });
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+    await workerPool?.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
+
+  it('gives the org an address of its own, apart from the document address, made once by an owner or admin', async () => {
+    const o = await org();
+    expect(o.address).toMatch(/^[0-9a-f]{24}@in\.test$/);
+    expect(o.address).not.toBe(o.document);
+    expect(o.address.split('@')[0]).not.toBe(o.document.split('@')[0]);
+    // Asked again, it is the same address; a member neither sees it nor makes it.
+    await exec(o, o.owner, 'kernel.conversation.address_issue', {});
+    expect((await query<OrgDetail>(o, o.owner, 'kernel.org.get', {})).conversationAddress).toBe(o.address);
+    expect((await query<OrgDetail>(o, o.member, 'kernel.org.get', {})).conversationAddress).toBeNull();
+    await expect(exec(o, o.member, 'kernel.conversation.address_issue', {})).rejects.toThrow();
+    // An org that never opens the Inbox has no address and no ledger row for one.
+    const idle = await org();
+    expect(idle.address).toBeDefined();
+    const bare = await person('bare');
+    const { orgId } = await createOrg(rt, asUser(bare), `Công ty ${randomUUID().slice(0, 6)}`);
+    expect((await query<OrgDetail>({ orgId, owner: bare, member: bare, address: '', document: '' }, bare, 'kernel.org.get', {})).conversationAddress).toBeNull();
+    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.inbound_address WHERE org_id = $1 AND kind = 'conversation'", [orgId]))[0]?.n).toBe('0');
+  });
+
+  it('replaces the address for good: the old one stops receiving, the document address is untouched, and the rate limit holds', async () => {
+    const o = await org();
+    expect(await deliver(o.address, raw({ to: o.address, messageId: '<rot1@mau.test>' }))).toMatchObject({ conversation: 'stored' });
+    await rt.execute('kernel.conversation.address_rotate', {}, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const fresh = (await query<OrgDetail>(o, o.owner, 'kernel.org.get', {})).conversationAddress as string;
+    expect(fresh).not.toBe(o.address);
+    await expect(deliver(o.address, raw({ to: o.address, messageId: '<rot2@mau.test>' }))).rejects.toMatchObject({ code: 'UNKNOWN_RECIPIENT' });
+    expect(await deliver(fresh, raw({ to: fresh, messageId: '<rot3@mau.test>' }))).toMatchObject({ conversation: 'stored' });
+    // The address the delivery was for decides: a retired one is not replaced by a live one named in the headers.
+    await expect(deliver(o.address, raw({ to: fresh, messageId: '<rot4@mau.test>' }))).rejects.toMatchObject({ code: 'UNKNOWN_RECIPIENT' });
+    await deliver(o.document, raw({ to: o.document, subject: 'Hoá đơn', body: 'Gửi anh chị hoá đơn.' }));
+    expect((await rows('SELECT 1 FROM crove_kernel.inbound_message WHERE org_id = $1', [o.orgId])).length).toBe(1);
+    const ledger = await rows<{ kind: string; retired: boolean }>('SELECT kind, retired_at IS NOT NULL AS retired FROM crove_kernel.inbound_address WHERE org_id = $1 ORDER BY kind, created_at', [o.orgId]);
+    expect(ledger).toEqual([
+      { kind: 'conversation', retired: true },
+      { kind: 'conversation', retired: false },
+      { kind: 'document', retired: false },
+    ]);
+    // A retired token is never issued again and a row is never deleted.
+    await expect(admin((c) => c.query("DELETE FROM crove_kernel.inbound_address WHERE org_id = $1 AND kind = 'conversation'", [o.orgId]))).rejects.toThrow(/INBOUND_ADDRESS_TOMBSTONE/);
+    // Three rotations a day, as the document address: the fourth is refused.
+    await rt.execute('kernel.conversation.address_rotate', {}, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await rt.execute('kernel.conversation.address_rotate', {}, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(rt.execute('kernel.conversation.address_rotate', {}, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    // An admin does not rotate it; the owner's second factor is asked for.
+    await expect(rt.execute('kernel.conversation.address_rotate', {}, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toThrow();
+  });
+
+  it('counts customer mail against a budget of its own, so it never defers an invoice and an invoice never defers it', async () => {
+    const o = await org();
+    const limits: UsageLimits = { inbound_emails: '1', attachment_bytes: '1000000000', extraction_pages: '1500', ai_cost: '20', conversation_emails: '1' };
+    expect(await deliver(o.address, raw({ to: o.address, messageId: '<b1@mau.test>' }), limits)).toMatchObject({ conversation: 'stored' });
+    expect(await deliver(o.address, raw({ to: o.address, messageId: '<b2@mau.test>' }), limits)).toHaveProperty('deferred');
+    expect((await threads(o)).length).toBe(1);
+    // The invoice budget is untouched by it: a mail to the document address is still filed.
+    expect(await deliver(o.document, raw({ to: o.document, subject: 'Hoá đơn', body: 'Gửi anh chị hoá đơn.' }), limits)).not.toHaveProperty('deferred');
+    const used = await rows<{ metric: string; n: string }>('SELECT metric, count(*)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 GROUP BY metric ORDER BY metric', [o.orgId]);
+    expect(used).toEqual([
+      { metric: 'conversation_emails', n: '1' },
+      { metric: 'inbound_emails', n: '1' },
+    ]);
+  });
+
+  it('does not take a sender nobody vouched for as the customer: no thread by References, no contact link, and a mark until a verified mail comes', async () => {
+    const o = await org();
+    const sender = 'Khách A <a@khach.test>';
+    await deliver(o.address, raw({ to: o.address, messageId: '<v1@mau.test>', from: sender }));
+    const [known] = await threads(o);
+    // A person links the customer to a contact; a later verified thread of that customer inherits it, a forged one does not.
+    const party = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'organization', 'Công ty A', 'a@khach.test') RETURNING id", [o.orgId]))[0]?.id;
+    await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: known?.id, partyId: party });
+    await deliver(o.address, raw({ to: o.address, messageId: '<v2@mau.test>', from: sender, subject: 'Thật' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<v3@mau.test>', from: sender, subject: 'Giả mạo', auth: 'none' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<v4@mau.test>', from: sender, subject: 'Giả mạo 2', auth: 'foreign' }));
+    const all = await rows<{ subject: string; party_id: string | null; sender_unverified: boolean }>('SELECT subject, party_id, sender_unverified FROM crove_kernel.conversation WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+    expect(all.map((r) => [r.subject, r.party_id === party, r.sender_unverified])).toEqual([
+      ['Hỏi giá gạo', true, false],
+      ['Thật', true, false],
+      ['Giả mạo', false, true],
+      ['Giả mạo 2', false, true],
+    ]);
+    // The screen is told, with the address beside the name the sender chose.
+    const forged = (await threads(o))[2];
+    const seen = await detail(o, o.owner, forged?.id as string);
+    expect(seen.conversation).toMatchObject({ senderUnverified: true, contact: { address: 'a@khach.test' } });
+    // The email match is not offered for it.
+    const candidates = await query<{ email: unknown[] }>(o, o.owner, 'kernel.conversation.contact_candidates', { conversationId: forged?.id });
+    expect(candidates.email).toEqual([]);
+    // A mail naming the forged thread does not join it unless it is verified, and a verified one clears the mark.
+    await deliver(o.address, raw({ to: o.address, messageId: '<v5@mau.test>', from: sender, inReplyTo: '<v3@mau.test>', auth: 'none' }));
+    expect((await threads(o)).length).toBe(5);
+    await deliver(o.address, raw({ to: o.address, messageId: '<v6@mau.test>', from: sender, inReplyTo: '<v3@mau.test>' }));
+    expect((await threads(o)).length).toBe(5);
+    expect((await messagesOf(forged?.id as string)).map((m) => m.external_message_id)).toEqual(['<v3@mau.test>', '<v6@mau.test>']);
+    expect((await detail(o, o.owner, forged?.id as string)).conversation).toMatchObject({ senderUnverified: false });
+  });
+
+  it("does not carry a person's contact link to a thread whose sender nobody vouched for, even one that existed before the link", async () => {
+    const o = await org();
+    const sender = 'Khách B <b@khach.test>';
+    await deliver(o.address, raw({ to: o.address, messageId: '<lk1@mau.test>', from: sender, subject: 'Thật' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<lk2@mau.test>', from: sender, subject: 'Giả mạo', auth: 'none' }));
+    const [real, forged] = await threads(o);
+    const party = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'organization', 'Công ty B', 'b@khach.test') RETURNING id", [o.orgId]))[0]?.id;
+    await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: real?.id, partyId: party });
+    const linked = await rows<{ subject: string; party_id: string | null }>('SELECT subject, party_id FROM crove_kernel.conversation WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+    expect(linked.map((r) => [r.subject, r.party_id === party])).toEqual([
+      ['Thật', true],
+      ['Giả mạo', false],
+    ]);
+    // A person who looks at the forged thread and links it themselves may.
+    await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: forged?.id, partyId: party });
+    expect((await rows<{ party_id: string | null }>('SELECT party_id FROM crove_kernel.conversation WHERE id = $1', [forged?.id]))[0]?.party_id).toBe(party);
+  });
+
+  it('accepts one mailbox in From and nothing else: a list or a quoted local part opens nothing, and a reply to a list address is refused', async () => {
+    const o = await org();
+    for (const [i, from] of ['<a@x.test,b@y.test>', '"a b"@x.test', 'a@@x.test'].entries()) {
+      expect(await deliver(o.address, raw({ to: o.address, messageId: `<list${i}@mau.test>`, from })), from).toMatchObject({ conversation: 'ignored', reason: 'no_sender' });
+    }
+    expect(await threads(o)).toEqual([]);
+    // An identity that carries a list (seeded by hand) is never answered: no mail is queued.
+    await deliver(o.address, raw({ to: o.address, messageId: '<one@mau.test>', from: 'Khách <one@khach.test>' }));
+    const [thread] = await threads(o);
+    await admin((c) => c.query("UPDATE crove_kernel.conversation_identity SET external_user_id = 'one@khach.test,two@khach.test' WHERE org_id = $1", [o.orgId]));
+    await expect(exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ.' })).rejects.toMatchObject({ code: 'VALIDATION' });
+    expect(await rows("SELECT 1 FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([]);
+  });
+
+  it('is found by a search of the sender\'s address, as personal data kept with its threads', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<pd1@mau.test>', from: 'Người Tìm <timthay@khach.test>' }));
+    const found = await rt.execute<{ matches: Array<{ column: string; handling: string }> }>('kernel.personal_data.find', { value: 'TimThay@khach.test' }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(found.matches.some((m) => m.column.endsWith('conversation_identity.external_user_id') && m.handling === 'keep_record')).toBe(true);
+  });
+
+  it('opens a New email conversation from a mail to the conversation address, made once, and a redelivery is a duplicate', async () => {
+    const o = await org();
+    const message = raw({ to: o.address, subject: 'Hỏi giá gạo ST25', messageId: '<first@mau.test>', body: SECRET });
+    expect(await deliver(o.address, message)).toMatchObject({ conversation: 'stored' });
+    const [thread] = await threads(o);
+    expect(thread).toMatchObject({ kind: 'email', status: 'new', subject: 'Hỏi giá gạo ST25', external_thread_id: '<first@mau.test>', last_seq: 1 });
+    const [first] = await messagesOf(thread?.id as string);
+    expect(first).toMatchObject({ direction: 'in', external_message_id: '<first@mau.test>', tainted: true, email_refs: [] });
+    expect(first?.body).toContain('0912345678');
+    // The org's email connection is one, with no credential.
+    const connections = await rows<{ provider: string; display_name: string }>("SELECT provider, display_name FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'email'", [o.orgId]);
+    expect(connections).toEqual([{ provider: 'email', display_name: 'Email' }]);
+    // The same Message-ID again changes nothing.
+    expect(await deliver(o.address, message)).toMatchObject({ conversation: 'duplicate' });
+    expect((await threads(o)).length).toBe(1);
+    expect((await messagesOf(thread?.id as string)).length).toBe(1);
+    // It never reached the invoice reader.
+    expect(await rows('SELECT 1 FROM crove_kernel.inbound_message WHERE org_id = $1', [o.orgId])).toEqual([]);
+  });
+
+  it('puts a mail to the document address where it went before, not in the Inbox, and the Inbox address never reaches the invoice reader', async () => {
+    const o = await org();
+    await deliver(o.document, raw({ to: o.document, subject: 'Hoá đơn tháng 11', body: 'Gửi anh chị hoá đơn.' }));
+    expect(await threads(o)).toEqual([]);
+    expect((await rows('SELECT 1 FROM crove_kernel.inbound_message WHERE org_id = $1', [o.orgId])).length).toBe(1);
+  });
+
+  it('joins a reply to its thread by In-Reply-To or by References, and reopens a resolved thread as New', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<a1@mau.test>' }));
+    const [thread] = await threads(o);
+    await deliver(o.address, raw({ to: o.address, messageId: '<a2@mau.test>', inReplyTo: '<a1@mau.test>', subject: 'Re: Hỏi giá gạo', body: 'Còn hàng không?' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<a3@mau.test>', references: '<zzz@elsewhere.test> <a2@mau.test>', body: 'Cảm ơn.' }));
+    expect((await threads(o)).length).toBe(1);
+    const stored = await messagesOf(thread?.id as string);
+    expect(stored.map((m) => m.external_message_id)).toEqual(['<a1@mau.test>', '<a2@mau.test>', '<a3@mau.test>']);
+    expect(stored[1]?.email_refs).toEqual(['<a1@mau.test>']);
+    expect(stored[2]?.email_refs).toEqual(['<zzz@elsewhere.test>', '<a2@mau.test>']);
+    await exec(o, o.owner, 'kernel.conversation.resolve', { conversationId: thread?.id });
+    expect((await threads(o))[0]?.status).toBe('resolved');
+    await deliver(o.address, raw({ to: o.address, messageId: '<a4@mau.test>', inReplyTo: '<a3@mau.test>', body: 'Một câu hỏi nữa.', date: new Date(Date.now() + 60_000).toUTCString() }));
+    expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 4 });
+  });
+
+  it('never joins a thread by its subject, and never by an id that is not this org\'s: a forged In-Reply-To opens a thread of its own', async () => {
+    const o = await org();
+    const other = await org();
+    await deliver(other.address, raw({ to: other.address, messageId: '<theirs@mau.test>', subject: 'Báo giá' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<mine@mau.test>', subject: 'Báo giá' }));
+    // Same subject, no header link: a new thread.
+    await deliver(o.address, raw({ to: o.address, messageId: '<mine2@mau.test>', subject: 'Báo giá' }));
+    expect((await threads(o)).length).toBe(2);
+    // An id of another org's conversation: a new thread here, and nothing is added to the other org's.
+    await deliver(o.address, raw({ to: o.address, messageId: '<forged@mau.test>', inReplyTo: '<theirs@mau.test>', subject: 'Re: Báo giá', body: 'Tôi trả lời thư của người khác.' }));
+    expect((await threads(o)).length).toBe(3);
+    const theirs = await threads(other);
+    expect(theirs.length).toBe(1);
+    expect(theirs[0]?.last_seq).toBe(1);
+  });
+
+  it('opens nothing for automated mail, bulk mail, or mail from the deployment\'s own domain, and shows HTML as safe text', async () => {
+    const o = await org();
+    for (const headers of [{ 'Auto-Submitted': 'auto-replied' }, { Precedence: 'bulk' }, { 'List-Unsubscribe': '<mailto:x@y.test>' }]) {
+      expect(await deliver(o.address, raw({ to: o.address, headers }))).toMatchObject({ conversation: 'ignored', reason: 'automated' });
+    }
+    expect(await deliver(o.address, raw({ to: o.address, from: `noreply@${DOMAIN}` }))).toMatchObject({ conversation: 'ignored', reason: 'own_address' });
+    expect(await threads(o)).toEqual([]);
+    // HTML with a script, a remote image and a tracking pixel is reduced to its text; nothing remote is loaded or kept.
+    await deliver(
+      o.address,
+      raw({
+        to: o.address,
+        messageId: '<html@mau.test>',
+        html: '<html><body><p>Xin chào, tôi cần <b>10 tấn</b> gạo.</p><script>fetch("https://evil.test/x")</script><img src="https://track.test/p.gif" width="1" height="1"><img src="https://evil.test/big.png"></body></html>',
+      }),
+    );
+    const [thread] = await threads(o);
+    const [message] = await messagesOf(thread?.id as string);
+    expect(message?.body).toContain('Xin chào, tôi cần 10 tấn gạo.');
+    expect(message?.body).not.toMatch(/evil\.test|track\.test|<|script|fetch/);
+  });
+
+  it('is read as a private message: the owner reads it, a member with no permission does not, and the contact is offered by the sender\'s address', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, from: 'Chị Hoa <hoa@khach.test>', messageId: '<priv@mau.test>' }));
+    const [thread] = await threads(o);
+    expect((await query<ConversationListed>(o, o.owner, 'kernel.conversation.list', {})).conversations.map((c) => c.id)).toEqual([thread?.id]);
+    expect((await query<ConversationListed>(o, o.member, 'kernel.conversation.list', {})).conversations).toEqual([]);
+    const seen = await detail(o, o.owner, thread?.id as string);
+    expect(seen.conversation).toMatchObject({ kind: 'email', subject: 'Hỏi giá gạo', channel: { provider: 'email' } });
+    expect(seen.reply).toEqual({ allowed: true, reason: null });
+    expect(seen.conversation.contact.displayName).toBe('Chị Hoa');
+    // A contact that carries the sender's address (any case) is the first candidate, by the deterministic key.
+    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'organization', 'Cửa hàng Hoa', 'HOA@khach.test')", [o.orgId]));
+    const matched = await query<{ email: Array<{ name: string }> }>(o, o.owner, 'kernel.conversation.contact_candidates', { conversationId: thread?.id });
+    expect(matched.email.map((c) => c.name)).toEqual(['Cửa hàng Hoa']);
+  });
+
+  it('answers by a mail of the kernel pipeline: threaded, under the org\'s name, its outcome settling the message, and the customer\'s next mail joins the thread', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<q1@mau.test>', references: '<q0@mau.test>', subject: 'Hỏi giá gạo', body: 'Giá gạo ST25 bao nhiêu?' }));
+    const [thread] = await threads(o);
+    const reply = await exec<{ messageId: string; seq: number }>(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ giá 25.000 đồng một ký ạ.' });
+    // The reply is a queued mail of the pipeline, to the customer, with the threading ids, and no platform call was asked for.
+    const [mail] = await rows<{ id: string; status: string; to_address: string; template_key: string; subject: string; payload: Record<string, unknown>; message_id_header: string; source: string }>(
+      'SELECT id, status, to_address, template_key, subject, payload, message_id_header, source FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2',
+      [o.orgId, reply.messageId],
+    );
+    expect(mail).toMatchObject({ status: 'queued', to_address: 'khach@mau.test', template_key: 'kernel.conversation_reply', subject: 'Re: Hỏi giá gạo', source: 'kernel.conversation.reply' });
+    expect(mail?.payload).toMatchObject({ text: 'Dạ giá 25.000 đồng một ký ạ.', inReplyTo: '<q1@mau.test>', references: ['<q0@mau.test>', '<q1@mau.test>'] });
+    expect(await rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.reply_queued'", [o.orgId])).toEqual([]);
+    const [out] = (await messagesOf(thread?.id as string)).slice(-1);
+    expect(out).toMatchObject({ direction: 'out', send_state: 'queued', external_message_id: mail?.message_id_header, tainted: false });
+    expect((await threads(o))[0]?.status).toBe('pending');
+    // The queue sends it once and records the outcome: the message is sent.
+    const begun = await sys<{ action: string; attempt: number }>(o, 'kernel.mail.queue.begin', { messageId: mail?.id, provider: 'smtp', safety: 'never' });
+    expect(begun.action).toBe('send');
+    await sys(o, 'kernel.mail.queue.record', { messageId: mail?.id, attempt: begun.attempt, outcome: 'sent' });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]?.send_state).toBe('sent');
+    // A hard bounce afterwards fails it.
+    await sys(o, 'kernel.mail.event.record', { messageId: mail?.id, provider: 'smtp', providerEventId: `dsn:${randomUUID()}`, kind: 'bounce_hard', occurredAt: new Date().toISOString(), detail: {} });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]?.send_state).toBe('failed');
+    // The customer answers the org's mail: its Message-ID is the one the reply carries, so the thread is found.
+    await deliver(o.address, raw({ to: o.address, messageId: '<q2@mau.test>', inReplyTo: mail?.message_id_header, subject: 'Re: Hỏi giá gạo', body: 'Cảm ơn, tôi lấy 10 ký.' }));
+    expect((await threads(o)).length).toBe(1);
+    expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 3 });
+  });
+
+  it('settles a failed or unknown send on the message, and a stopped address fails it at once', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<s1@mau.test>', from: 'bounce@mau.test' }));
+    const [thread] = await threads(o);
+    const send = async (seen: number) => {
+      const reply = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: seen, body: 'Dạ.' });
+      const [mail] = await rows<{ id: string }>('SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [o.orgId, reply.messageId]);
+      return { reply, mailId: mail?.id as string };
+    };
+    const one = await send(1);
+    const begun = await sys<{ attempt: number }>(o, 'kernel.mail.queue.begin', { messageId: one.mailId, provider: 'smtp', safety: 'never' });
+    await sys(o, 'kernel.mail.queue.record', { messageId: one.mailId, attempt: begun.attempt, outcome: 'ambiguous', errorCode: 'SEND_TIMEOUT' });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]).toMatchObject({ send_state: 'unknown' });
+    // A hard bounce stops mail to the address: the next reply is refused by the suppression list when the queue begins it.
+    await sys(o, 'kernel.mail.event.record', { messageId: one.mailId, provider: 'smtp', providerEventId: `dsn:${randomUUID()}`, kind: 'bounce_hard', occurredAt: new Date().toISOString(), detail: {} });
+    const two = await send(2);
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]).toMatchObject({ send_state: 'failed', send_error_code: 'SUPPRESSED' });
+    expect(two.mailId).toBeTruthy();
+  });
+
+  it('is deleted like any conversation: when the customer is erased (the reply mail loses its address), by the retention purge, and with the org', async () => {
+    const o = await org();
+    const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
+    await deliver(o.address, raw({ to: o.address, messageId: '<e1@mau.test>', from: 'Khách Xoá <xoa@khach.test>' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<e2@mau.test>', from: 'Khách Giữ <giu@khach.test>' }));
+    const [erased, kept] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: erased?.id, lastSeenSeq: 1, body: 'Dạ.' });
+    expect(await rows("SELECT to_address FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([{ to_address: 'xoa@khach.test' }]);
+    await rt.execute('kernel.conversation.erase_contact', { conversationId: erased?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId });
+    expect((await threads(o)).map((t) => t.id)).toEqual([kept?.id]);
+    // The mail the org sent that customer keeps no address; the other customer's thread is untouched.
+    expect(await rows("SELECT to_address, subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([{ to_address: null, subject: null, payload: null }]);
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId]))[0]?.n).toBe('1');
+    // The retention purge deletes an old email thread by its last message.
+    await exec(o, o.owner, 'kernel.conversation.retention_set', { retentionMonths: 6 });
+    await admin((c) => c.query("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '8 months' WHERE org_id = $1", [o.orgId]));
+    const purged = await sys<{ threads: number }>(o, 'kernel.conversation.purge_expired', { limit: 100 });
+    expect(purged.threads).toBe(1);
+    expect(await threads(o)).toEqual([]);
+    // Mail that arrives again for the erased customer within the tombstone's days and dated before the erasure is not stored.
+    expect(await deliver(o.address, raw({ to: o.address, messageId: '<e3@mau.test>', from: 'Khách Xoá <xoa@khach.test>', date: new Date(Date.now() - 3_600_000).toUTCString() }))).toMatchObject({ conversation: 'ignored' });
+    expect(await threads(o)).toEqual([]);
+  });
+
+  it('opens a thread of its own for a mail from someone else who names a thread\'s Message-ID, and reopens a resolved thread whatever the Date header says', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<own1@mau.test>', from: 'Khách A <a@khach.test>' }));
+    // Someone copied on the mail, or who learned its id, answers it from another address: not the customer's thread, so not their words in it.
+    await deliver(o.address, raw({ to: o.address, messageId: '<own2@mau.test>', inReplyTo: '<own1@mau.test>', from: 'Người Khác <b@khach.test>', body: 'Tôi là người khác.' }));
+    const all = await threads(o);
+    expect(all.length).toBe(2);
+    expect(all[0]?.last_seq).toBe(1);
+    // A mail dated before the thread was resolved, arriving after it, reopens the thread.
+    await exec(o, o.owner, 'kernel.conversation.resolve', { conversationId: all[0]?.id });
+    await deliver(o.address, raw({ to: o.address, messageId: '<own3@mau.test>', inReplyTo: '<own1@mau.test>', from: 'Khách A <a@khach.test>', date: new Date(Date.now() - 600_000).toUTCString() }));
+    expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 2 });
+  });
+
+  it('counts a kept mail against the daily limit of customer mail, shows the sender\'s address when there is no name, and keeps the Inbox connection out of the Social channel list', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<cnt1@mau.test>', from: 'bare@khach.test' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<cnt1@mau.test>', from: 'bare@khach.test' }));
+    const used = await rows<{ n: string }>("SELECT coalesce(sum(amount), 0)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'conversation_emails'", [o.orgId]);
+    expect(Number(used[0]?.n)).toBe(1);
+    const [thread] = await threads(o);
+    const seen = await detail(o, o.owner, thread?.id as string);
+    expect(seen.conversation.contact.displayName).toBe('bare@khach.test');
+    const channels = await query<{ provider: string }[]>(o, o.owner, 'kernel.channel.list', {});
+    expect(channels.map((c) => c.provider)).not.toContain('email');
+    // The screen that limits what a member may read lists it.
+    const forAccess = await query<{ provider: string }[]>(o, o.owner, 'kernel.channel.list', { includeEmail: true });
+    expect(forAccess.map((c) => c.provider)).toContain('email');
+  });
+
+  it('assigns an email thread to a member who can read it, not to one who cannot', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<asg1@mau.test>' }));
+    const [thread] = await threads(o);
+    await expect(exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.member })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_ALLOWED' });
+    await exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.owner });
+  });
+
+  it("dates a thread by the mail's arrival when its Date header is years off, and keeps the customer name against an unverified sender", async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<old1@mau.test>', from: 'Chị Thật <that@khach.test>', date: new Date('2019-01-01T00:00:00Z').toUTCString() }));
+    const stamps = await rows<{ fresh: boolean; sent_old: boolean }>("SELECT c.last_message_at > now() - interval '2 days' AS fresh, m.sent_at < now() - interval '1 year' AS sent_old FROM crove_kernel.conversation c JOIN crove_kernel.conversation_message m ON m.conversation_id = c.id WHERE c.org_id = $1", [o.orgId]);
+    expect(stamps).toEqual([{ fresh: true, sent_old: true }]);
+    // The same address, written by someone nobody vouched for, does not rename the customer on the verified thread.
+    await deliver(o.address, raw({ to: o.address, messageId: '<old2@mau.test>', from: 'Ngân Hàng Giả <that@khach.test>', auth: 'none' }));
+    const [first] = await threads(o);
+    expect((await detail(o, o.owner, first?.id as string)).conversation.contact.displayName).toBe('Chị Thật');
+  });
+
+  it('shows the reply mail row only to those who may read its thread', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<pol1@mau.test>' }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Trả lời riêng.' });
+    const seenBy = (user: string) => probe.query<number>('test.reply_mail_rows', {}, { actor: asUser(user), orgId: o.orgId });
+    expect(await seenBy(o.owner)).toBe(1);
+    // A member with no permission to read mail to the business neither reads the thread nor the row that holds its answer.
+    expect(await seenBy(o.member)).toBe(0);
+    // Once granted, the member sees both.
+    await admin((c) => c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [o.orgId, o.member, o.owner]));
+    await admin((c) => c.query("INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES ('desk.agent', 'kernel.conversation.direct.read') ON CONFLICT DO NOTHING"));
+    expect(await seenBy(o.member)).toBe(1);
+  });
+
+  it('fails the reply when the customer complains about the mail', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<cmp1@mau.test>' }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ, giá 25.000.' });
+    const [mail] = await rows<{ id: string }>("SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId]);
+    const begun = await sys<{ attempt: number }>(o, 'kernel.mail.queue.begin', { messageId: mail?.id, provider: 'smtp', safety: 'never' });
+    await sys(o, 'kernel.mail.queue.record', { messageId: mail?.id, attempt: begun.attempt, outcome: 'sent' });
+    await sys(o, 'kernel.mail.event.record', { messageId: mail?.id, provider: 'smtp', providerEventId: `fbl:${randomUUID()}`, kind: 'complaint', occurredAt: new Date().toISOString(), detail: {} });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]).toMatchObject({ send_state: 'failed', send_error_code: 'COMPLAINED' });
+  });
+
+  it('does not settle the message from an earlier mail once a retry made a new one', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<old1@mau.test>' }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ, giá 25.000.' });
+    const [first] = await rows<{ id: string }>("SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply' ORDER BY created_at", [o.orgId]);
+    const out = (await messagesOf(thread?.id as string)).slice(-1)[0];
+    expect(out?.direction).toBe('out');
+    // The message now carries another mail's id (a retry made a new mail): a late bounce of the first mail leaves it alone.
+    await admin((c) => c.query("UPDATE crove_kernel.conversation_message SET external_message_id = '<newer-mail@mail.test>', send_state = 'sent', send_error_code = NULL WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [o.orgId, thread?.id]));
+    await sys(o, 'kernel.mail.event.record', { messageId: first?.id, provider: 'smtp', providerEventId: `dsn:${randomUUID()}`, kind: 'bounce_hard', occurredAt: new Date().toISOString(), detail: {} });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]?.send_state).toBe('sent');
+  });
+
+  it('leaves no mail text, subject or address in an audit row or an event', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<audit@mau.test>', from: 'Bí Mật <bimat@khach.test>', subject: 'Tiêu đề bí mật 123', body: SECRET }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Trả lời bí mật 456' });
+    const audits = JSON.stringify(await rows('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]));
+    const events = JSON.stringify(await rows('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1', [o.orgId]));
+    for (const text of [audits, events]) {
+      expect(text).not.toMatch(/bí mật|0912345678|bimat@khach|Nguyễn Văn Mẫu/i);
+    }
+  });
+});

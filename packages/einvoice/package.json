@@ -1,0 +1,14 @@
+{
+  "name": "@crove/einvoice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "E-invoice providers behind the finance module's issue port (ADR-0044): one adapter per provider, the offline sandbox first",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

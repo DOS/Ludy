@@ -28,7 +28,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // What a value is, for the finder: which columns a searched email, phone or code is compared with. free_text: words
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'other'] as const;
+// account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -70,6 +71,12 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_crm.booking.email': { kind: 'email', handling: 'erase', reason: 'The address a visitor gave when booking a meeting' },
   'crove_crm.booking.phone': { kind: 'phone', handling: 'erase', reason: 'The number a visitor gave when booking a meeting' },
   'crove_crm.booking.note': { kind: 'other', handling: 'erase', reason: 'Free text a visitor wrote when booking a meeting, which may name or describe them' },
+  // Rows of a contact import waiting for the member's go-ahead (#2229): the contact as read from the file. They are deleted
+  // on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep); the erasure deletes the rows that name the person sooner.
+  'crove_crm.import_row.email': { kind: 'email', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.phone': { kind: 'phone', handling: 'erase', reason: 'The number as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.tax_code': { kind: 'tax_code', handling: 'erase', reason: 'The tax code as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.address': { kind: 'address', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
   'crove_kernel.party.address': {
     kind: 'address',
     handling: 'erase',
@@ -90,6 +97,24 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
   'crove_kernel.inbound_message.from_address': { kind: 'email', handling: 'erase', reason: 'The sender of a forwarded mail; the stored file keeps the document itself' },
   'crove_kernel.inbound_message.body_text': { kind: 'other', handling: 'erase', reason: 'The text of a forwarded mail (#779), which may name or describe its sender; erased with the address of its sender' },
+  'crove_kernel.conversation_identity.display_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason:
+      'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
+  },
+  'crove_kernel.conversation_identity.external_user_id': {
+    kind: 'email',
+    handling: 'keep_record',
+    reason:
+      "For an email conversation the customer's address (#2439), found by a search of that address: erased with its threads by kernel.conversation.erase_contact, the retention purge and the offboarding of the org, as the display name is, so the generic erase leaves it alone",
+  },
+  'crove_kernel.conversation_message.email_refs': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason:
+      'The Message-IDs a mail answers (#2439), kept only to join a reply to its thread: opaque ids made by mail programs, not addresses or text. They go with the message when the contact is erased, the retention purge runs or the org is offboarded',
+  },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
   'crove_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },
@@ -117,13 +142,44 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'The name of a connected social account, which may be a person; disconnecting removes the account',
   },
+  // A member's connected outside calendar (#2123): the member's own account address, kept only for them.
+  'crove_kernel.calendar_connection.display_name': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own address in an outside calendar (their Google account), the same value as external_account; disconnecting removes it, and it is not exported with the org",
+  },
+  'crove_kernel.calendar_connection.external_account': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own address in an outside calendar (their Google account); disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
+  },
+  // Bank feeds (ADR-0039, #2044): the accounts a connection reaches, as the worker listed them; not the books.
+  'crove_finance.bank_feed_listed_account.display_name': {
+    kind: 'name',
+    handling: 'erase',
+    reason: "The name of a bank account a bank feed reaches, which may be its holder's; the next listing replaces it and disconnecting removes it",
+  },
+  'crove_finance.bank_feed_listed_account.external_account_id': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "The provider's id of a bank account a bank feed reaches, which may be its number; the next listing replaces it and disconnecting removes it",
+  },
   // Finance records.
   'crove_finance.cash_voucher.person_name': {
     kind: 'name',
     handling: 'keep_legal',
     reason: 'The payer or payee named on a phiếu thu or phiếu chi is part of the accounting voucher',
   },
+  // A sales e-invoice draft (#2500): the buyer as the person typed it or took it from a customer. A draft becomes the record of an invoice, kept like the books.
+  // An e-invoice provider connection (#2501): the tax code of the entity it issues for, which is a household's owner's national ID when the entity is a household. The row
+  // is deleted when the connection is closed and with the org's working rows, so there is nothing to keep.
+  'crove_finance.einvoice_connection.seller_tax_code': { kind: 'tax_code', handling: 'erase', reason: "The tax code of the legal entity an e-invoice provider connection issues for; a household's is its owner's national ID number. Deleted when the connection is closed" },
+  'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'crove_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   // Free text that can name a person (#1948): searched for the value anywhere inside it. Social's posts and comments
@@ -170,6 +226,11 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_legal',
     reason: "A line of an imported bank statement as the bank wrote it, evidence for the books; append-only and kept by law (Accounting Law 88/2015, Art. 41)",
   },
+  'crove_finance.bank_line.counterparty_account': {
+    kind: 'account_number',
+    handling: 'keep_legal',
+    reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). Found by a code of 8 to 20 digits: an account of 6 or 7 digits cannot be searched, since such a short value would also match amounts in free text. The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
+  },
   'crove_finance.journal_line.memo': {
     kind: 'free_text',
     handling: 'keep_legal',
@@ -195,6 +256,11 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
+  // The people payroll is run for (#2530, payroll plan 6.6). Their names and addresses are cleared by the owner's erasure of an ended employee after the retention
+  // (hr.payroll.employee.erase), which also deletes the person's key; the finder does not match them by an email, a phone or a number (their numbers are sealed, below).
+  'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -205,13 +271,28 @@ export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
 // one list or the other.
 export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 
+// Columns that hold a value sealed under its subject's key (ADR-0017, #2640; `<schema>.<table>.<column>`, the place ctx.seal takes). An erasure
+// deletes the subject's key (crove_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling
+// `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
+// here is in no other registry above (apps/kernel/test/personal-data.test.ts).
+export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {
+  'crove_hr.payroll_employee.national_id_sealed': {
+    handling: 'shred',
+    reason: "An employee's identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.bank_account_sealed': {
+    handling: 'shred',
+    reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+};
+
 // The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,
-// crove_crm or crove_notes whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
+// crove_crm, crove_notes or crove_hr whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
 // sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column
@@ -225,10 +306,11 @@ export function personalDataProbe(value: string): Probe | null {
   const trimmed = value.trim();
   if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) return { kind: 'email', email: trimmed.toLowerCase() };
   // A phone number (spaces, dots, dashes, brackets and a leading + allowed, as in "(028) 3829 1234"), a tax code (10
-  // digits, or 13 with a branch suffix) or a national ID (12 digits).
-  if (/^[+(\d][\d\s().-]{7,24}$/.test(trimmed)) {
+  // digits, or 13 with a branch suffix), a national ID (12 digits) or a bank account number (8 to 20 digits; the 6 and 7 digit
+  // accounts are out of reach, as such a short value also matches amounts written with dots in free text).
+  if (/^[+(\d][\d\s().-]{7,40}$/.test(trimmed)) {
     const digits = trimmed.replace(/\D/g, '');
-    if (digits.length >= 8 && digits.length <= 15) return { kind: 'digits', digits };
+    if (digits.length >= 8 && digits.length <= 20) return { kind: 'digits', digits };
   }
   return null;
 }
@@ -258,7 +340,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
     return null;
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
-  if (kind === 'tax_code') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;
@@ -459,9 +541,9 @@ export const personalDataErase = defineCommand({
 
     // Parties the value identifies, and whether the books name them.
     const partyMatch = sql<boolean>`(${match('email', 'p.email') ?? never} OR ${match('phone', 'p.phone') ?? never} OR ${match('tax_code', 'p.tax_code') ?? never})`;
-    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; documented: boolean }>`
+    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; company: boolean; documented: boolean }>`
       SELECT p.id, p.email IS NOT NULL AS email, p.phone IS NOT NULL AS phone, p.address IS NOT NULL AS address,
-             p.tax_code IS NOT NULL AS tax_code,
+             p.tax_code IS NOT NULL AS tax_code, p.company_id IS NOT NULL AS company,
              (EXISTS (SELECT 1 FROM crove_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
@@ -477,6 +559,9 @@ export const personalDataErase = defineCommand({
           email: null,
           phone: null,
           address: null,
+          // The company a person works at (#2438) is a fact about the person, not a line of the books: it goes with the contact details, for a party the books name
+          // (which keeps its name and tax code) as for one they do not (which loses its name too).
+          company_id: null,
           ...(forget ? { tax_code: null, name: ERASED_PARTY_NAME } : {}),
           version: eb('version', '+', 1),
           updated_at: ctx.now,
@@ -484,15 +569,38 @@ export const personalDataErase = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', party.id)
         .execute();
+      // The people who worked at a forgotten company are not left pointing at the placeholder name.
+      if (forget) {
+        // The matched parties count their own link in the loop; the others are counted here.
+        const unlinked = await ctx.trx
+          .updateTable('crove_kernel.party')
+          .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
+          .where('org_id', '=', ctx.orgId)
+          .where('company_id', '=', party.id)
+          .$if(parties.length > 0, (qb) => qb.where('id', 'not in', parties.map((p) => p.id)))
+          .executeTakeFirst();
+        add('crove_kernel.party.company_id', Number(unlinked.numUpdatedRows));
+      }
       add('crove_kernel.party.email', Number(party.email));
       add('crove_kernel.party.phone', Number(party.phone));
       add('crove_kernel.party.address', Number(party.address));
+      add('crove_kernel.party.company_id', Number(party.company));
       if (forget) {
         add('crove_kernel.party.name', 1);
         add('crove_kernel.party.tax_code', Number(party.tax_code));
       } else {
         keptParties += 1;
       }
+    }
+    // The learned bank-line rules of those parties (#2402): the keyed hash of a payer's name in a statement line points at the
+    // person, and a party the books keep (a voucher names it) is never deleted, so the cascade never reaches them. They go,
+    // documented or not; the vouchers they were learned from stay as the books keep them.
+    if (parties.length > 0) {
+      const { rows: rules } = await sql<{ id: string }>`
+        DELETE FROM crove_finance.bank_party_rule
+         WHERE org_id = ${ctx.orgId}::uuid AND party_id = ANY(${parties.map((p) => p.id)}::uuid[])
+         RETURNING id`.execute(ctx.trx);
+      add('crove_finance.bank_party_rule.key_hash', rules.length);
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,
@@ -509,6 +617,35 @@ export const personalDataErase = defineCommand({
       add('crove_crm.booking.email', Number(b.email));
       add('crove_crm.booking.phone', Number(b.phone));
       add('crove_crm.booking.note', Number(b.note));
+    }
+
+    // Rows of a contact import not yet committed (#2229), matched by email, phone or tax code: deleted whole, for the row
+    // holds the person's name and details as read from the file. The batch keeps its counts.
+    const importMatch = sql<boolean>`(${match('email', 'r.email') ?? never} OR ${match('phone', 'r.phone') ?? never} OR ${match('tax_code', 'r.tax_code') ?? never})`;
+    const { rows: staged } = await sql<{ batch_id: string; email: boolean; phone: boolean; tax_code: boolean; address: boolean }>`
+      DELETE FROM crove_crm.import_row r
+       WHERE r.org_id = ${ctx.orgId}::uuid AND ${importMatch}
+       RETURNING r.batch_id, r.email IS NOT NULL AS email, r.phone IS NOT NULL AS phone, r.tax_code IS NOT NULL AS tax_code,
+                 r.address IS NOT NULL AS address`.execute(ctx.trx);
+    // The staged batches that lost rows count what is left, so the preview and the Import button do not promise rows that are gone.
+    const touched = [...new Set(staged.map((r) => r.batch_id))];
+    if (touched.length > 0) {
+      await sql`
+        UPDATE crove_crm.import_batch b SET
+          total_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id),
+          new_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
+          duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
+          conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
+          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
+          new_companies = (SELECT count(DISTINCT crove_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
+                           WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new' AND r.company_state = 'new')
+        WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
+    }
+    for (const r of staged) {
+      add('crove_crm.import_row.email', Number(r.email));
+      add('crove_crm.import_row.phone', Number(r.phone));
+      add('crove_crm.import_row.tax_code', Number(r.tax_code));
+      add('crove_crm.import_row.address', Number(r.address));
     }
 
     if (probe.kind === 'email') {

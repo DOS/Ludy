@@ -21,7 +21,7 @@ import {
 } from '@crove/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
-import { assertExportKey, loadConfig } from '../src/config.ts';
+import { assertExportKey, assertSplitRoles, extractConcurrency, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { secretMatches } from '../src/inbound.ts';
 import { buildZip } from '../../extract/test/zip-fixture.ts';
@@ -64,7 +64,114 @@ describe('configuration guards', () => {
     expect(() => loadConfig(local)).not.toThrow();
     expect(() => loadConfig({ ...local, PUBLIC_URL: 'https://books.example.com' })).toThrow(/sample value/);
     expect(() => loadConfig({ ...base, AUTH_AUTOCONFIRM: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/AUTH_AUTOCONFIRM/);
-    expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' })).not.toThrow();
+    // The sandbox bank feed (ADR-0039): made-up bank lines, never on a deployment others reach.
+    expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true' })).not.toThrow();
+    expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/BANK_FEED_SANDBOX/);
+    // The sandbox ad platform (ADR-0040): made-up ad spend next to the real books, never on a deployment others reach that
+    // runs the ads module. docker compose falls back to true, so a public deployment sets false, or leaves the module out.
+    const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/ADS_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' })).toThrow(/ADS_SANDBOX/);
+    // The sandbox e-invoice provider (ADR-0044 point 8, #2502): it issues made-up sales invoices into the books, so a deployment others reach that runs the finance module
+    // sets it to false (docker compose falls back to true), or leaves the module out.
+    // Left out, it is on for a local URL and off for a public one.
+    expect(loadConfig({ ...base }).EINVOICE_SANDBOX).toBe('true');
+    expect(loadConfig({ ...base, ...publicUrl }).EINVOICE_SANDBOX).toBe('false');
+    expect(() => loadConfig({ ...base, EINVOICE_SANDBOX: 'true' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true' })).toThrow(/EINVOICE_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', CROVE_MODULES: 'finance' })).toThrow(/EINVOICE_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', CROVE_MODULES: 'social' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'false' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', EINVOICE_SANDBOX: 'false', CROVE_MODULES: 'finance' })).not.toThrow();
+    expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', EINVOICE_SANDBOX: 'false' })).not.toThrow();
+  });
+
+  // #2118: docker-compose.yml falls back to published passwords for an unset one; on a public URL the kernel refuses them.
+  it('refuses a sample database password on a public PUBLIC_URL, naming the setting and never the value', () => {
+    const publicBase = { ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    const sample = (name: string, password: string) => ({ ...publicBase, [name]: `postgres://crove_x:${password}@db:5432/postgres` });
+    for (const name of ['DATABASE_URL', 'WORKER_DATABASE_URL', 'ADMIN_DATABASE_URL', 'DATABASE_LISTEN_URL']) {
+      for (const password of ['local-app-password', 'local-worker-password', 'local-postgres-password', 'change-me-app', 'my-Change-Me-pass', '%63hange-me-worker', 'change%2Dme-app']) {
+        let message = '';
+        try {
+          loadConfig(sample(name, password));
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message, `${name} ${password}`).toContain(`${name} carries a database password shipped in .env.example or docker-compose.yml`);
+        expect(message).not.toContain(password);
+      }
+      expect(() => loadConfig(sample(name, 'r4nd0m-Pa55-0123456789abcdef'))).not.toThrow();
+    }
+    // The password may also come as a query parameter, which node-postgres reads.
+    expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://crove_app@db:5432/postgres?password=local-app-password' })).toThrow(/DATABASE_URL carries a database password/);
+    // Locally the compose fallbacks are the documented default.
+    expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://crove_app:local-app-password@db:5432/postgres' })).not.toThrow();
+    expect(() => loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', DATABASE_URL: 'postgres://crove_app:local-app-password@db:5432/postgres' })).not.toThrow();
+    // No password in the URL, or no URL at all (the connection fails on its own later), is not a sample password.
+    expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://localhost/x' })).not.toThrow();
+  });
+
+  // #2118: a missing compose.pilot.yml or a stray profile must not silently run the API on the worker's login.
+  it('starts the all role on a public PUBLIC_URL only with CROVE_ALLOW_ALL_IN_ONE=true', () => {
+    const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
+    expect(() => assertSplitRoles(publicConfig(), 'all')).toThrow(/CROVE_ALLOW_ALL_IN_ONE=true/);
+    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'false' }), 'all')).toThrow(/separate processes/);
+    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: '' }), 'all')).toThrow(/separate processes/);
+    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    for (const role of ['api', 'worker'] as const) expect(() => assertSplitRoles(publicConfig(), role)).not.toThrow();
+    // A laptop needs no opt-in.
+    expect(() => assertSplitRoles(loadConfig(base), 'all')).not.toThrow();
+    expect(() => loadConfig({ ...base, CROVE_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/CROVE_ALLOW_ALL_IN_ONE/);
+  });
+
+  // #2133: keeping the worker's all-org login out of the API does not rest on how the container was composed.
+  it('refuses the api role on a public PUBLIC_URL when it holds WORKER_DATABASE_URL, and only then', () => {
+    const worker = { WORKER_DATABASE_URL: 'postgres://crove_worker:worker-ref@db:5432/postgres' };
+    const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
+    expect(() => assertSplitRoles(publicConfig(worker), 'api')).toThrow(/api role must not hold WORKER_DATABASE_URL/);
+    // The message names the setting and never its value.
+    expect(() => assertSplitRoles(publicConfig(worker), 'api')).not.toThrow(/worker-ref/);
+    // Without it, and for the worker (which needs it), nothing is refused; an empty value (a compose `${VAR:-}`) is unset.
+    expect(() => assertSplitRoles(publicConfig(), 'api')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ WORKER_DATABASE_URL: '' }), 'api')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig(worker), 'worker')).not.toThrow();
+    // The all role has it by design (the opt-in above governs it); a laptop's api may hold it.
+    expect(() => assertSplitRoles(publicConfig({ ...worker, CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(loadConfig({ ...base, ...worker }), 'api')).not.toThrow();
+    expect(() => assertSplitRoles(loadConfig({ ...base, ...worker, PUBLIC_URL: 'http://127.0.0.1:8080' }), 'api')).not.toThrow();
+  });
+
+  // #2119: how many extract jobs the worker runs at once, and how often an AI call is sent again.
+  it('runs up to 4 extract jobs at once, never more than the sandbox has slots, and bounds the AI retries', () => {
+    const sandbox = { EXTRACT_URL: 'http://crove-extract:8090' };
+    // Without a word about the sandbox's slots, one job at a time, as the sandbox's own default of one slot allows.
+    expect(loadConfig(base).EXTRACT_CONCURRENCY).toBe(1);
+    expect(extractConcurrency(loadConfig(base))).toBe(1);
+    // docker compose gives both 4; a blank value (a compose `${VAR:-}`) is unset.
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_CONCURRENCY: '4' }))).toBe(4);
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_WORKER_CONCURRENCY: '', EXTRACT_CONCURRENCY: '4' }))).toBe(4);
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_WORKER_CONCURRENCY: '', EXTRACT_CONCURRENCY: '' }))).toBe(1);
+    // More slots than 4 do not raise the default; fewer lower it; the setting goes down for the AI provider's rate limit.
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_CONCURRENCY: '8' }))).toBe(4);
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_CONCURRENCY: '2' }))).toBe(2);
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_WORKER_CONCURRENCY: '1', EXTRACT_CONCURRENCY: '4' }))).toBe(1);
+    expect(extractConcurrency(loadConfig({ ...base, EXTRACT_WORKER_CONCURRENCY: '8', EXTRACT_CONCURRENCY: '8' }))).toBe(8);
+    // Never past the slots: refused where the sandbox is used.
+    expect(() => loadConfig({ ...base, ...sandbox, EXTRACT_WORKER_CONCURRENCY: '5', EXTRACT_CONCURRENCY: '4' })).toThrow(/must not exceed EXTRACT_CONCURRENCY/);
+    expect(() => loadConfig({ ...base, ...sandbox, EXTRACT_WORKER_CONCURRENCY: '2' })).toThrow(/must not exceed EXTRACT_CONCURRENCY/);
+    // The API resets EXTRACT_URL, so a stray value there never stops it.
+    expect(() => loadConfig({ ...base, EXTRACT_WORKER_CONCURRENCY: '5', EXTRACT_CONCURRENCY: '4' })).not.toThrow();
+    for (const bad of ['0', '9', '2.5', 'many']) {
+      expect(() => loadConfig({ ...base, EXTRACT_WORKER_CONCURRENCY: bad }), bad).toThrow(/EXTRACT_WORKER_CONCURRENCY/);
+      expect(() => loadConfig({ ...base, EXTRACT_CONCURRENCY: bad }), bad).toThrow(/EXTRACT_CONCURRENCY/);
+    }
+    expect(loadConfig(base).AI_MAX_RETRIES).toBe(1);
+    expect(loadConfig({ ...base, AI_MAX_RETRIES: '' }).AI_MAX_RETRIES).toBe(1);
+    expect(loadConfig({ ...base, AI_MAX_RETRIES: '0' }).AI_MAX_RETRIES).toBe(0);
+    for (const bad of ['-1', '6', '1.5', 'x']) expect(() => loadConfig({ ...base, AI_MAX_RETRIES: bad }), bad).toThrow(/AI_MAX_RETRIES/);
   });
 
   // ADR-0028 section 1 and 3.
@@ -75,14 +182,14 @@ describe('configuration guards', () => {
 
   // Plan Decision 12, ADR-0031.
   it('enables every module by default, always keeps kernel and refuses an unknown module', () => {
-    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
-    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
+    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr']);
+    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr']);
+    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr']);
+    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).CROVE_MODULES).toEqual(['kernel']);
     expect(loadConfig({ ...base, CROVE_MODULES: ' Finance ' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'finance,kernel' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, crm, notes\)/);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr\)/);
   });
 
   it('never resolves the session check to "no check" by default', () => {
@@ -125,6 +232,61 @@ describe('configuration guards', () => {
     expect(loadConfig({ ...base, ...auth, PUBLIC_URL: 'http://books.example.com' }).PUBLIC_URL).toBe('http://books.example.com');
     expect(loadConfig({ ...base, ...auth, ...meta, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_APP_ID).toBe('1234567890');
     expect(loadConfig({ ...base, ...meta }).CHANNEL_META_APP_ID).toBe('1234567890');
+  });
+
+  // #2218: the Meta app for ad accounts is its own pair (it may hold the same values as the Pages app), both or neither,
+  // a numeric id, and over https on a public URL like any channel OAuth app.
+  it('takes the Meta ads app as a pair with a numeric id, over https on a public URL', () => {
+    const ads = { CHANNEL_META_ADS_APP_ID: '1234567890', CHANNEL_META_ADS_APP_SECRET: 'meta-secret-0123456789abcdef' };
+    const auth = { PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    expect(loadConfig({ ...base, ...ads }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
+    expect(loadConfig(base).CHANNEL_META_ADS_APP_ID).toBeUndefined();
+    expect(() => loadConfig({ ...base, CHANNEL_META_ADS_APP_ID: '1234567890' })).toThrow(/both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET/);
+    expect(() => loadConfig({ ...base, CHANNEL_META_ADS_APP_SECRET: 'x' })).toThrow(/both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET/);
+    expect(() => loadConfig({ ...base, ...ads, CHANNEL_META_ADS_APP_ID: 'not-a-number' })).toThrow(/numeric id/);
+    // The same app as the Pages one is fine.
+    expect(() => loadConfig({ ...base, ...ads, CHANNEL_META_APP_ID: ads.CHANNEL_META_ADS_APP_ID, CHANNEL_META_APP_SECRET: ads.CHANNEL_META_ADS_APP_SECRET })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...auth, ...ads, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
+    expect(loadConfig({ ...base, ...auth, ...ads, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
+  });
+
+  // #2294 (W0b), #2366: the Meta app for the write connection of an ad account is a pair too, both or neither, and a numeric id. It may
+  // be the read ads app (the owner's own account) or an app of its own; a deployment others reach needs one of its own, neither the read
+  // ads app nor the Pages app, so no reading token can hold the permission to change campaigns.
+  it('takes the Meta ads write app as a pair with a numeric id, the read ads app or one of its own, and on a public deployment one of its own', () => {
+    const write = { CHANNEL_META_ADS_WRITE_APP_ID: '1234567890', CHANNEL_META_ADS_WRITE_APP_SECRET: 'meta-secret-0123456789abcdef' };
+    const read = { CHANNEL_META_ADS_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_ADS_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
+    const readOther = { CHANNEL_META_ADS_APP_ID: '987654321', CHANNEL_META_ADS_APP_SECRET: 'meta-read-secret-0123456789abcdef' };
+    const auth = { PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    const publicUrl = { ...auth, PUBLIC_URL: 'https://books.example.com' };
+    expect(loadConfig({ ...base, ...read, ...write }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    expect(loadConfig(base).CHANNEL_META_ADS_WRITE_APP_ID).toBeUndefined();
+    expect(loadConfig(base).CHANNEL_META_ADS_WRITE_APP_SECRET).toBeUndefined();
+    expect(() => loadConfig({ ...base, ...read, CHANNEL_META_ADS_WRITE_APP_ID: '1234567890' })).toThrow(/both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET/);
+    expect(() => loadConfig({ ...base, ...read, CHANNEL_META_ADS_WRITE_APP_SECRET: 'x' })).toThrow(/both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET/);
+    expect(() => loadConfig({ ...base, ...read, ...write, CHANNEL_META_ADS_WRITE_APP_ID: 'not-a-number' })).toThrow(/numeric id/);
+    // A write app of its own is taken, with the read ads app set or not.
+    expect(loadConfig({ ...base, ...readOther, ...write }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    expect(loadConfig({ ...base, ...write }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    // The same app as the read ads app is fine for the owner's own account, and so is one app serving reading, writing and publishing.
+    const pages = { CHANNEL_META_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
+    expect(() => loadConfig({ ...base, ...read, ...write })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...read, ...write, ...pages })).not.toThrow();
+    // One Meta app has one secret: the id of the read ads app or of the Pages app with another secret is refused (a half-done rotation).
+    expect(() => loadConfig({ ...base, ...read, ...write, CHANNEL_META_ADS_WRITE_APP_SECRET: 'meta-secret-0123456789abcdee' })).toThrow(/CHANNEL_META_ADS_WRITE_APP_ID is the id of CHANNEL_META_ADS_APP_ID but its secret is not/);
+    expect(() => loadConfig({ ...base, ...readOther, ...pages, CHANNEL_META_ADS_WRITE_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_ADS_WRITE_APP_SECRET: 'meta-secret-0123456789abcdee' })).toThrow(/is the id of CHANNEL_META_APP_ID but its secret is not/);
+    // The Pages app that is not also the read ads app is refused: the Pages and Instagram tokens of the person who grants it could change campaigns.
+    expect(() => loadConfig({ ...base, ...pages, ...write })).toThrow(/is the Pages app but not the read ads app/);
+    expect(() => loadConfig({ ...base, ...readOther, ...pages, ...write })).toThrow(/is the Pages app but not the read ads app/);
+    // A deployment others reach refuses the read ads app or the Pages app as the write app: with the one app, a person's reading tokens can
+    // change campaigns, in every org of the deployment (ADR-0043 point 4). An app of its own is taken, and the read pair alone is fine.
+    expect(() => loadConfig({ ...base, ...publicUrl, ...read, ...write })).toThrow(/CHANNEL_META_ADS_WRITE_APP_ID is the read ads app or the Pages app/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ...readOther, ...pages, CHANNEL_META_ADS_WRITE_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_ADS_WRITE_APP_SECRET: pages.CHANNEL_META_APP_SECRET })).toThrow(/is the Pages app but not the read ads app/);
+    // The same secret under another id is the same app too, and refused there.
+    expect(() => loadConfig({ ...base, ...publicUrl, ...readOther, CHANNEL_META_ADS_WRITE_APP_ID: '5550001', CHANNEL_META_ADS_WRITE_APP_SECRET: readOther.CHANNEL_META_ADS_APP_SECRET })).toThrow(/CHANNEL_META_ADS_WRITE_APP_ID is the read ads app or the Pages app/);
+    expect(loadConfig({ ...base, ...publicUrl, ...readOther, ...write }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    expect(loadConfig({ ...base, ...publicUrl, ...read }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
+    expect(() => loadConfig({ ...base, ...auth, ...readOther, ...write, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
   });
 
   // #212: org exports are sealed at rest on every public deployment; a key must be 32 bytes.
@@ -178,6 +340,27 @@ describe('configuration guards', () => {
     };
     expect(await config({})).toBeNull();
     expect(await config({ SUPPORT_URL: 'mailto:support@example.com' })).toBe('mailto:support@example.com');
+  });
+
+  // #2192: a store without browser transfers (R2) can still sign a read for the platforms that fetch media by URL, and the
+  // app learns it, so the composer does not hold Zalo OA, Instagram and Threads images back as if the files were local.
+  it('tells the app whether the store can sign a media URL for a platform, apart from how uploads go', async () => {
+    const read = async (store: Partial<BlobStore>) => {
+      const app = createHttpApp({
+        config: loadConfig({ ...base, WEB_DIST: '/nonexistent' }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: store as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+      });
+      return (await (await app.request('/api/config')).json()) as { uploads: unknown; platformMediaUrls: unknown };
+    };
+    expect(await read({})).toMatchObject({ uploads: 'direct', platformMediaUrls: false });
+    expect(await read({ fetchUrls: { presign: async () => 'https://files.example.test/x' } })).toMatchObject({ uploads: 'direct', platformMediaUrls: true });
+    expect(await read({ direct: {} as BlobStore['direct'], fetchUrls: { presign: async () => 'https://files.example.test/x' } })).toMatchObject({ uploads: 'presigned', platformMediaUrls: true });
   });
 
   // #688: the terms of service and privacy notice linked at sign-up and invite acceptance are https: pages.
@@ -901,5 +1084,90 @@ describe('uploads through the kernel (#432)', () => {
     // A body with its length takes a direct-upload slot.
     expect((await post(app, pdf(1024), 'c.pdf')).status).toBe(200);
     expect(largeUploads.inUse + directUploads.inUse).toBe(0);
+  });
+});
+
+// #2121: exports of the books are bounded per process; one past the limit is refused at once with 503 EXPORT_BUSY and
+// Retry-After, a slot is free again when the export is done (or failed), and one user cannot hold every slot.
+describe('export slots', () => {
+  const orgId = randomUUID();
+  const users: Record<string, AuthUser> = {
+    a: { userId: randomUUID(), email: 'a@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null },
+    b: { userId: randomUUID(), email: 'b@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null },
+  };
+  let gate: Promise<void> = Promise.resolve();
+  let failure: Error | null = null;
+  const exports = new ConcurrencyLimiter({ total: 2 });
+  const app = createHttpApp({
+    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' }),
+    runtime: {
+      installed: () => true,
+      modules: () => ['kernel', 'finance'],
+      forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      query: async () => {
+        await gate;
+        if (failure) throw failure;
+        return [];
+      },
+      execute: async () => ({}),
+    } as unknown as Runtime,
+    store: {} as BlobStore,
+    authenticate: async (header) => users[String(header).replace('Bearer ', '')] ?? users['a']!,
+    pool: {} as pg.Pool,
+    aiEnabled: false,
+    exports,
+  });
+  const journal = (who: 'a' | 'b') => app.request('/api/export/journal.xlsx', { headers: { authorization: `Bearer ${who}`, [ORG_HEADER]: 'acme' } });
+  const hold = () => {
+    let open!: () => void;
+    gate = new Promise<void>((resolve) => (open = resolve));
+    return open;
+  };
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  it('refuses an export past the limit with EXPORT_BUSY and Retry-After, and takes the next one when a slot is free', async () => {
+    expect(exports.perKey).toBe(1);
+    const open = hold();
+    const first = journal('a');
+    await settle();
+    expect(exports.inUse).toBe(1);
+
+    // The same user may not hold a second slot, though one is free.
+    const same = await journal('a');
+    expect(same.status).toBe(503);
+    expect(same.headers.get('retry-after')).toBe('5');
+    expect(await same.json()).toMatchObject({ code: 'EXPORT_BUSY' });
+
+    // Another user takes the other slot; a third export of anyone is refused.
+    const second = journal('b');
+    await settle();
+    expect(exports.inUse).toBe(2);
+    expect((await journal('a')).status).toBe(503);
+    expect((await journal('b')).status).toBe(503);
+    // Every export route is behind the same slots, not only the journal.
+    for (const path of ['/api/export/ledger.xlsx', '/api/export/vat.xlsx', '/api/export/misa/sales.xlsx', '/api/export/statements-htkk.xml']) {
+      const refused = await app.request(path, { headers: { authorization: 'Bearer b', [ORG_HEADER]: 'acme' } });
+      expect(refused.status, path).toBe(503);
+      expect(await refused.json(), path).toMatchObject({ code: 'EXPORT_BUSY' });
+    }
+
+    open();
+    for (const done of await Promise.all([first, second])) {
+      expect(done.status).toBe(200);
+      // A real xlsx: a zip.
+      expect(new Uint8Array(await done.arrayBuffer()).subarray(0, 2)).toEqual(new Uint8Array([0x50, 0x4b]));
+    }
+    expect(exports.inUse).toBe(0);
+    expect((await journal('a')).status).toBe(200);
+  });
+
+  it('gives the slot back when the export fails', async () => {
+    failure = new DomainError('LEGAL_ENTITY_NOT_ALLOWED', 403, 'no');
+    try {
+      expect((await journal('a')).status).toBe(403);
+      expect(exports.inUse).toBe(0);
+    } finally {
+      failure = null;
+    }
   });
 });

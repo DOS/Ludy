@@ -17,7 +17,7 @@ export function OwnerPhone({ dict }: { dict: Dictionary }) {
           <ul className="mt-8 flex flex-col gap-3">
             {owner.points.map((point) => (
               <li key={point} className="flex items-start gap-3">
-                <Check className="mt-1 size-4 shrink-0 text-ok" aria-hidden="true" />
+                <Check className="mt-1 size-4 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
                 <span>{point}</span>
               </li>
             ))}

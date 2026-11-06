@@ -17,6 +17,9 @@ import {
   todoStanding,
   zMyWorkInput,
   zTodoCreate,
+  REBALANCE_AT,
+  keyBetween,
+  spreadKeys,
   zTodoHandOver,
   zTodoList,
   zTodoRef,
@@ -36,7 +39,6 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { notesManifest } from './manifest.ts';
-import { REBALANCE_AT, keyBetween, spreadKeys } from './sort-key.ts';
 
 // Owners, admins and members keep to-dos; viewers write none (notes.md §3.5). They run the reads, where the row
 // policies show them none but their own: a member made a viewer still reads what they wrote.

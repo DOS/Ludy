@@ -12,7 +12,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { AmountInput } from '../components/amount-input.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, Spinner } from '../components/ui.tsx';
+import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -238,8 +238,7 @@ export function JournalVoucherFormCard({ slug, onClose }: { slug: string; onClos
         {formLevel && <ErrorText>{t(`formProblems.${formLevel}`)}</ErrorText>}
         {request.error && <ErrorText>{refused ? t(`problems.${refused}`) : errorMessage(request.error)}</ErrorText>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={request.isPending}>
-            {request.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={request.isPending} type="submit">
             {t('submit')}
           </Button>
           <Button type="button" variant="ghost" onClick={onClose} disabled={request.isPending}>

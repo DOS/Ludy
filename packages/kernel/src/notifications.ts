@@ -7,13 +7,14 @@
 // writes nothing), and prunes the recipients' old rows. It returns how many rows it wrote. kind is '<module>.<kind>'.
 //
 // The kernel's own kinds come from kernel.notification.dispatch: a proposal waiting for my approval (the eligible
-// approvers of its command, P12) and a file that failed to read (whoever asked for the reading, else the uploader,
-// else, for a mailed file, the owners and admins), and a task a chart or role change moved to someone because its
+// approvers of its command, P12), a file that failed to read (whoever asked for the reading, else the uploader,
+// else, for a mailed file, the owners and admins), a task given or moved to my position (#2588, the target seat's
+// holder, or the owners when the task has no seat), and a task a chart or role change moved to someone because its
 // holder could no longer read its legal entity (the target seat's holder, else the owners; #1799). Members read their own (kernel.notification.list), mark them read
 // and turn kinds off (kernel.notification.mute); a restrictive policy keeps each member to their own rows.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zNotificationKind } from '@crove/kernel-contract';
+import { isAdProviderId, zId, zNotificationKind } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { eligibleApprovers } from './approval.ts';
@@ -34,10 +35,18 @@ export const NOTIFICATION_KIND = /^[a-z]+\.[a-z0-9_]+$/;
 // The kernel's kinds.
 export const APPROVAL_WAITING = 'kernel.approval_waiting';
 export const FILE_UNREADABLE = 'kernel.file_unreadable';
+export const TASK_ASSIGNED = 'kernel.task_assigned';
 export const TASK_REROUTED = 'kernel.task_rerouted';
 // An owner's notice before a personal-data erasure (#1678, ADR-0037 section 5): how many of my private notes and
 // to-dos mention a person who asked to be erased. Not one a member can turn off: the erasure waits on it.
 export const PERSONAL_DATA_NOTICE = 'kernel.personal_data_notice';
+// An ad platform refused a connection's token, or the member who connected it left (#2219): the account's sync is paused
+// until an owner or admin connects it again. Social tells its own channels' owners apart (its dispatch), so this one is
+// for the ad platforms' connections only.
+export const CHANNEL_EXPIRED = 'kernel.channel_expired';
+// The original e-invoice XML attached to a posted invoice differs from the posting or has a signature that is not verified
+// (#2335): a warning for the person who uploaded it and the one who approved the posting. The ledger is never touched.
+export const ORIGINAL_FLAGGED = 'kernel.original_flagged';
 
 export interface NotifyInput {
   // '<module>.<kind>', for example 'finance.bank_attention'.
@@ -122,7 +131,16 @@ export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ev
 }
 
 // The events kernel.notification.dispatch handles.
-export const KERNEL_NOTIFYING_EVENTS = ['kernel.proposal.created', 'kernel.file.read_failed', 'kernel.task.rerouted', 'kernel.personal_data.notified'] as const;
+export const KERNEL_NOTIFYING_EVENTS = [
+  'kernel.proposal.created',
+  'kernel.file.read_failed',
+  'kernel.task.created',
+  'kernel.task.assigned',
+  'kernel.task.rerouted',
+  'kernel.personal_data.notified',
+  'kernel.channel.expired',
+  'kernel.proposal.original_flagged',
+] as const;
 
 export const notificationDispatch = defineCommand({
   name: 'kernel.notification.dispatch',
@@ -183,6 +201,63 @@ export const notificationDispatch = defineCommand({
         });
         return { sent };
       }
+      case 'kernel.task.created':
+      case 'kernel.task.assigned': {
+        const e = z.object({ taskId: zId, positionId: zId.nullable().optional() }).safeParse(event.payload);
+        if (!e.success) return { sent: 0 };
+        const task = await ctx.trx
+          .selectFrom('crove_kernel.task')
+          .select(['id', 'assignee_position_id', 'status', 'legal_entity_id'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', e.data.taskId)
+          .executeTakeFirst();
+        // Closed or moved again before the worker got to it: that later move tells its own holder.
+        if (!task || ['done', 'cancelled'].includes(task.status)) return { sent: 0 };
+        if (e.data.positionId !== undefined && task.assignee_position_id !== e.data.positionId) return { sent: 0 };
+        const superseded = await sql<{ exists: boolean }>`
+          SELECT EXISTS (
+            SELECT 1
+            FROM crove_kernel.outbox_event o
+            JOIN crove_kernel.outbox_event cur
+              ON cur.org_id = o.org_id AND cur.id = ${event.id}::uuid
+            WHERE o.org_id = ${ctx.orgId}::uuid
+              AND o.id <> cur.id
+              AND o.type = 'kernel.task.assigned'
+              AND o.payload ->> 'taskId' = ${task.id}
+              AND (o.created_at, o.id) > (cur.created_at, cur.id)
+          ) AS exists`.execute(ctx.trx);
+        if (superseded.rows[0]?.exists) return { sent: 0 };
+        let users: string[];
+        if (task.assignee_position_id === null) {
+          users = (
+            await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').execute()
+          ).map((r) => r.user_id);
+        } else {
+          const seat = await ctx.trx
+            .selectFrom('crove_kernel.position')
+            .select('holder_user_id')
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', task.assignee_position_id)
+            .executeTakeFirst();
+          users = seat?.holder_user_id ? [seat.holder_user_id] : [];
+        }
+        let sent = 0;
+        for (const userId of users) {
+          sent += await notifyMembers(ctx, {
+            kind: TASK_ASSIGNED,
+            users: [userId],
+            key: `task_assigned:${task.id}:${event.id}`,
+            subject: { type: 'kernel.task', id: task.id },
+            // An org-wide task (legal_entity_id IS NULL) uses an entity the recipient reads so notification's le_scope policy shows it.
+            legalEntityId: task.legal_entity_id ?? (await uploaderEntity(ctx, userId)),
+            // The task's title is read when the notice is shown, never copied (#1977).
+            detail: {},
+            eventId: event.id,
+            actor: event.actor,
+          });
+        }
+        return { sent };
+      }
       case 'kernel.task.rerouted': {
         const e = z
           .object({ toPositionId: zId.nullable(), legalEntityId: zId, count: z.number().int().positive(), taskIds: z.array(zId).min(1).max(REROUTED_EVENT_TASKS) })
@@ -220,6 +295,58 @@ export const notificationDispatch = defineCommand({
           detail: waiting.length === 1 && e.data.count === 1 ? {} : { count: String(waiting.length === e.data.taskIds.length ? e.data.count : waiting.length) },
           eventId: event.id,
           actor: event.actor,
+        });
+        return { sent };
+      }
+      case 'kernel.channel.expired': {
+        const e = z.object({ connection_id: zId, provider: z.string().max(32) }).safeParse(event.payload);
+        if (!e.success || !isAdProviderId(e.data.provider)) return { sent: 0 };
+        // Still expired: a connection connected again since is not waiting for anyone.
+        const connection = await ctx.trx
+          .selectFrom('crove_kernel.channel_connection')
+          .select('status')
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', e.data.connection_id)
+          .executeTakeFirst();
+        if (connection?.status !== 'expired') return { sent: 0 };
+        const sent = await notifyMembers(ctx, {
+          kind: CHANNEL_EXPIRED,
+          users: await ownersAndAdmins(ctx),
+          key: `channel_expired:${e.data.connection_id}:${event.id}`,
+          subject: { type: 'kernel.channel_connection', id: e.data.connection_id },
+          // The platform's id only: the account's name is read where the notice opens (the Ads screen).
+          detail: { provider: e.data.provider },
+          eventId: event.id,
+        });
+        return { sent };
+      }
+      case 'kernel.proposal.original_flagged': {
+        const e = z.object({ proposalId: zId, fileId: zId, differs: z.boolean(), signature: z.enum(['unverified', 'none']) }).safeParse(event.payload);
+        if (!e.success) return { sent: 0 };
+        const proposal = await ctx.trx
+          .selectFrom('crove_kernel.proposal')
+          .select(['id', 'status', 'decided_by', 'legal_entity_id'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', e.data.proposalId)
+          .executeTakeFirst();
+        const file = await ctx.trx.selectFrom('crove_kernel.file').select('created_by').where('org_id', '=', ctx.orgId).where('id', '=', e.data.fileId).executeTakeFirst();
+        if (!proposal || !file) return { sent: 0 };
+        // The one who uploaded the original and the one who approved the posting, while they are members; a mailed original
+        // whose approver has left goes to the owners and admins.
+        const named = [...new Set([file.created_by, proposal.decided_by].filter((u): u is string => u !== null))];
+        const members =
+          named.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', named).execute()).map((r) => r.user_id);
+        const users = members.length > 0 ? members : await ownersAndAdmins(ctx);
+        const sent = await notifyMembers(ctx, {
+          kind: ORIGINAL_FLAGGED,
+          users,
+          key: `original_flagged:${proposal.id}:${e.data.fileId}`,
+          subject: { type: 'kernel.proposal', id: proposal.id },
+          // The posted proposal's entity: a member limited to other entities never sees it (#1280). Its title is read when
+          // the notice is shown, never copied (#1977).
+          legalEntityId: proposal.legal_entity_id,
+          detail: { differs: e.data.differs ? 'true' : 'false', signature: e.data.signature },
+          eventId: event.id,
         });
         return { sent };
       }

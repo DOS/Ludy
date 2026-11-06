@@ -39,17 +39,29 @@ interface CommandPolicy {
   permission: string | null;
   // Four-eyes (P10) applies to R3 commands.
   fourEyes: boolean;
+  // Who may approve is decided at approval time, from the members of the org now, not from the snapshot taken when the proposal
+  // was made (the ads commands, #2294): the one-person rule (P10) is judged by how many eligible people exist when someone
+  // approves, so an owner who asked while alone cannot approve their own request once an admin has joined, and the admin can.
+  live?: boolean;
 }
 
 // The permission that approves a proposal that posts to the ledger (finance.chief_accountant holds it). Only an
-// org-wide assignment grants it: no proposal names a legal entity yet, so an entity-scoped assignment could not be
-// checked against the proposal's entity, and it grants nothing here (fail closed). When proposals carry
-// legal_entity_id, eligibility becomes "holds the permission for the proposal's entity".
+// org-wide assignment grants it: finance.chief_accountant is an org role (role_assignment's foreign key on
+// (role_key, scope) keeps it from naming an entity), and no entity-scoped role holds an approval permission (#1507;
+// roles.db.test.ts pins the table). So its holders cover every legal entity a proposal names (#1538, #2060). Should an
+// entity role ever hold it, eligibility must first become "holds it for the proposal's entity", here and in the
+// database (crove_kernel.proposal_approval_decide, approval_eligible_now and the chief accountant keep guard, #1793).
 export const LEDGER_APPROVE_PERMISSION = 'finance.proposal.approve';
 
-// Approval policy per proposal command. Every proposal command today is R3 and posts to the ledger, so the roles that
-// may post approve (#71), and so does a member an owner made chief accountant (the permission above).
+// Approval policy per proposal command. Every proposal command is R3. The ledger's post to it, so the roles that may post
+// approve (#71), and so does a member an owner made chief accountant (the permission above); the ads commands that open
+// the way to spend post nothing and are approved by the base roles alone.
 const LEDGER: CommandPolicy = { roles: ['owner', 'admin'], permission: LEDGER_APPROVE_PERMISSION, fourEyes: true };
+// A distinct object, so approvalPolicies() reports it as no ledger policy (the database's `ledger` false for these commands).
+const ADS: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
+// Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document that posts nothing to the ledger (the sale is posted later, from the signed XML). Owners and admins approve,
+// with four-eyes and the one-person path (P10), judged on the members now: the same rule as the ads commands.
+const EINVOICE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
 const POLICIES: Record<string, CommandPolicy> = {
   'finance.purchase.record': LEDGER,
   // A reversal is itself a posting (#138): the same roles approve it, with four-eyes.
@@ -62,6 +74,20 @@ const POLICIES: Record<string, CommandPolicy> = {
   'finance.closing.record': LEDGER,
   // A month's depreciation and allocation (#919) is a general journal voucher built from the register: the same rule.
   'finance.depreciation.record': LEDGER,
+  // The close of a month of stock (#2513) is a general journal voucher built from the stock moves (Dr 632 / Cr the stock accounts): the same rule.
+  'finance.stock.close_period': LEDGER,
+  // The confirmation of a count of stock (#2513) posts the adjustment moves and a general journal voucher built from the books (a shortage to 632 or 1381, a surplus to 3381): the same rule.
+  'finance.stock.count_confirm': LEDGER,
+  // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): a plain base-role policy, no approval
+  // permission and no ledger. Owners and admins approve (Q2), with four-eyes and the one-person path (P10): an owner alone
+  // approves their own request, flagged self_approved; with two eligible approvers someone other than an author approves.
+  'ads.write.enable': ADS,
+  'ads.account.enable_write': ADS,
+  'ads.cap.set': ADS,
+  'ads.launches.unblock': ADS,
+  // The launch of a drafted campaign (ADR-0043, #2295, W1): the plan and its largest amount are what the approver signs; the same rule.
+  'ads.campaign.launch': ADS,
+  'finance.einvoice.issue': EINVOICE,
 };
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
@@ -72,10 +98,18 @@ export function approvalPolicies(): Array<{ command: string; roles: readonly str
   return Object.entries(POLICIES).map(([command, p]) => ({ command, ...p, ledger: p === LEDGER }));
 }
 
+// The commands judged on the members of the org now, not on the snapshot taken at the request (CommandPolicy.live): the database's
+// crove_kernel.approval_command_live answers the same for each of them (apps/kernel/test/ads.db.test.ts pins both).
+export function liveApprovalCommands(): string[] {
+  return Object.entries(POLICIES)
+    .filter(([, p]) => p.live === true)
+    .map(([command]) => command);
+}
+
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build.
-export const APPROVAL_POLICY_VERSION = 2;
+export const APPROVAL_POLICY_VERSION = 7;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
@@ -220,20 +254,21 @@ export async function decideApproval(
   if (actor.type !== 'user') return deny('not_eligible');
   const snapshot = proposal.eligible_approvers ?? [];
   const authors = parseAuthors(proposal.authors);
-  // A pending proposal without a recorded snapshot or authors cannot be judged: fail closed.
-  if (snapshot.length === 0 || authors === null) return deny('not_eligible');
-
   // Under the preset in force now, not the one at creation: a switch to the accountant preset stops an owner or admin
   // in the snapshot from approving at once (fail closed); a switch back does not add anyone to the snapshot.
   const policy = policyFor(proposal.command, org);
+  // A pending proposal without a recorded snapshot (unless the command is judged live, which reads no snapshot) or authors
+  // cannot be judged: fail closed.
+  if ((snapshot.length === 0 && policy.live !== true) || authors === null) return deny('not_eligible');
   if (policy.roles.length === 0 && policy.permission === null) return deny('not_eligible');
   let query = trx
     .selectFrom('crove_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
-    .where('user_id', 'in', snapshot)
     // user_id order, as membership changes lock, so the two never take the same rows in opposite orders.
     .orderBy('user_id');
+  // A live command is judged on every member of the org now; any other on the snapshot taken at creation.
+  if (policy.live !== true) query = query.where('user_id', 'in', snapshot);
   if (options.lock) query = query.forShare();
   const live = await query.execute();
   // The snapshot members who still hold the approval permission org-wide, read after their membership rows are locked:
@@ -245,7 +280,11 @@ export async function decideApproval(
   // Eligible now: in the snapshot taken at creation AND still holding an approving role or the approval permission
   // (re-checked live). The snapshot is never rewritten; this filter is what keeps it current. A removed approver has no
   // row, and a demoted one or one whose assignment was revoked no longer approves, so neither is eligible nor counts
-  // toward the two that four-eyes (P10) needs.
+  // toward the two that four-eyes (P10) needs. Whether they can enter the org now does not matter (#2064): while it
+  // offboards only owners can, and an admin or chief accountant still counts, so a closing org's last postings keep
+  // their second pair of eyes. The owner who wrote one rejects it or, under the founder preset, first demotes the others
+  // or revokes their approval role (audited); under the accountant preset an author never approves a ledger proposal.
+  // The database gate (crove_kernel.proposal_approval_decide) counts the same way.
   const eligible = new Set(live.filter((m) => policy.roles.includes(m.role) || holders.has(m.user_id)).map((m) => m.user_id));
   if (!eligible.has(actor.userId)) return deny('not_eligible', eligible.size);
 

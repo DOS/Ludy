@@ -5,23 +5,30 @@
 // network I/O.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import type { ChannelProviderId, ConnectedAccount } from './index.ts';
+import type { ConnectedAccount, ConnectorProviderId } from './index.ts';
 
 export interface AuthorizeInput {
   state: string;
   redirectUri: string;
   // S256 challenge of the attempt's verifier; null when the connector does not use PKCE.
   codeChallenge: string | null;
+  // Facebook Pages (CV2, #2307): the member ticked "also read and answer comments" on the Channels screen, so the dialog asks for the
+  // comment-reading and webhook-subscription permissions besides the publishing ones.
+  comments?: boolean;
 }
 
 export interface ExchangeInput {
   code: string;
   redirectUri: string;
   codeVerifier: string | null;
+  // Meta ads, the reading connection only (ADR-0043, #2294): the org's switch for running ads is on, so a token that also holds a
+  // permission to change campaigns is accepted and its full set of permissions recorded. Left out, such a token is refused. Every
+  // other connector ignores it.
+  spendScopesAllowed?: boolean;
 }
 
 export interface OAuthConnector {
-  readonly provider: ChannelProviderId;
+  readonly provider: ConnectorProviderId;
   readonly pkce: boolean;
   authorizeUrl(input: AuthorizeInput): string;
   // The accounts the grant covers (a Facebook login covers every Page the user picked in Meta's dialog). Throws

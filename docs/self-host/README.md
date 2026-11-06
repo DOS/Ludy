@@ -81,6 +81,8 @@ cp tools/deploy/caddy/compose.host.yml tools/deploy/caddy/Caddyfile .
 echo 'COMPOSE_FILE=docker-compose.yml:compose.host.yml' >> .env
 ```
 
+This keeps the one-container layout, which is fine for your own use. A deployment other people reach (a pilot) runs the API and the worker apart and only the finance module: add `tools/deploy/compose.pilot.yml` as well ([deploy.md](../runbooks/deploy.md), "The pilot layout"); `pnpm pilot:check` fails a public deployment without it. On a public `PUBLIC_URL` the kernel also refuses to start the one-container layout unless you set `CROVE_ALLOW_ALL_IN_ONE=true` in `.env`, which accepts that the API then runs on the worker's database login.
+
 Point the domain's `A` record (and `AAAA` only if IPv6 reaches the server) at the server and wait until
 `dig +short <your domain>` answers with its address before the first start: Caddy asks for the certificate at once,
 and Let's Encrypt limits repeated failures. The certificates live in the `caddy-data` volume; keep it.
@@ -107,7 +109,7 @@ one password reset to an address at a large mail provider and check that it land
 
 Invoices by email (one address per organization) need an inbound mail relay: `INBOUND_DOMAIN`, `INBOUND_SECRET`, and
 [`tools/inbound-mail/worker.js`](../../tools/inbound-mail/worker.js) for Cloudflare Email Routing, set up in
-[provision-pilot.md](../runbooks/provision-pilot.md), section 5, "Inbound email". Uploads work without it.
+[provision-pilot.md](../runbooks/provision-pilot.md), section 5, "Inbound email". Uploads work without it. Customer email for the Inbox uses the same relay, to an address of its own per organization; set `INBOUND_AUTHSERV_ID` (see `.env.example`) so a customer's reply joins its conversation, otherwise each reply opens a new one.
 
 ## 6. Who may sign up
 

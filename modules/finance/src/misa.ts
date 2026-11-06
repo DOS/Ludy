@@ -1,5 +1,5 @@
 // Vouchers in the Excel import templates of MISA SME (issue #317). The firm keeps its system of record (decision
-// D10); Crove hands it purchase and sales vouchers, and cash receipts and payments (#657), in the layout MISA's
+// D10); Crove hands it purchase and sales vouchers, and cash and bank receipts and payments (#657), in the layout MISA's
 // "Tệp > Nhập khẩu từ Excel" reads. Purchase lines on a stock account (152, 153, 156) go to the goods purchase
 // template with the org's MISA item and warehouse codes; the other lines to the services template (#1398).
 //
@@ -14,7 +14,6 @@
 //
 // Values follow the same safety rules as the journal export (export.ts): amounts are exact (`decimalCell`) and
 // text is written as inert string cells.
-import ExcelJS from 'exceljs';
 import {
   PAYABLE_ACCOUNT,
   VAT_INPUT_ASSETS,
@@ -26,9 +25,11 @@ import {
   sum,
   type DecimalValue,
 } from '@crove/l10n-vn';
-import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes } from '@crove/kernel-contract';
+import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes, type VoucherType } from '@crove/kernel-contract';
+import { DomainError } from '@crove/kernel-runtime';
 import { canonical, roundToCurrency } from './domain/money.ts';
 import { decimalCell, textCell } from './export.ts';
+import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Inputs
@@ -87,16 +88,22 @@ export interface SalesVoucher {
 }
 
 /**
- * A posted cash voucher (issue #657, from #327), loaded by finance.vouchers.cash: a phiếu thu (Dr the cash account,
- * Cr each line) or a phiếu chi (Dr each line, Cr the cash account). Bank vouchers (báo Có, báo Nợ) have their own
- * MISA templates, not documented yet.
+ * A posted cash or bank voucher (issue #657, from #327), loaded by finance.vouchers.cash: a phiếu thu or giấy báo Có
+ * (Dr the cash or bank account, Cr each line), a phiếu chi or giấy báo Nợ (Dr each line, Cr the cash or bank account).
+ * Each type has its own MISA template.
  */
 export interface CashVoucher {
-  type: 'cash_receipt' | 'cash_payment';
-  /** Crove's voucher code, PT00001 or PC00001. */
+  type: VoucherType;
+  /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;
+  /**
+   * The key of the number series' period the code was taken in (#1401): `2026` for a yearly reset (the default),
+   * `2026-10` for a monthly one, `-` for a series that never resets. PT00001 of 2026 and of 2027 are two vouchers.
+   */
+  numberPeriod: string;
   /** Voucher date, which is its journal entry's date. */
   date: string;
+  /** The account the money moves on: 111x for a cash voucher, 112x for a bank voucher. */
   cashAccount: string;
   party: VoucherParty | null;
   /** Người nộp or người nhận, as entered. */
@@ -297,14 +304,35 @@ export interface CashRow {
 }
 
 /**
- * Cash vouchers keep Crove's own number behind this prefix (CRPT00001, CRPC00001): the firm's MISA numbers its own
- * vouchers PT00001, PC00001 ..., so the bare code could collide with one of them. Same number on every export.
+ * Cash and bank vouchers keep Crove's own number behind this prefix: the firm's MISA numbers its own vouchers PT00001,
+ * PC00001 ..., so the bare code could collide with one of them. Same number on every export.
  */
 export const CASH_VOUCHER_PREFIX = 'CR';
 
+/** MISA's limit for "Số chứng từ (*)". */
+const CASH_VOUCHER_NO_MAX = 20;
+
+/**
+ * "Số chứng từ (*)" of a cash or bank voucher: `CR`, the two letters of the code, the digits of the number series' period
+ * (#2346), then the code's number: `CRBN202700001` for BN00001 of 2027 under a yearly reset, `CRBN20271000001` for
+ * October 2027 under a monthly one, `CRBN00001` for a series that never resets. A series restarts at 1 in each period,
+ * and MISA groups rows by this number, so two vouchers of one type from two periods must not share it. The period is in
+ * the number whatever range is exported, so a voucher keeps its number from one export to the next. At most 20
+ * characters, MISA's limit: up to 12 digits of number under a yearly reset, 10 under a monthly one. A longer number is
+ * refused, never cut: two vouchers that differ in their last digits would export under one number.
+ */
+export function cashVoucherNo(voucher: Pick<CashVoucher, 'code' | 'numberPeriod'>): string {
+  const period = voucher.numberPeriod.replace(/\D/g, '');
+  const number = `${CASH_VOUCHER_PREFIX}${voucher.code.slice(0, 2)}${period}${voucher.code.slice(2)}`;
+  if (number.length > CASH_VOUCHER_NO_MAX) {
+    throw new DomainError('EXPORT_VOUCHER_NUMBER_TOO_LONG', 422, `Số chứng từ ${voucher.code} quá dài để xuất cho MISA (tối đa ${CASH_VOUCHER_NO_MAX} ký tự)`, { code: voucher.code });
+  }
+  return number;
+}
+
 /** One row per voucher line: the cash account on one side, the line's account on the other. */
 export function cashRows(voucher: CashVoucher): CashRow[] {
-  const voucherNo = `${CASH_VOUCHER_PREFIX}${voucher.code}`;
+  const voucherNo = cashVoucherNo(voucher);
   return voucher.lines.map((line) => ({ voucher, line, voucherNo }));
 }
 
@@ -587,6 +615,108 @@ export const MISA_SME_CASH_PAYMENT: MisaTemplate<CashRow> = {
   ],
 };
 
+/**
+ * MISA SME 2026 "Chứng từ thu tiền" (Tiền gửi > Thu tiền, the giấy báo Có): money into the bank account, Dr 112x, Cr each
+ * line. Headers from one source (S9, `Phieu_thu_tien_gui_VND.xls`), spelled as that file spells them, the trailing space
+ * of "Diễn giải lý do thu " included. The template has no "Người nộp" column, so the payer's name is not written. "Lý do
+ * thu" and the catalog columns stay blank. Length limits are the ones of the same fields in the cash templates (S6),
+ * unconfirmed for this file.
+ */
+export const MISA_SME_BANK_CREDIT: MisaTemplate<CashRow> = {
+  id: 'Phieu_thu_tien_gui',
+  sheetName: 'Chứng từ thu tiền',
+  columns: [
+    { header: 'Hiển thị trên sổ', cell: blank }, // blank: both books
+    { header: 'Ngày hạch toán (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Ngày chứng từ (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Số chứng từ (*)', maxLength: 20, cell: (r) => text(r.voucherNo) },
+    { header: 'Mã đối tượng', cell: blank }, // MISA catalog code
+    { header: 'Tên đối tượng', maxLength: 128, cell: (r) => text(r.voucher.party?.name) },
+    { header: 'Địa chỉ', maxLength: 255, cell: (r) => text(r.voucher.party?.address) },
+    { header: 'Nộp vào TK', cell: blank }, // MISA bank account catalog entry
+    { header: 'Mở tại NH', cell: blank },
+    { header: 'Lý do thu', cell: blank }, // MISA code
+    { header: 'Diễn giải lý do thu ', maxLength: 255, cell: (r) => text(r.voucher.description) },
+    { header: 'Nhân viên thu', cell: blank }, // MISA catalog code
+    { header: 'Diễn giải', maxLength: 255, cell: (r) => text(r.line.memo || r.voucher.description) },
+    { header: 'TK Nợ (*)', cell: (r) => text(r.voucher.cashAccount) },
+    { header: 'TK Có (*)', cell: (r) => text(r.line.account) },
+    { header: 'Số tiền', cell: (r) => fixed(r.line.amount) },
+    { header: 'Đối tượng', cell: blank }, // MISA catalog code
+    { header: 'Khoản mục CP', cell: blank },
+    { header: 'Đơn vị', cell: blank },
+    { header: 'Đối tượng THCP', cell: blank },
+    { header: 'Công trình', cell: blank },
+    { header: 'Đơn đặt hàng', cell: blank },
+    { header: 'Hợp đồng mua', cell: blank },
+    { header: 'Hợp đồng bán', cell: blank },
+    { header: 'Mã thống kê', cell: blank },
+  ],
+};
+
+/**
+ * MISA SME 2026 "Chứng từ Chi tiền gửi" (Tiền gửi > Chi tiền, the giấy báo Nợ): money out of the bank account, Dr each
+ * line, Cr 112x. Headers from one source (S9, `Phieu_chi_tien_gui_VND.xls`). The paying account, the payee's bank, the
+ * payment method and the VAT and invoice columns stay blank (catalog entries and codes the firm sets in MISA; filling the
+ * bank account columns from the account numbers of Settings is open question 12 in the doc; a purchase invoice reaches
+ * the books as a purchase voucher, and the báo Nợ only settles it, Dr 331). "Người lĩnh tiền" carries
+ * the payee named on the voucher. Length limits are the ones of the same fields in the cash templates (S6), unconfirmed
+ * for this file.
+ */
+export const MISA_SME_BANK_DEBIT: MisaTemplate<CashRow> = {
+  id: 'Phieu_chi_tien_gui',
+  sheetName: 'Chứng từ Chi tiền gửi',
+  columns: [
+    { header: 'Hiển thị trên sổ', cell: blank }, // blank: both books
+    { header: 'Phương thức thanh toán', cell: blank }, // MISA code
+    { header: 'Ngày hạch toán (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Ngày chứng từ (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Số chứng từ (*)', maxLength: 20, cell: (r) => text(r.voucherNo) },
+    { header: 'Tài khoản chi', cell: blank }, // MISA bank account catalog entry
+    { header: 'Mở tại NH', cell: blank },
+    { header: 'Nội dung thanh toán', cell: blank }, // MISA code
+    { header: 'Diễn giải nội dung thanh toán', maxLength: 255, cell: (r) => text(r.voucher.description) },
+    { header: 'Mã đối tượng', cell: blank }, // MISA catalog code
+    { header: 'Tên đối tượng', maxLength: 128, cell: (r) => text(r.voucher.party?.name) },
+    { header: 'Địa chỉ', maxLength: 255, cell: (r) => text(r.voucher.party?.address) },
+    { header: 'Tài khoản nhận', cell: blank },
+    { header: 'Tên NH nhận', cell: blank },
+    { header: 'Người lĩnh tiền', maxLength: 255, cell: (r) => text(r.voucher.personName) },
+    { header: 'Số CMND', cell: blank },
+    { header: 'Ngày cấp CMND', cell: blank },
+    { header: 'Nơi cấp CMND', cell: blank },
+    { header: 'Nhân viên', cell: blank }, // MISA catalog code
+    { header: 'Diễn giải', maxLength: 255, cell: (r) => text(r.line.memo || r.voucher.description) },
+    { header: 'TK Nợ (*)', cell: (r) => text(r.line.account) },
+    { header: 'TK Có (*)', cell: (r) => text(r.voucher.cashAccount) },
+    { header: 'Số tiền', cell: (r) => fixed(r.line.amount) },
+    { header: 'Mã đối tượng (Chi tiết)', cell: blank },
+    { header: 'Khoản mục chi phí', cell: blank },
+    { header: 'Đơn vị', cell: blank },
+    { header: 'ĐT tập hợp chi phí', cell: blank },
+    { header: 'Công trình', cell: blank },
+    { header: 'Đơn đặt hàng', cell: blank },
+    { header: 'Hợp đồng mua', cell: blank },
+    { header: 'Hợp đồng bán', cell: blank },
+    { header: 'Chi phí không hợp lý', cell: blank },
+    { header: 'Mã thống kê', cell: blank },
+    { header: 'Diễn giải (Thuế)', cell: blank },
+    { header: 'TK thuế GTGT', cell: blank },
+    { header: 'Tiền thuế GTGT', cell: blank },
+    { header: '% thuế GTGT', cell: blank },
+    { header: 'Tỷ lệ tính thuế (Thuế suất KHAC)', cell: blank },
+    { header: 'Giá trị HHDV chưa thuế', cell: blank },
+    { header: 'Mẫu số hóa đơn', cell: blank },
+    { header: 'Ký hiệu hóa đơn', cell: blank },
+    { header: 'Số hóa đơn', cell: blank },
+    { header: 'Ngày hóa đơn', cell: blank },
+    { header: 'Nhóm HHDV mua vào', cell: blank },
+    { header: 'Mã NCC', cell: blank },
+    { header: 'Tên NCC', cell: blank },
+    { header: 'Mã số thuế NCC', cell: blank },
+  ],
+};
+
 // ---------------------------------------------------------------------------------------------------------------
 // Workbook
 
@@ -608,15 +738,23 @@ function excelDate(value: string): Date {
 
 /** One sheet named as MISA's template, its header row, then one row per voucher line. */
 // brand: the product name users see (BRAND_NAME, #1045), as the file's creator.
-export async function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: readonly Row[], brand = 'Ludy'): Promise<Uint8Array> {
-  const workbook = new ExcelJS.Workbook();
+// Written as a stream (#2121), like the journal: a voucher export holds up to 50,000 vouchers.
+export function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: readonly Row[], brand = 'Ludy'): Promise<Uint8Array> {
+  return streamWorkbook((workbook) => writeMisa(workbook, template, rows, brand));
+}
+
+async function writeMisa<Row>(workbook: StreamedWorkbook, template: MisaTemplate<Row>, rows: readonly Row[], brand: string): Promise<void> {
   workbook.creator = brand;
-  const sheet = workbook.addWorksheet(template.sheetName);
-  sheet.addRow(template.columns.map((c) => c.header));
-  sheet.getRow(1).font = { bold: true };
+  workbook.lastModifiedBy = brand;
+  const sheet = workbook.addWorksheet(template.sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
+  // Column widths come before the first row: a streamed row is written as soon as it is committed.
   template.columns.forEach((c, i) => {
     sheet.getColumn(i + 1).width = Math.min(Math.max(c.header.length + 2, 12), 40);
   });
+  const header = sheet.addRow(template.columns.map((c) => c.header));
+  header.font = { bold: true };
+  header.commit();
+  let written = 0;
   for (const row of rows) {
     const excelRow = sheet.addRow([]);
     template.columns.forEach((column, i) => {
@@ -639,7 +777,8 @@ export async function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: 
         }
       }
     });
+    excelRow.commit();
+    await pace(++written);
   }
-  sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  return new Uint8Array(await workbook.xlsx.writeBuffer());
+  sheet.commit();
 }

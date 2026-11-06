@@ -1,8 +1,13 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { OAUTH_MAX_ACCOUNTS_PER_GRANT, contract } from '@crove/kernel-contract';
-import { BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, type OAuthConnector } from '@crove/channel';
+import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { sandboxBankFeed } from '@crove/bank-feed';
+import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
+import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import { briefAnswer } from './today-brief.ts';
+import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
   ALT_TEXT_IMAGE_TYPES,
@@ -29,18 +34,29 @@ import {
   type AcceptedInvite,
   type BulkApproveResult,
   type ChannelConnectInput,
+  type ContactCandidates,
   type DirectMail,
+  type IntentSource,
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { zAgentBudget, zAgentTemplate, zTask } from '@crove/kernel-contract';
+import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
+import { sql } from 'kysely';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
+import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
+import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
+import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
+import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
 import { ChatAlertSaveBudget, ChatAlertTestBudget, requestChatAlertTest, saveChatAlert } from './chat-alert-save.ts';
 import { actorOf, type AuthUser } from './auth.ts';
 import { ConcurrencyLimiter } from './concurrency.ts';
+import { setLogContext } from './log.ts';
 import type { StockPhotos } from './stock-photos.ts';
 import type { MediaUrls } from './media-urls.ts';
 import type { InviteRole, SendInviteMail } from './invite-mail.ts';
@@ -65,6 +81,8 @@ export async function resolveMembership(runtime: Runtime, user: AuthUser, slug: 
   const orgs = await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId));
   const org = orgs.find((o) => o.slug === slug);
   if (!org) throw new DomainError('NOT_A_MEMBER', 403, 'Bạn không thuộc tổ chức này');
+  // From here on the request's log lines name the org (#2175).
+  setLogContext({ orgId: org.orgId });
   return org;
 }
 
@@ -97,6 +115,8 @@ export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
     // A draft written from photos of the library (#1191) too, read from their stored bytes like alt text, when the model
     // takes images; each read stops at the size its file row records.
     draftStored?: (request: Omit<DraftRequest, 'images'>, images: readonly { file: StoredImage; mime: string }[]) => Promise<DraftResult | null>;
+    // Vy's daily brief on Home (#2383), through the same endpoint and the same budget meter.
+    brief?: (facts: BriefFacts) => Promise<BriefResult>;
   };
 
 // A stored file as the vision reads take it: the row's reference, hash and recorded size.
@@ -205,6 +225,15 @@ export interface RpcChannels {
   broker: CredentialBroker;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
+  // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
+  bankFeedSandbox?: boolean;
+  // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
+  einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
+  // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
+  adsPlatforms?: Readonly<Record<string, AdPlatform>>;
+  // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
+  // Meta reading connection (ADR-0043 point 4). Left out, it is taken as shared, the safe side.
+  adsWriteAppShared?: boolean;
   // Bluesky accounts may connect with an app password (CHANNEL_BLUESKY).
   bluesky?: boolean;
   // Telegram channels may connect with a bot token (CHANNEL_TELEGRAM).
@@ -217,7 +246,10 @@ export interface RpcChannels {
   wordpress?: boolean;
   // Providers connected through an OAuth dialog that this deployment configured (Social plan S6), by provider id.
   connectors?: Readonly<Partial<Record<string, OAuthConnector>>>;
-  // PUBLIC_URL: the provider sends the browser back to PUBLIC_URL/channels/oauth/:provider/callback.
+  // Outside calendars members connect (#2123) through an OAuth dialog this deployment configured, by OAuth provider id.
+  calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
+  // The web app's address (kernel.ts hands over APP_URL, else PUBLIC_URL, #2261): the provider sends the browser back to
+  // <it>/channels/oauth/:provider/callback, a page of the app that posts the code to the API. Named publicUrl for history.
   publicUrl?: string;
   // Stock photos from Pexels for the media library (#1106, MEDIA_PEXELS_API_KEY); unset: off, and no Pexels call is
   // made. Not a channel: it rides on this object because the HTTP edge hands it to the RPC handler unchanged, so the
@@ -237,6 +269,17 @@ function connectorFailure(error: unknown): DomainError {
   if (error instanceof ConnectorError) {
     console.warn(`[channels] OAuth exchange failed: ${error.kind}${error.code ? ` (${error.code})` : ''}: ${error.message}`);
     if (error.kind === 'invalid_grant') return new DomainError('OAUTH_CODE_REJECTED', 400, 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn), hãy kết nối lại');
+    // A token that can change campaigns or the business (ads_management, business_management): the person granted more than
+    // reading reports to this app before. Said as it is, since accepting more permissions cannot help.
+    if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
+      return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
+    }
+    if (error.kind === 'denied' && error.code === 'MANAGER_ACCOUNT_UNSUPPORTED') {
+      return new DomainError('OAUTH_GOOGLE_MANAGER_ONLY', 422, 'Tài khoản Google này chỉ truy cập được tài khoản quản lý (MCC), không có tài khoản quảng cáo trực tiếp; hãy đăng nhập bằng tài khoản Google truy cập trực tiếp tài khoản quảng cáo');
+    }
+    if (error.kind === 'denied' && error.code === 'CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION') {
+      return new DomainError('OAUTH_GOOGLE_PROJECT_TEST_ONLY', 422, 'Dự án Google Cloud này đang ở mức Test nên chỉ đọc được tài khoản thử nghiệm; hãy xin cấp mức Explorer trong Google Cloud Console cho tài khoản thực');
+    }
     if (error.kind === 'denied') return new DomainError('OAUTH_PERMISSION_MISSING', 422, 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền');
     return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
   }
@@ -259,8 +302,36 @@ export function createRpcHandler(
   blueskyLogins: BlueskyLoginBudget = new BlueskyLoginBudget(),
   portalSync?: PortalSync,
   bookingReader?: BookingReader,
+  // The AI budget meter of this request's model calls (#2382) as the member who made it; aiEnabled: the deployment has a model.
+  aiMeter?: (actor: UserActor) => AiMeter,
+  aiEnabled = false,
+  // The Inbox's AI coworker (CV3, #2306): the suggested intent and the likely contacts. Unset: no suggestion, with the inbox as it is.
+  conversationReader?: ConversationReader,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
+  const briefs = new DraftBudget();
+  // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
+  const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
+  const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
+  // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
+  const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
+  // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
+  const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
+  // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
+  const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
+  // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
+  // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
+  const stockCoworker = stockAi(
+    conversationReader && (conversationReader.stockMatch || conversationReader.reorderText)
+      ? {
+          ...(conversationReader.stockMatch ? { stockMatch: conversationReader.stockMatch.bind(conversationReader) } : {}),
+          ...(conversationReader.reorderText ? { reorderText: conversationReader.reorderText.bind(conversationReader) } : {}),
+        }
+      : null,
+    suggestionBudget(),
+  );
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -269,8 +340,26 @@ export function createRpcHandler(
       throw toORPCError(error);
     }
   };
+  // Demo comments of the offline sandbox, by org, for the per-org cap on the intake they share.
+  const sandboxStamps = new Map<string, number[]>();
+  // Every model call a handler makes counts against the org's AI budget (@crove/agent's metered(), #2382): the scope names
+  // the org and the meter that asks in this member's own authority.
   const inOrg = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) =>
-    guard(async () => fn(await resolveOrg(runtime, context.user, context.orgSlug), actorOf(context.user)));
+    guard(async () => {
+      const orgId = await resolveOrg(runtime, context.user, context.orgSlug);
+      const actor = actorOf(context.user);
+      return aiMeter ? withAiScope({ orgId, meter: aiMeter(actor) }, () => fn(orgId, actor)) : fn(orgId, actor);
+    });
+  // A model call refused because the org's AI budget of the month is spent: said as it is, so the Inbox and the panels
+  // show "Vy đã hết ngân sách tháng này" and the owner knows what to do. Posting, reading and exports are unaffected.
+  const refuseBudget = (error: unknown): void => {
+    if (error instanceof AiBudgetExhaustedError) {
+      throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đã hết ngân sách tháng này; chủ tổ chức có thể nâng ngân sách hoặc đợi sang tháng mới. Sổ sách và mọi việc không cần AI vẫn chạy bình thường', {
+        scope: error.scope,
+        ...(error.retryAt ? { retryAt: error.retryAt } : {}),
+      });
+    }
+  };
   // A procedure of a module this deployment leaves out (CROVE_MODULES, plan Decision 12) answers like a route that
   // does not exist, before any database work. The contract is shared, so the procedure stays in the router.
   const finance = runtime.installed('finance');
@@ -283,6 +372,13 @@ export function createRpcHandler(
   const inFinance = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
     if (!finance) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun tài chính chưa được bật' });
     return inOrg(context, fn);
+  };
+  // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
+  const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
+  // The commands check the role again; this answers first, in words, before anything is sealed or called.
+  const requireOwnerOrAdmin = async (context: RpcContext, message: string) => {
+    const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+    if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, message);
   };
   // The assisted tax portal sync (issue #325): the steps check the member's role again in their commands; the password
   // in login's input goes to the portal and nowhere else.
@@ -337,17 +433,80 @@ export function createRpcHandler(
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inNotes(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
+  // The HR module (#2530): its procedures answer 404 when the deployment leaves it out, as the notes module's do. Owners and admins only (the database's policy and
+  // every command's and query's access); every read is a sensitive query.
+  const hr = runtime.installed('hr');
+  const inHr = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!hr) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Nhân sự chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const hrCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inHr(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const hrQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inHr(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+
+  // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
+  const ads = runtime.installed('ads');
+  // The proposal request an ads change makes (kernel.proposal.request): the command it would run once approved, and what that
+  // command's preparer takes.
+  const adsRequestOf = (change: AdsChangeRequest) => {
+    switch (change.change) {
+      case 'write_enable':
+        return { command: 'ads.write.enable', input: {} };
+      case 'account_enable':
+        return { command: 'ads.account.enable_write', input: { adAccountId: change.adAccountId } };
+      case 'cap_set':
+        return {
+          command: 'ads.cap.set',
+          input: { scope: change.scope, ...(change.adAccountId ? { adAccountId: change.adAccountId } : {}), period: change.period, amount: change.amount, currency: change.currency },
+        };
+      case 'launches_unblock':
+        return { command: 'ads.launches.unblock', input: {} };
+      case 'campaign_launch':
+        return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
+    }
+  };
+  const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!ads) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Quảng cáo chưa được bật' });
+    return inOrg(context, fn);
+  };
+
   // The connector of an OAuth provider this deployment configured, for an owner or admin of the org in the header.
   // The commands check the role again; checking first keeps a member from learning how the deployment is set up.
   const oauthConnector = async (context: RpcContext, provider: string) => {
     const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
     if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được kênh');
+    // An ad platform (ADR-0040) connects only where the Ads module runs: its accounts are linked as the grant is finished.
+    if (isAdProviderId(provider) && !runtime.installed('ads')) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Mô-đun Quảng cáo chưa được bật');
+    // The write connection of an ad account (ADR-0043, W0b) is the owner's, and only while the org's switch is on: nobody is sent through
+    // the platform's dialog for a token the org may not hold. The command that attaches it checks both again.
+    if (isAdWriteProviderId(provider)) {
+      if (role !== 'owner') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới kết nối được để chạy quảng cáo');
+      const state = await runtime.query<{ writeEnabled: boolean }>('ads.write.state', {}, { actor: actorOf(context.user), orgId });
+      if (!state.writeEnabled) throw new DomainError('ADS_WRITE_OFF', 409, 'Chủ sở hữu chưa bật việc chạy quảng cáo cho tổ chức này');
+    }
     const connector = channels?.connectors?.[provider];
     if (!channels || !connector) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được cấu hình trên máy chủ');
     // Checked before an attempt is written or used up: without a key the tokens could never be sealed, and the user
     // would go through the provider's dialog for nothing.
     if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
     return { orgId, actor: actorOf(context.user), connector, broker: channels.broker };
+  };
+  const calendarRedirectUri = (provider: string) => `${(channels?.publicUrl ?? '').replace(/\/$/, '')}/calendar/oauth/${provider}/callback`;
+  // The adapter of a calendar provider this deployment configured, for a member who edits (a viewer has no calendar of
+  // their own to connect). The commands check the role again.
+  const calendarAdapter = async (context: RpcContext, provider: string) => {
+    const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+    if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được lịch');
+    const adapter = channels?.calendars?.[provider];
+    if (!channels || !adapter) throw new DomainError('CALENDAR_PROVIDER_DISABLED', 404, 'Loại lịch này chưa được cấu hình trên máy chủ');
+    // Checked before an attempt is written or used up: without a key the tokens could never be sealed.
+    if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { orgId, actor: actorOf(context.user), adapter, broker: channels.broker };
   };
   // The org's team chat for Social alerts (#863): the target is checked with the platform and sealed here, then saved by
   // the command. The API never reads it back: a test line is only asked for, and the worker sends it.
@@ -407,6 +566,22 @@ export function createRpcHandler(
           } finally {
             release();
           }
+        }),
+      ),
+    },
+    today: {
+      list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
+      // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
+      // spent: no brief, and Home shows the list alone. Nothing is stored.
+      mail: {
+        get: os.today.mail.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today_mail.get', {}, { actor, orgId }))),
+        set: os.today.mail.set.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.today_mail.set', input, { actor, orgId }))),
+      },
+      brief: os.today.brief.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
+          return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
         }),
       ),
     },
@@ -525,6 +700,21 @@ export function createRpcHandler(
           return { inboundAddress: org.inboundAddress };
         }),
       ),
+      issueConversationAddress: os.org.issueConversationAddress.handler(({ context }) =>
+        inOrg(context, async (orgId, actor) => {
+          await runtime.execute('kernel.conversation.address_issue', {}, { actor, orgId });
+          const org = await runtime.query<{ conversationAddress: string | null }>('kernel.org.get', {}, { actor, orgId });
+          return { conversationAddress: org.conversationAddress ?? null };
+        }),
+      ),
+      rotateConversationAddress: os.org.rotateConversationAddress.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          await runtime.execute('kernel.conversation.address_rotate', {}, { actor, orgId, idempotencyKey: input.idempotencyKey });
+          // The current address, not a stored result: a key replayed after a later rotation must never show a retired address.
+          const org = await runtime.query<{ conversationAddress: string | null }>('kernel.org.get', {}, { actor, orgId });
+          return { conversationAddress: org.conversationAddress ?? null };
+        }),
+      ),
       changeMemberRole: os.org.changeMemberRole.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
@@ -557,6 +747,23 @@ export function createRpcHandler(
         }),
       ),
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
+    },
+    hr: {
+      payroll: {
+        employees: {
+          list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
+          get: os.hr.payroll.employees.get.handler(hrQuery('hr.payroll.employee.get')),
+          add: os.hr.payroll.employees.add.handler(hrCommand('hr.payroll.employee.add')),
+          edit: os.hr.payroll.employees.edit.handler(hrCommand('hr.payroll.employee.edit')),
+          end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
+          erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+        },
+        employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
+        dependents: {
+          add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
+          end: os.hr.payroll.dependents.end.handler(hrCommand('hr.payroll.dependent.end')),
+        },
+      },
     },
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
@@ -592,11 +799,61 @@ export function createRpcHandler(
       },
     },
     crm: {
+      pipeline: {
+        stages: os.crm.pipeline.stages.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.stage.list', {}, { actor, orgId }))),
+        setup: os.crm.pipeline.setup.handler(crmCommand('crm.pipeline.setup')),
+        addStage: os.crm.pipeline.addStage.handler(crmCommand('crm.stage.add')),
+        renameStage: os.crm.pipeline.renameStage.handler(crmCommand('crm.stage.rename')),
+        reorderStages: os.crm.pipeline.reorderStages.handler(crmCommand('crm.stage.reorder')),
+        removeStage: os.crm.pipeline.removeStage.handler(crmCommand('crm.stage.remove')),
+      },
+      parties: { search: os.crm.parties.search.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.search', input, { actor, orgId }))) },
+      deals: {
+        board: os.crm.deals.board.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.board', input, { actor, orgId }))),
+        list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
+        get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
+        byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
+        conversations: os.crm.deals.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.conversations', input, { actor, orgId }))),
+        create: os.crm.deals.create.handler(crmCommand('crm.deal.create')),
+        update: os.crm.deals.update.handler(crmCommand('crm.deal.update')),
+        move: os.crm.deals.move.handler(crmCommand('crm.deal.move')),
+        delete: os.crm.deals.delete.handler(crmCommand('crm.deal.delete')),
+      },
+      // The stale-deal rule's next steps (#2381): read them, mark them done or snooze them; the rule itself runs in the worker.
+      nextSteps: {
+        list: os.crm.nextSteps.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.next_step.list', input, { actor, orgId }))),
+        done: os.crm.nextSteps.done.handler(crmCommand('crm.next_step.done')),
+        snooze: os.crm.nextSteps.snooze.handler(crmCommand('crm.next_step.snooze')),
+      },
+      dealSetting: {
+        get: os.crm.dealSetting.get.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal_setting.get', {}, { actor, orgId }))),
+        set: os.crm.dealSetting.set.handler(crmCommand('crm.deal_setting.set')),
+      },
       eventTypes: {
         list: os.crm.eventTypes.list.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.event_type.list', {}, { actor, orgId }))),
         create: os.crm.eventTypes.create.handler(crmCommand('crm.event_type.create')),
         update: os.crm.eventTypes.update.handler(crmCommand('crm.event_type.update')),
         setActive: os.crm.eventTypes.setActive.handler(crmCommand('crm.event_type.set_active')),
+      },
+      contacts: {
+        list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
+        conversations: os.crm.contacts.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.conversations', input, { actor, orgId }))),
+        // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the
+        // AI meter. Nothing is stored or linked. The org's switch for AI on its customers' messages covers it too (the names of its contacts reach the model):
+        // with it off the companies come in their own order and the answer says `off`.
+        companySuggestions: os.crm.contacts.companySuggestions.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const found = await runtime.query<CompanyCandidates>('crm.contact.company_candidates', input, { actor, orgId });
+            const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+            return suggestCompanies(autoDraft ? companyAi : { ...companyAi, reader: null }, orgId, actor.userId, found);
+          }),
+        ),
+      },
+      contactImport: {
+        stage: os.crm.contactImport.stage.handler(crmCommand('crm.import.stage')),
+        preview: os.crm.contactImport.preview.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.import.preview', input, { actor, orgId }))),
+        commit: os.crm.contactImport.commit.handler(crmCommand('crm.import.commit')),
+        cancel: os.crm.contactImport.cancel.handler(crmCommand('crm.import.cancel')),
       },
       bookings: {
         list: os.crm.bookings.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.booking.list', input, { actor, orgId }))),
@@ -624,6 +881,8 @@ export function createRpcHandler(
             try {
               reading = await bookingReader.read({ message: input.message, today, days, timeZone: next.timeZone });
             } catch (error: unknown) {
+              // The budget is spent (#2382): the next free slots still come, and the member is told why Vy did not read the message.
+              if (error instanceof AiBudgetExhaustedError) return { ai: 'budget' as const, asksForMeeting: null, windows: [], ...next };
               // Neither the message nor the answer is logged.
               console.error('[crm-ai] suggest failed', error instanceof Error ? error.name : typeof error);
               return { ai: 'failed' as const, asksForMeeting: null, windows: [], ...next };
@@ -723,8 +982,8 @@ export function createRpcHandler(
                 ? await runtime.query<{ fileId: string; storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: number }[]>('social.media.draft_images', { fileIds }, { actor, orgId })
                 : [];
             for (const photo of photos) {
-              if (!ALT_TEXT_IMAGE_TYPES.includes(photo.contentType)) throw new DomainError('AI_DRAFT_IMAGE_ONLY', 422, 'Vy chỉ soạn bài từ ảnh JPG, PNG hoặc WEBP, không từ video hay tệp PDF', { fileId: photo.fileId });
-              if (photo.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('AI_DRAFT_IMAGE_TOO_LARGE', 413, 'Có ảnh lớn hơn 10 MB nên Vy không đọc được', { fileId: photo.fileId });
+              if (!ALT_TEXT_IMAGE_TYPES.includes(photo.contentType)) throw new DomainError('AI_DRAFT_IMAGE_ONLY', 422, `${COWORKERS.marketing} chỉ soạn bài từ ảnh JPG, PNG hoặc WEBP, không từ video hay tệp PDF`, { fileId: photo.fileId });
+              if (photo.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('AI_DRAFT_IMAGE_TOO_LARGE', 413, `Có ảnh lớn hơn 10 MB nên ${COWORKERS.marketing} không đọc được`, { fileId: photo.fileId });
             }
             // The source page (#769) as its link preview read it (fetched by the worker through the egress guard, parsed in
             // the extract container): asked for if new, and waited for a few seconds. Before the budget: waiting for a page
@@ -762,15 +1021,16 @@ export function createRpcHandler(
                     )
                   : await socialWriter.draft(request);
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] draft failed', error instanceof Error ? error.name : typeof error);
               // A photo that could not be read as recorded, or a failed vision call, has its own words (#1126).
-              if (photos.length > 0) throw new DomainError('AI_DRAFT_VISION_FAILED', 503, 'Vy chưa đọc được ảnh để soạn bài lúc này, hãy thử lại sau');
-              throw new DomainError('AI_DRAFT_FAILED', 503, 'Vy không soạn được bài lúc này, hãy thử lại sau');
+              if (photos.length > 0) throw new DomainError('AI_DRAFT_VISION_FAILED', 503, `${COWORKERS.marketing} chưa đọc được ảnh để soạn bài lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.marketing} không soạn được bài lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!draft && photos.length > 0) throw new DomainError('AI_DRAFT_PHOTOS_EMPTY', 422, 'Vy không soạn được bài từ những ảnh này, hãy thêm vài dòng mô tả');
-            if (!draft) throw new DomainError('AI_DRAFT_EMPTY', 422, 'Vy không soạn được bài từ mô tả này, hãy viết rõ hơn');
+            if (!draft && photos.length > 0) throw new DomainError('AI_DRAFT_PHOTOS_EMPTY', 422, `${COWORKERS.marketing} không soạn được bài từ những ảnh này, hãy thêm vài dòng mô tả`);
+            if (!draft) throw new DomainError('AI_DRAFT_EMPTY', 422, `${COWORKERS.marketing} không soạn được bài từ mô tả này, hãy viết rõ hơn`);
             const own = new Map(draft.variants.map((v) => [v.key, v]));
             const created = await runtime.execute<{ postId: string }>(
               'social.post.create',
@@ -819,18 +1079,19 @@ export function createRpcHandler(
               const voice = voices ? ((input.connectionId ? voices.byChannel.get(input.connectionId) : undefined) ?? voices.org) : null;
               result = await socialWriter.rewrite({ text: input.text, title: input.title ?? null, action: input.action, ...(channel ? { channel } : {}), ...(voice ? { voice } : {}) });
             } catch (error: unknown) {
+              refuseBudget(error);
               // The check after a proofread (#1167) found a changed link, hashtag, mention, number or price, or emoji.
               if (error instanceof ProofreadChangedError) {
-                throw new DomainError('AI_PROOFREAD_CHANGED', 422, 'Vy đã sửa cả liên kết, hashtag, tài khoản được nhắc (@), con số, giá hoặc emoji nên bản sửa bị bỏ; nội dung của bạn vẫn giữ nguyên', { changed: [...error.kinds] });
+                throw new DomainError('AI_PROOFREAD_CHANGED', 422, `${COWORKERS.marketing} đã sửa cả liên kết, hashtag, tài khoản được nhắc (@), con số, giá hoặc emoji nên bản sửa bị bỏ; nội dung của bạn vẫn giữ nguyên`, { changed: [...error.kinds] });
               }
               console.error('[social-ai] rewrite failed', error instanceof Error ? error.name : typeof error);
-              if (proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, 'Vy chưa soát được chính tả lúc này, hãy thử lại sau');
-              throw new DomainError('AI_DRAFT_FAILED', 503, 'Vy không soạn được bài lúc này, hãy thử lại sau');
+              if (proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, `${COWORKERS.marketing} chưa soát được chính tả lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.marketing} không soạn được bài lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!result && proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, 'Vy chưa soát được chính tả lúc này, hãy thử lại sau');
-            if (!result) throw new DomainError('AI_REWRITE_EMPTY', 422, 'Vy không viết lại được đoạn này, hãy thử cách khác');
+            if (!result && proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, `${COWORKERS.marketing} chưa soát được chính tả lúc này, hãy thử lại sau`);
+            if (!result) throw new DomainError('AI_REWRITE_EMPTY', 422, `${COWORKERS.marketing} không viết lại được đoạn này, hãy thử cách khác`);
             return result;
           }),
         ),
@@ -845,7 +1106,7 @@ export function createRpcHandler(
             if (!socialWriter.describeStored) throw new DomainError('AI_VISION_OFF', 422, 'Mô hình AI của máy chủ chưa đọc được ảnh (AI_VISION)');
             const file = await runtime.query<{ storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: number }>('social.media.stored', { fileId: input.fileId }, { actor, orgId });
             if (!ALT_TEXT_IMAGE_TYPES.includes(file.contentType)) throw new DomainError('ALT_TEXT_IMAGE_ONLY', 422, 'Chỉ gợi ý mô tả cho ảnh');
-            if (file.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('ALT_TEXT_IMAGE_TOO_LARGE', 413, 'Ảnh lớn hơn 10 MB nên Vy không đọc được');
+            if (file.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('ALT_TEXT_IMAGE_TOO_LARGE', 413, `Ảnh lớn hơn 10 MB nên ${COWORKERS.marketing} không đọc được`);
             // The post's channels, the org's own (a disconnected one of a saved post included): the suggestion keeps
             // within their strictest alt-text limit. A member limited to some channels (#1081) names only theirs (#1175),
             // checked before the budget and the model call.
@@ -873,12 +1134,13 @@ export function createRpcHandler(
             try {
               altText = await socialWriter.describeStored({ key: file.storageKey, generation: file.generation, sha256: file.sha256, sizeBytes: file.sizeBytes }, file.contentType, input.language, maxChars);
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] describe failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_ALT_TEXT_FAILED', 503, 'Vy chưa gợi ý được mô tả ảnh lúc này, hãy thử lại sau');
+              throw new DomainError('AI_ALT_TEXT_FAILED', 503, `${COWORKERS.marketing} chưa gợi ý được mô tả ảnh lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!altText) throw new DomainError('AI_ALT_TEXT_EMPTY', 422, 'Vy không mô tả được ảnh này, bạn hãy tự viết mô tả');
+            if (!altText) throw new DomainError('AI_ALT_TEXT_EMPTY', 422, `${COWORKERS.marketing} không mô tả được ảnh này, bạn hãy tự viết mô tả`);
             return { altText };
           }),
         ),
@@ -907,8 +1169,9 @@ export function createRpcHandler(
             try {
               return { hashtags: await socialWriter.hashtags({ text: input.text, language: input.language, ...(channel ? { channel } : {}), exclude: input.exclude }) };
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] hashtags failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_DRAFT_FAILED', 503, 'Vy không soạn được bài lúc này, hãy thử lại sau');
+              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.marketing} không soạn được bài lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
@@ -964,16 +1227,17 @@ export function createRpcHandler(
               const voice = (only ? voices.byChannel.get(only) : undefined) ?? voices.org;
               text = await socialWriter.summary({ ...summaryInput, language: language ?? 'vi', ...(voice ? { voice } : {}) });
             } catch (error: unknown) {
+              refuseBudget(error);
               // The check after the call found a number that is not one of the period's figures.
               if (error instanceof SummaryFigureError) {
-                throw new DomainError('AI_SUMMARY_FIGURE_INVENTED', 422, 'Vy đã viết một con số không có trong số liệu của kỳ nên bản tóm tắt bị bỏ; hãy thử lại', { numbers: error.numbers.length });
+                throw new DomainError('AI_SUMMARY_FIGURE_INVENTED', 422, `${COWORKERS.marketing} đã viết một con số không có trong số liệu của kỳ nên bản tóm tắt bị bỏ; hãy thử lại`, { numbers: error.numbers.length });
               }
               console.error('[social-ai] summary failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_SUMMARY_FAILED', 503, 'Vy chưa viết được tóm tắt lúc này, hãy thử lại sau');
+              throw new DomainError('AI_SUMMARY_FAILED', 503, `${COWORKERS.marketing} chưa viết được tóm tắt lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!text) throw new DomainError('AI_SUMMARY_EMPTY', 422, 'Vy không viết được tóm tắt cho kỳ này, hãy thử lại');
+            if (!text) throw new DomainError('AI_SUMMARY_EMPTY', 422, `${COWORKERS.marketing} không viết được tóm tắt cho kỳ này, hãy thử lại`);
             return { text };
           }),
         ),
@@ -1031,12 +1295,13 @@ export function createRpcHandler(
               const voice = (input.connectionId ? voices.byChannel.get(input.connectionId) : undefined) ?? voices.org;
               ideas = await socialWriter.ideas({ theme: input.theme, occasion: input.occasion ?? null, count: input.count, language: input.language ?? 'vi', ...(voice ? { voice } : {}) });
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] ideas failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_IDEAS_FAILED', 503, 'Vy chưa gợi ý được ý tưởng lúc này, hãy thử lại sau');
+              throw new DomainError('AI_IDEAS_FAILED', 503, `${COWORKERS.marketing} chưa gợi ý được ý tưởng lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (ideas.length === 0) throw new DomainError('AI_IDEAS_EMPTY', 422, 'Vy không nghĩ ra ý tưởng nào từ chủ đề này, hãy viết rõ hơn');
+            if (ideas.length === 0) throw new DomainError('AI_IDEAS_EMPTY', 422, `${COWORKERS.marketing} không nghĩ ra ý tưởng nào từ chủ đề này, hãy viết rõ hơn`);
             return { ideas };
           }),
         ),
@@ -1433,7 +1698,12 @@ export function createRpcHandler(
             { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
             { actor, orgId },
           );
-          const authorizeUrl = connector.authorizeUrl({ state: attempt.state, redirectUri: oauthRedirectUri(input.provider), codeChallenge: attempt.codeChallenge });
+          const authorizeUrl = connector.authorizeUrl({
+            state: attempt.state,
+            redirectUri: oauthRedirectUri(input.provider),
+            codeChallenge: attempt.codeChallenge,
+            ...(input.comments ? { comments: true } : {}),
+          });
           return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
         }),
       ),
@@ -1448,10 +1718,29 @@ export function createRpcHandler(
             { actor, orgId },
           );
           if (connector.pkce && !codeVerifier) throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
-          const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
+          // A reading connection of an ad account whose token also holds a permission to change campaigns is accepted only while the org's
+          // switch for running ads is on, and only from an owner (ADR-0043, #2294): with the one Meta app that serves reading and writing,
+          // the owner's own read login returns every permission they granted it, and refusing it then would stop reading for good; an admin
+          // who edits the dialog to ask for more must not seal a token that can spend. The link checks the switch again.
+          let spendScopesAllowed = false;
+          if (isAdProviderId(input.provider) && !isAdWriteProviderId(input.provider)) {
+            const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+            if (role === 'owner') spendScopesAllowed = (await runtime.query<{ writeEnabled: boolean }>('ads.write.state', {}, { actor, orgId })).writeEnabled;
+          }
+          const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier, ...(spendScopesAllowed ? { spendScopesAllowed } : {}) }).catch((error: unknown) => {
             throw connectorFailure(error);
           });
-          if (accounts.length === 0) throw new DomainError('CHANNEL_NO_ACCOUNTS', 422, 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này');
+          if (accounts.length === 0) {
+            throw new DomainError(
+              'CHANNEL_NO_ACCOUNTS',
+              422,
+              isAdWriteProviderId(input.provider)
+                ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để chạy quảng cáo'
+                : isAdProviderId(input.provider)
+                  ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để đọc báo cáo'
+                  : 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',
+            );
+          }
           // Each account connects in its own command, so one that fails leaves the others connected: the answer says
           // which did and which did not (#375), and only a grant where none connected is an error. A grant covering
           // more accounts than a request should connect one by one is cut, and the answer says how many were left.
@@ -1459,7 +1748,22 @@ export function createRpcHandler(
           const connections: { connectionId: string; displayName: string; reconnected: boolean }[] = [];
           const failed: { displayName: string; code: string }[] = [];
           let firstError: DomainError | null = null;
+          // A write connection is made only for an account linked for reading with a read connection that is not closed: nothing is
+          // sealed for the others (an account an owner or admin disconnected stays closed), and when none of them is ready there is
+          // nothing to connect. The attaching command checks the same again.
+          let writeReady: Set<string> | null = null;
+          if (isAdWriteProviderId(input.provider)) {
+            const ready = await runtime.query<string[]>('ads.account.write_ready', { provider: input.provider, externalAccountIds: taken.map((a) => a.externalAccountId) }, { actor, orgId });
+            writeReady = new Set(ready);
+            if (writeReady.size === 0) {
+              throw new DomainError('ADS_WRITE_NEEDS_READ', 409, 'Hãy kết nối tài khoản quảng cáo này để đọc số liệu trước, rồi mới kết nối để chạy quảng cáo');
+            }
+          }
           for (const account of taken) {
+            if (writeReady && !writeReady.has(account.externalAccountId)) {
+              failed.push({ displayName: account.displayName, code: 'ADS_WRITE_NEEDS_READ' });
+              continue;
+            }
             const sealed = broker.seal(account.secret, { orgId, provider: account.provider, externalAccountId: account.externalAccountId });
             const command: ChannelConnectInput = {
               provider: account.provider,
@@ -1468,9 +1772,50 @@ export function createRpcHandler(
               scopes: account.scopes,
               expiresAt: account.expiresAt?.toISOString() ?? null,
               credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              ...(account.grantedByHash ? { grantedByHash: account.grantedByHash } : {}),
             };
             try {
               const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+              // An ad account is also linked to the org's books as it connects (the entity the member reads by default), so
+              // its first sync starts at once; a link that is refused closes the connection it just made, which no screen would
+              // list, and the account is reported as failed. An account connected again keeps its row, history and settings.
+              if (isAdWriteProviderId(account.provider)) {
+                // A write connection hangs off the account the read connection linked, never an account of its own; one with no read
+                // link, or while the switch is off, is refused and the connection it just made is closed.
+                try {
+                  await runtime.execute(
+                    'ads.account.link_write',
+                    { connectionId: done.connectionId, grantedByHash: account.grantedByHash ?? null },
+                    { actor, orgId, idempotencyKey: `oauth-ads-link-write:${oauthStateHash(input.state)}:${done.connectionId}` },
+                  );
+                } catch (linkError) {
+                  await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+                    console.warn(`[ads] a write connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+                  });
+                  throw linkError;
+                }
+              } else if (isAdProviderId(account.provider)) {
+                try {
+                  const linked = await runtime.execute<{ refused?: 'spend_scopes' }>(
+                    'ads.account.link',
+                    { connectionId: done.connectionId, grantedByHash: account.grantedByHash ?? null },
+                    { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` },
+                  );
+                  // The link closed the connection (running ads was switched off while the person was signing in, and the token can
+                  // change campaigns); the closing is committed, so the person is told here.
+                  if (linked.refused === 'spend_scopes') {
+                    throw new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Mã truy cập này còn quyền sửa quảng cáo mà việc chạy quảng cáo đã tắt nên chưa dùng để đọc báo cáo được. Hãy gỡ ứng dụng Meta trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại');
+                  }
+                } catch (linkError) {
+                  if (!done.reconnected) {
+                    // A connection that stays with no ad account is listed nowhere: say so in the log, by code only.
+                    await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+                      console.warn(`[ads] a connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+                    });
+                  }
+                  throw linkError;
+                }
+              }
               connections.push({ connectionId: done.connectionId, displayName: account.displayName, reconnected: done.reconnected });
             } catch (error) {
               // Only a refusal of this one account lets the others go on; a failure of the server (an outage, a bug)
@@ -1498,6 +1843,61 @@ export function createRpcHandler(
       saveHours: os.calendar.saveHours.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.hours.save', input, { actor, orgId }))),
       addEvent: os.calendar.addEvent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.event.add', input, { actor, orgId }))),
       cancelEvent: os.calendar.cancelEvent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.event.cancel', input, { actor, orgId }))),
+      // Outside calendars (#2123). Providers: only those with app credentials and a credential key, so the screen shows
+      // no connect button the server could not finish.
+      providers: os.calendar.providers.handler(({ context }) =>
+        guard(async () => {
+          await resolveMembership(runtime, context.user, context.orgSlug);
+          if (!channels || channels.broker.id === 'none') return [];
+          return CALENDAR_OAUTH_PROVIDERS.filter((p) => channels.calendars?.[p] !== undefined);
+        }),
+      ),
+      connections: os.calendar.connections.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.calendar.connections', {}, { actor, orgId }))),
+      // The state and the PKCE verifier are made here; only the state's hash and the verifier reach the database.
+      connectStart: os.calendar.connectStart.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, actor, adapter } = await calendarAdapter(context, input.provider);
+          const attempt = newOAuthAttempt(adapter.pkce);
+          const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
+            'kernel.calendar.oauth_begin',
+            { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
+            { actor, orgId },
+          );
+          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: calendarRedirectUri(input.provider), codeChallenge: attempt.codeChallenge, ...(input.writeBack ? { writeBack: true } : {}) });
+          return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
+        }),
+      ),
+      // The attempt is consumed before the code is exchanged, so a code and state work once even if the exchange
+      // fails. The tokens the provider returns are sealed here and dropped; only the envelope reaches the command.
+      connectFinish: os.calendar.connectFinish.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, actor, adapter, broker } = await calendarAdapter(context, input.provider);
+          const { codeVerifier } = await runtime.execute<{ codeVerifier: string | null }>(
+            'kernel.calendar.oauth_consume',
+            { provider: input.provider, stateHash: oauthStateHash(input.state) },
+            { actor, orgId },
+          );
+          if (adapter.pkce && !codeVerifier) throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
+          const account = await adapter.exchange({ code: input.code, redirectUri: calendarRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
+            throw connectorFailure(error);
+          });
+          const sealed = broker.seal(account.secret, calendarBinding(orgId, adapter.provider, account.externalAccount));
+          return runtime.execute<{ connectionId: string; reconnected: boolean }>(
+            'kernel.calendar.connect',
+            {
+              provider: adapter.provider,
+              externalAccount: account.externalAccount,
+              displayName: account.displayName,
+              scopes: account.scopes,
+              expiresAt: account.expiresAt?.toISOString() ?? null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            },
+            { actor, orgId },
+          ).then((done) => ({ ...done, displayName: account.displayName }));
+        }),
+      ),
+      setWriteBack: os.calendar.setWriteBack.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.write_back.set', input, { actor, orgId }))),
+      disconnect: os.calendar.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.disconnect', input, { actor, orgId }))),
     },
     // Org-less: any signed-in user may look up a tax code before the org exists. Nothing is written, so no command.
     taxRegistry: {
@@ -1545,6 +1945,8 @@ export function createRpcHandler(
       timeline: os.inbox.timeline.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.proposal.timeline', input, { actor, orgId }))),
       raised: os.inbox.raised.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.raised', {}, { actor, orgId }))),
       dismiss: os.inbox.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.inbox.dismiss', input, { actor, orgId }))),
+      originals: os.inbox.originals.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.originals', {}, { actor, orgId }))),
+      dismissOriginal: os.inbox.dismissOriginal.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.inbox.original_dismiss', input, { actor, orgId }))),
       approve: os.inbox.approve.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
@@ -1581,9 +1983,10 @@ export function createRpcHandler(
       reject: os.inbox.reject.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.proposal.reject', input, { actor, orgId })),
       ),
-      // Every proposal it makes is a finance proposal, like inbox.request.
+      // Asking again for an expired proposal: a finance one (the books' module is on wherever one exists) or an Ads one (#2294;
+      // Ads depends on the kernel alone, so it can run without Finance).
       resubmit: os.inbox.resubmit.handler(({ context, input }) =>
-        inFinance(context, (orgId, actor) => {
+        inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('kernel.proposal.resubmit', rest, { actor, orgId, idempotencyKey });
         }),
@@ -1600,6 +2003,9 @@ export function createRpcHandler(
       recent: os.inbound.recent.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbound.recent', {}, { actor, orgId }))),
     },
     files: {
+      staged: os.files.staged.handler(({ context }) =>
+        inOrg(context, (orgId, actor) => runtime.query('kernel.files.staged', {}, { actor, orgId })),
+      ),
       recent: os.files.recent.handler(({ context }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.files.recent', {}, { actor, orgId })),
       ),
@@ -1623,6 +2029,8 @@ export function createRpcHandler(
       customers: os.parties.customers.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.customers.list', input, { actor, orgId })),
       ),
+      timeline: os.parties.timeline.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.timeline', input, { actor, orgId }))),
+      create: os.parties.create.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.create', input, { actor, orgId }))),
       update: os.parties.update.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.update', input, { actor, orgId }))),
       markDuplicate: os.parties.markDuplicate.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.party.mark_duplicate', input, { actor, orgId })),
@@ -1630,6 +2038,7 @@ export function createRpcHandler(
       unmarkDuplicate: os.parties.unmarkDuplicate.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.party.unmark_duplicate', input, { actor, orgId })),
       ),
+      setCompany: os.parties.setCompany.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.set_company', input, { actor, orgId }))),
       duplicateHints: os.parties.duplicateHints.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.duplicate_hints', {}, { actor, orgId }))),
     },
     documents: {
@@ -1642,6 +2051,98 @@ export function createRpcHandler(
       list: os.notifications.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.notification.list', {}, { actor, orgId }))),
       read: os.notifications.read.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.read', input, { actor, orgId }))),
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
+    },
+    conversations: {
+      list: os.conversations.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.list', input, { actor, orgId }))),
+      counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
+      get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
+      reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
+      replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
+        inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_privately', input, { actor, orgId })),
+      ),
+      settle: os.conversations.settle.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_settle', input, { actor, orgId }))),
+      hide: os.conversations.hide.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.hide', input, { actor, orgId }))),
+      assign: os.conversations.assign.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.assign', input, { actor, orgId }))),
+      resolve: os.conversations.resolve.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.resolve', input, { actor, orgId }))),
+      reopen: os.conversations.reopen.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reopen', input, { actor, orgId }))),
+      note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
+      linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
+      setIntent: os.conversations.setIntent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_intent', input, { actor, orgId }))),
+      // The Inbox's suggestions (CV3, #2306): the thread's text is read in the member's own transaction, then the model is called outside it, through the
+      // AI meter. Nothing is stored; a model that is off, refused or failing leaves no suggestion and no error.
+      // The org's switch for AI on its customers' messages (conversation_setting.auto_draft, ADR-0041 section 8) covers these too: with it off no word of a
+      // customer or name of a contact reaches the model, and the answer is `off`.
+      suggestIntents: os.conversations.suggestIntents.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+          if (!autoDraft) return { ai: 'off' as const, suggestions: [] };
+          return suggestIntents(conversationAi, orgId, actor.userId, await runtime.query<IntentSource[]>('kernel.conversation.intent_source', input, { actor, orgId }));
+        }),
+      ),
+      // The contacts by phone come first whatever the switch says (no model reads anything); only the ranking of name matches needs it.
+      contactMatches: os.conversations.contactMatches.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const found = await runtime.query<ContactCandidates>('kernel.conversation.contact_candidates', input, { actor, orgId });
+          const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+          return matchContacts(autoDraft ? conversationAi : { ...conversationAi, reader: null }, orgId, actor.userId, found);
+        }),
+      ),
+      markRead: os.conversations.markRead.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.mark_read', input, { actor, orgId }))),
+      // The inbox (CV3, #2306): the "you are replying" marker and the availability switch.
+      composing: os.conversations.composing.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.composing', input, { actor, orgId }))),
+      availability: os.conversations.availability.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.availability', {}, { actor, orgId }))),
+      setAvailability: os.conversations.setAvailability.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_availability', input, { actor, orgId }))),
+      // The command checks the connection and the role and returns the event; the body then takes the intake's own way, parked
+      // for the worker with no tenant context, as a platform's notice does.
+      retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
+      setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
+      eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
+      // The sales coworker's "soạn" button: asking is rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since each ask leads to a
+      // paid model call in the worker; no counter of its own.
+      draftRequest: os.conversations.draftRequest.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const ticket = drafts.take(orgId, actor.type === 'user' ? actor.userId : 'system');
+          if (!ticket.allowed) {
+            throw new DomainError('RATE_LIMITED', 429, ticket.reason === 'busy' ? 'Đang chờ AI trả lời, hãy đợi xong rồi thử tiếp' : 'Đã dùng AI nhiều lần trong phút này, hãy thử lại sau ít phút', {
+              retryAfterSeconds: ticket.retryAfterSeconds,
+            });
+          }
+          try {
+            return await runtime.execute('kernel.conversation.draft_request', input, { actor, orgId });
+          } finally {
+            ticket.release();
+          }
+        }),
+      ),
+      draftDiscard: os.conversations.draftDiscard.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.draft_discard', input, { actor, orgId }))),
+      autoDraft: os.conversations.autoDraft.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.auto_draft', {}, { actor, orgId }))),
+      setAutoDraft: os.conversations.setAutoDraft.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.auto_draft_set', input, { actor, orgId }))),
+      savedReplies: os.conversations.savedReplies.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.saved_reply_list', input, { actor, orgId }))),
+      createSavedReply: os.conversations.createSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_create', input, { actor, orgId }))),
+      updateSavedReply: os.conversations.updateSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_update', input, { actor, orgId }))),
+      deleteSavedReply: os.conversations.deleteSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_delete', input, { actor, orgId }))),
+      sandboxComment: os.conversations.sandboxComment.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          // The intake is shared by every org, so a demo comment is limited per org: thirty a minute.
+          const stamp = Date.now();
+          const recent = (sandboxStamps.get(orgId) ?? []).filter((t) => stamp - t < 60_000);
+          if (recent.length >= 30) throw new ORPCError('TOO_MANY_REQUESTS', { status: 429, message: 'Tạo bình luận thử quá nhanh, hãy thử lại sau một phút' });
+          sandboxStamps.set(orgId, [...recent, stamp]);
+          const made = await runtime.execute<{ accountId: string; events: ConversationEvent[] }>('kernel.conversation.sandbox_comment', input, { actor, orgId });
+          const body = sandboxNoticeBody({ ...made, connectionId: input.connectionId });
+          await runtime.orgless(async (db) => {
+            await sql`SELECT crove_kernel.conversation_inbound_enqueue('sandbox', ${body})`.execute(db);
+          });
+          return { queued: true as const };
+        }),
+      ),
+    },
+    savedViews: {
+      list: os.savedViews.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.saved_view.list', input, { actor, orgId }))),
+      save: os.savedViews.save.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.save', input, { actor, orgId }))),
+      rename: os.savedViews.rename.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.rename', input, { actor, orgId }))),
+      setShared: os.savedViews.setShared.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.set_shared', input, { actor, orgId }))),
+      remove: os.savedViews.remove.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.delete', input, { actor, orgId }))),
     },
     search: {
       query: os.search.query.handler(({ context, input }) =>
@@ -1694,6 +2195,225 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => runtime.execute('finance.misa_goods_code.remove', input, { actor, orgId })),
       ),
     },
+    bankPartyRules: {
+      list: os.bankPartyRules.list.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank_party_rules.list', input ?? {}, { actor, orgId })),
+      ),
+      remove: os.bankPartyRules.remove.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.execute('finance.bank_party_rule.remove', input, { actor, orgId })),
+      ),
+    },
+    financeOverview: {
+      get: os.financeOverview.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceOverview>('finance.overview', input, { actor, orgId }))),
+      // The sentence is asked of the model outside any transaction, from the figures the overview read in the member's own one (their legal entities only).
+      explain: os.financeOverview.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const overview = await runtime.query<FinanceOverview>('finance.overview', ask, { actor, orgId });
+          return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
+        }),
+      ),
+    },
+    paymentReminders: {
+      list: os.paymentReminders.list.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminders.list', input ?? {}, { actor, orgId })),
+      ),
+      draft: os.paymentReminders.draft.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminder.draft', input, { actor, orgId })),
+      ),
+      send: os.paymentReminders.send.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.execute('finance.payment_reminder.send', input, { actor, orgId })),
+      ),
+      // The wording is asked of the model outside any transaction, from the facts the draft read in the member's own one (their legal entities only).
+      wording: os.paymentReminders.wording.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const draft = await runtime.query<PaymentReminderDraft>('finance.payment_reminder.draft', { partyId: input.partyId, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) }, { actor, orgId });
+          return wordReminder(reminderAi, orgId, actor.userId, { level: draft.level, lang: draft.lang, org: draft.org }, input.hint);
+        }),
+      ),
+      settings: {
+        get: os.paymentReminders.settings.get.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.collection_setting.get', {}, { actor, orgId }))),
+        set: os.paymentReminders.settings.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.collection_setting.set', input, { actor, orgId }))),
+      },
+      customer: {
+        get: os.paymentReminders.customer.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.customer_collection.get', input, { actor, orgId }))),
+        set: os.paymentReminders.customer.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.customer_collection.set', input, { actor, orgId }))),
+      },
+    },
+    einvoice: {
+      status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
+      // What the connect form may offer: the providers this deployment enabled, never a credential or a host.
+      providers: os.einvoice.providers.handler(({ context }) =>
+        inFinance(context, async () => Object.entries(channels?.einvoiceProviders ?? {}).map(([id, provider]) => ({ id, offline: provider.hosts.length === 0, connectFields: [...provider.connectFields] }))),
+      ),
+      // The org's own account at a provider (ADR-0044 point 2). The fields it types are sealed here, once; the command gets the envelope, never the secret, and only the
+      // worker opens it. A provider whose signature needs the seller's own token is refused before anything is sealed.
+      connections: {
+        list: os.einvoice.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_connection.list', {}, { actor, orgId }))),
+        connect: os.einvoice.connections.connect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được nhà cung cấp hóa đơn điện tử');
+            const provider = einvoiceProviderOf(input.provider);
+            if (!provider || !channels) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử này chưa được bật');
+            if (provider.capabilities.signing === 'seller_token') {
+              throw new DomainError('EINVOICE_SIGNING_TOKEN', 422, 'Nhà cung cấp này ký hóa đơn bằng chữ ký số nằm trên máy của người bán, Ludy không dùng được cách đó; hãy dùng nhà cung cấp ký trên máy chủ của họ');
+            }
+            const fields = Object.keys(input.fields);
+            if (fields.length !== provider.connectFields.length || !provider.connectFields.every((name) => Object.hasOwn(input.fields, name))) {
+              throw new DomainError('EINVOICE_FIELDS', 422, 'Hãy nhập đủ các thông tin mà nhà cung cấp yêu cầu, không thêm thông tin khác');
+            }
+            const seller = await runtime.query<{ legalEntityId: string; sellerTaxCode: string }>(
+              'finance.einvoice_connection.target',
+              { legalEntityId: input.legalEntityId, sellerTaxCode: input.sellerTaxCode },
+              { actor, orgId },
+            );
+            const channelProvider = `einvoice_${input.provider}`;
+            // The account is the entity's under this provider, so a second connect of it is the same connection. The seller's tax code is not in it, nor in the display name:
+            // the channel row stays as history after a disconnect, and a household's tax code is its owner's national ID. Only the finance row holds the code, and it goes with the
+            // disconnect.
+            const externalAccountId = seller.legalEntityId;
+            // The offline provider has no account: it is sealed with its own fixed word, so a credential row exists for the flow and holds nothing of the org's.
+            const secret = provider.hosts.length === 0 ? SANDBOX_EINVOICE_SECRET : JSON.stringify(input.fields);
+            const sealed = channels.broker.seal(secret, { orgId, provider: channelProvider, externalAccountId });
+            const connected = await runtime.execute<{ id: string }>(
+              'finance.einvoice_connection.connect',
+              {
+                provider: input.provider,
+                legalEntityId: seller.legalEntityId,
+                sellerTaxCode: seller.sellerTaxCode,
+                displayName: provider.hosts.length === 0 ? 'Nhà cung cấp hóa đơn thử nghiệm' : input.provider,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              },
+              { actor, orgId },
+            );
+            return { id: connected.id };
+          }),
+        ),
+        test: os.einvoice.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối hóa đơn điện tử');
+            const rows = await runtime.query<EInvoiceConnection[]>('finance.einvoice_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('EINVOICE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối hóa đơn điện tử này');
+            const provider = einvoiceProviderOf(row.provider);
+            if (!provider) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử này chưa được bật');
+            // The API never opens a credential: a provider that is reached over the network is tested by the worker (a later build, with its adapter). The offline
+            // provider reaches no host and needs no credential, so its test runs here.
+            if (provider.hosts.length > 0) throw new DomainError('EINVOICE_PROVIDER_NOT_READY', 503, 'Nhà cung cấp này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            let state: ConnectionState;
+            let templates: EInvoiceSeriesTemplate[] = [];
+            try {
+              state = await provider.testConnection(SANDBOX_EINVOICE_SECRET);
+              if (state === 'works') templates = await provider.listTemplates(SANDBOX_EINVOICE_SECRET);
+            } catch (error) {
+              state = error instanceof EInvoiceProviderError && error.kind === 'credentials' ? 'wrong_credentials' : 'unreachable';
+            }
+            return runtime.execute('finance.einvoice_connection.record_test', { id: row.id, state, templates }, { actor, orgId });
+          }),
+        ),
+        disconnect: os.einvoice.connections.disconnect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới ngắt được kết nối hóa đơn điện tử');
+            const rows = await runtime.query<EInvoiceConnection[]>('finance.einvoice_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) return { removed: false };
+            // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
+            await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
+            return runtime.execute<{ removed: boolean }>('finance.einvoice_connection.unlink', { id: row.id }, { actor, orgId });
+          }),
+        ),
+      },
+      series: {
+        list: os.einvoice.series.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_series.list', {}, { actor, orgId }))),
+        sync: os.einvoice.series.sync.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            if (!einvoiceProviderOf('sandbox')) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử thử nghiệm chưa được bật');
+            return runtime.execute('finance.einvoice_series.sync', input, { actor, orgId });
+          }),
+        ),
+        setDefault: os.einvoice.series.setDefault.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_series.set_default', input, { actor, orgId }))),
+      },
+      drafts: {
+        list: os.einvoice.drafts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.list', input ?? {}, { actor, orgId }))),
+        get: os.einvoice.drafts.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.get', input, { actor, orgId }))),
+        check: os.einvoice.drafts.check.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.check', input, { actor, orgId }))),
+        save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),
+        delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
+        issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
+      },
+    },
+    marketplace: {
+      staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
+      preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
+      confirm: os.marketplace.confirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      reject: os.marketplace.reject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.reject', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      orders: os.marketplace.orders.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.orders', input ?? {}, { actor, orgId }))),
+      unassigned: os.marketplace.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.marketplace.assign.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      unassign: os.marketplace.unassign.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.unassign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+    },
+    stock: {
+      items: {
+        list: os.stock.items.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_item.list', input ?? {}, { actor, orgId }))),
+        save: os.stock.items.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_item.save', input, { actor, orgId }))),
+        setActive: os.stock.items.setActive.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_item.set_active', input, { actor, orgId }))),
+      },
+      aliases: {
+        teach: os.stock.aliases.teach.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_alias.teach', input, { actor, orgId }))),
+        forget: os.stock.aliases.forget.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_alias.forget', input, { actor, orgId }))),
+      },
+      moves: {
+        list: os.stock.moves.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_move.list', input, { actor, orgId }))),
+        reverse: os.stock.moves.reverse.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_move.reverse', input, { actor, orgId }))),
+      },
+      unassigned: os.stock.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.stock.assign.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.assign', input, { actor, orgId }))),
+      report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
+      card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
+      periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
+      closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
+      // The coworker's reads (#2514): the model is asked outside any transaction, from what the member's own read said it may see.
+      suggest: os.stock.suggest.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<SuggestSource>('finance.stock.suggest_source', input, { actor, orgId });
+          return suggestItems(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
+        }),
+      ),
+      low: os.stock.low.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.low', input ?? {}, { actor, orgId }))),
+      reorderDraft: os.stock.reorderDraft.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<ReorderSource>('finance.stock.reorder_source', input, { actor, orgId });
+          return draftReorder(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi', input.hint);
+        }),
+      ),
+      counts: {
+        list: os.stock.counts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.list', input ?? {}, { actor, orgId }))),
+        preview: os.stock.counts.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.preview', input, { actor, orgId }))),
+        create: os.stock.counts.create.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.create', input, { actor, orgId }))),
+        cancel: os.stock.counts.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.cancel', input, { actor, orgId }))),
+        confirmEmpty: os.stock.counts.confirmEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.confirm_empty', input, { actor, orgId }))),
+      },
+    },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.categorization_rules.list', input ?? {}, { actor, orgId })),
@@ -1708,6 +2428,9 @@ export function createRpcHandler(
     vat: {
       period: os.vat.period.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vat.period', input, { actor, orgId })),
+      ),
+      salesNumberGaps: os.vat.salesNumberGaps.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.vat.sales_number_gaps', input, { actor, orgId })),
       ),
       markPayment: os.vat.markPayment.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.execute('finance.vat.payment_mark', input, { actor, orgId })),
@@ -1813,6 +2536,21 @@ export function createRpcHandler(
       preview: os.bank.preview.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.preview', input, { actor, orgId })),
       ),
+      statementLines: os.bank.statementLines.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.statement_lines', input, { actor, orgId })),
+      ),
+      statementConfirm: os.bank.statementConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank.statement_confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      statementReject: os.bank.statementReject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank.statement_reject', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
       import: os.bank.import.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
@@ -1828,9 +2566,259 @@ export function createRpcHandler(
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),
       ),
+      matchGroups: os.bank.matchGroups.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.match_groups', input, { actor, orgId })),
+      ),
+      matched: os.bank.matched.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.matched', input, { actor, orgId })),
+      ),
       openLines: os.bank.openLines.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.open_lines', input ?? {}, { actor, orgId })),
       ),
+    },
+    // Bank feeds (ADR-0039, #2044). The sandbox's secret is made and sealed here; the worker opens it and lists the
+    // accounts the login reaches (part 2b), so the API never uses a credential. The commands check the role again.
+    bankFeeds: {
+      accounts: os.bankFeeds.accounts.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_feed.accounts', {}, { actor, orgId }))),
+      connections: os.bankFeeds.connections.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_feed.connections', {}, { actor, orgId }))),
+      listed: os.bankFeeds.listed.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_feed.listed', input, { actor, orgId }))),
+      connectSandbox: os.bankFeeds.connectSandbox.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được nguồn giao dịch ngân hàng');
+          if (!channels?.bankFeedSandbox) throw new DomainError('BANK_FEED_DISABLED', 404, 'Nguồn giao dịch ngân hàng thử nghiệm chưa được bật');
+          const login = sandboxBankFeed().connect(input.displayName);
+          const sealed = channels.broker.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+          const command: ChannelConnectInput = {
+            provider: login.provider,
+            externalAccountId: login.externalAccountId,
+            displayName: login.displayName,
+            scopes: [],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          return { connectionId };
+        }),
+      ),
+      map: os.bankFeeds.map.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank_feed.map', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      unmap: os.bankFeeds.unmap.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank_feed.unmap', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+    },
+    bankAccountNumbers: {
+      list: os.bankAccountNumbers.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_account_number.list', {}, { actor, orgId }))),
+      set: os.bankAccountNumbers.set.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank_account_number.set', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      clear: os.bankAccountNumbers.clear.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank_account_number.clear', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+    },
+    // Ads (ADR-0040, #2217). The sandbox's secret is made and sealed here, and the account linked at once; the API never
+    // opens a credential, and the first sync (the worker's) reads the platform. The commands check the role again.
+    ads: {
+      accounts: os.ads.accounts.handler(({ context }) =>
+        inAds(context, async (orgId, actor) => {
+          const rows = await runtime.query<Array<Omit<AdAccountView, 'resultKinds'>>>('ads.account.list', {}, { actor, orgId });
+          // The result keys an owner may pick come from the platform's adapter, which the module does not have.
+          return rows.map((row) => ({ ...row, resultKinds: [...(channels?.adsPlatforms?.[row.provider]?.capabilities.resultKinds ?? [])] }));
+        }),
+      ),
+      connectSandbox: os.ads.connectSandbox.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được tài khoản quảng cáo');
+          if (!channels || !Object.hasOwn(channels.adsPlatforms ?? {}, 'sandbox_ads')) throw new DomainError('ADS_SANDBOX_DISABLED', 404, 'Nền tảng quảng cáo thử nghiệm chưa được bật');
+          // The account derives from the request's key, so a retry of this call is the same account (the same connection, the same link).
+          const login = sandboxAdPlatform().connect({ displayName: input.displayName, key: input.idempotencyKey, ...(input.currency ? { currency: input.currency } : {}) });
+          const sealed = channels.broker.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+          const command: ChannelConnectInput = {
+            provider: login.provider,
+            externalAccountId: login.externalAccountId,
+            displayName: login.displayName,
+            scopes: [],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId, reconnected } = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+          try {
+            const { adAccountId } = await runtime.execute<{ adAccountId: string }>(
+              'ads.account.link',
+              { connectionId, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) },
+              { actor, orgId, idempotencyKey: input.idempotencyKey },
+            );
+            return { connectionId, adAccountId };
+          } catch (error) {
+            // The link was refused (an entity to choose, one the caller may not use): no connection is left behind that no screen
+            // lists, with its sealed credential. A connection this call only reconnected (a retry of a call whose answer was
+            // lost) is the account's own, with its history: it stays.
+            if (!reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
+            throw error;
+          }
+        }),
+      ),
+      // The offline write connection of a sandbox account (W0b): its own sealed token with the permission that can change campaigns,
+      // attached to the account the read connection linked. The owner's, and only while the org's switch is on (the command checks it).
+      connectSandboxWrite: os.ads.connectSandboxWrite.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới kết nối được để chạy quảng cáo');
+          if (!channels || !Object.hasOwn(channels.adsPlatforms ?? {}, 'sandbox_ads')) throw new DomainError('ADS_SANDBOX_DISABLED', 404, 'Nền tảng quảng cáo thử nghiệm chưa được bật');
+          const target = await runtime.query<{ provider: string; externalAccountId: string; currency: string | null; name: string }>('ads.account.write_target', { adAccountId: input.adAccountId }, { actor, orgId });
+          if (target.provider !== 'sandbox_ads') throw new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản quảng cáo thử nghiệm này');
+          // The sandbox account's currency is known after its first sync; the writer's secret only carries it for show, so an account that has
+          // not synced yet takes the sandbox's default.
+          const login = sandboxWriteLogin({ externalAccountId: target.externalAccountId, currency: target.currency ?? 'VND' });
+          const sealed = channels.broker.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+          const command: ChannelConnectInput = {
+            provider: login.provider,
+            externalAccountId: login.externalAccountId,
+            displayName: target.name,
+            scopes: [...login.scopes],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          try {
+            const { adAccountId } = await runtime.execute<{ adAccountId: string }>('ads.account.link_write', { connectionId }, { actor, orgId, idempotencyKey: input.idempotencyKey });
+            return { connectionId, adAccountId };
+          } catch (error) {
+            // Refused (the switch is off, the account has no read connection any more): no write connection is left behind with its
+            // sealed token, one this call only reconnected included. A close that fails is still found by the switch-off, which closes
+            // every write connection of the org whether or not an account refers to it.
+            await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+              console.warn(`[ads] a write connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+            });
+            throw error;
+          }
+        }),
+      ),
+      // Closes an account's read connection and its write connection, dropping both sealed tokens (owners and admins).
+      disconnectAccount: os.ads.disconnectAccount.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => runtime.execute('ads.account.disconnect', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),
+      ),
+      configure: os.ads.configure.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.account.configure', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      requestSync: os.ads.requestSync.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.sync.request', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
+      // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins.
+      flags: os.ads.flags.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flags', {}, { actor, orgId }))),
+      // The deterministic 7-day side-by-side comparison note across connected platforms (#2220): every member who reads Ads.
+      weeklyNote: os.ads.weeklyNote.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.weekly_note', {}, { actor, orgId }))),
+      // The thresholds of those flags (#2378): owners and admins read and set them.
+      flagSettings: os.ads.flagSettings.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flag_settings', {}, { actor, orgId }))),
+      setFlagSettings: os.ads.setFlagSettings.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.flag_settings_set', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Campaign drafts (W1, #2295): built and checked here, nothing leaves Ludy; asking for approval is requestChange (campaign_launch).
+      campaignDrafts: os.ads.campaignDrafts.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.drafts', input, { actor, orgId }))),
+      campaignDraft: os.ads.campaignDraft.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.draft', input, { actor, orgId }))),
+      saveCampaignDraft: os.ads.saveCampaignDraft.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.campaign.draft_discard', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Cancelling a launch that has not started (W2-2): owners and admins; the approved plan's commitment against the caps is released.
+      cancelLaunch: os.ads.cancelLaunch.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.launch.cancel', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Stopping a launch that has started (W2-4a): owners and admins; its commitment against the caps stays to at least today and its objects at the platform are paused
+      // afterwards, from the queue (never in this request).
+      stopLaunch: os.ads.stopLaunch.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Running a launch that needs attention again (W2-4b): owners and admins; the request is stamped here and the launch job takes it (never a platform call in this request).
+      retryLaunch: os.ads.retryLaunch.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.launch.retry', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Asking the AI coworker for a draft (W1b): rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since
+      // each ask leads to a paid model call in the worker; no counter of its own. The answer, or why there is none, comes back through campaignRequests.
+      campaignRequests: os.ads.campaignRequests.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.requests', input, { actor, orgId }))),
+      requestCampaignDraft: os.ads.requestCampaignDraft.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const ticket = drafts.take(orgId, actor.type === 'user' ? actor.userId : 'system');
+          if (!ticket.allowed) {
+            throw new DomainError('RATE_LIMITED', 429, ticket.reason === 'busy' ? 'Đang chờ AI trả lời, hãy đợi xong rồi thử tiếp' : 'Đã dùng AI nhiều lần trong phút này, hãy thử lại sau ít phút', {
+              retryAfterSeconds: ticket.retryAfterSeconds,
+            });
+          }
+          try {
+            const { idempotencyKey, ...rest } = input;
+            return await runtime.execute('ads.campaign.draft_request', rest, { actor, orgId, idempotencyKey });
+          } finally {
+            ticket.release();
+          }
+        }),
+      ),
+      writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
+      // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
+      requestChange: os.ads.requestChange.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => runtime.execute('kernel.proposal.request', adsRequestOf(input), { actor, orgId, idempotencyKey: input.idempotencyKey })),
+      ),
+      proposal: os.ads.proposal.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.proposal.change', input, { actor, orgId }))),
+      lowerCap: os.ads.lowerCap.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.cap.lower', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      writeDisable: os.ads.writeDisable.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.write.disable', { sharedApp: channels?.adsWriteAppShared ?? true }, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
+      disableAccountWrite: os.ads.disableAccountWrite.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => runtime.execute('ads.account.disable_write', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),
+      ),
+      pauseAll: os.ads.pauseAll.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.pause_all', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
+      // An owner's or admin's deletion of an account's stored figures and sync log (#2219).
+      deleteHistory: os.ads.deleteHistory.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.account.delete_history', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      summary: os.ads.summary.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.spend.summary', input, { actor, orgId }))),
+      syncRuns: os.ads.syncRuns.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.sync.runs', input, { actor, orgId }))),
     },
     // AI agents (ADR-0029). The kernel module owns them; a template of a module that is off answers MODULE_DISABLED.
     chart: {
@@ -1852,12 +2840,21 @@ export function createRpcHandler(
       stop: os.agents.stop.handler(({ context, input }) => keyed(context, 'kernel.agent.kill_switch.engage', input)),
       release: os.agents.release.handler(({ context, input }) => keyed(context, 'kernel.agent.kill_switch.release', input)),
     },
+    ai: {
+      meter: os.ai.meter.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => ({ aiOn: aiEnabled, ...(await runtime.query<Omit<z.infer<typeof zAiMeter>, 'aiOn'>>('kernel.ai.meter.status', input, { actor, orgId })) })),
+      ),
+      usage: os.ai.usage.handler(({ context }) =>
+        inOrg(context, async (orgId, actor) => ({ aiOn: aiEnabled, ...(await runtime.query<Omit<z.infer<typeof zAiUsageReport>, 'aiOn'>>('kernel.ai.usage.report', {}, { actor, orgId })) })),
+      ),
+    },
     tasks: {
       list: os.tasks.list.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => (await runtime.query<{ tasks: z.infer<typeof zTask>[] }>('kernel.task.list', input, { actor, orgId })).tasks),
       ),
       get: os.tasks.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.task.get', input, { actor, orgId }))),
       create: os.tasks.create.handler(({ context, input }) => keyed(context, 'kernel.task.create', input)),
+      update: os.tasks.update.handler(({ context, input }) => keyed(context, 'kernel.task.update', input)),
       comment: os.tasks.comment.handler(({ context, input }) => keyed(context, 'kernel.task.comment', input)),
       setStatus: os.tasks.setStatus.handler(({ context, input }) => keyed(context, 'kernel.task.set_status', input)),
     },

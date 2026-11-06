@@ -3,11 +3,15 @@
 
 // The kinds a member can turn off, by module, in the order the settings list them.
 export const NOTIFICATION_KINDS = {
-  // A task that came to me because its holder can no longer read its legal entity (#1799).
-  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted'],
+  // A task given or moved to my seat (#2588); a task that came to me because its holder can no longer read its legal entity (#1799); an original e-invoice attached
+  // to a posted invoice that differs from it or is not verified (#2335).
+  // A conversation that is New and needs an answer (CV3, #2306): told to the assignee, else the available members who read it, else owners and admins.
+  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new'],
   finance: ['finance.bank_attention', 'finance.portal_attention', 'finance.period_closing'],
   // A to-do's reminder (#1675): it holds no text, the to-do shows in My work.
   notes: ['notes.todo_due'],
+  // An ad account whose connection stopped, so its updates are paused until an owner or admin connects it again (#2219).
+  ads: ['kernel.channel_expired'],
 } as const;
 export type KnownNotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS][number];
 
@@ -32,11 +36,15 @@ export type NotificationTarget =
   | { to: 'proposal'; id: string }
   | { to: 'inbox' }
   | { to: 'bank'; account?: string }
-  | { to: 'portal' }
+  | { to: 'portal'; sale?: true }
   | { to: 'ledger' }
   | { to: 'myWork' }
   | { to: 'task'; id: string }
-  | { to: 'tasks' };
+  | { to: 'conversation'; id: string }
+  | { to: 'conversations' }
+  | { to: 'tasks' }
+  | { to: 'ads' }
+  | { to: 'agents' };
 
 // What an item opens: the proposal waiting for approval, the Inbox (where a file that failed to read is listed), the
 // bank account with lines to look at, the tax-portal check, the ledger, where the period is locked, or My work, where
@@ -44,19 +52,30 @@ export type NotificationTarget =
 export function notificationTarget(item: { kind: string; subjectId: string | null; detail: Record<string, string> }): NotificationTarget | null {
   switch (item.kind) {
     case 'kernel.approval_waiting':
+    case 'kernel.original_flagged':
       return item.subjectId ? { to: 'proposal', id: item.subjectId } : { to: 'inbox' };
     case 'kernel.file_unreadable':
       return { to: 'inbox' };
+    case 'kernel.task_assigned':
     case 'kernel.task_rerouted':
       return item.subjectId ? { to: 'task', id: item.subjectId } : { to: 'tasks' };
+    // The thread that needs an answer opens in the Inbox, else the Inbox's New tab.
+    case 'kernel.conversation_new':
+      return item.subjectId ? { to: 'conversation', id: item.subjectId } : { to: 'conversations' };
     case 'finance.bank_attention':
       return item.detail.bankAccount ? { to: 'bank', account: item.detail.bankAccount } : { to: 'bank' };
     case 'finance.portal_attention':
-      return { to: 'portal' };
+      // A sales list's notification (#2141) opens the sales tab.
+      return item.detail.direction === 'sale' ? { to: 'portal', sale: true } : { to: 'portal' };
     case 'finance.period_closing':
       return { to: 'ledger' };
     case 'notes.todo_due':
       return { to: 'myWork' };
+    case 'kernel.channel_expired':
+      return { to: 'ads' };
+    // The AI budget's notice (#2382) opens the page with this month's use and the budgets, where an owner raises one.
+    case 'kernel.ai_budget':
+      return { to: 'agents' };
     default:
       return null;
   }

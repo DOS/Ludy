@@ -14,6 +14,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
+import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -245,17 +246,17 @@ function Item({ s, names, labelNames }: { s: Schedule; names: Map<string, string
         <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={() => toggle.mutate()}>
           {s.paused ? t('resume') : t('pause')}
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 px-2 text-xs"
+        <ConfirmDialog
+          render={<Button size="sm" variant="ghost" className="h-7 px-2 text-xs" />}
           disabled={busy}
-          onClick={() => {
-            if (window.confirm(t('removeConfirm'))) remove.mutate();
-          }}
+          title={t('removeTitle')}
+          description={t('removeConfirm')}
+          confirm={t('remove')}
+          destructive
+          onConfirm={() => remove.mutate()}
         >
           {t('remove')}
-        </Button>
+        </ConfirmDialog>
       </div>
       {test.data && <p className="text-xs text-muted-foreground">{test.data.suppressed > 0 ? t('testSuppressed') : t('testQueued')}</p>}
       {error && <ErrorText>{errorMessage(error)}</ErrorText>}

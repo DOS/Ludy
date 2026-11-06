@@ -14,7 +14,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { ClientSocialFigures } from '../components/client-social.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
-import { DataTable, Empty, ErrorText, Logo, OrgLeftNotice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, Logo, OrgLeftNotice, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { LocaleSwitcher, useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
@@ -90,8 +90,7 @@ function TaxCalendarRow({ row, periodLabel }: { row: TaxDueRow; periodLabel: (pe
       <TableCell className="px-4 py-3 text-muted-foreground">{periodLabel(row.period)}</TableCell>
       <TableCell className="px-4 py-3 text-right">
         {markFor ? (
-          <Button size="sm" variant="outline" onClick={() => done.mutate()} disabled={done.isPending}>
-            {done.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={done.isPending} size="sm" variant="outline" onClick={() => done.mutate()}>
             {tt('markDone')}
           </Button>
         ) : (

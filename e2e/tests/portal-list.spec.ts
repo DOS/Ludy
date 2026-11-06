@@ -97,7 +97,7 @@ test('import the tax portal purchase list and see which invoices Crove lacks', a
 
   await test.step('upload a purchase e-invoice; it waits in the Inbox', async () => {
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: SELLER }) })).toBeVisible({ timeout: 60_000 });
   });
@@ -126,7 +126,7 @@ test('import the tax portal purchase list and see which invoices Crove lacks', a
     await expect(missing.getByRole('row').filter({ hasText: '1C26TAB-5555' })).toContainText('CÔNG TY TNHH BÊN BÁN KHÁC');
     await expect(missing.getByText('Hãy xin người bán tệp XML', { exact: false })).toBeVisible();
 
-    const inbox = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Đang chờ duyệt trong Hộp thư (1)' }) });
+    const inbox = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Chứng từ đang chờ duyệt (1)' }) });
     const waiting = inbox.getByRole('row').filter({ hasText: '1C26TAB-1234' });
     await expect(waiting).toContainText(SELLER_TAX_CODE);
     await expect(waiting.getByRole('link', { name: 'Mở đề xuất' })).toBeVisible();

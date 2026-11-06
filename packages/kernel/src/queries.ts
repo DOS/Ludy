@@ -1,15 +1,19 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
 import {
+  ANOMALY_CHECK_PREFIX,
   JOURNAL_VOUCHER_KIND,
   VOUCHER_KIND,
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
   zMoney,
+  zProposalSignature,
   zProposalStatus,
+  UNCLASSIFIED_ACCOUNT_CODE,
   zPurchaseProposal,
   zSignatureStatus,
   zVoucherCode,
@@ -22,20 +26,24 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
-import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction } from './extraction.ts';
+import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
-import { fileStatuses } from './file-status.ts';
+import { fileStatuses, seesEveryEntity as unscoped } from './file-status.ts';
 import { agentQueries } from './agents.ts';
 import { channelQueries } from './channels.ts';
+import { conversationQueries } from './conversations.ts';
 import { inviteQueries } from './invites.ts';
 import { mailQueries } from './mail.ts';
 import { timelineQueries } from './timeline.ts';
 import { auditLogQueries } from './audit-log.ts';
 import { notificationQueries } from './notifications.ts';
 import { inboxItemQueries } from './inbox-items.ts';
+import { savedViewQueries } from './saved-views.ts';
+import { todayMailQueries } from './today-mail.ts';
 import { offboardingQueries } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { orgOverviewQuery, RECENT_FILES, type OverviewContribution } from './overview.ts';
+import { todayQuery } from './today.ts';
 import { proposalReminderQueries } from './proposal-reminders.ts';
 import { mayResubmit, resubmitSource } from './proposal-resubmit.ts';
 import { taxCalendarQueries } from './tax-calendar.ts';
@@ -44,6 +52,7 @@ import { numberingQueries } from './numbering.ts';
 import { myPermissions, roleQueries } from './roles.ts';
 import { calendarQueries } from './calendar.ts';
 import { partyQueries } from './parties.ts';
+import { aiBudgetQueries } from './ai-budget.ts';
 import { usageQueries } from './usage-limits.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -60,7 +69,7 @@ export function orgDetailQuery(options: OrgDetailOptions) {
     handler: async (ctx) => {
       const tenant = await ctx.trx
         .selectFrom('crove_kernel.tenant')
-        .select(['org_id', 'slug', 'name', 'inbound_token', 'tax_code', 'vat_filing_period', 'address', 'contact_email', 'approval_preset', 'approval_policy_version'])
+        .select(['org_id', 'slug', 'name', 'inbound_token', 'conversation_token', 'tax_code', 'vat_filing_period', 'address', 'contact_email', 'approval_preset', 'approval_policy_version'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();
       const memberRows = await ctx.trx
@@ -93,6 +102,8 @@ export function orgDetailQuery(options: OrgDetailOptions) {
         address: tenant.address,
         contactEmail: tenant.contact_email,
         inboundAddress: seesInbound ? `${tenant.inbound_token}@${options.inboundDomain}` : null,
+        // The Inbox's own address (#2439), issued the first time an owner or admin opens the Inbox; null until then.
+        conversationAddress: seesInbound && tenant.conversation_token ? `${tenant.conversation_token}@${options.inboundDomain}` : null,
         inboundDroppedCount,
         members: members.map((m) => ({ userId: m.user_id, email: m.email, displayName: m.display_name, role: m.role })),
         // What the signed-in member holds through org-wide role assignments (#1279).
@@ -104,8 +115,14 @@ export function orgDetailQuery(options: OrgDetailOptions) {
   });
 }
 
-function countChecks(payload: PurchaseProposal | null, status: 'fail' | 'warn'): number {
-  return payload?.checks.filter((c) => c.status === status).length ?? 0;
+function countChecks(checks: ReadonlyArray<{ status: string }>, status: 'fail' | 'warn'): number {
+  return checks.filter((c) => c.status === status).length;
+}
+
+// The lines of an invoice proposal still waiting for an account because no rule matched them (#2091): marked by the
+// suggestion, or carrying the placeholder account.
+function countUnclassified(payload: PurchaseProposal | null): number {
+  return payload?.lines.filter((l) => l.accountRule?.source === 'unclassified' || l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE).length ?? 0;
 }
 
 // Payloads are parsed by the proposal's kind: a purchase read from a file, or a reversal a user asked for (#138).
@@ -165,6 +182,8 @@ function payloadKey(payload: unknown, key: string): unknown {
   return payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>)[key] : undefined;
 }
 
+// The item the list and the detail share. `voided` is not here: the finance module answers it, for a page in the list and
+// for the one proposal in the detail, which each add it.
 function toInboxItem(row: {
   id: string;
   kind: string;
@@ -179,7 +198,10 @@ function toInboxItem(row: {
   legal_entity_id: string;
 }, agentName: string | null) {
   const payload = parsePayload(row.kind, row.payload);
-  const voucher = parseVoucher(row.kind, row.payload) ?? parseJournalVoucher(row.kind, row.payload);
+  const cashVoucher = parseVoucher(row.kind, row.payload);
+  const voucher = cashVoucher ?? parseJournalVoucher(row.kind, row.payload);
+  // An invoice's checks, or the warnings a payment voucher carries (#2419).
+  const checks = payload?.checks ?? cashVoucher?.checks ?? [];
   const direction = payload ? (payload.direction ?? 'purchase') : null;
   return {
     id: row.id,
@@ -193,8 +215,11 @@ function toInboxItem(row: {
     legalEntityId: revisionLegalEntity(row.kind, payloadKey(row.payload, 'legalEntityId'), row.legal_entity_id),
     total: payload?.invoice.total ?? voucher?.total ?? null,
     issueDate: payload?.invoice.issueDate ?? voucher?.date ?? null,
-    failedChecks: countChecks(payload, 'fail'),
-    warnChecks: countChecks(payload, 'warn'),
+    failedChecks: countChecks(checks, 'fail'),
+    warnChecks: countChecks(checks, 'warn'),
+    anomalyChecks: checks.filter((c) => c.id.startsWith(ANOMALY_CHECK_PREFIX)).length,
+    unclassifiedLines: countUnclassified(payload),
+    ...ruleFields(payload),
     // As the approval decides: an invoice read from XML whose signature is not verified is unverified (#674).
     signatureStatus: payload
       ? payload.extractionMethod === 'einvoice_xml' && payload.signature?.status !== 'verified'
@@ -206,6 +231,22 @@ function toInboxItem(row: {
     expiredAfterDays: expiredAfterDays(row),
     ...agentFields(row, agentName),
   };
+}
+
+// The learned rules that set an invoice's line accounts and how many lines no learned rule set (#2379), from a parsed
+// payload (kernel.inbox.get) as the list's SQL reads them.
+function ruleFields(payload: PurchaseProposal | null) {
+  const lines = payload?.lines ?? [];
+  return listedRuleFields(
+    lines.flatMap((l) => (l.accountRule?.source === 'learned' && l.accountRule.ruleId ? [l.accountRule.ruleId] : [])),
+    String(lines.filter((l) => l.accountRule?.source !== 'learned').length),
+  );
+}
+
+function listedRuleFields(ids: readonly string[], otherLines: string) {
+  const learned = [...new Set(ids.map((id) => id.toLowerCase()).filter((id) => zId.safeParse(id).success))].sort();
+  // At most LEARNED_RULE_IDS_MAX rules are listed; an invoice naming more is grouped by the first of them.
+  return { learnedRuleIds: learned.slice(0, LEARNED_RULE_IDS_MAX), otherRuleLines: Number(otherLines) };
 }
 
 // How many whole days an expired proposal waited before it expired (#876), the reason the Inbox shows; null otherwise.
@@ -249,6 +290,13 @@ export const inboxList = defineQuery({
         sql<string | null>`(SELECT a.display_name FROM crove_kernel.agent a WHERE a.org_id = crove_kernel.proposal.org_id AND a.id = crove_kernel.proposal.requested_by_agent)`.as('agent_name'),
         countChecksSql('fail').as('failed_checks'),
         countChecksSql('warn').as('warn_checks'),
+        // The anomaly flags among them (#2380).
+        sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload -> 'checks') = 'array' THEN payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.as('anomaly_checks'),
+        // The lines of an invoice proposal no rule matched (#2091), counted as countUnclassified counts them.
+        sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' = 'unclassified' OR l ->> 'debitAccount' = ${UNCLASSIFIED_ACCOUNT_CODE})`.as('unclassified_lines'),
+        // The learned rules behind the lines' accounts and the lines no learned rule set (#2379), as ruleFields reads them.
+        sql<string[]>`(SELECT coalesce(array_agg(DISTINCT l #>> '{accountRule,ruleId}'), '{}') FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' = 'learned' AND l #>> '{accountRule,ruleId}' IS NOT NULL)`.as('learned_rule_ids'),
+        sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' IS DISTINCT FROM 'learned')`.as('other_rule_lines'),
         // As the approval decides (kernel.proposal.approve): an invoice read from XML whose signature is not verified is
         // unverified, one read before #674 (no verification stored) included.
         sql<string | null>`left(CASE WHEN payload ->> 'extractionMethod' = 'einvoice_xml' AND coalesce(payload #>> '{signature,status}', '') <> 'verified' THEN 'unverified' ELSE payload #>> '{signature,status}' END, 20)`.as('signature_status'),
@@ -257,7 +305,15 @@ export const inboxList = defineQuery({
       .orderBy('created_at', 'desc')
       .limit(200);
     if (input.status) query = query.where('status', '=', input.status);
-    return (await query.execute()).map((row) => ({
+    const rows = await query.execute();
+    // The posted ones whose recorded document a reversal voided (#165), asked of the finance module once for the page
+    // (#2054), as kernel.inbox.get asks for one: the list must not show them as posted. The page holds at most 200 rows,
+    // within the query's 1000 ids.
+    const voided = await voidedProposals(
+      ctx,
+      rows.filter((row) => row.status === 'executed').map((row) => row.id),
+    );
+    return rows.map((row) => ({
       id: row.id,
       kind: row.kind,
       status: row.status,
@@ -272,10 +328,14 @@ export const inboxList = defineQuery({
       issueDate: row.issue_date && zLocalDate.safeParse(row.issue_date).success ? row.issue_date : null,
       failedChecks: Number(row.failed_checks),
       warnChecks: Number(row.warn_checks),
+      anomalyChecks: Number(row.anomaly_checks),
+      unclassifiedLines: Number(row.unclassified_lines),
+      ...listedRuleFields(row.learned_rule_ids, row.other_rule_lines),
       signatureStatus: row.kind === PURCHASE_KIND ? signatureStatusOf(row.signature_status) : null,
       duplicateOf: row.duplicate_of,
       createdAt: row.created_at.toISOString(),
       expiredAfterDays: expiredAfterDays(row),
+      voided: voided.has(row.id),
       ...agentFields(row, row.agent_name),
     }));
   },
@@ -320,12 +380,23 @@ export const inboxGet = defineQuery({
     const own = row.extraction_id
       ? await ctx.trx
           .selectFrom('crove_kernel.extraction')
-          .select('version')
+          .select(['version', 'file_id'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', row.extraction_id)
           .executeTakeFirst()
       : undefined;
-    const reading = latest?.inFlight === true;
+    // The revision was read from another file than the source file: the original XML of an invoice first read from a PDF
+    // took the proposal's place (#2269). That file's re-reading holds decisions too, and reading the source file again is
+    // refused, so it is not offered.
+    const readElsewhere = own !== undefined && file !== undefined && own.file_id !== file.id;
+    const originalRun = readElsewhere ? await latestExtraction(ctx, own.file_id) : undefined;
+    const reading = latest?.inFlight === true || originalRun?.inFlight === true;
+    // The run the screen reports: the original's while it is the one being read again, so the version and the state shown
+    // are the run's in progress and not the source file's.
+    const shown = originalRun?.inFlight === true ? originalRun : latest;
+    // Reading the source file again is refused only while the proposal waits for a decision; once decided, a new reading of
+    // it is allowed as for any proposal.
+    const originalHolds = readElsewhere && row.status === 'pending';
     // kernel.file.reextract acts on the file's newest proposal, so only that one offers it.
     const newest = file
       ? await ctx.trx
@@ -360,6 +431,23 @@ export const inboxGet = defineQuery({
     // The purchase this proposal recorded was voided by a reversal (#165); its file may then be read again.
     const voided = await executedButVoided(ctx, row);
     const newestReopened = newest?.id === row.id ? voided : await executedButVoided(ctx, newest);
+    // The originals (XML) that arrived after this invoice was posted (#2320): the runs that name it as the proposal they
+    // are the evidence of, newest first, with the seal result their run kept (read defensively).
+    const originalRuns =
+      row.status === 'executed'
+        ? await ctx.trx
+            .selectFrom('crove_kernel.extraction as x')
+            .innerJoin('crove_kernel.file as of', (join) => join.onRef('of.org_id', '=', 'x.org_id').onRef('of.id', '=', 'x.file_id'))
+            .select(['of.id as file_id', 'of.filename', 'x.created_at', 'x.original_differs', sql<unknown>`x.result -> 'signature'`.as('signature')])
+            .where('x.org_id', '=', ctx.orgId)
+            .where('x.original_of_proposal_id', '=', row.id)
+            // The ones that differ first, so a flood of matching files cannot push the warning off the screen.
+            .orderBy('x.original_differs', 'desc')
+            .orderBy('x.created_at', 'desc')
+            .orderBy('x.id', 'desc')
+            .limit(20)
+            .execute()
+        : [];
     return {
       ...toInboxItem(row, agent?.display_name ?? null),
       revision: row.revision,
@@ -396,8 +484,8 @@ export const inboxGet = defineQuery({
       canResubmit,
       resubmittedAs,
       resubmittedFrom: row.resubmitted_from,
-      extraction: latest
-        ? { version: latest.version, status: latest.status, error: latest.error, inFlight: reading, proposalVersion: own?.version ?? null }
+      extraction: shown
+        ? { version: shown.version, status: shown.status, error: shown.error, inFlight: reading, proposalVersion: own?.version ?? null }
         : null,
       // The same checks kernel.file.reextract makes. An expired file proposal offers both ways back (#876): reading the
       // file again (a new reading, as after a rejection) and asking for it again from the same reading (canResubmit).
@@ -405,11 +493,32 @@ export const inboxGet = defineQuery({
         editor &&
         latest !== undefined &&
         !reading &&
+        !originalHolds &&
         newest?.id === row.id &&
         (newest.status !== 'executed' || newestReopened) &&
         latest.version < MAX_EXTRACTION_VERSIONS,
+      originals: originalRuns.map((o) => {
+        const signature = zProposalSignature.safeParse(o.signature);
+        return {
+          fileId: o.file_id,
+          filename: o.filename,
+          receivedAt: new Date(o.created_at).toISOString(),
+          differs: o.original_differs === true,
+          signature: signature.success ? signature.data : null,
+        };
+      }),
     };
   },
+});
+
+// The bank statements read from files that wait for a member to import or skip them (#2142), however many files came since:
+// the Inbox lists them apart from the recent files, which show only the newest.
+export const STAGED_STATEMENTS_LIMIT = 100;
+export const filesStaged = defineQuery({
+  name: 'kernel.files.staged',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx) => (await fileStatuses(ctx, { staged: STAGED_STATEMENTS_LIMIT })).map((row) => row.status),
 });
 
 export const filesRecent = defineQuery({
@@ -425,8 +534,7 @@ export const filesRecent = defineQuery({
 // mail has no entity, so a member limited to some entities (an external accountant) gets no mail and no mail's text.
 const MAIL_READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 export const RECENT_MAILS = 20;
-// The caller's context sees every legal entity (the wildcard in enter_context's le_scope); fetched once per statement.
-const unscoped = sql<boolean>`coalesce('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]), false)`;
+// `unscoped`: the caller's context sees every legal entity (file-status.ts).
 export const inboundRecent = defineQuery({
   name: 'kernel.inbound.recent',
   input: z.object({}),
@@ -531,5 +639,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), streamCheck, inboxList, inboxGet, filesRecent, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...usageQueries];
+  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries];
 }

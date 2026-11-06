@@ -8,7 +8,7 @@
 // A pending run is at most one per file (partial UNIQUE index), and the database numbers versions.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zCheck, zId } from '@crove/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { actorRef, addAuthor, eligibleApprovers, parseAuthors, type ActorRef } from './approval.ts';
@@ -28,12 +28,36 @@ export const STALE_RUN_ERROR = 'Đọc lại quá lâu nên đã dừng; hãy b�
 // Extraction runs one file may have. Each run can cost an AI call; one pending run at a time is the main limit.
 export const MAX_EXTRACTION_VERSIONS = 20;
 
+// Asked of the finance module (finance.extraction.lookup) through ctx.query, as VOIDED_PROPOSALS_QUERY is, so the kernel
+// does not read the finance schema (#204); a deployment without finance has no purchase proposals to duplicate.
+export const DUPLICATE_LOOKUP_QUERY = 'finance.extraction.lookup';
+
+// The duplicate check made again where it can be trusted (#2137). Documents are read at the same time, so the lookup a
+// reader made before recording can miss a copy another reader records a moment later: two copies of one invoice in a
+// ZIP would then both go in with no warning. `key` names the identity of the document (the invoice, for finance); the
+// record takes a transaction-level advisory lock on it, asks the lookup again inside its own transaction, and when it now
+// finds an earlier proposal it flags this one: duplicateOf is set and `check` goes first in the run's checks and in the
+// payload's. The second to record is the one flagged, since it sees the first's committed proposal.
+export const zDuplicateGuard = z.object({
+  key: z.string().min(1).max(500),
+  // The reading is the seller's original (an e-invoice XML, #2269) and may take the place of a duplicate that is still
+  // pending and was read from a PDF or a photo: the guard asks the lookup (`duplicateProposalUpgradable`) under its
+  // lock, and the record revises that proposal instead of flagging this reading as its duplicate. The same reading of an
+  // invoice already posted from a PDF or a photo (`duplicateProposalAttachable`, #2320) is attached to the posted proposal
+  // as evidence instead, and creates no proposal of its own.
+  upgrades: z.boolean().optional(),
+  // The input of the lookup query, without the file (the command adds it).
+  lookup: z.record(z.string(), z.unknown()),
+  check: zCheck,
+});
+
 export const zProposalDraft = z.object({
   kind: z.string(),
   command: z.string(),
   title: z.string().max(300),
   payload: z.record(z.string(), z.unknown()),
   duplicateOf: zId.nullable(),
+  duplicateGuard: zDuplicateGuard.optional(),
 });
 
 // In flight: created within the stale window, measured at the start of the transaction (now()). A decision that
@@ -87,14 +111,21 @@ export async function executedButVoided(ctx: QueryContext, proposal: { id: strin
 
 // Refuses a decision (approve, edit, reject) on a proposal whose file is being read again: the result would
 // replace the content being decided on. Called after the proposal row is locked, so a re-extraction requested
-// first is seen here, and one requested later finds the decided proposal.
-export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null): Promise<void> {
-  if (!fileId) return;
+// first is seen here, and one requested later finds the decided proposal. `extractionId` is the run the proposal's
+// current revision was read from: when it is of another file than the proposal's source file (the original XML of an
+// invoice first read from a PDF, #2269), that file's re-reading counts too.
+export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null, extractionId: string | null = null): Promise<void> {
+  const files = fileId ? [fileId] : [];
+  if (extractionId) {
+    const read = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', extractionId).executeTakeFirst();
+    if (read && !files.includes(read.file_id)) files.push(read.file_id);
+  }
+  if (files.length === 0) return;
   const pending = await ctx.trx
     .selectFrom('crove_kernel.extraction')
     .select('version')
     .where('org_id', '=', ctx.orgId)
-    .where('file_id', '=', fileId)
+    .where('file_id', 'in', files)
     .where('status', '=', 'pending')
     .where(pendingSince)
     .executeTakeFirst();
@@ -125,7 +156,8 @@ export async function uploaderEntity(ctx: CommandContext, uploader: string | nul
   return rows[0]?.entity ?? null;
 }
 
-async function lockFile(ctx: CommandContext, fileId: string) {
+// `statement`: the run is of a bank statement (#2142), whose .xlsx arrives stored as a ZIP, so a ZIP is let through.
+async function lockFile(ctx: CommandContext, fileId: string, statement = false) {
   const file = await ctx.trx
     .selectFrom('crove_kernel.file')
     .select(['id', 'filename', 'created_by', 'content_type', 'upload_entity_id'])
@@ -135,23 +167,75 @@ async function lockFile(ctx: CommandContext, fileId: string) {
     .executeTakeFirst();
   if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
   // A ZIP archive (#314) is opened once by kernel.file.archive.record; it is never read as a document.
-  if (isArchiveType(file.content_type)) throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
+  if (isArchiveType(file.content_type) && !statement) throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
   return file;
 }
 
+// The kinds of staged read a member decides (#2142, #2515): a bank statement and a marketplace order report. Each is kept with the file's read until a member imports or skips it.
+const STAGED_KINDS: readonly unknown[] = ['bank_statement', 'marketplace_orders'];
+
+// Whether the file's newest run is a staged read (a bank statement, an order report) a member imported (#2142).
+async function statementImported(ctx: CommandContext, fileId: string): Promise<boolean> {
+  const run = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select('result')
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .orderBy('version', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  const result = run?.result as { kind?: unknown; summary?: { state?: unknown } } | null | undefined;
+  return STAGED_KINDS.includes(result?.kind) && result?.summary?.state === 'imported';
+}
+
+// Whether a read of the file was a bank statement's (#2142): an .xlsx stored as a ZIP that the worker read as a statement
+// records a run of method 'unsupported' (an archive records 'archive'), and may be read again, for instance once the
+// account it names is mapped.
+async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boolean> {
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .where('method', '=', 'unsupported')
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
+}
+
 // The file's newest proposal, locked. A file has one proposal unless an earlier one was rejected and the file was
-// read again.
+// read again. A proposal revised from the file's reading (the original of a PDF's invoice, #2269) is the file's too, and so
+// is the executed proposal the file was attached to as its original (#2320): reading that file again changes nothing in
+// the books, so it is refused as for any posted invoice.
 async function lockFileProposal(ctx: CommandContext, fileId: string) {
   return ctx.trx
     .selectFrom('crove_kernel.proposal')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
-    .where('source_file_id', '=', fileId)
+    .where((eb) =>
+      eb.or([
+        eb('source_file_id', '=', fileId),
+        eb('extraction_id', 'in', eb.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId)),
+        eb(
+          'id',
+          'in',
+          eb.selectFrom('crove_kernel.extraction').select('original_of_proposal_id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).where('original_of_proposal_id', 'is not', null),
+        ),
+      ]),
+    )
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
     .limit(1)
     .forUpdate()
     .executeTakeFirst();
+}
+
+// Whether the proposal's current revision was read from a file other than `fileId`: the original (XML) of an invoice
+// first read from a PDF took its place (#2269), so reading the PDF again must not put the weaker reading back.
+async function readFromAnotherFile(ctx: CommandContext, proposal: { extraction_id: string | null }, fileId: string): Promise<boolean> {
+  if (!proposal.extraction_id) return false;
+  const run = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', proposal.extraction_id).executeTakeFirst();
+  return run !== undefined && run.file_id !== fileId;
 }
 
 // A proposal stays in its legal entity (#1764): its entity never changes (ADR-0021, b_legal_entity).
@@ -178,9 +262,16 @@ export const reextractFile = defineCommand({
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới yêu cầu đọc lại được');
-    await lockFile(ctx, input.fileId);
+    const file = await lockFile(ctx, input.fileId, true);
+    // A ZIP is read again only when it was read as a bank statement (#2142); an archive of documents is never read again.
+    if (isArchiveType(file.content_type) && !(await readAsStatement(ctx, input.fileId))) {
+      throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
+    }
     const latest = await latestExtraction(ctx, input.fileId);
     if (!latest) throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lần đầu; hãy chờ kết quả');
+    // A bank statement already imported is read no more (#2142): its lines are stored, and a second reading could only
+    // stage them again, perhaps into another account.
+    if (await statementImported(ctx, input.fileId)) throw new DomainError('STATEMENT_IMPORTED', 409, 'Sao kê này đã được nhập nên không đọc lại được');
     if (latest.inFlight) {
       throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lại; hãy chờ kết quả', { version: latest.version });
     }
@@ -192,6 +283,9 @@ export const reextractFile = defineCommand({
     const proposal = await lockFileProposal(ctx, input.fileId);
     if (proposal?.status === 'executed' && !(await executedButVoided(ctx, proposal))) {
       throw new DomainError('PROPOSAL_DECIDED', 409, 'Hóa đơn này đã được ghi sổ nên không đọc lại được');
+    }
+    if (proposal?.status === 'pending' && (await readFromAnotherFile(ctx, proposal, input.fileId))) {
+      throw new DomainError('READ_FROM_ORIGINAL', 409, 'Đề xuất này đã được cập nhật từ hóa đơn gốc XML nên đọc lại tệp này sẽ không đổi gì; hãy đọc lại tệp XML');
     }
     let entity = latest.legalEntityId;
     if (input.legalEntityId !== undefined && input.legalEntityId.toLowerCase() !== latest.legalEntityId) {
@@ -265,6 +359,123 @@ export async function readAgainIn(ctx: CommandContext, fileId: string, legalEnti
   await ctx.run('kernel.file.reextract', { fileId, legalEntityId });
 }
 
+interface DuplicateAnswer {
+  duplicateDocumentId: string | null;
+  duplicateProposalId: string | null;
+  // The duplicate proposal is pending and was read from a PDF or a photo (#2269).
+  duplicateProposalUpgradable?: boolean;
+  // The duplicate proposal is executed, was read from a PDF or a photo and is the one match (#2320), and whether the
+  // original's amounts are not the posted document's.
+  duplicateProposalAttachable?: boolean;
+  attachDiffers?: boolean;
+}
+
+// The readings of an invoice that a pending proposal can be revised from: the weak ones, read from a PDF or a photo.
+const UPGRADABLE_METHODS: readonly unknown[] = ['pdf_text_ai', 'image_ai'];
+
+// The input of kernel.extraction.record with its duplicate guard applied (#2137, zDuplicateGuard): the lock on the
+// document's identity taken first, the lookup asked again, and a copy found now flagged. The lock is held until the
+// command commits, so a reader that recorded the same document a moment earlier has committed (or not started) by the
+// time this one looks. Without a guard, or without a proposal, the input is returned as it is.
+// `flagged` is the input with a copy found now flagged; `input` is the input as it came, and `upgrade` the id of a pending
+// proposal this reading may take the place of (#2269) when the guard says it is the original's: the caller revises it
+// instead, and falls back to `flagged` when the proposal can no longer be revised. `attach` is the executed proposal the
+// reading is the original of (#2320): the caller attaches the run to it as evidence, and falls back to `flagged` when the
+// proposal no longer qualifies.
+async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.infer<typeof zCheck>>; proposal: z.infer<typeof zProposalDraft> | null }>(
+  ctx: CommandContext,
+  input: T,
+): Promise<{ input: T; flagged: T; upgrade: string | null; attach: { proposalId: string; differs: boolean } | null }> {
+  const guard = input.proposal?.duplicateGuard;
+  if (!input.proposal || !guard) return { input, flagged: input, upgrade: null, attach: null };
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.extraction_duplicate:${ctx.orgId}:${guard.key}`}, 0))`.execute(ctx.trx);
+  const answer = await ctx.query<DuplicateAnswer>(DUPLICATE_LOOKUP_QUERY, { ...guard.lookup, fileId: input.fileId });
+  if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return { input, flagged: input, upgrade: null, attach: null };
+  const upgrade =
+    guard.upgrades === true && answer.value.duplicateProposalUpgradable === true && !answer.value.duplicateDocumentId ? (answer.value.duplicateProposalId ?? null) : null;
+  // The posted case (#2320): the one match is an executed PDF or photo reading that is the document in force's own.
+  const attach =
+    guard.upgrades === true && answer.value.duplicateProposalAttachable === true && answer.value.duplicateProposalId
+      ? { proposalId: answer.value.duplicateProposalId, differs: answer.value.attachDiffers === true }
+      : null;
+  // The input without the duplicate flag the worker may have set from its own, earlier lookup: an original that takes a
+  // proposal's place is not its duplicate.
+  const unflag = (checks: Array<z.infer<typeof zCheck>>) => checks.filter((c) => c.code !== guard.check.code);
+  const payloadChecksIn = input.proposal.payload['checks'];
+  const clean: T = {
+    ...input,
+    checks: unflag(input.checks),
+    proposal: {
+      ...input.proposal,
+      duplicateOf: null,
+      payload: Array.isArray(payloadChecksIn) ? { ...input.proposal.payload, checks: unflag(payloadChecksIn as Array<z.infer<typeof zCheck>>) } : input.proposal.payload,
+    },
+  };
+  ctx.audit({ duplicate_guard: upgrade ? 'upgrade' : attach ? 'attach' : 'found', duplicate_of: answer.value.duplicateProposalId });
+  const flagged = (checks: Array<z.infer<typeof zCheck>>) => (checks.some((c) => c.code === guard.check.code) ? checks : [guard.check, ...checks]);
+  const payloadChecks = input.proposal.payload['checks'];
+  return {
+    input: upgrade || attach ? clean : input,
+    upgrade,
+    attach,
+    flagged: {
+      ...input,
+      checks: flagged(input.checks),
+      proposal: {
+        ...input.proposal,
+        duplicateOf: input.proposal.duplicateOf ?? answer.value.duplicateProposalId,
+        payload: Array.isArray(payloadChecks)
+          ? { ...input.proposal.payload, checks: flagged(payloadChecks as Array<z.infer<typeof zCheck>>) }
+          : input.proposal.payload,
+      },
+    },
+  };
+}
+
+// The pending proposal an original may take the place of (#2269), locked, or undefined when it cannot any more: a decision
+// came first (it is no longer pending), a person changed it (an account, a rate or an entity they chose), it is of another
+// kind or command, it was not read from a PDF or a photo, or it belongs to another legal entity than the original's (a
+// proposal stays in its entity). The lock is taken
+// after the guard's, so a decision that went through first is seen here and one that comes later finds the new revision.
+async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.infer<typeof zProposalDraft>, file: { created_by: string | null; upload_entity_id: string | null }) {
+  const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
+  if (!row || row.status !== 'pending' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
+  const payload = row.payload as { extractionMethod?: unknown; legalEntityId?: unknown; lines?: Array<{ accountRule?: { source?: unknown } }>; invoice?: { foreign?: { source?: unknown } } } | null;
+  if (!UPGRADABLE_METHODS.includes(payload?.extractionMethod)) return undefined;
+  // What a person chose on the reading (an account for a line, an exchange rate, a legal entity) is theirs: the original
+  // does not replace it silently, it is flagged for them to decide, as before.
+  if (payload?.legalEntityId !== undefined || payload?.invoice?.foreign?.source === 'entered' || payload?.lines?.some((l) => l.accountRule?.source === 'user')) return undefined;
+  const entity =
+    file.upload_entity_id ??
+    (await uploaderEntity(ctx, file.created_by)) ??
+    (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+  return row.legal_entity_id === entity ? row : undefined;
+}
+
+// The executed proposal an original is attached to (#2320), locked, or undefined when it cannot any more: it is not executed
+// (or was voided by a reversal, then the original is a new invoice to read), it is of another kind or command, it was not
+// read from a PDF or a photo, or it belongs to another legal entity than the original's. Shared, not exclusive: nothing of
+// the proposal changes. A reversal does not lock the proposal, so one that commits between this check and the run's insert
+// leaves the original attached to a posting that is voided; its file may then be read again like any file of a voided
+// posting, which makes a new proposal.
+async function lockAttachable(
+  ctx: CommandContext,
+  proposalId: string,
+  draft: z.infer<typeof zProposalDraft>,
+  file: { created_by: string | null; upload_entity_id: string | null },
+) {
+  const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forShare().executeTakeFirst();
+  if (!row || row.status !== 'executed' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
+  if (await executedButVoided(ctx, row)) return undefined;
+  const payload = row.payload as { extractionMethod?: unknown } | null;
+  if (!UPGRADABLE_METHODS.includes(payload?.extractionMethod)) return undefined;
+  const entity =
+    file.upload_entity_id ??
+    (await uploaderEntity(ctx, file.created_by)) ??
+    (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+  return row.legal_entity_id === entity ? row : undefined;
+}
+
 // Records the result of an extraction run (worker only). Without `version` it is the first extraction of a new
 // file (a no-op once the file has any run). With `version` it finishes that pending re-extraction (a no-op if the
 // run is no longer pending), and the file's pending proposal gets a new revision with the new content.
@@ -280,13 +491,52 @@ export const recordExtraction = defineCommand({
     checks: z.array(zCheck),
     error: z.string().max(2000).nullable(),
     proposal: zProposalDraft.nullable(),
+    // Why a failed run failed (#1998): `service` when the reading service itself kept failing (the AI provider refused
+    // or did not answer, the parser sandbox was down) after every retry, which the operator must see; `document`
+    // (the default) when the document could not be read. A code in kernel.file.read_failed, which the prober counts.
+    failure: z.enum(['service', 'document']).optional(),
+    // What a done run with no proposal says in the file's history (#2142), for example how many bank lines a statement brought.
+    summary: z.string().max(500).optional(),
+    // The run is of a bank statement (#2142), which may be an .xlsx stored as a ZIP: with no proposal, method 'unsupported'.
+    statement: z.boolean().optional(),
+    // The legal entity a staged statement's run belongs to (#2142): the one its account is mapped to, so only members who
+    // see that entity see the statement's account, lines and totals. A statement run only; the first run of a file.
+    legalEntityId: zId.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
-  handler: async (ctx, input) => {
-    const file = await lockFile(ctx, input.fileId);
+  handler: async (ctx, original) => {
+    // A run of a bank statement (#2142) has no proposal and the method 'unsupported'; only such a run may name a ZIP.
+    if (original.statement === true && (original.proposal !== null || original.method !== 'unsupported')) {
+      throw new DomainError('INVALID', 422, 'Lần đọc sao kê không có đề xuất');
+    }
+    // The rows a staged statement keeps in the run's result are bounded (#2142): the staging checks it, and so does this.
+    if (original.statement === true && Buffer.byteLength(JSON.stringify(original.result ?? null), 'utf8') > STAGED_STATEMENT_MAX_BYTES + 64 * 1024) {
+      throw new DomainError('STATEMENT_TOO_LARGE', 422, 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng');
+    }
+    const file = await lockFile(ctx, original.fileId, original.statement === true);
+    const guarded = await withDuplicateGuard(ctx, original);
+    // An original (XML) read while the same invoice's PDF or photo reading is still pending takes its place (#2269): the
+    // first run only; a re-read never does.
+    const upgraded =
+      guarded.upgrade !== null && original.version === undefined && original.proposal ? await lockUpgradable(ctx, guarded.upgrade, original.proposal, file) : undefined;
+    // The original of an invoice already posted from a PDF or a photo (#2320) is attached to the posted proposal: the first
+    // run only, and only while that proposal still qualifies.
+    // A reading with a failing check (a buyer that is not the org's, amounts that do not add up) is not attached as the
+    // invoice's evidence: it is flagged as before, for a person to look at.
+    const attachedTo =
+      !upgraded &&
+      guarded.attach !== null &&
+      original.version === undefined &&
+      original.proposal &&
+      original.method === 'einvoice_xml' &&
+      original.status === 'done' &&
+      original.checks.every((c) => c.status !== 'fail')
+        ? await lockAttachable(ctx, guarded.attach.proposalId, original.proposal, file)
+        : undefined;
+    const input = upgraded || attachedTo ? guarded.input : guarded.flagged;
     const outcome = {
       method: input.method,
       status: input.status,
@@ -310,23 +560,88 @@ export const recordExtraction = defineCommand({
         .executeTakeFirst();
       if (existing) return { extractionId: existing.id, proposalId: null, duplicate: true };
       // The entity the upload named (#1764), else the uploader's own.
-      const entity = file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
+      const entity = (original.statement === true ? original.legalEntityId : undefined) ?? file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
+      // The original of a posted invoice (#2320): the run is inserted done, tied to the posted proposal as its evidence, and
+      // nothing else happens. No proposal of its own (the invoice is not posted twice), the entry and the document are not
+      // touched, and a difference in the amounts is only a warning the Inbox shows to a person.
+      if (attachedTo && guarded.attach) {
+        const differs = guarded.attach.differs;
+        const attached = await ctx.trx
+          .insertInto('crove_kernel.extraction')
+          .values({
+            org_id: ctx.orgId,
+            file_id: input.fileId,
+            ...(entity ? { legal_entity_id: entity } : {}),
+            ...outcome,
+            original_of_proposal_id: attachedTo.id,
+            original_differs: differs,
+          })
+          .returning(['id', 'version'])
+          .executeTakeFirstOrThrow();
+        ctx.audit({ version: attached.version, status: input.status, attached_to_proposal_id: attachedTo.id, differs });
+        const signature = (input.result as { signature?: { status?: unknown } } | null)?.signature?.status;
+        const sealed = signature === 'verified' ? 'hợp lệ' : signature === 'unverified' ? 'chưa xác minh được' : 'không có';
+        await ctx.activity(
+          'kernel.proposal',
+          attachedTo.id,
+          'proposal.original_attached',
+          `Đã nhận hóa đơn gốc XML ${file.filename} cho hóa đơn đã ghi sổ (chữ ký số: ${sealed}; ${differs ? 'số liệu KHÁC chứng từ đã ghi sổ, cần người kiểm tra' : 'số liệu khớp chứng từ đã ghi sổ'})`.slice(0, 500),
+        );
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', 'Hóa đơn gốc của hóa đơn đã ghi sổ từ tệp khác');
+        // A person is told when the original differs from the posting or its signature is not verified (#2335): the ledger
+        // stays as it is, the notice only asks for a look. kernel.notification.dispatch reads it from the outbox.
+        if (differs || signature !== 'verified') {
+          await ctx.emit('kernel.proposal.original_flagged', {
+            proposalId: attachedTo.id,
+            fileId: input.fileId,
+            differs,
+            signature: signature === 'unverified' ? 'unverified' : 'none',
+          });
+        }
+        return { extractionId: attached.id, proposalId: null, duplicate: false };
+      }
       run = await ctx.trx
         .insertInto('crove_kernel.extraction')
         .values({ org_id: ctx.orgId, file_id: input.fileId, ...(entity ? { legal_entity_id: entity } : {}), ...outcome })
         .returning(['id', 'version', 'requested_by'])
         .executeTakeFirstOrThrow();
-      current = undefined;
+      // The proposal the original takes the place of is revised below, as a pending proposal is by a re-reading.
+      current = upgraded;
     } else {
       const pending = await ctx.trx
         .selectFrom('crove_kernel.extraction')
-        .select(['id', 'version', 'status', 'requested_by'])
+        .select(['id', 'version', 'status', 'requested_by', 'legal_entity_id'])
         .where('org_id', '=', ctx.orgId)
         .where('file_id', '=', input.fileId)
         .where('version', '=', input.version)
         .forUpdate()
         .executeTakeFirst();
       if (!pending || pending.status !== 'pending') return { extractionId: pending?.id ?? null, proposalId: null, duplicate: true };
+      // A re-read of a bank statement whose account is now mapped in another legal entity than the run's (#2142). A run
+      // keeps its entity and the statement's account and totals must not reach members of the run's entity, so this run is
+      // closed as failed, with nothing of the statement, and the reading is recorded as a new run in the account's entity.
+      if (
+        original.statement === true &&
+        input.status === 'done' &&
+        original.legalEntityId !== undefined &&
+        pending.legal_entity_id !== null &&
+        pending.legal_entity_id !== original.legalEntityId.toLowerCase()
+      ) {
+        await ctx.trx
+          .updateTable('crove_kernel.extraction')
+          .set({ method: 'unsupported', status: 'failed', result: null, checks: '[]', error: 'Sao kê thuộc sổ của pháp nhân khác; hãy xem lần đọc mới nhất', completed_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', pending.id)
+          .execute();
+        const moved = await ctx.trx
+          .insertInto('crove_kernel.extraction')
+          .values({ org_id: ctx.orgId, file_id: input.fileId, legal_entity_id: original.legalEntityId, ...outcome })
+          .returning(['id', 'version'])
+          .executeTakeFirstOrThrow();
+        ctx.audit({ version: moved.version, status: input.status, applied: true, moved_from_version: pending.version });
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.summary ?? 'Đã đọc tệp');
+        return { extractionId: moved.id, proposalId: null, duplicate: false };
+      }
       // The proposal is locked before the run's age is read, and the age is read on the clock at this moment
       // (clock_timestamp()), not at the start of the transaction: a decision that went through because the run was
       // stale either committed before this lock, and then the run is older still here, or waits for this command
@@ -336,6 +651,8 @@ export const recordExtraction = defineCommand({
         SELECT created_at > pg_catalog.clock_timestamp() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int) AS fresh
         FROM crove_kernel.extraction WHERE org_id = ${ctx.orgId}::uuid AND id = ${pending.id}::uuid`.execute(ctx.trx);
       applies = rows[0]?.fresh === true;
+      // The proposal's revision was read from another file (the original, #2269): a re-reading of this one leaves it.
+      if (applies && current?.status === 'pending' && (await readFromAnotherFile(ctx, current, input.fileId))) applies = false;
       await ctx.trx
         .updateTable('crove_kernel.extraction')
         .set(outcome)
@@ -355,9 +672,15 @@ export const recordExtraction = defineCommand({
     const withReaders = (authors: ActorRef[]) => readers.reduce(addAuthor, authors);
 
     if (!input.proposal) {
+      // A run that is done with no proposal read a file into something else than an invoice (a bank statement into bank
+      // lines, #2142): its own account of it, not a failure.
+      if (input.status === 'done') {
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.summary ?? 'Đã đọc tệp');
+        return { extractionId: run.id, proposalId: null, duplicate: false };
+      }
       await ctx.activity('kernel.file', input.fileId, 'extraction.failed', input.error ?? 'Không đọc được chứng từ');
       // Whoever is waiting for this reading is told (#671, kernel.notification.dispatch).
-      if (input.status === 'failed') await ctx.emit('kernel.file.read_failed', { fileId: input.fileId, version: run.version });
+      if (input.status === 'failed') await ctx.emit('kernel.file.read_failed', { fileId: input.fileId, version: run.version, reason: input.failure ?? 'document' });
       if (applies && current?.status === 'pending') {
         await ctx.activity('kernel.proposal', current.id, 'proposal.reextract_failed', `Đọc lại không thành công (lần đọc ${run.version}); đề xuất giữ nguyên bản ${current.revision}`);
       }
@@ -392,7 +715,9 @@ export const recordExtraction = defineCommand({
         .where('id', '=', current.id)
         .execute();
       ctx.audit({ proposal_id: current.id, revision });
-      await ctx.activity('kernel.proposal', current.id, 'proposal.reextracted', `Đọc lại chứng từ (lần đọc ${run.version}, bản ${revision})`);
+      await (upgraded
+        ? ctx.activity('kernel.proposal', current.id, 'proposal.original_received', `Đã nhận hóa đơn gốc XML ${file.filename}; số liệu lấy từ hóa đơn gốc (bản ${revision})`.slice(0, 500))
+        : ctx.activity('kernel.proposal', current.id, 'proposal.reextracted', `Đọc lại chứng từ (lần đọc ${run.version}, bản ${revision})`));
       return { extractionId: run.id, proposalId: current.id, duplicate: false };
     }
 
@@ -422,4 +747,80 @@ export const recordExtraction = defineCommand({
   },
 });
 
-export const extractionCommands = [reextractFile, recordExtraction];
+// A staged bank statement (#2142) is decided: imported (the finance module stored its lines in this same transaction) or
+// rejected (skipped, nothing stored). A finished run never changes (extraction_guard), so the decision is a NEW run of the
+// file, with the staged summary in its new state and no rows: it is the file's newest run, the one the Inbox shows and the
+// one a second decision finds, so a statement is decided once; its audit row names the member who decided (a run inserted
+// already finished has no requester). The staged run keeps its rows, like any run keeps its
+// result. Run by finance.bank.statement_confirm and .statement_reject, as the member who decided; the finance module takes
+// a lock on the file first, so two members cannot both decide it.
+export const statementState = defineCommand({
+  name: 'kernel.extraction.statement_state',
+  input: z.object({
+    fileId: zId,
+    state: z.enum(['imported', 'rejected']),
+    // What an import stored: the lines new to the account, the lines it already had, and the import.
+    newLines: z.number().int().nonnegative().optional(),
+    duplicateLines: z.number().int().nonnegative().optional(),
+    importId: zId.optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: REEXTRACT_ROLES,
+  target: (input) => ({ type: 'kernel.file', id: input.fileId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới quyết định được sao kê');
+    await lockFile(ctx, input.fileId, true);
+    const run = await ctx.trx
+      .selectFrom('crove_kernel.extraction')
+      .select(['id', 'status', 'result', 'legal_entity_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('file_id', '=', input.fileId)
+      .orderBy('version', 'desc')
+      .limit(1)
+      .forUpdate()
+      .executeTakeFirst();
+    const result = run?.result as { kind?: unknown; summary?: { state?: unknown } & Record<string, unknown> } | null | undefined;
+    if (!run || run.status !== 'done' || !STAGED_KINDS.includes(result?.kind) || result?.summary?.state !== 'staged') {
+      throw new DomainError('STATEMENT_NOT_STAGED', 409, 'Tệp này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
+    }
+    const kind = result.kind as 'bank_statement' | 'marketplace_orders';
+    const summary = {
+      ...result.summary,
+      state: input.state,
+      ...(input.newLines !== undefined ? { newLines: input.newLines } : {}),
+      ...(input.duplicateLines !== undefined ? { duplicateLines: input.duplicateLines } : {}),
+      ...(input.importId !== undefined ? { importId: input.importId } : {}),
+    };
+    await ctx.trx
+      .insertInto('crove_kernel.extraction')
+      .values({
+        org_id: ctx.orgId,
+        file_id: input.fileId,
+        ...(run.legal_entity_id ? { legal_entity_id: run.legal_entity_id } : {}),
+        method: 'unsupported',
+        status: 'done',
+        result: JSON.stringify({ kind, summary }),
+        checks: '[]',
+        completed_at: ctx.now,
+      })
+      .execute();
+    ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
+    const orders = kind === 'marketplace_orders';
+    await ctx.activity(
+      'kernel.file',
+      input.fileId,
+      input.state === 'imported' ? 'statement.imported' : 'statement.rejected',
+      input.state === 'imported'
+        ? orders
+          ? `Đã nhập báo cáo đơn hàng: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+          : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+        : orders
+          ? 'Đã bỏ qua báo cáo đơn hàng; không có đơn nào được nhập'
+          : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
+    );
+    return { fileId: input.fileId, state: input.state };
+  },
+});
+
+export const extractionCommands = [reextractFile, recordExtraction, statementState];

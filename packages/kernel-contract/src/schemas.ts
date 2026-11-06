@@ -24,7 +24,7 @@ export function isCalendarDate(value: string): boolean {
 // Same rule as isCalendarDate in @crove/l10n-vn, which does not depend on this package.
 export const zLocalDate = z.string().refine(isCalendarDate, 'YYYY-MM-DD calendar date');
 // Failed checks that make an invoice impossible to post as-is; confirming them does not help.
-// amount_scale: a VND invoice with an amount below one dong (#1282, rounding policy #1308).
+// amount_scale: a VND invoice with an amount below one dong that cannot be rounded (#1282, rounding rule #1308, #2235).
 export const BLOCKING_CHECK_IDS: readonly string[] = ['currency', 'lines_sum', 'total', 'amount_scale'];
 // A TT133 account code or one of the org's sub-accounts (11211, 1121.VCB; see accounts.ts).
 export const zAccountCode = z.string().regex(ACCOUNT_CODE_PATTERN);
@@ -43,9 +43,12 @@ export const INVOICE_CHECK_CODES = [
   'lines_sum.mismatch',
   'total.ok',
   'total.mismatch',
-  // A VND invoice with an amount below one dong, which the ledger refuses (#1282); how to round it is the accountant's
-  // decision, #1308.
+  // A VND invoice with an amount below one dong, which the ledger refuses (#1282): fraction when it cannot be rounded
+  // (blocking); rounded and rounded_even, warnings, when it was rounded to the dong with the difference on its largest
+  // line (#1308, #2235), rounded_even when the rounded lines already add up.
   'amount_scale.fraction',
+  'amount_scale.rounded',
+  'amount_scale.rounded_even',
   'vat_breakdown.ok',
   'vat_breakdown.mismatch',
   'seller_tax_code.unreadable',
@@ -83,8 +86,19 @@ export const INVOICE_CHECK_CODES = [
   'related.adjusts',
   'related.replaces_missing',
   'related.adjusts_missing',
+  // The account of every line (#2091): a warning naming the lines no rule matched, a pass once each has its account.
+  'accounts.unclassified',
+  'accounts.classified',
+  // Anomaly flags against the vendor's own history (#2380), warnings that never block: its bank account is not one it used
+  // before, its amount is far from its usual, a unit price jumped. The check ids are anomaly_bank, anomaly_amount and
+  // anomaly_price: a proposal with one of them is approved one by one, never in bulk.
+  'anomaly_bank.changed',
+  'anomaly_amount.unusual',
+  'anomaly_price.jump',
 ] as const;
 export type InvoiceCheckCode = (typeof INVOICE_CHECK_CODES)[number];
+// The ids of the anomaly flags start with this (#2380): a proposal that carries one is approved one by one.
+export const ANOMALY_CHECK_PREFIX = 'anomaly';
 
 export const zCheck = z.object({
   id: z.string().max(50),
@@ -96,15 +110,23 @@ export const zCheck = z.object({
 });
 export type Check = z.infer<typeof zCheck>;
 
+// The longest bank account a party reference carries; a longer one on an invoice is dropped, not refused (#2380).
+export const PARTY_BANK_ACCOUNT_MAX = 100;
 export const zPartyRef = z.object({
   name: z.string().max(500),
   taxCode: z.string().max(20).nullable(),
   address: z.string().max(1000).nullable(),
   email: z.string().max(320).nullable(),
   phone: z.string().max(50).nullable(),
+  // The bank account the invoice names for this party (#2380), the history the vendor's next invoice is compared with.
+  bankAccount: z.string().max(PARTY_BANK_ACCOUNT_MAX).nullable().optional(),
 });
 
-export const ACCOUNT_RULE_SOURCES = ['learned', 'vendor_default', 'builtin', 'user'] as const;
+// 'unclassified' (#2091): no rule matched the line, so it has no account yet and cannot be approved as it is.
+// The placeholder account of such a line, in no chart; the same value as UNCLASSIFIED_ACCOUNT in @crove/l10n-vn, which
+// does not depend on this package (modules/finance/test checks they stay equal).
+export const UNCLASSIFIED_ACCOUNT_CODE = '000';
+export const ACCOUNT_RULE_SOURCES = ['learned', 'vendor_default', 'builtin', 'user', 'unclassified'] as const;
 export const RULE_MATCH_KINDS = ['description', 'keyword'] as const;
 export const zRuleMatchKind = z.enum(RULE_MATCH_KINDS);
 export const zAccountRule = z.object({
@@ -112,6 +134,9 @@ export const zAccountRule = z.object({
   ruleId: zId.optional(),
   scope: z.enum(['vendor', 'org']).optional(),
   matchKind: zRuleMatchKind.optional(),
+  // On a line a person changed (source 'user', #2379): the learned rule that had proposed another account. A learned rule's
+  // corrections are the lines of approved invoices that name it here.
+  correctedRuleId: zId.optional(),
 });
 export type AccountRule = z.infer<typeof zAccountRule>;
 
@@ -128,6 +153,9 @@ export const zCategorizationRule = z.object({
   confirmedBy: z.string().nullable(),
   confirmedAt: z.string(),
   sourceDocument: z.object({ documentId: zId, series: z.string(), number: z.string(), invoiceDate: zLocalDate }).nullable(),
+  // How many lines of approved invoices a person gave another account than this rule proposed (#2379): a rule that is
+  // often corrected stands out.
+  corrections: z.number().int().nonnegative(),
 });
 export type CategorizationRule = z.infer<typeof zCategorizationRule>;
 
@@ -180,6 +208,28 @@ export const zRelatedInvoiceRef = z.object({
   documentId: zId.nullable(),
 });
 export type RelatedInvoiceRef = z.infer<typeof zRelatedInvoiceRef>;
+
+// Where the seller's original XML can be looked up (#2267, plan docs/plan/einvoice-lookup.md): the provider, an https link on
+// one of its lookup hosts and the lookup code, as read from the invoice's PDF text. Each part may be absent (a code
+// with no link, a link with no code). The list of providers is LOOKUP_PROVIDERS in @crove/l10n-vn, which this package
+// does not depend on; a finance test compares them. The code is invoice data (class pii): kept with the proposal, never
+// in a log, an audit row or an error text.
+export const LOOKUP_PROVIDER_IDS = ['misa', 'viettel', 'vnpt', 'bkav', 'easyinvoice', 'fpt'] as const;
+export const zLookupHint = z.object({
+  provider: z.enum(LOOKUP_PROVIDER_IDS).nullable(),
+  url: z
+    .string()
+    .max(400)
+    // Printable ASCII after the host: what the reader writes (the URL serializer percent-encodes the rest) and what the
+    // database CHECK of an original-needed item's detail accepts (#2286).
+    .regex(/^https:\/\/[a-z0-9.-]+(?:[/?][!-~]*)?$/)
+    .nullable(),
+  code: z
+    .string()
+    .regex(/^[A-Za-z0-9]{6,40}$/)
+    .nullable(),
+});
+export type LookupHint = z.infer<typeof zLookupHint>;
 
 // Payload stored on a finance.purchase proposal and executed by finance.purchase.record. direction 'sale' (issue #313):
 // the seller is the org itself (its tax code), the buyer is the customer, and the journal is Dr 131, Cr revenue, Cr
@@ -235,6 +285,9 @@ export const zPurchaseProposal = z.object({
   // The legal entity whose books the invoice is recorded in (#1280), set by a revision (inbox.edit legalEntityId).
   // Absent: the entity resolved for the approver as in zLegalEntityChoice (the org's default entity for an owner).
   legalEntityId: zId.optional(),
+  // Lookup links and codes read from the invoice's PDF text, at most three (#2267). Only on a proposal read from a PDF,
+  // and only when the text held any.
+  lookupHints: z.array(zLookupHint).max(3).optional(),
 });
 export type PurchaseProposal = z.infer<typeof zPurchaseProposal>;
 
@@ -265,6 +318,8 @@ export const zOrgDetail = z.object({
   // sets it.
   contactEmail: z.string().nullable(),
   inboundAddress: z.string().nullable(),
+  // The org's conversation address, where customers write to reach the Inbox (#2439): the inbound address with the conversation tag; null when inboundAddress is.
+  conversationAddress: z.string().nullable().optional(),
   // Messages to the org's addresses retired in the last 30 days that were dropped (#139); null when inboundAddress is.
   inboundDroppedCount: z.number().int().nonnegative().nullable(),
   members: z.array(z.object({ userId: zId, email: z.string(), displayName: z.string().nullable(), role: zRole })),
@@ -383,12 +438,17 @@ export const zInvite = z.object({
   mail: zInviteMailStatus.nullable(),
   // The legal entities the invitee will be limited to (#1281), or null for an invite to the whole org.
   legalEntityIds: z.array(zId).nullable(),
+  // The department role the invitee gets on accepting (#2611), or null: a key of the role catalog (roles.ts), a plain string here so
+  // this file does not import roles.ts.
+  roleKey: z.string().nullable(),
 });
 
 // What the invitee consents to before accepting.
 export const zInvitePreview = z.object({
   orgName: z.string(),
   role: zInviteRole,
+  // The department role the invite carries (#2611), or null.
+  roleKey: z.string().nullable(),
   invitedBy: z.string(),
   expiresAt: z.string(),
 });
@@ -411,7 +471,10 @@ export const zChannelConnection = z.object({
 export const OAUTH_CHANNEL_PROVIDERS = ['facebook_page', 'instagram', 'zalo_oa', 'threads', 'linkedin', 'youtube', 'tiktok', 'x', 'google_business', 'pinterest', 'linkedin_page'] as const;
 // Accounts one OAuth grant connects in a request, one command each (#375): a Meta user may manage hundreds of Pages.
 export const OAUTH_MAX_ACCOUNTS_PER_GRANT = 100;
-export const zOAuthProvider = z.enum(OAUTH_CHANNEL_PROVIDERS);
+// The ad platforms connected the same way (ADR-0040, #2218, #2220): the Ads screen offers them, never the Social channels one.
+// metawrite_ads is the write connection of an ad account (ADR-0043, W0b): the owner connects it while the org's switch is on.
+export const OAUTH_AD_PROVIDERS = ['meta_ads', 'google_ads', 'metawrite_ads'] as const;
+export const zOAuthProvider = z.enum([...OAUTH_CHANNEL_PROVIDERS, ...OAUTH_AD_PROVIDERS]);
 export const zOAuthState = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 // A Supabase Auth session as Crove tracks it (ADR-0028).
@@ -454,6 +517,8 @@ export const zBulkApproveItems = z
   .max(MAX_BULK_APPROVE)
   .refine((items) => new Set(items.map((i) => i.id)).size === items.length, 'each proposal once');
 
+// The most learned rule ids an Inbox item lists; a proposal with more is not grouped by them.
+export const LEARNED_RULE_IDS_MAX = 50;
 export const zInboxItem = z.object({
   id: zId,
   kind: z.string(),
@@ -473,6 +538,15 @@ export const zInboxItem = z.object({
   issueDate: zLocalDate.nullable(),
   failedChecks: z.number().int(),
   warnChecks: z.number().int(),
+  // How many of its checks are anomaly flags against the vendor's history (#2380): such a proposal is not bulk approved.
+  anomalyChecks: z.number().int().nonnegative().optional(),
+  // How many lines of an invoice proposal still wait for an account because no rule matched them (#2091); 0 for any
+  // other kind. The Inbox's "Chưa phân loại" filter lists the proposals with at least one.
+  unclassifiedLines: z.number().int().nonnegative(),
+  // The learned rules (#1399) that set the accounts of an invoice proposal's lines, each once, and how many lines no
+  // learned rule set (#2379): what the Inbox groups clean proposals by. Empty and 0 for any other kind.
+  learnedRuleIds: z.array(zId).max(LEARNED_RULE_IDS_MAX),
+  otherRuleLines: z.number().int().nonnegative(),
   // The invoice's signature verification (#674); null for other kinds and for invoices read before it.
   signatureStatus: zSignatureStatus.nullable(),
   duplicateOf: zId.nullable(),
@@ -483,6 +557,10 @@ export const zInboxItem = z.object({
   extracted: z.boolean(),
   // An expired proposal (#876): the whole days it waited for approval before it expired, its reason; null otherwise.
   expiredAfterDays: z.number().int().nonnegative().nullable(),
+  // An executed invoice (a purchase or a sale) whose document was voided by reversing its journal entry (#165): no longer in the books, so the
+  // list does not show it as posted (#2054), and its file may be read again and the invoice recorded anew. False for any
+  // other proposal.
+  voided: z.boolean(),
 });
 
 // Cash and bank vouchers (issue #327; cash-voucher.ts has the rest).
@@ -510,6 +588,38 @@ export const zVoucherLine = z.object({
 });
 export type VoucherLine = z.infer<typeof zVoucherLine>;
 
+// Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
+// description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
+// `learned` (#2402): the line's words point at a party a person matched by hand before.
+// `account` (#2402): the line's counterparty account number is one a person matched to the party by hand before; a hint like
+// `learned`, weaker than the invoice the text names.
+export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'account', 'learned', 'name', 'balance'] as const;
+export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
+
+// How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:
+// the deterministic matcher, never a model's read), or the person's own choice
+// (`manual`). The server checks a claimed `suggested` against the matcher before it keeps it. `reason` and the invoice are what
+// the matcher found, so the review page can say why in words.
+export const zBankMatchedBy = z.object({
+  kind: z.enum(['suggested', 'manual']),
+  reason: z.enum(BANK_MATCH_REASONS).optional(),
+  invoice: z.object({ series: z.string().max(50), number: z.string().max(50) }).optional(),
+});
+export type BankMatchedBy = z.infer<typeof zBankMatchedBy>;
+
+// A learned bank-line rule as Settings lists it (#2402): the party its key points at, who confirmed it (their name while they are a
+// member), when, and the voucher whose approval taught it. The key itself is never returned: only its keyed hash is stored.
+export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
+export const zBankPartyRule = z.object({
+  id: zId,
+  kind: z.enum(BANK_PARTY_RULE_KINDS),
+  party: z.object({ partyId: zId, name: z.string() }),
+  confirmedBy: z.string().nullable(),
+  confirmedAt: z.string(),
+  voucher: z.object({ voucherId: zId, code: z.string() }),
+});
+export type BankPartyRule = z.infer<typeof zBankPartyRule>;
+
 // The payload of a finance.cash_voucher proposal, built by the server from the request (the party as found, the total
 // computed). finance.voucher.record checks it all again when the proposal is approved.
 export const zCashVoucherProposal = z.object({
@@ -523,6 +633,12 @@ export const zCashVoucherProposal = z.object({
   total: zVoucherAmount,
   // The bank statement line the voucher settles (#326); absent on vouchers entered by hand.
   bankLineId: zId.optional(),
+  // How the voucher's party was found when it was made from a bank line (#2385): the matcher's suggestion or the person's
+  // own choice, as the server checked it when the voucher was asked for.
+  matchedBy: zBankMatchedBy.optional(),
+  // The warnings the server raised when the voucher was asked for (#2419): an unusual amount of a payment. Absent when
+  // there is none; an anomaly flag keeps the proposal out of a bulk approval, as on an invoice (#2380).
+  checks: z.array(zCheck).max(10).optional(),
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),
@@ -568,6 +684,16 @@ export const zJournalReversal = z.object({
 });
 export type JournalReversal = z.infer<typeof zJournalReversal>;
 
+// An original XML kept as the evidence of a posted invoice (#2320); see zInboxDetail.originals.
+export const zInboxOriginal = z.object({
+  fileId: zId,
+  filename: z.string(),
+  receivedAt: z.string(),
+  differs: z.boolean(),
+  signature: zProposalSignature.nullable(),
+});
+export type InboxOriginal = z.infer<typeof zInboxOriginal>;
+
 export const zInboxDetail = zInboxItem.extend({
   revision: z.number().int(),
   // Parsed by kind: a purchase (kind finance.purchase), a reversal (kind finance.journal_reversal) or a cash or bank
@@ -595,9 +721,6 @@ export const zInboxDetail = zInboxItem.extend({
       voucherCode: z.string().optional(),
     })
     .nullable(),
-  // An executed purchase whose document was voided by reversing its journal entry (#165): the file may be read again
-  // and the invoice recorded anew.
-  voided: z.boolean(),
   // The server's approval decision for the caller (plan §4.7 P10, P12): 'four_eyes' means the caller wrote
   // part of this revision and another eligible approver must approve it.
   canApprove: z.boolean(),
@@ -622,7 +745,35 @@ export const zInboxDetail = zInboxItem.extend({
     .nullable(),
   // The caller may ask for the source file to be read again (files.reextract).
   canReextract: z.boolean(),
+  // The sellers' original XML files that arrived after this invoice was posted from a PDF or a photo (#2320), kept as its
+  // evidence. differs: the original's amounts are not the posted document's, a warning for a person to look at (the books
+  // are never changed by it). signature: the result of checking the original's seal, null when it carries none.
+  originals: z.array(zInboxOriginal),
 });
+
+// What the Inbox shows of a bank statement read from a file (#2142): the bank account its account number is mapped to, the
+// lines it holds (newLines and duplicateLines as checked against the account when it was read, then as stored when a member
+// imported it), its period and its totals. state: staged (waiting for a member), imported, rejected (skipped).
+export const zStatementSummary = z.object({
+  state: z.enum(['staged', 'imported', 'rejected']),
+  bankAccount: z.string(),
+  // The account number the file names, masked (#2191): all but its last four digits are hidden, so an approver can tell
+  // which account the file says it is for without the Inbox spelling the number out. Null for a statement read before.
+  accountMask: z.string().nullable().default(null),
+  filename: z.string(),
+  lines: z.number().int().nonnegative(),
+  // Lines a member's import stores: the new ones, those flagged to look at, and conflicts.
+  newLines: z.number().int().nonnegative(),
+  duplicateLines: z.number().int().nonnegative(),
+  // Of those, lines whose bank reference the account already holds with another date or amount (#2191): stored flagged,
+  // never taken for a duplicate.
+  conflictLines: z.number().int().nonnegative().default(0),
+  from: zLocalDate.nullable(),
+  to: zLocalDate.nullable(),
+  totalIn: zMoney,
+  totalOut: zMoney,
+});
+export type StatementSummary = z.infer<typeof zStatementSummary>;
 
 export const zFileStatus = z.object({
   id: zId,
@@ -630,10 +781,33 @@ export const zFileStatus = z.object({
   contentType: z.string(),
   // expanded: a ZIP archive whose entries were filed as documents of their own (#314). waiting: kept unread because
   // the org used its daily extraction limit (#675); it is read once the org is back under it.
-  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded']),
+  // A bank statement read from a file (#2142) has no proposal: staged is a statement waiting for a member to import it
+  // (nothing is stored until then), imported one whose lines were stored, dismissed one a member skipped.
+  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded', 'staged', 'imported', 'dismissed']),
   // The newest run's error, when that run failed.
   error: z.string().nullable(),
+  // The bank statement of a staged, imported or dismissed file (#2142), null for any other file.
+  // decidedBy: who imported or skipped it and when, from the audit row of the decision (null while it waits, or when the
+  // row is not visible to the reader); name is null for a person who is no longer a member.
+  // origin (#2191): how the file reached the org, for the member who decides it: by email (the org's inbound address,
+  // which anyone who knows it may write to), or uploaded by a member (name null once they are no longer a member).
+  // entity: the legal entity the lines would go to, with its name as it is now (null when the reader cannot see it).
+  statement: zStatementSummary
+    .extend({
+      decidedBy: z.object({ name: z.string().nullable(), at: z.string() }).nullable(),
+      // from: the sender address of the mail an emailed file came in (#2196), only for members who may read mails; null for
+      // an upload, for a file received before the link existed, for an erased address, and for any other reader.
+      origin: z.object({ channel: z.enum(['email', 'upload']), by: z.string().nullable(), from: z.string().nullable() }),
+      entity: z.object({ id: zId, name: z.string() }).nullable(),
+    })
+    .nullable(),
   proposalId: zId.nullable(),
+  // That proposal's status (#2009): a proposed file waiting for a person, posted or rejected, so the Inbox tells them
+  // apart (DESIGN.md principle 2). Null when the file has no proposal.
+  proposalStatus: zProposalStatus.nullable(),
+  // That proposal was posted, then its document voided by a reversal (#2032): no longer in the books, so not shown as
+  // posted. False for any other file.
+  voided: z.boolean(),
   // The newest extraction run's number (1 for the first read), null while the file has not been read yet.
   version: z.number().int().nullable(),
   canReextract: z.boolean(),
@@ -832,6 +1006,15 @@ export const zRaisedInboxItem = z.object({
 export type RaisedInboxItem = z.infer<typeof zRaisedInboxItem>;
 export const zRaisedInboxItems = z.object({ items: z.array(zRaisedInboxItem), total: z.number().int().min(0) });
 
+// An Inbox item "the original invoice is needed" (#2286): a mail with no invoice attachment whose text held the seller's
+// lookup link or code. One item per hint; it carries the hint and nothing of the mail (no text, sender or subject). The
+// lookup code opens the invoice for anyone who has it, so only members of the org list these, and the code stays out of
+// audit events, logs and error texts. total counts every open item.
+export const ORIGINAL_NEEDED_KIND = 'finance.invoice.original_needed';
+export const zOriginalNeededItem = zLookupHint.extend({ id: zId, raisedAt: z.string() });
+export type OriginalNeededItem = z.infer<typeof zOriginalNeededItem>;
+export const zOriginalNeededItems = z.object({ items: z.array(zOriginalNeededItem), total: z.number().int().min(0) });
+
 // What the command palette's search found (#673): at most 8 rows per group. A party that is customerOnly (a customer of
 // sales that never sold to the org) is not among the vendors. A document's proposalId opens it in the Inbox.
 export const zSearchResult = z.object({
@@ -962,6 +1145,31 @@ export const zVatReport = z.object({
   // accountant for the entity. Answered by finance.vat.period; the server checks again.
   filable: z.boolean().optional(),
 });
+// Gaps in the org's own sales e-invoice number series (#2140): per template, series and year, the runs of numbers missing
+// between the lowest and the highest recorded. Each run carries the invoice dates of the recorded numbers on either side
+// of it (the missing invoice was most likely issued between them). More than 100 runs in a series: ranges holds the first.
+export const zSalesNumberGapRange = z.object({
+  from: z.string(),
+  to: z.string(),
+  count: z.number().int().positive(),
+  afterDate: zLocalDate,
+  beforeDate: zLocalDate,
+});
+export const zSalesNumberGapGroup = z.object({
+  template: z.string().nullable(),
+  series: z.string(),
+  year: z.number().int(),
+  firstNumber: z.string(),
+  lastNumber: z.string(),
+  recorded: z.number().int().positive(),
+  missingCount: z.number().int().positive(),
+  ranges: z.array(zSalesNumberGapRange).min(1),
+  truncated: z.boolean(),
+});
+export const zSalesNumberGaps = z.object({
+  groups: z.array(zSalesNumberGapGroup),
+  missingCount: z.number().int().nonnegative(),
+});
 // Marks the period's VAT return filed (done) with its figures, or takes the mark back (#1400).
 export const zVatReturnMark = z.strictObject({
   period: zVatPeriod,
@@ -1080,10 +1288,22 @@ export type YearArchiveVerification = z.infer<typeof zYearArchiveVerification>;
 // is then incomplete); `balanced` is whether B01's total assets equal its total sources.
 const zStatementLine = z.object({ code: z.string(), label: z.string(), amount: zMoney, total: z.boolean() });
 const zUnmappedRow = z.object({ accountCode: z.string(), accountName: z.string().nullable(), partyName: z.string().nullable(), amount: zMoney });
+// The comparison columns (#2090): the line amounts of another period by line code. `startOfYear` is B01 at the end of
+// the previous year, `lastYear` is B02 for the same period a year earlier and `previous` is B02 for the month or quarter
+// right before (null for a year). Each is null where there is no earlier period (before the year 2000). `unmapped`
+// counts the balances of that period no line reads, and `balanced` is B01's total assets equal to its total sources:
+// the warnings of the period's own statement, kept for the column.
+const zColumnAmounts = z.record(z.string(), zMoney);
+const zComparedPeriod = z.object({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate, amounts: zColumnAmounts, unmapped: z.number().int().nonnegative() });
 export const zFinancialStatements = z.object({
   period: zLedgerPeriodRange,
   b01: z.object({ asOf: zLocalDate, lines: z.array(zStatementLine), unmapped: z.array(zUnmappedRow), balanced: z.boolean() }),
   b02: z.object({ from: zLocalDate, to: zLocalDate, lines: z.array(zStatementLine), unmapped: z.array(zUnmappedRow) }),
+  comparison: z.object({
+    startOfYear: z.object({ asOf: zLocalDate, amounts: zColumnAmounts, balanced: z.boolean(), unmapped: z.number().int().nonnegative() }).nullable(),
+    lastYear: zComparedPeriod.nullable(),
+    previous: zComparedPeriod.nullable(),
+  }),
 });
 
 export const zAccountLedger = z.object({
@@ -1176,10 +1396,34 @@ export const zAgentBudget = z.object({
   monthlyLimit: z.string(),
   warnPercent: z.number().int(),
   hardStop: z.boolean(),
-  // What this month's runs it covers cost so far.
+  // What this month's model calls it covers cost so far (the AI budget meter's ledger, #2382).
   spent: z.string(),
   updatedAt: z.string(),
 });
+
+// The small meter beside Vy's panels (#2382), for every member: where the tightest org or module AI budget stands, in
+// whole percent, with no amounts. aiOn is false when the deployment has no AI endpoint: the core works without it.
+export const zAiMeter = z.object({
+  aiOn: z.boolean(),
+  state: z.enum(['none', 'ok', 'warn', 'stop']),
+  percent: z.number().int().min(0).max(100).nullable(),
+  scope: zAgentScope.nullable(),
+  resetAt: z.string(),
+});
+export type AiMeter = z.infer<typeof zAiMeter>;
+
+// This month's AI use for Settings, owners and admins (#2382): the estimated cost (a decimal string in the deployment's price
+// unit) by feature and by agent. Ids, keys and counts only: never a prompt, a document's text or an answer.
+export const zAiUsageReport = z.object({
+  aiOn: z.boolean(),
+  month: z.string(),
+  resetAt: z.string(),
+  spent: z.string(),
+  calls: z.number().int(),
+  byFeature: z.array(z.object({ feature: z.string(), module: z.string(), calls: z.number().int(), inputTokens: z.number().int(), outputTokens: z.number().int(), cost: z.string() })),
+  byAgent: z.array(z.object({ agentId: zId, name: z.string().nullable(), calls: z.number().int(), cost: z.string() })),
+});
+export type AiUsageReport = z.infer<typeof zAiUsageReport>;
 
 export const zTask = z.object({
   id: zId,
@@ -1460,6 +1704,8 @@ export const zSocialVariant = z.object({
   queuePaused: z.boolean(),
   attempt: z.number().int(),
   externalUrl: z.string().nullable(),
+  // The platform's own id of the published post, which the conversation core's comment threads are under (#2303).
+  externalPostId: z.string().nullable(),
   publishedAt: z.string().nullable(),
   // Taken down from its platform (#860): when, who asked and why; removal: where an ask on a published channel stands.
   removedAt: z.string().nullable(),

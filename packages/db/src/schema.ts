@@ -98,12 +98,17 @@ export type TaxProfileTable = Refine<
   }
 >;
 // The org-wide records a link to a legal entity can name (#1280 part 3b, crove_kernel.record_le).
+// The language of the daily brief mail (#2406): the member's choice when they opted in; NULL is Vietnamese.
+export const TODAY_MAIL_LANGUAGES = ['vi', 'en'] as const;
+export type TodayMailTable = Refine<G.KernelTodayMailTable, { language: ColumnType<(typeof TODAY_MAIL_LANGUAGES)[number] | null, (typeof TODAY_MAIL_LANGUAGES)[number] | null, never> }>;
+
 export const RECORD_LE_TYPES = ['kernel.party'] as const;
 export type RecordLeTable = Refine<G.KernelRecordLeTable, { record_type: ColumnType<(typeof RECORD_LE_TYPES)[number], (typeof RECORD_LE_TYPES)[number], never> }>;
 
-// Inbox items the system raises (#1720): a job that failed its last retry, in its own org. Only a system context
+// Inbox items the system raises (#1720): a job that failed its last retry, in its own org; and (#2286) a mail with no
+// invoice attachment but with the seller's lookup link or code, whose original invoice is needed. Only a system context
 // inserts them; tenant roles update the dismissal columns only.
-export const INBOX_ITEM_KINDS = ['kernel.job.dead_lettered'] as const;
+export const INBOX_ITEM_KINDS = ['kernel.job.dead_lettered', 'finance.invoice.original_needed'] as const;
 export type InboxItemKind = (typeof INBOX_ITEM_KINDS)[number];
 export type InboxItemTable = Refine<G.KernelInboxItemTable, { kind: ColumnType<InboxItemKind, InboxItemKind, never> }>;
 
@@ -116,13 +121,25 @@ export type NumberSeriesPolicyTable = Refine<G.KernelNumberSeriesPolicyTable, { 
 
 // The calendar core (issue #1313): a member's weekly working hours and the events on their calendar. Holidays and the
 // slot rules are in @crove/kernel-contract (calendar.ts).
-export const CALENDAR_EVENT_KINDS = ['manual', 'time_off', 'booking'] as const;
+export const CALENDAR_EVENT_KINDS = ['manual', 'time_off', 'booking', 'google', 'microsoft', 'caldav'] as const;
+export const CALENDAR_CONNECTION_STATUSES = ['active', 'expired', 'disconnecting'] as const;
+export const CALENDAR_PROVIDERS = ['google', 'microsoft', 'caldav'] as const;
+export const CALENDAR_LINK_STATES = ['written', 'removed', 'error'] as const;
 export const CALENDAR_EVENT_STATUSES = ['active', 'cancelled'] as const;
 export type CalendarEventTable = Refine<
   G.KernelCalendarEventTable,
   {
     kind: Generated<(typeof CALENDAR_EVENT_KINDS)[number]>;
     status: Generated<(typeof CALENDAR_EVENT_STATUSES)[number]>;
+  }
+>;
+
+export type CalendarEventLinkTable = Refine<G.KernelCalendarEventLinkTable, { state: (typeof CALENDAR_LINK_STATES)[number] }>;
+export type CalendarConnectionTable = Refine<
+  G.KernelCalendarConnectionTable,
+  {
+    provider: ColumnType<(typeof CALENDAR_PROVIDERS)[number], (typeof CALENDAR_PROVIDERS)[number], never>;
+    status: Generated<(typeof CALENDAR_CONNECTION_STATUSES)[number]>;
   }
 >;
 
@@ -330,12 +347,15 @@ export const MAIL_EVENT_KINDS = ['delivered', 'deferred', 'bounce_hard', 'bounce
 export type MailEventTable = Refine<G.KernelMailEventTable, { kind: (typeof MAIL_EVENT_KINDS)[number] }>;
 
 // Per-org abuse limits (#675): what an org used, and the items kept for its next day's budget.
-export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost'] as const;
+export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'conversation_emails'] as const;
 export type UsageMetric = (typeof USAGE_METRICS)[number];
+// What a deferral may wait for: a limit above, or the AI budget of the month (#2382).
+export const USAGE_DEFERRAL_METRICS = [...USAGE_METRICS, 'ai_budget'] as const;
+export type UsageDeferralMetric = (typeof USAGE_DEFERRAL_METRICS)[number];
 export const USAGE_DEFERRAL_SUBJECTS = ['inbound_email', 'file'] as const;
 export type UsageDeferralSubject = (typeof USAGE_DEFERRAL_SUBJECTS)[number];
 export type OrgUsageTable = Refine<G.KernelOrgUsageTable, { metric: UsageMetric }>;
-export type UsageDeferralTable = Refine<G.KernelUsageDeferralTable, { metric: UsageMetric; subject_type: UsageDeferralSubject }>;
+export type UsageDeferralTable = Refine<G.KernelUsageDeferralTable, { metric: UsageDeferralMetric; subject_type: UsageDeferralSubject }>;
 
 export const AGENT_WAKEUP_STATUSES = ['pending', 'claimed', 'done'] as const;
 export type AgentWakeupTable = Refine<G.KernelAgentWakeupTable, { status: Generated<(typeof AGENT_WAKEUP_STATUSES)[number]> }>;
@@ -445,6 +465,62 @@ export type VatReturnFiledTable = Refine<
   }
 >;
 
+// Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
+export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
+export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+// A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
+export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
+export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
+export type EInvoiceDraftTable = Refine<
+  G.FinanceEinvoiceDraftTable,
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
+export const STOCK_ITEM_KINDS = ['goods'] as const;
+export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export type StockTrade = (typeof STOCK_TRADES)[number];
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count'] as const;
+export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
+export type StockItemTable = Refine<
+  G.FinanceStockItemTable,
+  { kind: ColumnType<StockItemKind, StockItemKind | undefined, G.NotGranted>; trade: Generated<StockTrade>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type StockAliasTable = Refine<G.FinanceStockAliasTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// Marketplace orders (#2515, ADR-0045 point 5): the platform, how far a line has got, and which move of an order line a stock move is (a shipment out, a return in).
+export const CHANNEL_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
+export type ChannelPlatform = (typeof CHANNEL_PLATFORMS)[number];
+export const CHANNEL_STAGES = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
+export type ChannelStage = (typeof CHANNEL_STAGES)[number];
+export const STOCK_ORDER_MOVES = ['ship', 'return'] as const;
+export type StockOrderMove = (typeof STOCK_ORDER_MOVES)[number];
+export type StockMoveTable = Refine<
+  G.FinanceStockMoveTable,
+  { source_type: ColumnType<StockMoveSource, StockMoveSource, G.NotGranted>; order_move: ColumnType<StockOrderMove | null, StockOrderMove | null | undefined, G.NotGranted>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// The close of a month of stock (#2513): a closed month and what it held of each item, both append-only.
+export type StockPeriodTable = Refine<G.FinanceStockPeriodTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type StockPeriodItemTable = Refine<G.FinanceStockPeriodItemTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The count of stock (#2513 part b): a header that is a draft until it is confirmed or cancelled, and what was counted of each item.
+export const STOCK_COUNT_STATUSES = ['draft', 'confirmed', 'cancelled'] as const;
+export type StockCountStatus = (typeof STOCK_COUNT_STATUSES)[number];
+export type StockCountTable = Refine<G.FinanceStockCountTable, { status: ColumnType<StockCountStatus, StockCountStatus | undefined, StockCountStatus>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type StockCountLineTable = Refine<G.FinanceStockCountLineTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type ChannelOrderTable = Refine<G.FinanceChannelOrderTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type ChannelOrderLineTable = Refine<G.FinanceChannelOrderLineTable, { stage: ChannelStage; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
+export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
+export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
+export type EInvoiceConnectionTable = Refine<
+  G.FinanceEinvoiceConnectionTable,
+  { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+
 // Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
 // never changes in place.
 export const CATEGORIZATION_RULE_MATCH_KINDS = ['description', 'keyword'] as const;
@@ -500,11 +576,14 @@ export type JournalVoucherTable = Refine<
 // update trigger stamps recorded_at and removed_at with the database clock. Rows are append-only.
 export const PORTAL_LIST_STATUSES = ['pending', 'done', 'failed'] as const;
 export const PORTAL_INVOICE_STATUSES = ['original', 'replacement', 'adjustment', 'replaced', 'adjusted', 'cancelled', 'unknown'] as const;
+// The org is the buyer (the purchase list) or the seller (the sales list, #2141).
+export const PORTAL_LIST_DIRECTIONS = ['purchase', 'sale'] as const;
 
 export type PortalInvoiceListTable = Refine<
   G.FinancePortalInvoiceListTable,
   {
     status: ColumnType<(typeof PORTAL_LIST_STATUSES)[number], (typeof PORTAL_LIST_STATUSES)[number] | undefined, (typeof PORTAL_LIST_STATUSES)[number]>;
+    direction: ColumnType<(typeof PORTAL_LIST_DIRECTIONS)[number], (typeof PORTAL_LIST_DIRECTIONS)[number] | undefined, never>;
     legal_entity_id: LegalEntityColumn;
   },
   'legal_entity_id'
@@ -680,16 +759,93 @@ export type SocialPostApprovalTable = Refine<
 >;
 
 // The crm module (issue #1314): event types of booking pages.
-export const EVENT_TYPE_LOCATION_KINDS = ['in_person', 'phone', 'video'] as const;
+export const EVENT_TYPE_LOCATION_KINDS = ['in_person', 'phone', 'video', 'google_meet'] as const;
 // Who hosts a booking of the type (#1373): the lead host alone, one free host of the team, or every host together.
 export const EVENT_TYPE_ASSIGNMENTS = ['single', 'round_robin', 'collective'] as const;
 export type CrmEventTypeTable = Refine<
   G.CrmEventTypeTable,
   { location_kind: Generated<(typeof EVENT_TYPE_LOCATION_KINDS)[number]>; assignment: Generated<(typeof EVENT_TYPE_ASSIGNMENTS)[number]> }
 >;
+// The CRM pipeline (#2225): a stage is open, or closes its deals as won or lost; a deal's amount is in VND for now.
+export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
+export const DEAL_CURRENCIES = ['VND'] as const;
+export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
+export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+// The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
+// closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
+export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
+export const DEAL_NEXT_STEP_STATUSES = ['open', 'done', 'closed'] as const;
+export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed'] as const;
+export type CrmDealNextStepTable = Refine<
+  G.CrmDealNextStepTable,
+  {
+    reason: (typeof DEAL_NEXT_STEP_REASONS)[number];
+    status: Generated<(typeof DEAL_NEXT_STEP_STATUSES)[number]>;
+    closed_reason: (typeof DEAL_NEXT_STEP_CLOSE_REASONS)[number] | null;
+  }
+>;
+// Contact import staging (#2229): a batch is staged until it is committed, cancelled or expired; a row is classified as
+// new, a duplicate of a party or of an earlier row, a conflict between two parties, or invalid.
+export const IMPORT_BATCH_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
+export const IMPORT_ON_DUPLICATE_CHOICES = ['skip', 'fill_empty'] as const;
+export const IMPORT_ROW_OUTCOMES = ['new', 'duplicate', 'conflict', 'invalid'] as const;
+// What the company cell of a staged person's row came to (#2438).
+export const IMPORT_ROW_COMPANY_STATES = ['none', 'matched', 'new', 'in_file', 'unknown_tax_code', 'ambiguous'] as const;
+export type CrmImportBatchTable = Refine<
+  G.CrmImportBatchTable,
+  { status: Generated<(typeof IMPORT_BATCH_STATUSES)[number]>; on_duplicate: Generated<(typeof IMPORT_ON_DUPLICATE_CHOICES)[number]> }
+>;
+export type CrmImportRowTable = Refine<
+  G.CrmImportRowTable,
+  { kind: Generated<(typeof PARTY_KINDS)[number]>; outcome: (typeof IMPORT_ROW_OUTCOMES)[number]; company_state: Generated<(typeof IMPORT_ROW_COMPANY_STATES)[number]> }
+>;
+// The conversation core (#2303): a thread is a comment thread or a private message, and is new until a member answers, pending
+// while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
+export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
+export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
+// The intent a person applies to a conversation (CV3, #2306); what the AI coworker suggests is never stored, only this decision is.
+export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
+export const MESSAGE_DIRECTIONS = ['in', 'out'] as const;
+export const MESSAGE_AUTHOR_KINDS = ['contact', 'member', 'system'] as const;
+export const MESSAGE_SEND_STATES = ['queued', 'sending', 'sent', 'failed', 'unknown'] as const;
+export const MESSAGE_HIDE_REQUESTS = ['hide', 'unhide'] as const;
+export type ConversationTable = Refine<
+  G.KernelConversationTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; status: Generated<(typeof CONVERSATION_STATUSES)[number]>; intent: (typeof CONVERSATION_INTENTS)[number] | null }
+>;
+export type ConversationMessageTable = Refine<
+  G.KernelConversationMessageTable,
+  {
+    kind: (typeof CONVERSATION_KINDS)[number];
+    direction: (typeof MESSAGE_DIRECTIONS)[number];
+    author_kind: (typeof MESSAGE_AUTHOR_KINDS)[number];
+    send_state: (typeof MESSAGE_SEND_STATES)[number] | null;
+    hide_request: (typeof MESSAGE_HIDE_REQUESTS)[number] | null;
+  }
+>;
+// A customer's image of a message (#2357): pending while only the platform's address is known, stored once its bytes are.
+export const ATTACHMENT_STATES = ['pending', 'stored'] as const;
+export const ATTACHMENT_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+// Vy's reply draft of a thread (#2310): asked for (requested), written (live), then used, discarded or made stale by a newer customer message.
+export const DRAFT_STATES = ['requested', 'live', 'used', 'discarded', 'stale'] as const;
+export const DRAFT_SOURCES = ['auto', 'asked'] as const;
+export type ConversationDraftTable = Refine<
+  G.KernelConversationDraftTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; source: (typeof DRAFT_SOURCES)[number]; state: Generated<(typeof DRAFT_STATES)[number]> }
+>;
+// The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
+export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
+export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
+export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
+export type ConversationAttachmentTable = Refine<
+  G.KernelConversationAttachmentTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; state: Generated<(typeof ATTACHMENT_STATES)[number]>; content_type: (typeof ATTACHMENT_CONTENT_TYPES)[number] | null }
+>;
 // Bookings of the public booking page (#1318): requested, then confirmed or refused by the worker.
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled'] as const;
 export const BOOKING_REFUSALS = ['taken', 'unavailable'] as const;
+// The Google Meet of a booking (C7, #1375).
+export const BOOKING_MEETING_STATES = ['none', 'pending', 'ready', 'failed'] as const;
 // A visitor's ask from a manage link (#1319), and the worker's answer to it.
 export const BOOKING_MANAGE_ACTIONS = ['cancel', 'move'] as const;
 export const BOOKING_MANAGE_OUTCOMES = ['cancelled', 'moved', 'taken', 'unavailable'] as const;
@@ -698,6 +854,7 @@ export type CrmBookingTable = Refine<
   {
     status: Generated<(typeof BOOKING_STATUSES)[number]>;
     refusal: (typeof BOOKING_REFUSALS)[number] | null;
+    meeting_state: Generated<(typeof BOOKING_MEETING_STATES)[number]>;
     manage_action: (typeof BOOKING_MANAGE_ACTIONS)[number] | null;
     manage_outcome: (typeof BOOKING_MANAGE_OUTCOMES)[number] | null;
   }
@@ -714,13 +871,130 @@ export const TODO_STATUSES = ['open', 'done', 'handed_over', 'cancelled'] as con
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 export type NotesTodoTable = Refine<G.NotesTodoTable, { status: Generated<TodoStatus> }>;
 
+// The ads module (#2217, ADR-0040): the level of a row of daily figures (the account, or one of its campaigns), how a sync
+// of an ad account ended, and how it failed (the channel layer's typed errors).
+export const AD_LEVELS = ['account', 'campaign'] as const;
+export const AD_SYNC_RUN_STATUSES = ['ok', 'failed'] as const;
+export const AD_ERROR_KINDS = ['token_expired', 'permission', 'bad_request', 'rate_limited', 'transient', 'unknown'] as const;
+export type AdErrorKind = (typeof AD_ERROR_KINDS)[number];
+export type AdsAdAccountTable = Refine<G.AdsAdAccountTable, { last_error_kind: AdErrorKind | null }>;
+export type AdsAdSpendDayTable = Refine<G.AdsAdSpendDayTable, { level: ColumnType<(typeof AD_LEVELS)[number], (typeof AD_LEVELS)[number], never> }>;
+export type AdsAdSyncRunTable = Refine<
+  G.AdsAdSyncRunTable,
+  {
+    status: ColumnType<(typeof AD_SYNC_RUN_STATUSES)[number], (typeof AD_SYNC_RUN_STATUSES)[number], never>;
+    error_kind: ColumnType<AdErrorKind | null, AdErrorKind | null, never>;
+  }
+>;
+
+// Running ads (#2294, ADR-0043): whose cap a row of ad_spend_cap is (the org's or one account's) and its period. Insert-only.
+export const AD_CAP_SCOPES = ['org', 'account'] as const;
+export const AD_CAP_PERIODS = ['daily', 'monthly'] as const;
+export type AdsAdSpendCapTable = Refine<
+  G.AdsAdSpendCapTable,
+  {
+    scope: ColumnType<(typeof AD_CAP_SCOPES)[number], (typeof AD_CAP_SCOPES)[number], never>;
+    period: ColumnType<(typeof AD_CAP_PERIODS)[number], (typeof AD_CAP_PERIODS)[number], never>;
+  }
+>;
+
+// A campaign draft (#2295, W1): its objective, where it stands (a draft, approved by an approved proposal, or discarded) and who wrote it.
+export const AD_OBJECTIVES = ['traffic', 'engagement', 'messenger'] as const;
+export const AD_DRAFT_STATUSES = ['draft', 'approved', 'discarded'] as const;
+export const AD_DRAFT_ORIGINS = ['human', 'ai'] as const;
+export type AdsAdCampaignDraftTable = Refine<
+  G.AdsAdCampaignDraftTable,
+  {
+    objective: (typeof AD_OBJECTIVES)[number];
+    status: Generated<(typeof AD_DRAFT_STATUSES)[number]>;
+    origin: Generated<(typeof AD_DRAFT_ORIGINS)[number]>;
+  }
+>;
+
+// A request to the AI coworker for a campaign draft (#2295, W1b): waiting, written (a draft exists) or none (a code says why).
+export const AD_REQUEST_STATES = ['requested', 'written', 'none'] as const;
+export type AdsAdCampaignRequestTable = Refine<
+  G.AdsAdCampaignRequestTable,
+  {
+    objective: (typeof AD_OBJECTIVES)[number];
+    state: Generated<(typeof AD_REQUEST_STATES)[number]>;
+  }
+>;
+
+// The launch ledger (#2296, W2-2): where an approved plan's launch stands (queued until W2-3's writer runs it). The database's guard holds the moves.
+export const AD_LAUNCH_STATES = ['queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled'] as const;
+export type AdsAdLaunchTable = Refine<
+  G.AdsAdLaunchTable,
+  {
+    state: Generated<(typeof AD_LAUNCH_STATES)[number]>;
+  }
+>;
+
+// What a launch created at the platform (#2296, W2-3): the level of each object and what Ludy set it to (paused or archived; nothing here un-pauses). The
+// database's guard holds who writes it.
+export const AD_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
+export const AD_OBJECT_STATUSES = ['paused', 'archived'] as const;
+export type AdsAdObjectTable = Refine<
+  G.AdsAdObjectTable,
+  {
+    level: (typeof AD_OBJECT_LEVELS)[number];
+    configured_status: Generated<(typeof AD_OBJECT_STATUSES)[number]>;
+  }
+>;
+
+// The revoke at the platform of a closed ads connection's token (#2296, W2-1): which token it was, where the obligation stands, how it ended or why it gave
+// up, and the kinds of error a try ended in. Read only for tenant roles: the definers write it.
+export const AD_TOKEN_KINDS = ['write', 'read_spend'] as const;
+export const AD_REVOKE_STATES = ['pending', 'done', 'gave_up'] as const;
+export const AD_REVOKE_HOWS = ['revoked', 'already_invalid', 'sandbox', 'shared_grant', 'reconnected'] as const;
+export const AD_REVOKE_GIVE_UPS = ['attempts', 'age', 'unrevocable'] as const;
+export const AD_REVOKE_ERROR_KINDS = ['rate_limited', 'transient', 'permission', 'bad_request', 'unknown'] as const;
+export type AdsAdTokenRevokeTable = Refine<
+  G.AdsAdTokenRevokeTable,
+  {
+    kind: (typeof AD_TOKEN_KINDS)[number];
+    state: Generated<(typeof AD_REVOKE_STATES)[number]>;
+    how_done: (typeof AD_REVOKE_HOWS)[number] | null;
+    give_up: (typeof AD_REVOKE_GIVE_UPS)[number] | null;
+    last_error_kind: (typeof AD_REVOKE_ERROR_KINDS)[number] | null;
+  }
+>;
+
+// The HR module (#2530, payroll plan 6.1): an employee is active or ended; the terms of an employment name a contract type and a wage region (Decree 74/2024).
+export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
+export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
+export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
+export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
+export type HrPayrollEmploymentTable = Refine<
+  G.HrPayrollEmploymentTable,
+  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never> }
+>;
+
 type Refined = Tables<{
+  'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
+  'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
+  'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_object': AdsAdObjectTable;
+  'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
+  'crove_ads.ad_spend_day': AdsAdSpendDayTable;
+  'crove_ads.ad_sync_run': AdsAdSyncRunTable;
+  'crove_ads.ad_token_revoke': AdsAdTokenRevokeTable;
   'crove_crm.booking': CrmBookingTable;
+  'crove_crm.deal': CrmDealTable;
+  'crove_crm.deal_next_step': CrmDealNextStepTable;
   'crove_crm.event_type': CrmEventTypeTable;
+  'crove_crm.import_batch': CrmImportBatchTable;
+  'crove_crm.import_row': CrmImportRowTable;
+  'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_hr.payroll_employee': HrPayrollEmployeeTable;
+  'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
+  'crove_kernel.calendar_connection': CalendarConnectionTable;
   'crove_kernel.calendar_event': CalendarEventTable;
+  'crove_kernel.calendar_event_link': CalendarEventLinkTable;
   'crove_kernel.legal_entity': LegalEntityTable;
   'crove_kernel.number_series_policy': NumberSeriesPolicyTable;
   'crove_kernel.role': RoleTable;
@@ -748,17 +1022,36 @@ type Refined = Tables<{
   'crove_kernel.kill_switch': KillSwitchTable;
   'crove_kernel.budget_policy': BudgetPolicyTable;
   'crove_kernel.channel_connection': ChannelConnectionTable;
+  'crove_kernel.conversation': ConversationTable;
+  'crove_kernel.conversation_message': ConversationMessageTable;
+  'crove_kernel.conversation_attachment': ConversationAttachmentTable;
+  'crove_kernel.conversation_composing': ConversationComposingTable;
+  'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
+  'crove_kernel.member_availability': MemberAvailabilityTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;
   'crove_kernel.mail_event': MailEventTable;
   'crove_kernel.org_usage': OrgUsageTable;
+  'crove_kernel.today_mail': TodayMailTable;
   'crove_kernel.usage_deferral': UsageDeferralTable;
   'crove_finance.purchase_document': PurchaseDocumentTable;
   'crove_finance.journal_entry': JournalEntryTable;
   'crove_finance.org_account': OrgAccountTable;
   'crove_finance.cash_voucher': CashVoucherTable;
   'crove_finance.fixed_asset': FixedAssetTable;
+  'crove_finance.bank_party_rule': BankPartyRuleTable;
+  'crove_finance.einvoice_draft': EInvoiceDraftTable;
+  'crove_finance.einvoice_connection': EInvoiceConnectionTable;
+  'crove_finance.stock_item': StockItemTable;
+  'crove_finance.channel_order': ChannelOrderTable;
+  'crove_finance.channel_order_line': ChannelOrderLineTable;
+  'crove_finance.stock_alias': StockAliasTable;
+  'crove_finance.stock_move': StockMoveTable;
+  'crove_finance.stock_period': StockPeriodTable;
+  'crove_finance.stock_period_item': StockPeriodItemTable;
+  'crove_finance.stock_count': StockCountTable;
+  'crove_finance.stock_count_line': StockCountLineTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

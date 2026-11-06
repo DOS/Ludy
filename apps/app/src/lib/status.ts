@@ -20,8 +20,8 @@ export const PROPOSAL_STATUS_VARIANT: Record<ProposalStatus, ChipVariant> = {
 };
 
 // A file on its way to a proposal (the Inbox's files and the intake list): one map, so a state looks the same on both.
-// `proposed` says only that the file has a proposal, posted or not, so it keeps the success chip until the file carries
-// its proposal's status (#2009). `rejected` is an archive entry that was not filed (encrypted, corrupt, too large): an
+// `proposed` is shown by its proposal's status (fileProposal, #2009); its own chip is the fallback for a file whose
+// proposal's status is not known. `rejected` is an archive entry that was not filed (encrypted, corrupt, too large): an
 // error, not a rejected proposal.
 export const FILE_STATE_VARIANT = {
   queued: 'secondary',
@@ -33,6 +33,28 @@ export const FILE_STATE_VARIANT = {
   duplicate: 'warning',
   failed: 'destructive',
   expanded: 'success',
+  // A bank statement read into bank lines (#2142).
+  imported: 'success',
+  // A statement waiting for a member to import it, and one a member skipped.
+  staged: 'proposal',
+  dismissed: 'secondary',
   rejected: 'destructive',
 } as const satisfies Record<string, ChipVariant>;
 export type FileState = keyof typeof FILE_STATE_VARIANT;
+
+// The proposal a file's chip shows (#2009): a proposed file looks as its proposal does, waiting for a person in the
+// proposal hue, posted in success, rejected as a rejected proposal (DESIGN.md principle 2). Null for any other state,
+// which keeps its file chip.
+// A posting voided by a reversal (#2032) is no longer in the books: it says so, in the error chip the proposal page gives
+// it, never as posted.
+export type FileProposalChip = ProposalStatus | 'voided';
+
+export function fileProposal(state: string, proposalStatus: ProposalStatus | null, voided = false): FileProposalChip | null {
+  if (state !== 'proposed' || !proposalStatus) return null;
+  return voided && proposalStatus === 'executed' ? 'voided' : proposalStatus;
+}
+
+export function fileChipVariant(state: FileState, proposalStatus: ProposalStatus | null, voided = false): ChipVariant {
+  const proposal = fileProposal(state, proposalStatus, voided);
+  return proposal === 'voided' ? 'destructive' : proposal ? PROPOSAL_STATUS_VARIANT[proposal] : FILE_STATE_VARIANT[state];
+}

@@ -4,8 +4,11 @@ import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
   zAccount,
+  zBankPartyRule,
   zCategorizationRule,
   zAgentBudget,
+  zAiMeter,
+  zAiUsageReport,
   zAgentRisk,
   zAgentRoleKey,
   zAgentScope,
@@ -158,12 +161,14 @@ import {
   zNotificationKind,
   zNotifications,
   zRaisedInboxItems,
+  zOriginalNeededItems,
   zRole,
   zSession,
   zSessionRevoke,
   zVatPeriod,
   zVatFilingPeriod,
   zVatReport,
+  zSalesNumberGaps,
   zExchangeRate,
   zInputVatCheckOutcome,
   zVatReturnMark,
@@ -184,15 +189,87 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
+import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
+import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
+import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
+import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
+import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
+import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
+import {
+  zConversationAssign,
+  zConversationCounted,
+  zConversationCounts,
+  zConversationDetail,
+  zConversationGet,
+  zConversationHide,
+  zConversationId,
+  zConversationLinkContact,
+  zConversationIntent,
+  zConversationSetIntent,
+  zConversationIntentSuggest,
+  zConversationIntentSuggested,
+  zConversationContactMatches,
+  zConversationContactMatched,
+  zConversationList,
+  zConversationListed,
+  zConversationMarkRead,
+  zConversationComposing,
+  zConversationComposed,
+  zAvailability,
+  zAvailabilityEntry,
+  zAvailabilitySet,
+  zConversationNoteAdd,
+  zConversationPrivateReplied,
+  zConversationPrivateReply,
+  zConversationReplied,
+  zConversationReply,
+  zConversationRetention,
+  zConversationRetentionSet,
+  zConversationEraseContact,
+  zConversationErased,
+  zConversationSandboxComment,
+  zConversationSandboxQueued,
+  zConversationSettle,
+  zConversationAutoDraft,
+  zConversationAutoDraftSet,
+  zConversationDraftDiscard,
+  zConversationDraftRequest,
+  zConversationOther,
+  zSavedReplyId,
+  zSavedReplyInput,
+  zSavedReplyList,
+  zSavedReplyListed,
+  zSavedReplyUpdate,
+  zConversationAddress,
+} from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
+import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
-import { zMemberRoles, zRoleAssignInput } from './roles.ts';
-import { zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zMyCalendar, zWorkingHours } from './calendar.ts';
+import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
+import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
+import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
+import {
+  zHrDependentAdd,
+  zHrDependentEnd,
+  zHrEmployee,
+  zHrEmployeeAdd,
+  zHrEmployeeEdit,
+  zHrEmployeeEnd,
+  zHrEmployeeErased,
+  zHrEmployeeList,
+  zHrEmployeeRef,
+  zHrEmployeeSummary,
+  zHrEmploymentAdd,
+  zHrWritten,
+} from './hr.ts';
 import {
   zNote,
   zNoteCreate,
@@ -225,9 +302,11 @@ import {
   zTodoWritten,
 } from './notes.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
-import { MISSING_INVOICE_REMINDER_DAY_MAX, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
+import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport } from './bank-statement.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
+import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -254,6 +333,19 @@ export const contract = {
     // own org, and how many orgs the user has (#495). One at a time per user: a second while the first runs is
     // refused with OVERLOADED (503).
     clients: oc.output(zClientOverviews),
+  },
+  // "Hôm nay cần bạn" on Home (issue #2383): what needs the member today across the apps, merged from each line's own
+  // today read and ordered flags first. Every role; each line shows only what the member could open there. Reads only.
+  today: {
+    list: oc.output(zTodayList),
+    // Vy's brief of the same list: a few checked sentences, or the plain template, or none (#2383). One model call at most, counted
+    // against the AI budget; every role.
+    brief: oc.input(zTodayBriefInput).output(zTodayBrief),
+    // The caller's own opt-in to the daily brief by email (#2406); every role, only their own setting.
+    mail: {
+      get: oc.output(zTodayMailSetting),
+      set: oc.input(zTodayMailSet).output(zTodayMailSetting),
+    },
   },
   org: {
     // A retry with the same idempotencyKey returns the org the first request created.
@@ -305,14 +397,22 @@ export const contract = {
     // Owners and admins (admins cannot invite admins). R3: needs fresh MFA. Nobody becomes a member until the
     // invitee accepts (invites.accept). The answer is the same whether or not the email has an account.
     // An owner may scope the invite to legal entities (#1281): the invitee joins as a member or viewer holding the
-    // external_accountant role for those entities only.
-    invite: oc.input(z.object({ email: z.email().max(320), role: zInviteRole, legalEntityIds: zInviteLegalEntityIds.optional() })).output(zInviteCreated),
+    // external_accountant role for those entities only. An owner may also send one department role (#2611, a catalog role
+    // of scope org), granted when the invite is accepted; it never goes with legalEntityIds.
+    invite: oc
+      .input(z.object({ email: z.email().max(320), role: zInviteRole, legalEntityIds: zInviteLegalEntityIds.optional(), roleKey: zBuiltinRoleKey.optional() }))
+      .output(zInviteCreated),
     // Owners and admins: the org's invites that are still pending or expired, newest first.
     listInvites: oc.output(z.array(zInvite)),
     revokeInvite: oc.input(z.object({ inviteId: zId })).output(z.object({ ok: z.literal(true) })),
     // Owner only. Retires the org's inbound email address for good and returns the new one (null when the server
     // has no inbound domain). A retry with the same idempotencyKey does not rotate again.
     rotateInbound: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ inboundAddress: z.string().nullable() })),
+    // Owners and admins (#2439): the Inbox's own email address, made the first time it is asked for and the same one after; null when the server has no
+    // inbound domain.
+    issueConversationAddress: oc.input(z.object({})).output(zConversationAddress),
+    // Owner only (R3): retires the Inbox's email address for good and returns the new one. A retry with the same idempotencyKey does not rotate again.
+    rotateConversationAddress: oc.input(z.object({ idempotencyKey: zId })).output(zConversationAddress),
     // Owners only (R3). A retry with the same idempotencyKey returns the first result.
     changeMemberRole: oc
       .input(z.object({ userId: zId, role: zRole, idempotencyKey: zId }))
@@ -349,6 +449,20 @@ export const contract = {
     saveHours: oc.input(zWorkingHours).output(z.strictObject({ hours: zWorkingHours, saved: z.boolean() })),
     addEvent: oc.input(zCalendarEventAdd).output(zCalendarEventView),
     cancelEvent: oc.input(zCalendarEventCancel).output(z.strictObject({ eventId: zId, cancelled: z.literal(true) })),
+    // Outside calendars (#2123): the OAuth providers this server offers (empty without the app credentials), the
+    // member's own connections, and connect and disconnect. Start returns where to send the browser; the provider
+    // sends it back to /calendar/oauth/:provider/callback, whose screen finishes the attempt with the code and state.
+    providers: oc.output(z.array(zCalendarOAuthProvider)),
+    connections: oc.output(z.array(zCalendarConnectionView)),
+    connectStart: oc
+      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional() }))
+      .output(z.strictObject({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
+    connectFinish: oc
+      .input(z.strictObject({ provider: zCalendarOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
+      .output(z.strictObject({ connectionId: zId, displayName: z.string(), reconnected: z.boolean() })),
+    disconnect: oc.input(z.strictObject({ connectionId: zId })).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
+    // Whether bookings are written to this connection's calendar (#2124); on only for a grant with the events scope.
+    setWriteBack: oc.input(z.strictObject({ connectionId: zId, enabled: z.boolean() })).output(z.strictObject({ connectionId: zId, writeBack: z.boolean() })),
   },
   taxRegistry: {
     lookup: oc.input(z.object({ taxCode: z.string().trim().max(20) })).output(zTaxRegistryEntry),
@@ -365,7 +479,7 @@ export const contract = {
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
   channels: {
-    list: oc.input(z.object({ includeRevoked: z.boolean().optional() })).output(z.array(zChannelConnection)),
+    list: oc.input(z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() })).output(z.array(zChannelConnection)),
     // The offline sandbox channel, when the deployment enables it. Connecting again with the same key reconnects the
     // same sandbox account.
     connectSandbox: oc
@@ -402,7 +516,7 @@ export const contract = {
     // provider sends it back to /channels/oauth/:provider/callback, and that screen finishes the attempt with the code
     // and state. Finish connects every account the grant covers (for Facebook, the Pages picked in Meta's dialog).
     oauthStart: oc
-      .input(z.object({ provider: zOAuthProvider }))
+      .input(z.object({ provider: zOAuthProvider, comments: z.boolean().optional() }))
       .output(z.object({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
     oauthFinish: oc
       .input(z.object({ provider: zOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
@@ -434,12 +548,83 @@ export const contract = {
       // Times to offer a client (#1440): read-only; the model, when the deployment has one, reads the pasted message.
       suggest: oc.input(zBookingSuggestInput).output(zBookingSuggestion),
     },
+    // The contacts of the CRM (K4, #2228): the org's parties, searched without Vietnamese marks, filtered and sorted by a
+    // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
+    contacts: {
+      list: oc.input(zContactList).output(zContactPage),
+      // The companies a person may work at (#2438): the sales coworker's suggestion, read only; a person links one with a click.
+      companySuggestions: oc.input(zCompanySuggest).output(zCompanySuggested),
+      // The conversations linked to the contact (#2333; for a company, its people's too), newest activity first, with no message body.
+      conversations: oc.input(zPartyDealsQuery).output(z.array(zConversationOther)),
+    },
+    // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
+    // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every
+    // role may read a preview.
+    contactImport: {
+      stage: oc.input(zImportStage).output(zImportPreview),
+      preview: oc.input(zImportPreviewQuery).output(zImportPreview),
+      commit: oc.input(zImportCommit).output(zImportCommitted),
+      cancel: oc.input(zImportRef).output(zImportBatch),
+    },
+    // The org's one pipeline and its deals (#2225, docs/plan/crm.md): everyone reads; owners, admins and members write.
+    pipeline: {
+      stages: oc.input(z.strictObject({})).output(z.array(zPipelineStage)),
+      // Creates the default stages when the org has none; answers the stages either way.
+      setup: oc.input(z.strictObject({})).output(z.array(zPipelineStage)),
+      // Owners and admins edit the open stages; each answers the stages afterwards.
+      addStage: oc.input(zStageAdd).output(z.array(zPipelineStage)),
+      renameStage: oc.input(zStageRename).output(z.array(zPipelineStage)),
+      reorderStages: oc.input(zStageReorder).output(z.array(zPipelineStage)),
+      removeStage: oc.input(zStageRemove).output(z.array(zPipelineStage)),
+    },
+    parties: { search: oc.input(zPartySearchQuery).output(z.array(zPartyChoice)) },
+    deals: {
+      board: oc.input(zBoardQuery).output(zBoard),
+      list: oc.input(zDealListQuery).output(zDealPage),
+      get: oc.input(zDealRef).output(zDeal),
+      byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
+      // The conversations of the deal's contact since the deal opened (#2333), newest activity first, with no message body.
+      conversations: oc.input(zDealRef).output(z.array(zConversationOther)),
+      create: oc.input(zDealCreate).output(zDeal),
+      update: oc.input(zDealUpdate).output(zDeal),
+      move: oc.input(zDealMove).output(zDeal),
+      delete: oc.input(zDealRef).output(zDealDeleted),
+    },
+    // The next steps the stale-deal rule raises for open deals (#2381, docs/plan/crm.md): everyone reads, owners, admins and members mark them done
+    // or snooze them (up to 20 at once); the rule itself runs in the worker.
+    nextSteps: {
+      list: oc.input(zNextStepListQuery).output(zNextStepPage),
+      done: oc.input(zNextStepDone).output(zNextStepChanged),
+      snooze: oc.input(zNextStepSnooze).output(zNextStepChanged),
+    },
+    // After how many days without a change an open deal raises a next step: everyone reads, owners and admins set it.
+    dealSetting: {
+      get: oc.input(z.strictObject({})).output(zDealSetting),
+      set: oc.input(zDealSettingSet).output(zDealSetting),
+    },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.
     bookingFeed: {
       get: oc.input(z.object({})).output(z.object({ createdAt: z.string() }).nullable()),
       create: oc.input(z.strictObject({})).output(z.object({ token: z.string() })),
       revoke: oc.input(z.strictObject({})).output(z.object({ revoked: z.boolean() })),
+    },
+  },
+  // HR (#2530, payroll plan 6.1), when the deployment runs the hr module: owners and admins only. Every read is a sensitive query (its audit row is written before it reads), and the
+  // identity number and the bank account number come back only from `get`, opened from their sealed form for the one employee asked for.
+  hr: {
+    payroll: {
+      employees: {
+        list: oc.input(zHrEmployeeList).output(z.array(zHrEmployeeSummary)),
+        get: oc.input(zHrEmployeeRef).output(zHrEmployee),
+        add: oc.input(zHrEmployeeAdd).output(zHrWritten),
+        edit: oc.input(zHrEmployeeEdit).output(zHrWritten),
+        end: oc.input(zHrEmployeeEnd).output(zHrWritten),
+        // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
+        erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+      },
+      employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
+      dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
@@ -1142,12 +1327,12 @@ export const contract = {
       )
       // A purchase returns its document, and the posting date when it was posted later than its invoice date (#478); a
       // reversal (#138) returns the entry it reversed and, when that entry recorded a purchase, the document it voided
-      // (#165); a cash or bank voucher (#327) returns the voucher.
+      // (#165); a cash or bank voucher (#327) returns the voucher; an ads proposal (#2294) posts nothing, so it returns none of these.
       .output(
         z.object({
           documentId: zId.optional(),
           postingDate: zLocalDate.optional(),
-          journalEntryId: zId,
+          journalEntryId: zId.optional(),
           reversedEntryId: zId.optional(),
           voidedDocumentId: zId.optional(),
           voucherId: zId.optional(),
@@ -1207,6 +1392,11 @@ export const contract = {
     // newest first (50 at most; total counts them all), and dismissing one. Members and viewers get an empty list.
     raised: oc.input(z.object({})).output(zRaisedInboxItems),
     dismiss: oc.input(z.strictObject({ id: zId })).output(z.object({ ok: z.literal(true) })),
+    // Owners, admins and members whose scope is the whole org (#2286): the mails with no invoice attachment whose text held
+    // the seller's lookup link or code, one item per hint, newest first (50 at most; total counts them all), and
+    // dismissing one. Viewers and members limited to some legal entities get an empty list.
+    originals: oc.input(z.object({})).output(zOriginalNeededItems),
+    dismissOriginal: oc.input(z.strictObject({ id: zId })).output(z.object({ ok: z.literal(true) })),
     // Asks for a proposal that no file produced (kernel.proposal.request; owners, admins and members): reversing a
     // posted journal entry (#138, #165), or a cash or bank voucher entered by hand (#327). It posts nothing; the
     // proposal is approved like any other (R3, P10 four-eyes, P11 step-up). Reversing a purchase entry also voids
@@ -1223,6 +1413,15 @@ export const contract = {
           z.object({ command: z.literal('finance.closing.record'), input: zYearClosingRequest, idempotencyKey: zId }),
           // A month's depreciation and allocation (#919): the server builds the lines from the register.
           z.object({ command: z.literal('finance.depreciation.record'), input: zDepreciationRequest, idempotencyKey: zId }),
+          // A sales e-invoice draft asked to be issued (#2502, ADR-0044 point 3): the server checks the draft and hashes what it is issued from; an owner or an admin approves.
+          // EINVOICE_DRAFT_INVALID, EINVOICE_DRAFT_MISMATCH, EINVOICE_NOT_DRAFT (409/422), EINVOICE_ISSUE_PENDING (409) while a request for the same content is open.
+          z.object({ command: z.literal('finance.einvoice.issue'), input: z.strictObject({ draftId: zId }), idempotencyKey: zId }),
+          // The close of a month of stock (#2513): the server builds the cost of goods sold of the month from the stock moves; an owner or an admin approves.
+          // STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED, STOCK_CLOSE_NO_COST (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, PERIOD_LOCKED (409).
+          z.object({ command: z.literal('finance.stock.close_period'), input: zStockCloseRequest, idempotencyKey: zId }),
+          // The confirmation of a count of stock (#2513): the server works out the differences from the books and builds the entry; an owner or an admin approves, and approving writes
+          // the adjustment moves. STOCK_COUNT_NOT_DRAFT, STOCK_COUNT_CLOSED, PERIOD_LOCKED, STOCK_COUNT_STALE (409), STOCK_COUNT_UNPRICED, STOCK_COUNT_NO_DIFFERENCE (422).
+          z.object({ command: z.literal('finance.stock.count_confirm'), input: zStockCountIdInput, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -1236,6 +1435,9 @@ export const contract = {
   },
   files: {
     recent: oc.output(z.array(zFileStatus)),
+    // Every role: the bank statements read from files that wait for a member to import or skip them (#2142), newest first,
+    // however many files came since (recent lists only the newest).
+    staged: oc.output(z.array(zFileStatus)),
     // Every role: the status of the given files of the org, in the order asked (ids it cannot see are left out), and
     // for a ZIP archive the entries it was opened into, each with its own file's status (bulk intake, #314).
     batch: oc.input(z.object({ ids: z.array(zId).min(1).max(MAX_BATCH_FILES) })).output(z.array(zBatchFile)),
@@ -1257,6 +1459,9 @@ export const contract = {
     // follow), each with its receivable on 131 and its last invoice date. q searches the name and the tax code.
     // The customers of one legal entity (#1534): legalEntityId as in zLegalEntityChoice.
     customers: oc.input(z.object({ q: z.string().max(100).optional(), after: zCustomerCursor.optional(), legalEntityId: zId.optional() })).output(zCustomerPage),
+    // Owners, admins and members (R1, CRM K4 #2228): a person or a company by hand, validated as an edit is; a tax code
+    // another party uses refuses (409) and names it.
+    create: oc.input(zPartyCreate).output(z.object({ partyId: zId, version: z.number().int() })),
     // Owners, admins and members (R1, #887): the party's name and contact details, from the version the editor read.
     // A tax code can be added, never changed or removed.
     update: oc
@@ -1269,6 +1474,8 @@ export const contract = {
           address: z.string().max(2000).nullable(),
           email: z.string().max(1000).nullable(),
           phone: z.string().max(100).nullable(),
+          // The kind, when it changes (#2438): only for a party nothing points at (PARTY_KIND_LOCKED), and a person with a company clears the link first.
+          kind: zPartyKind.optional(),
         }),
       )
       .output(z.object({ partyId: zId, version: z.number().int() })),
@@ -1276,6 +1483,11 @@ export const contract = {
     // under it; nothing is deleted. unmarkDuplicate undoes it.
     markDuplicate: oc.input(z.object({ partyId: zId, keepId: zId })).output(z.object({ partyId: zId, keepId: zId })),
     unmarkDuplicate: oc.input(z.object({ partyId: zId })).output(z.object({ partyId: zId })),
+    // Owners, admins and members (R1, #2438): the company a person works at, set, changed or cleared (companyId null), from the version the editor read. The company
+    // is an organization of the org that is not merged into another; only a person has one.
+    setCompany: oc.input(z.object({ partyId: zId, companyId: zId.nullable(), version: z.number().int().min(1) })).output(z.object({ partyId: zId, version: z.number().int() })),
+    // Every role (K4, #2228): what happened to a contact, oldest first (fixed text, never a name or contact detail).
+    timeline: oc.input(z.object({ partyId: zId })).output(zTimeline),
     // Owners, admins and members: pairs of parties that look like duplicates, strongest first.
     duplicateHints: oc.input(z.object({})).output(z.array(zDuplicateHint)),
   },
@@ -1289,6 +1501,64 @@ export const contract = {
     list: oc.input(z.object({})).output(zNotifications),
     read: oc.input(z.union([z.strictObject({ ids: z.array(zId).min(1).max(100) }), z.strictObject({ all: z.literal(true) })])).output(z.object({ read: z.number().int() })),
     mute: oc.input(z.strictObject({ kind: zNotificationKind, muted: z.boolean() })).output(z.object({ kind: zNotificationKind, muted: z.boolean() })),
+  },
+  // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at
+  // most 30 per member per scope. Members see their own and the shared ones; the owner changes and deletes a view, and
+  // owners and admins a shared one. The input is checked against the scope registry by the command (422).
+  savedViews: {
+    list: oc.input(zSavedViewList).output(z.array(zSavedView)),
+    save: oc.input(zSavedViewSaveShape).output(z.object({ viewId: zId })),
+    rename: oc.input(zSavedViewRename).output(z.object({ viewId: zId })),
+    setShared: oc.input(zSavedViewSetShared).output(z.object({ viewId: zId })),
+    remove: oc.input(zSavedViewDelete).output(z.object({ viewId: zId })),
+  },
+  // The conversation core (#2303): comments under the org's posts and private messages, one store. Every role reads what the
+  // database lets it read (a comment thread of a channel it may use; a private message only owners, admins and holders of
+  // kernel.conversation.direct.read); owners, admins and members answer, hide, assign, resolve and note; a viewer only reads. A reply
+  // carries the last seq its sender saw (409 CONVERSATION_MOVED when a newer message exists).
+  conversations: {
+    list: oc.input(zConversationList).output(zConversationListed),
+    counts: oc.input(zConversationCounts).output(zConversationCounted),
+    get: oc.input(zConversationGet).output(zConversationDetail),
+    reply: oc.input(zConversationReply).output(zConversationReplied),
+    replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
+    // A refused or unclear reply: send it again as a new attempt, or record that it did go out.
+    settle: oc.input(zConversationSettle).output(z.object({ messageId: zId, state: z.string() })),
+    hide: oc.input(zConversationHide).output(z.object({ messageId: zId })),
+    assign: oc.input(zConversationAssign).output(z.object({ conversationId: zId })),
+    resolve: oc.input(zConversationId).output(z.object({ conversationId: zId })),
+    reopen: oc.input(zConversationId).output(z.object({ conversationId: zId })),
+    note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
+    linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
+    // The intent (CV3, #2306): a person applies, changes or clears it (the only thing stored). The AI coworker's suggestion and the likely contacts of a
+    // customer are read apart: a model call through the AI budget meter, never stored, and with the model off, spent or failing the answer is no suggestion.
+    setIntent: oc.input(zConversationSetIntent).output(z.object({ conversationId: zId, intent: zConversationIntent.nullable() })),
+    suggestIntents: oc.input(zConversationIntentSuggest).output(zConversationIntentSuggested),
+    contactMatches: oc.input(zConversationContactMatches).output(zConversationContactMatched),
+    markRead: oc.input(zConversationMarkRead).output(z.object({ conversationId: zId })),
+    // The inbox (CV3, #2306): the "you are replying" marker (at most one write in 20 seconds per thread and member), and the member's availability
+    // for new conversations (every staff member reads the team's, a member sets their own).
+    composing: oc.input(zConversationComposing).output(zConversationComposed),
+    availability: oc.input(z.strictObject({})).output(zAvailability),
+    setAvailability: oc.input(zAvailabilitySet).output(zAvailabilityEntry),
+    // A demo comment on a post of a sandbox connection (owners and admins): it goes through the same intake a platform's notice takes.
+    sandboxComment: oc.input(zConversationSandboxComment).output(zConversationSandboxQueued),
+    // The retention of the org's threads (every member reads it; owners and admins set it), and the erasure of one customer (owners and
+    // admins, with a fresh second factor).
+    retention: oc.input(z.strictObject({})).output(zConversationRetention),
+    setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
+    eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
+    // Vy's drafts (CV8, #2310): a member asks for one ("Vy soạn": the draft arrives in the thread's detail within seconds, written by the worker) or sets
+    // one aside; owners and admins switch the drafting of new conversations on or off (a customer's message goes to the AI endpoint for it).
+    draftRequest: oc.input(zConversationDraftRequest).output(z.object({ draftId: zId, queued: z.boolean() })),
+    draftDiscard: oc.input(zConversationDraftDiscard).output(z.object({ discarded: z.boolean() })),
+    autoDraft: oc.input(z.strictObject({})).output(zConversationAutoDraft),
+    setAutoDraft: oc.input(zConversationAutoDraftSet).output(zConversationAutoDraft),
+    // The org's saved replies: every member reads them; owners, admins and members write them.
+    savedReplies: oc.input(zSavedReplyList).output(zSavedReplyListed),
+    createSavedReply: oc.input(zSavedReplyInput).output(z.object({ id: zId })),
+    updateSavedReply: oc.input(zSavedReplyUpdate).output(z.object({ id: zId })),
+    deleteSavedReply: oc.input(zSavedReplyId).output(z.object({ id: zId })),
   },
   // Every role (#673): parties by name or tax code, documents by series, number or party, journal entries by
   // description or amount. Vietnamese marks and case are ignored, and each word matches the start of a word.
@@ -1345,6 +1615,147 @@ export const contract = {
   // admins (R1), a keyword rule for every vendor or for one; RULE_TEXT_TOO_SHORT (422) when fewer than two letters or
   // digits are left once normalized, RULE_EXISTS (409) for the same keyword and vendor. remove: owners and admins (R1),
   // any rule, learned or added; RULE_NOT_FOUND (404). Approving an invoice writes the rules learned from it.
+  // The learned rules that point a bank line's text at a party (#2402): list (every role) and remove (owners and admins,
+  // R1, audited; RULE_NOT_FOUND 404). Approving the voucher of a bank line whose party a person chose writes the rule.
+  bankPartyRules: {
+    list: oc.input(zLegalEntityChoice.optional()).output(z.array(zBankPartyRule)),
+    remove: oc.input(z.object({ id: zId })).output(z.object({ id: zId })),
+  },
+  // Customer payment reminders (#2488, "nhắc thu nợ"). list (every role): the customers with a sales invoice past its due date and an amount
+  // left, in the entity the caller names or sees, longest overdue first. draft (every role): one customer's overdue invoices as the books
+  // stand, the fixed words for its notice level and the bank accounts it may ask to be paid into; NOTHING_OVERDUE (409). send (owners,
+  // admins, members; R2, a mail): queues the reminder the person approved, its facts rebuilt from the books; STALE_REMINDER (409) when the
+  // level or total moved since the draft, CUSTOMER_EMAIL_REQUIRED (409), ALREADY_REMINDED (409) for a second one of the level within three days
+  // unless confirm is true, PAY_TO_NOT_FOUND (422).
+  paymentReminders: {
+    list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
+    draft: oc.input(z.object({ partyId: zId, legalEntityId: zId.optional() })).output(zPaymentReminderDraft),
+    send: oc.input(zPaymentReminderSend).output(zPaymentReminderSent),
+    // The finance coworker's wording of the lead-in and the closing (#2488, slice 2), read-only and stored nowhere: the model is told the notice level, the
+    // language and the sender's name, never a fact of the books, and its text is refused when it holds a figure or a link. Any refusal leaves words null and the
+    // screen on the fixed template words.
+    wording: oc.input(zPaymentReminderWordingAsk).output(zPaymentReminderWording),
+    // The org's terms and weekly switch (#2488, slice 3): get for every role, set for owners and admins (R1, audited). The terms date the invoices of every customer
+    // that has none of its own; the weekly switch only adds a "Hôm nay cần bạn" item, it drafts and sends nothing.
+    settings: {
+      get: oc.output(zCollectionSetting),
+      set: oc.input(zCollectionSetting).output(zCollectionSetting),
+    },
+    // One customer's own terms (null: the org's) and its pause (the last day with no reminder; null: not paused): get for every role, set for owners, admins and
+    // members (R1, audited). The settings sit on the kept party of a duplicate group. PARTY_NOT_FOUND (404), PAUSE_DATE_INVALID and PAUSE_TOO_LONG (422).
+    customer: {
+      get: oc.input(z.object({ partyId: zId })).output(zCustomerCollection),
+      set: oc.input(zCustomerCollectionSet).output(zCustomerCollection),
+    },
+  },
+  // Sales e-invoice drafts and the series they are issued from (#2500, ADR-0044). Nothing issues an invoice and no provider is called: a draft is made, checked,
+  // edited and deleted while it is a draft; the amounts are computed by the server from the lines. Every role reads; owners, admins and members write drafts;
+  // owners and admins read a series from the provider (the offline sandbox, when EINVOICE_SANDBOX is on).
+  einvoice: {
+    status: oc.output(zEInvoiceStatus),
+    series: {
+      list: oc.output(z.array(zEInvoiceSeries)),
+      // EINVOICE_DISABLED (404) when the sandbox is off; LEGAL_ENTITY_NOT_ALLOWED (403) for an entity the caller may not see.
+      sync: oc.input(zEInvoiceSeriesSync).output(zEInvoiceSeriesSynced),
+      // The entity's default series: owners and admins; EINVOICE_SERIES_NOT_FOUND (404).
+      setDefault: oc.input(zEInvoiceSeriesSetDefault).output(z.object({ series: z.array(zEInvoiceSeries) })),
+    },
+    // The org's own account at a provider (#2501, ADR-0044 point 2). The credential is sealed in the kernel and never in an answer, a log or an audit row. Every member
+    // reads the connections and their last test; owners and admins connect, test and disconnect.
+    providers: oc.output(z.array(zEInvoiceProviderInfo)),
+    connections: {
+      list: oc.output(z.array(zEInvoiceConnection)),
+      // EINVOICE_DISABLED (404) for a provider this deployment does not offer, EINVOICE_SIGNING_TOKEN (422) for a provider whose signature needs the seller's own token,
+      // EINVOICE_FIELDS (422) when the fields are not the adapter's, EINVOICE_TAX_CODE_NEEDED and EINVOICE_TAX_CODE_MISMATCH (422), EINVOICE_CONNECTION_EXISTS (409),
+      // FORBIDDEN (403) unless owner or admin.
+      connect: oc.input(zEInvoiceConnect).output(z.object({ id: zId })),
+      // Reads the provider's templates and series and records the state; the series it finds are added to the connection's entity. EINVOICE_PROVIDER_NOT_READY (503)
+      // for a provider that is reached through the worker.
+      test: oc.input(z.object({ id: zId })).output(zEInvoiceConnectionTested),
+      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+    },
+    drafts: {
+      // The drafts of one legal entity, or of every entity the caller may see when none is named.
+      list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(z.array(zEInvoiceDraftSummary)),
+      get: oc.input(z.object({ draftId: zId })).output(zEInvoiceDraft),
+      // The live check of the form as it stands: the computed lines, the totals and the issues, nothing stored.
+      check: oc.input(zEInvoiceDraftCheckInput).output(zEInvoiceDraftCheck),
+      // EINVOICE_DRAFT_NOT_FOUND (404), EINVOICE_NOT_DRAFT (409), EINVOICE_SERIES_NOT_FOUND (404), EINVOICE_SERIES_ENTITY (422), EINVOICE_ENTITY_FIXED (422),
+      // EINVOICE_DRAFT_INVALID (422), PARTY_NOT_FOUND (404). A draft that fails a check is saved all the same, with its issues.
+      save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
+      delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
+      // The request to issue a draft as the Inbox card shows it (#2502): the draft now, and whether it is still what was asked for. Owners, admins and members.
+      issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
+    },
+  },
+  // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.
+  // staged lists the reports waiting; preview says how one stands against the org's orders and stock items now; confirm stores the orders once and moves stock for the lines that name an
+  // item (MARKETPLACE_NOT_STAGED, 409, when it was already decided or read again); reject skips it, storing nothing. orders lists the confirmed orders. No buyer data of any kind.
+  marketplace: {
+    staged: oc.input(z.object({}).optional()).output(z.array(zMarketplaceStaged)),
+    preview: oc.input(z.object({ fileId: zId })).output(zMarketplacePreview),
+    confirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceConfirmResult),
+    reject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    orders: oc.input(zMarketplaceOrdersInput.optional()).output(z.array(zMarketplaceOrder)),
+    // The order lines that move stock and name no item yet, newest first, and the assignment of one: the shipment (and the return) move stock through the item, once.
+    // MARKETPLACE_LINE_ASSIGNED, MARKETPLACE_LINE_NOT_SHIPPED (409), MARKETPLACE_LINE_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH (422), STOCK_ITEM_INACTIVE (409).
+    unassigned: oc.input(zMarketplaceUnassignedInput.optional()).output(z.array(zMarketplaceUnassignedLine)),
+    assign: oc.input(zMarketplaceAssign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int() })),
+    // Takes a line back from its item: its stock comes back and it waits to be assigned again (#2633). MARKETPLACE_LINE_NOT_ASSIGNED (409) for a line that names no item, MARKETPLACE_LINE_CANCELLED (409) for one cancelled after it shipped (its stock came back by itself). forgot: whether the taught name of that SKU went too (only the one that put the line on its item).
+    unassign: oc.input(zMarketplaceUnassign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int(), forgot: z.boolean() })),
+  },
+  // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
+  // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.
+  stock: {
+    items: {
+      // The items of one legal entity, or of every entity the caller may see; the inactive ones only when asked. On hand is the sum of the item's moves.
+      list: oc.input(z.object({ legalEntityId: zId.optional(), includeInactive: z.boolean().optional() }).optional()).output(z.array(zStockItem)),
+      // STOCK_ITEM_CODE_EXISTS (409), STOCK_ITEM_CODE_FIXED, STOCK_ITEM_ENTITY_FIXED, STOCK_ITEM_IN_USE (the unit and the account stay once a move names the item),
+      // STOCK_ACCOUNT_UNKNOWN, STOCK_ACCOUNT_INACTIVE, STOCK_ACCOUNT_KIND (422), STOCK_ITEM_NOT_FOUND (404).
+      save: oc.input(zStockItemInput).output(z.object({ id: zId })),
+      setActive: oc.input(z.object({ itemId: zId, active: z.boolean() })).output(z.object({ active: z.boolean() })),
+    },
+    aliases: {
+      // STOCK_ALIAS_TAKEN and STOCK_ALIAS_FACTOR (409), STOCK_ALIAS_EMPTY (422), STOCK_ITEM_INACTIVE (409).
+      teach: oc.input(zStockAliasTeach).output(z.object({ id: zId, existing: z.boolean() })),
+      forget: oc.input(z.object({ aliasId: zId })).output(z.object({ removed: z.boolean() })),
+    },
+    moves: {
+      list: oc.input(z.object({ itemId: zId, limit: z.number().int().min(1).max(500).optional() })).output(z.array(zStockMove)),
+      // The correction of a move: a reversing move of the opposite quantity. STOCK_MOVE_NOT_FOUND (404), STOCK_MOVE_IS_REVERSAL and STOCK_MOVE_REVERSED (409).
+      reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
+    },
+    // The goods lines of posted documents that moved no stock: they matched no item by code or by a taught name.
+    unassigned: oc.input(zStockUnassignedInput.optional()).output(z.array(zStockUnassignedLine)),
+    // Writes the move of a line and, unless told not to, teaches its name to the item. STOCK_LINE_NOT_FOUND (404), STOCK_LINE_ASSIGNED and STOCK_LINE_VOIDED (409),
+    // STOCK_LINE_NOT_GOODS, STOCK_LINE_NO_QUANTITY and STOCK_ITEM_ENTITY_MISMATCH (422).
+    assign: oc.input(zStockAssign).output(z.object({ moveId: zId, aliasId: zId.nullable() })),
+    // Nhập xuất tồn of one month and the stock card of an item (#2513): read-only and provisional (the weighted average of the month); every role reads.
+    report: oc.input(zStockReportInput).output(z.array(zStockReportRow)),
+    card: oc.input(zStockCardInput).output(zStockCard),
+    // The months a person has closed, newest first, with the cost posted for each (#2513).
+    periods: oc.input(zStockPeriodsInput).output(z.array(zStockPeriod)),
+    // Closes a month that has no cost to post, with no entry and so with no approval (owners and admins; R3, a closed month is not reopened). A month with cost goes through inbox.request
+    // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
+    closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
+    // The finance coworker on stock (#2514), all read-only. suggest: the item each unassigned line is most likely about (the model sees the line's description and unit and the
+    // entity's item codes, names and units, nothing else; a person still assigns, which teaches the name); ai says why there is none. low: the items whose stock will not last the lead
+    // days at the pace of the last eight weeks, with the supplier they were last bought from. reorderDraft: the message to that supplier (the model's, or the fixed template when there is
+    // none), to copy or send from the person's own mail. STOCK_ITEM_NOT_FOUND and PARTY_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH and STOCK_ITEM_INACTIVE (422/409).
+    suggest: oc.input(zStockSuggestInput).output(zStockSuggested),
+    low: oc.input(zStockLowInput.optional()).output(z.array(zStockLowItem)),
+    reorderDraft: oc.input(zStockReorderAsk).output(zStockReorderDraft),
+    // Counts of stock (#2513 part b), newest first (every role reads). create makes a draft with what was counted (owners, admins, members; STOCK_COUNT_FUTURE (422), STOCK_COUNT_CLOSED,
+    // STOCK_COUNT_DUPLICATE_ITEM, STOCK_COUNT_ITEM_INACTIVE (409), STOCK_ITEM_NOT_FOUND (404), STOCK_COUNT_ITEM_ENTITY (422)); cancel drops a draft; confirmEmpty confirms a count that differs from the
+    // books nowhere, with nothing to post. A count with differences is confirmed through inbox.request (finance.stock.count_confirm).
+    counts: {
+      list: oc.input(zStockCountListInput.optional()).output(z.array(zStockCount)),
+      preview: oc.input(zStockCountPreviewInput).output(z.array(zStockCountPreviewRow)),
+      create: oc.input(zStockCountCreate).output(z.object({ id: zId })),
+      cancel: oc.input(zStockCountIdInput).output(z.object({ id: zId })),
+      confirmEmpty: oc.input(zStockCountIdInput).output(z.object({ id: zId })),
+    },
+  },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),
     create: oc
@@ -1361,6 +1772,12 @@ export const contract = {
   // when the voucher is not a báo Nợ of the org.
   vat: {
     period: oc.input(z.object({ period: zVatPeriod, legalEntityId: zId.optional() })).output(zVatReport),
+    // salesNumberGaps (every role; #2140): the numbers missing in the org's own sales e-invoice series, per template,
+    // series and year. With period, the runs that may fall in it (VAT working); with fromYear, the series of that year on
+    // (Overview); alone, every year. Read-only.
+    salesNumberGaps: oc
+      .input(z.object({ period: zVatPeriod.optional(), fromYear: z.number().int().min(2000).max(2100).optional(), legalEntityId: zId.optional() }))
+      .output(zSalesNumberGaps),
     markPayment: oc
       .input(
         z.object({
@@ -1376,13 +1793,15 @@ export const contract = {
     // or takes both back (done false). The next period's [22] is prefilled from this [43].
     markReturn: oc.input(zVatReturnMark).output(z.object({ period: zVatPeriod, done: z.boolean() })),
   },
-  // The tax portal's purchase-invoice list (issue #465) for one VAT period. reconcile: every role; the lists of the
-  // period and how their invoices compare with Crove's purchases. import (owners, admins, members; R1): files an .xlsx
+  // The tax portal's invoice list (issue #465) for one VAT period. direction 'purchase' (the default) is the "mua vào"
+  // export compared with Crove's purchases; 'sale' (#2141) is the "bán ra" export compared with the recorded sales, so a
+  // sale missing from the books or booked with another amount is flagged. reconcile: every role; the lists of the
+  // period and how their invoices compare with Crove's. import (owners, admins, members; R1): files an .xlsx
   // uploaded with purpose 'import' as a list of the period; the worker reads it (poll reconcile until no list is
   // pending). remove (owners, admins, members; R1): takes a list out of its period; it is kept.
   portalList: {
-    reconcile: oc.input(z.object({ period: zVatPeriod, legalEntityId: zId.optional() })).output(zPortalReconciliation),
-    import: oc.input(z.object({ period: zVatPeriod, fileId: zId, legalEntityId: zId.optional() })).output(z.object({ listId: zId })),
+    reconcile: oc.input(z.object({ period: zVatPeriod, legalEntityId: zId.optional(), direction: z.enum(PORTAL_LIST_DIRECTIONS).optional() })).output(zPortalReconciliation),
+    import: oc.input(z.object({ period: zVatPeriod, fileId: zId, legalEntityId: zId.optional(), direction: z.enum(PORTAL_LIST_DIRECTIONS).optional() })).output(z.object({ listId: zId })),
     remove: oc.input(z.object({ listId: zId })).output(z.object({ listId: zId })),
   },
   // The assisted sync from the tax portal (issue #325, ADR-0036), off unless the deployment sets TAX_PORTAL_SYNC=true
@@ -1407,6 +1826,14 @@ export const contract = {
     setReminder: oc
       .input(z.object({ day: z.number().int().min(1).max(MISSING_INVOICE_REMINDER_DAY_MAX).nullable() }))
       .output(z.object({ day: z.number().int().min(1).max(MISSING_INVOICE_REMINDER_DAY_MAX).nullable() })),
+  },
+  // The Tổng quan of the Kế toán app (#2631), every role: get answers the four cards (cash 111 + 112, profit before tax, receivables 131, payables 331) for a
+  // period against the period before, the six months' results and the expense mix, all read from the books; explain is the finance coworker's sentence on the
+  // biggest change, asked of the model outside any transaction from the aggregated figures only, and its text is dropped when it states a number the figures
+  // do not hold (ai says why there is none).
+  financeOverview: {
+    get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
+    explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.
@@ -1457,6 +1884,16 @@ export const contract = {
   bank: {
     preview: oc.input(zBankStatementImport).output(zBankImportPreview),
     import: oc.input(zBankStatementImport.extend({ idempotencyKey: zId })).output(zBankImportResult),
+    // A statement read from a file sent by email or dropped in the Inbox (#2142) waits, staged, for a member: statementConfirm
+    // (owners, admins, members; R1, audited) stores its lines once, on the account its account number is mapped to, and
+    // statementReject skips it, storing nothing. STATEMENT_NOT_STAGED (409) when it was already decided or read again;
+    // STATEMENT_MAPPING_CHANGED (409) when its account is no longer mapped to the same bank account.
+    statementConfirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zBankImportResult),
+    statementReject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    // The staged statement's lines as they stand against the account now (#2191), conflicts first: each line with its
+    // reference, and for a conflict the line the account already holds under that reference. Owners, admins, members;
+    // STATEMENT_NOT_STAGED (409) once it was decided or read again.
+    statementLines: oc.input(z.object({ fileId: zId })).output(zStatementLines),
     lines: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankLines),
     // The báo Có or báo Nợ a line makes and the party it is probably about (#326, stage 2a), for the voucher form; the
     // voucher itself is asked for with inbox.request (finance.voucher.record, bankLineId set). Owners, admins and
@@ -1465,8 +1902,102 @@ export const contract = {
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with
     // the voucher each makes (stage 2b); the SPA asks for them one by one with inbox.request. Owners, admins and members.
     suggestions: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(z.array(zBankLineVoucher)),
+    // The open lines of an account and period sorted into a clean group (one exact candidate, no warning: ask for and approve
+    // together) and lines that need a look, each with why (#2385). Deterministic; the SPA asks for the clean lines' vouchers
+    // with inbox.request and approves them with inbox.approveMany. Owners, admins and members.
+    matchGroups: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankMatchGroups),
+    // The lines a voucher settles in a period (all accounts, or one), with the voucher, who approved it and how its party
+    // was found (#2385). Every member.
+    matched: oc.input(z.object({ bankAccount: zAccountCode.optional(), period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankMatched),
     // The open lines per bank account, for the Inbox (stage 2b). Every member.
     openLines: oc.input(zLegalEntityChoice.optional()).output(zBankOpenLines),
+  },
+  // Bank feeds (ADR-0039, #2044): a connection's accounts mapped to the org's bank accounts. Every member lists the
+  // mappings of the entities they read; owners and admins connect, map and unmap. Read-only feeds: nothing here moves
+  // money.
+  bankFeeds: {
+    accounts: oc.output(z.array(zBankFeedAccountView)),
+    // The org's live bank feed connections with their status, mapped accounts or not, for the Settings card (#2099).
+    // Owners and admins.
+    connections: oc.output(z.array(zBankFeedConnectionView)),
+    // The offline sandbox feed, when the deployment enables it (BANK_FEED_SANDBOX): a login of its own each time. The
+    // worker lists the accounts it reaches (listed), to map.
+    connectSandbox: oc.input(z.object({ displayName: z.string().trim().min(1).max(200) })).output(z.object({ connectionId: zId })),
+    // The accounts a connection reaches, as the worker last listed them.
+    listed: oc
+      .input(z.object({ connectionId: zId }))
+      .output(z.array(z.object({ externalAccountId: z.string(), displayName: z.string(), listedAt: z.string() }))),
+    map: oc.input(zBankFeedMap.extend({ idempotencyKey: zId })).output(z.object({ feedAccountId: zId })),
+    unmap: oc.input(z.object({ feedAccountId: zId, idempotencyKey: zId })).output(z.object({ feedAccountId: zId })),
+  },
+  // The numbers of the org's bank accounts (#2183): owners and admins record the digits a bank statement names on a bank
+  // account of an entity (set), list them and remove one (clear), so a statement that arrives by email or in the Inbox
+  // finds its account without a bank feed. A number belongs to one bank account of an org: BANK_ACCOUNT_NUMBER_TAKEN
+  // (409) when it is on another one, here or as a bank feed mapping, whether or not the caller may read that row.
+  bankAccountNumbers: {
+    list: oc.output(z.array(zBankAccountNumberView)),
+    set: oc.input(zBankAccountNumberSet.extend({ idempotencyKey: zId })).output(z.object({ id: zId })),
+    clear: oc.input(z.object({ id: zId, idempotencyKey: zId })).output(z.object({ id: zId })),
+  },
+  // Ads (ADR-0040, #2217): the org's ad accounts and the daily spend and results their platforms report, read only. Every
+  // member lists the accounts of the entities they read; owners and admins connect and configure. The sandbox ad platform
+  // is the offline one (ADS_SANDBOX); the real platforms connect through the channel layer's OAuth later (A2).
+  ads: {
+    accounts: oc.output(z.array(zAdAccountView)),
+    connectSandbox: oc
+      .input(z.object({ displayName: z.string().trim().min(1).max(200), currency: z.enum(ADS_SANDBOX_CURRENCIES).optional(), legalEntityId: zId.optional(), idempotencyKey: zId }))
+      .output(z.object({ connectionId: zId, adAccountId: zId })),
+    // The offline write connection of a sandbox account (the owner, while the org's switch is on): its own sealed token, with the scope
+    // that can change campaigns, attached to the account the read connection linked (W0b).
+    connectSandboxWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ connectionId: zId, adAccountId: zId })),
+    // Closes the read connection of an account and its write connection, dropping both sealed tokens (owners and admins).
+    disconnectAccount: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, closed: z.number() })),
+    configure: oc.input(zAdsAccountConfigure.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
+    // Asks for a refresh of one account, at most one a minute.
+    requestSync: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
+    // Deletes an account's stored figures and sync log (owners and admins): a connected account reads its 13 months again, one
+    // whose connection is closed also loses its row (#2219).
+    deleteHistory: oc.input(zAdsAccountDeleteHistory.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId, days: z.number(), runs: z.number(), removed: z.boolean() })),
+    // Running ads (ADR-0043, #2294): the switches, the spend caps, the stops and the requests. Owners and admins read the state
+    // and stop everything with pauseAll; the owner switches writing off, an account's flag off and lowers a cap. What opens the
+    // way to spend (the org switch, an account's flag, a cap set or raised, launches opened again) is asked for with
+    // requestChange: a proposal approved in the Inbox (P10, P11), never a direct change. Nothing here calls a platform yet.
+    writeState: oc.output(zAdsWriteState),
+    // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins, read only.
+    flags: oc.output(z.array(zAdsFlag)),
+    // The deterministic 7-day side-by-side comparison note across connected platforms (#2220): every member who reads Ads, read only.
+    weeklyNote: oc.output(z.array(zAdsWeeklyNote)),
+    // The thresholds of those flags: owners and admins read them and set them (nothing spends or changes by it).
+    flagSettings: oc.output(zAdsFlagSettings),
+    setFlagSettings: oc.input(zAdsFlagSettingCall).output(zAdsFlagSettings),
+    requestChange: oc.input(zAdsChangeRequest).output(z.object({ proposalId: zId })),
+    // Campaign drafts (W1, #2295): one campaign with its ad set and ad, built and checked here; nothing leaves Ludy. Owners, admins and members
+    // draft (a member limited to some legal entities sees those entities' accounts only); submitting a draft for approval is requestChange
+    // with change campaign_launch, owners and admins.
+    campaignDrafts: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignDraftView)),
+    campaignDraft: oc.input(z.strictObject({ draftId: zId })).output(zAdsCampaignDraftView),
+    saveCampaignDraft: oc.input(zAdsCampaignDraftSaveCall).output(zAdsCampaignDraftView),
+    discardCampaignDraft: oc.input(zAdsCampaignDraftDiscardCall).output(z.object({ draftId: zId })),
+    // Cancels a launch that has not started (W2-2): an approved plan's commitment against the caps is released. Owners and admins.
+    cancelLaunch: oc.input(zAdsLaunchCancelCall).output(z.object({ launchId: zId, released: z.string() })),
+    // Stops a launch that has started (W2-4a): owners and admins. It keeps the launch's commitment against the caps to at least today in the account's time zone (a person's
+    // stop never releases spend that ran or is in flight), and the objects it made at the platform are paused from the queue after the commit.
+    stopLaunch: oc.input(zAdsLaunchStopCall).output(z.object({ launchId: zId, state: z.literal('stopped'), commitUntil: z.string().nullable() })),
+    // Runs a launch that needs attention again (W2-4b): owners and admins. The request is stamped and the launch job takes it, with the next attempt: it first looks at what the
+    // earlier attempts left unsettled at the platform, then creates what is missing, then switches the objects on if the approved launch is still in force.
+    retryLaunch: oc.input(zAdsLaunchRetryCall).output(z.object({ launchId: zId, requested: z.boolean() })),
+    // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
+    // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
+    campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),
+    requestCampaignDraft: oc.input(zAdsCampaignRequestCall).output(zAdsCampaignRequestAsked),
+    // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
+    proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),
+    lowerCap: oc.input(zAdsCapLowerCall).output(z.object({ capId: zId, previous: z.string() })),
+    writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number(), connectionsClosed: z.number(), readConnectionsClosed: z.number() })),
+    disableAccountWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, writeEnabled: z.literal(false), connectionsClosed: z.number() })),
+    pauseAll: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ launchesBlocked: z.literal(true), paused: z.number() })),
+    summary: oc.input(zAdsSummaryInput).output(zAdsSummary),
+    syncRuns: oc.input(z.object({ adAccountId: zId })).output(z.array(zAdsSyncRunView)),
   },
   // The org chart (ADR-0029): positions shared by members and AI agents. Every member reads it; changing it is the
   // owner's (R3: role keys, holders and reporting lines decide what agents may do). A retry with the same
@@ -1561,6 +2092,13 @@ export const contract = {
     // Owner (R3, fresh MFA): turns a kill switch off again.
     release: oc.input(z.object({ id: zId, idempotencyKey: zId })).output(z.object({ ok: z.literal(true) })),
   },
+  // The AI budget meter (#2382). Raising a budget is agents.setBudget: R3, owner only, a fresh second factor.
+  ai: {
+    // Every member: where the tightest org or module budget stands (the small meter beside Vy's panels).
+    meter: oc.input(z.object({ module: z.string().max(40).optional() })).output(zAiMeter),
+    // Owners and admins: this month's use by feature and by agent.
+    usage: oc.output(zAiUsageReport),
+  },
   // Work given to positions, held by members or agents (ADR-0029). Every member reads; owners, admins and members
   // create, comment and change status.
   tasks: {
@@ -1573,6 +2111,18 @@ export const contract = {
           description: z.string().max(10000).optional(),
           assigneePositionId: zId.nullable(),
           due: z.iso.datetime().optional(),
+          idempotencyKey: zId,
+        }),
+      )
+      .output(z.object({ taskId: zId })),
+    update: oc
+      .input(
+        z.object({
+          id: zId,
+          title: z.string().trim().min(1).max(300).optional(),
+          description: z.string().max(10000).nullable().optional(),
+          assigneePositionId: zId.nullable().optional(),
+          due: z.iso.datetime().nullable().optional(),
           idempotencyKey: zId,
         }),
       )

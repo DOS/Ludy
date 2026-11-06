@@ -1,7 +1,22 @@
 // Bulk intake state (issue #314): what the Inbox shows for each file of an upload batch, and when it stops polling.
 import { describe, expect, it } from 'vitest';
 import type { BatchFile, FileStatus } from '@crove/kernel-contract';
-import { ARCHIVES_PER_POLL, MAX_INTAKE_FILES, applyBatch, eachLimited, fitsBatch, isSettled, newItem, pendingIds, pollGroups, precheck, summarize, uploaded } from '../src/lib/intake.ts';
+import {
+  ARCHIVES_PER_POLL,
+  MAX_INTAKE_FILES,
+  applyBatch,
+  eachLimited,
+  fitsBatch,
+  isSettled,
+  newItem,
+  pendingIds,
+  pollGroups,
+  precheck,
+  summarize,
+  undecidedIds,
+  uploaded,
+  withProposalStatuses,
+} from '../src/lib/intake.ts';
 
 const ID = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const status = (id: string, value: FileStatus['status'], error: string | null = null): FileStatus => ({
@@ -10,7 +25,10 @@ const status = (id: string, value: FileStatus['status'], error: string | null = 
   contentType: 'application/xml',
   status: value,
   error,
+  statement: null,
   proposalId: null,
+  proposalStatus: null,
+  voided: false,
   version: 1,
   canReextract: false,
   createdAt: '2026-10-18T00:00:00.000Z',
@@ -26,7 +44,10 @@ describe('bulk intake state', () => {
   it('prechecks size and extension; the server still decides by content', () => {
     expect(precheck({ name: 'hd.XML', size: 10 })).toBe('ok');
     expect(precheck({ name: 'thang-10.zip', size: 10 })).toBe('ok');
-    expect(precheck({ name: 'bang-ke.xlsx', size: 10 })).toBe('unsupported');
+    // A bank statement (#2142): Excel or CSV.
+    expect(precheck({ name: 'bang-ke.xlsx', size: 10 })).toBe('ok');
+    expect(precheck({ name: 'sao-ke.CSV', size: 10 })).toBe('ok');
+    expect(precheck({ name: 'sao-ke.xls', size: 10 })).toBe('unsupported');
     expect(precheck({ name: 'noextension', size: 10 })).toBe('unsupported');
     expect(precheck({ name: 'big.pdf', size: 25 * 1024 * 1024 + 1 })).toBe('too_large');
     expect(MAX_INTAKE_FILES).toBe(500);
@@ -46,7 +67,77 @@ describe('bulk intake state', () => {
     expect(isSettled(items)).toBe(true);
     // A later answer that leaves a settled file out does not undo it.
     expect(applyBatch(items, []).map((i) => i.state)).toEqual(['proposed', 'duplicate', 'upload_failed']);
-    expect(summarize(items)).toEqual({ total: 3, settled: 3, proposed: 1, duplicate: 1, failed: 1 });
+    expect(summarize(items)).toEqual({ total: 3, settled: 3, proposed: 1, imported: 0, duplicate: 1, failed: 1 });
+  });
+
+  it('settles a bank statement waiting for a member, one imported and one skipped, apart from the proposals (#2142)', () => {
+    let items = [newItem('a', 'sao-ke-t9.xlsx'), newItem('b', 'hd.xml'), newItem('c', 'sao-ke-t10.csv'), newItem('d', 'sao-ke-t11.csv')];
+    items = items.map((item, i) => uploaded(item, { fileId: ID(i + 1), duplicate: false }));
+    expect(pendingIds(items)).toEqual([ID(1), ID(2), ID(3), ID(4)]);
+    items = applyBatch(items, [batchFile(ID(1), 'imported'), batchFile(ID(2), 'proposed'), batchFile(ID(3), 'staged'), batchFile(ID(4), 'dismissed')]);
+    expect(items.map((i) => i.state)).toEqual(['imported', 'proposed', 'staged', 'dismissed']);
+    expect(pendingIds(items)).toEqual([]);
+    expect(isSettled(items)).toBe(true);
+    // A statement waiting for a member waits for a decision, as a proposal does.
+    expect(summarize(items)).toEqual({ total: 4, settled: 4, proposed: 2, imported: 1, duplicate: 0, failed: 0 });
+  });
+
+  it("carries a proposed file's proposal status, so its chip tells posted from waiting (#2009)", () => {
+    const item = uploaded(newItem('a', 'a.xml'), { fileId: ID(1), duplicate: false });
+    expect(item.proposalStatus).toBeNull();
+    const waiting = applyBatch([item], [{ ...batchFile(ID(1), 'proposed'), proposalId: ID(9), proposalStatus: 'pending' }]);
+    expect(waiting[0]).toMatchObject({ state: 'proposed', proposalStatus: 'pending' });
+    const posted = applyBatch(waiting, [{ ...batchFile(ID(1), 'proposed'), proposalId: ID(9), proposalStatus: 'executed' }]);
+    expect(posted[0]).toMatchObject({ state: 'proposed', proposalStatus: 'executed' });
+    // An archive's entries carry theirs too.
+    const zip = uploaded(newItem('z', 'z.zip'), { fileId: ID(2), duplicate: false });
+    const entry = { name: 'x.xml', outcome: 'stored' as const, reason: null, file: { ...status(ID(3), 'proposed'), proposalId: ID(8), proposalStatus: 'rejected' as const } };
+    const [opened] = applyBatch([zip], [batchFile(ID(2), 'expanded', [entry])]);
+    expect(opened?.entries[0]).toMatchObject({ state: 'proposed', proposalStatus: 'rejected' });
+  });
+
+  it('asks again about files whose proposal waits, and takes the decision made later (#2009)', () => {
+    const zip = uploaded(newItem('z', 'z.zip'), { fileId: ID(2), duplicate: false });
+    const waitingEntry = { name: 'x.xml', outcome: 'stored' as const, reason: null, file: { ...status(ID(3), 'proposed'), proposalId: ID(8), proposalStatus: 'pending' as const } };
+    const postedEntry = { name: 'y.xml', outcome: 'stored' as const, reason: null, file: { ...status(ID(4), 'proposed'), proposalId: ID(7), proposalStatus: 'executed' as const } };
+    const plain = uploaded(newItem('a', 'a.xml'), { fileId: ID(1), duplicate: false });
+    let items = applyBatch(
+      [plain, zip],
+      [
+        { ...batchFile(ID(1), 'proposed'), proposalId: ID(9), proposalStatus: 'pending' },
+        batchFile(ID(2), 'expanded', [waitingEntry, postedEntry]),
+      ],
+    );
+    // Settled, so no longer polled; the two still waiting are watched, the posted one is not.
+    expect(pendingIds(items)).toEqual([]);
+    expect(undecidedIds(items)).toEqual([ID(1), ID(3)]);
+    items = withProposalStatuses(items, [
+      { ...status(ID(1), 'proposed'), proposalId: ID(9), proposalStatus: 'executed' },
+      { ...status(ID(3), 'proposed'), proposalId: ID(8), proposalStatus: 'rejected' },
+    ]);
+    expect(items[0]).toMatchObject({ proposalStatus: 'executed' });
+    expect(items[1]?.entries.map((e) => e.proposalStatus)).toEqual(['rejected', 'executed']);
+    expect(undecidedIds(items)).toEqual([]);
+  });
+
+  it("takes a watched file's own state once a later read settled it, never back to being read (#2032)", () => {
+    const plain = uploaded(newItem('a', 'a.xml'), { fileId: ID(1), duplicate: false });
+    const other = uploaded(newItem('b', 'b.xml'), { fileId: ID(2), duplicate: false });
+    let items = applyBatch(
+      [plain, other],
+      [
+        { ...batchFile(ID(1), 'proposed'), proposalId: ID(9), proposalStatus: 'pending' },
+        { ...batchFile(ID(2), 'proposed'), proposalId: ID(8), proposalStatus: 'pending' },
+      ],
+    );
+    items = withProposalStatuses(items, [
+      { ...status(ID(1), 'failed', 'Không đọc được'), proposalId: ID(9), proposalStatus: 'rejected' },
+      { ...status(ID(2), 'processing'), proposalId: ID(8), proposalStatus: 'pending' },
+    ]);
+    expect(items[0]).toMatchObject({ state: 'failed', error: 'Không đọc được', proposalStatus: 'rejected' });
+    // Being read again (or an older answer that says so): the item keeps what it showed and is not polled again.
+    expect(items[1]).toMatchObject({ state: 'proposed', proposalStatus: 'pending' });
+    expect(pendingIds(items)).toEqual([]);
   });
 
   it('turns an opened archive into its entries and polls it while an entry is being read', () => {
@@ -70,7 +161,7 @@ describe('bulk intake state', () => {
       ['inner.zip', 'rejected'],
     ]);
     expect(items[0]?.entries[3]?.reason).toBe('nested_archive');
-    expect(summarize(items)).toEqual({ total: 4, settled: 3, proposed: 1, duplicate: 1, failed: 1 });
+    expect(summarize(items)).toEqual({ total: 4, settled: 3, proposed: 1, imported: 0, duplicate: 1, failed: 1 });
     expect(pendingIds(items)).toEqual([ID(10)]);
 
     items = applyBatch(items, [
@@ -89,7 +180,7 @@ describe('bulk intake state', () => {
   it('counts an archive the sandbox refused as one failed file', () => {
     const items = applyBatch([uploaded(newItem('z', 'bad.zip'), { fileId: ID(20), duplicate: false })], [{ ...batchFile(ID(20), 'failed'), error: 'Tệp ZIP có đường dẫn không an toàn: ../x' }]);
     expect(items[0]).toMatchObject({ state: 'failed', error: 'Tệp ZIP có đường dẫn không an toàn: ../x' });
-    expect(summarize(items)).toEqual({ total: 1, settled: 1, proposed: 0, duplicate: 0, failed: 1 });
+    expect(summarize(items)).toEqual({ total: 1, settled: 1, proposed: 0, imported: 0, duplicate: 0, failed: 1 });
   });
 
   it('polls archives a few at a time so their entries always fit one answer, and caps the files in flight', () => {

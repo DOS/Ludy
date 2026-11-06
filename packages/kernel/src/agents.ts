@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
+import { auditValue, defaultCoworkerName, tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
 import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
 import {
   DomainError,
@@ -29,6 +29,7 @@ import { decideAgentApproval, eligibleApprovers, type ActorRef } from './approva
 import { refuseWhileReextracting } from './extraction.ts';
 import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
+import { releaseWaitingFiles } from './ai-budget.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
 
@@ -389,12 +390,21 @@ export const installAgentTemplate = defineCommand({
       throw new DomainError('MODULE_DISABLED', 409, 'Phân hệ của mẫu tác tử AI này chưa được bật', { module: template.module });
     }
     if (input.reportsTo) await lockPosition(ctx.trx, ctx.orgId, input.reportsTo);
+    // The module's AI coworker (Vy, Ly, Dy, Uy) names the agent when the installer gives no name (#2410). The screens
+    // tell agents apart by name, so a second agent of the same module (two finance templates both give Ly) gets the
+    // template's title next to it instead of sharing the name.
+    let displayName = input.displayName;
+    if (displayName === undefined) {
+      const coworker = defaultCoworkerName(template.module);
+      const taken = coworker === null ? undefined : await ctx.trx.selectFrom('crove_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('display_name', '=', coworker).limit(1).executeTakeFirst();
+      displayName = coworker === null ? template.title : taken ? `${coworker} (${template.title})` : coworker;
+    }
     const agent = await ctx.trx
       .insertInto('crove_kernel.agent')
       .values({
         org_id: ctx.orgId,
         template_key: template.key,
-        display_name: input.displayName ?? template.title,
+        display_name: displayName,
         max_risk: template.max_risk,
         daily_run_cap: template.daily_run_cap,
         created_by: userId,
@@ -507,7 +517,9 @@ export const setAgentBudget = defineCommand({
   name: 'kernel.agent.budget.set',
   input: z.object({ scope: zScope, target: z.string().min(1).max(100), monthlyLimit: zAmount, warnPercent: z.number().int().min(1).max(100).optional(), hardStop: z.boolean().optional() }),
   risk: 'R3',
-  sideEffect: 'internal',
+  // External: a raised budget sends the documents that waited for the model to be read again, and the extract queue reaches the
+  // AI endpoint (the egress invariant counts the emitter's side effect, #1653, #2382).
+  sideEffect: 'external',
   access: OWNER,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
@@ -534,8 +546,10 @@ export const setAgentBudget = defineCommand({
       )
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ budget: row.id, scope: input.scope, target, monthly_limit: input.monthlyLimit, hard_stop: input.hardStop ?? true });
     await rewakePending(ctx);
+    // Documents that waited for the AI budget (#2382) are read again at once when the new limit lets them in.
+    const released = await releaseWaitingFiles(ctx);
+    ctx.audit({ budget: row.id, scope: input.scope, target, monthly_limit: input.monthlyLimit, hard_stop: input.hardStop ?? true, released_files: released });
     await ctx.activity('kernel.agent', row.id, 'agent.budget_set', `Đặt ngân sách AI (${input.scope} ${target}): ${input.monthlyLimit}`);
     return { budgetId: row.id };
   },
@@ -656,7 +670,7 @@ async function insertHumanTask(
     .returning(['id', 'tainted', 'request_depth'])
     .executeTakeFirstOrThrow();
   await requestWakeup(ctx, input.assigneePositionId, { taskId: task.id, why: 'assigned' }, task.tainted, task.request_depth);
-  await ctx.emit('kernel.task.created', { taskId: task.id });
+  await ctx.emit('kernel.task.created', { taskId: task.id, positionId: input.assigneePositionId });
   return { taskId: task.id };
 }
 
@@ -692,6 +706,89 @@ export const createTaskFromTodo = defineCommand({
     });
     ctx.audit({ taskId: created.taskId, todoId: input.todoId, positionId: input.positionId });
     return created;
+  },
+});
+
+// A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
+// Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
+// (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
+const TASK_TABLE = kernelManifest.tables.crove_kernel.task;
+export const updateTask = defineCommand({
+  name: 'kernel.task.update',
+  input: z.object({
+    id: zId,
+    title: zTaskTitle.optional(),
+    description: z.string().max(10000).nullable().optional(),
+    assigneePositionId: zId.nullable().optional(),
+    due: z.iso.datetime().nullable().optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  target: (input) => ({ type: 'kernel.task', id: input.id }),
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    // Serialize with chart and role changes when moving the task to another seat (#1858).
+    if (input.assigneePositionId !== undefined) await lockChartChanges(ctx);
+    const before = await ctx.trx
+      .selectFrom('crove_kernel.task')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!before) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
+    if (before.checkout_run_id && before.lock_expires_at && before.lock_expires_at.getTime() > ctx.now.getTime()) {
+      throw new DomainError('TASK_CHECKED_OUT', 409, 'Việc này đang được xử lý');
+    }
+    const nextPositionId = input.assigneePositionId !== undefined ? input.assigneePositionId : before.assignee_position_id;
+    const seatChanged = nextPositionId !== before.assignee_position_id;
+    if (seatChanged && nextPositionId !== null) {
+      const position = await lockPosition(ctx.trx, ctx.orgId, nextPositionId);
+      if (position.status === 'archived') throw new DomainError('POSITION_ARCHIVED', 409, 'Vị trí này đã ngừng sử dụng');
+      if (!(await userHolderCovers(ctx.trx, ctx.orgId, position, before.legal_entity_id))) {
+        throw new DomainError('OUTSIDE_LEGAL_ENTITY', 422, 'Vị trí nhận việc không được xem pháp nhân của việc này', { rule: 'task_legal_entity' });
+      }
+    }
+    const nextTitle = input.title !== undefined ? input.title : before.title;
+    const nextDescription = input.description !== undefined ? input.description : before.description;
+    const nextDue = input.due !== undefined ? input.due : before.due?.toISOString() ?? null;
+    const beforeDue = before.due?.toISOString() ?? null;
+    const changed = [
+      ...(nextTitle !== before.title ? ['title'] : []),
+      ...(nextDescription !== before.description ? ['description'] : []),
+      ...(seatChanged ? ['assigneePositionId'] : []),
+      ...(nextDue !== beforeDue ? ['due'] : []),
+    ];
+    if (changed.length > 0) {
+      await ctx.trx
+        .updateTable('crove_kernel.task')
+        .set({
+          title: nextTitle,
+          description: nextDescription,
+          assignee_position_id: nextPositionId,
+          due: nextDue,
+          // A stale lease left after its run expired is cleared when the seat moves.
+          ...(seatChanged ? { checkout_run_id: null, lock_expires_at: null } : {}),
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', before.id)
+        .execute();
+    }
+    if (seatChanged && !['done', 'cancelled'].includes(before.status)) {
+      await requestWakeup(ctx, nextPositionId, { taskId: before.id, why: 'assigned' }, before.tainted, before.request_depth);
+      await ctx.emit('kernel.task.assigned', { taskId: before.id, positionId: nextPositionId });
+    }
+    ctx.audit({
+      taskId: before.id,
+      changed,
+      title: auditValue(TASK_TABLE, 'title', nextTitle),
+      description: auditValue(TASK_TABLE, 'description', nextDescription),
+      assigneePositionId: nextPositionId,
+      previousAssigneePositionId: before.assignee_position_id,
+      due: nextDue,
+    });
+    return { taskId: before.id };
   },
 });
 
@@ -836,6 +933,35 @@ async function holderCovers(trx: Trx, orgId: string, positionId: string, entityI
   if (entityId === null) return true;
   const { rows } = await sql<{ covers: boolean }>`
     SELECT crove_kernel.position_reads_legal_entity(${orgId}::uuid, ${positionId}::uuid, ${entityId}::uuid) AS covers`.execute(trx);
+  return rows[0]?.covers === true;
+}
+
+// Same rule as holderCovers for a user command (crove_app): an agent or a vacant seat reads the position's le_scope;
+// a member reads the entity when they are an owner or admin, hold an assignment for that entity or the whole org, or
+// hold no assignment at all. Under role_assignment_scope, a caller who can read the task's entity also sees every
+// org-wide assignment and every assignment for that entity, so the only uncomputable case is a member who has no
+// visible assignment here: if the caller is limited to some entities (`ctx_le_scope` without '*'), that member might
+// be limited to another entity only, so a conservative false keeps the task from being handed to someone who cannot read it.
+async function userHolderCovers(
+  trx: Trx,
+  orgId: string,
+  position: { holder_user_id: string | null; le_scope: readonly string[] },
+  entityId: string | null,
+): Promise<boolean> {
+  if (entityId === null) return true;
+  if (!position.holder_user_id) return scopeCovers(position.le_scope, entityId);
+  const { rows } = await sql<{ covers: boolean }>`
+    SELECT COALESCE((
+      SELECT m.role IN ('owner', 'admin')
+          OR EXISTS (
+               SELECT 1 FROM crove_kernel.role_assignment a
+               WHERE a.org_id = m.org_id AND a.user_id = m.user_id
+                 AND (a.legal_entity_id IS NULL OR a.legal_entity_id = ${entityId}::uuid))
+          OR ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+              AND NOT EXISTS (SELECT 1 FROM crove_kernel.role_assignment a WHERE a.org_id = m.org_id AND a.user_id = m.user_id))
+      FROM crove_kernel.tenant_member m
+      WHERE m.org_id = ${orgId}::uuid AND m.user_id = ${position.holder_user_id}::uuid
+    ), false) AS covers`.execute(trx);
   return rows[0]?.covers === true;
 }
 
@@ -1128,11 +1254,7 @@ export const startAgentRun = defineCommand({
         EXISTS (SELECT 1 FROM crove_kernel.budget_policy b
                 WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                   AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${position.module}) OR (b.scope = 'agent' AND b.target = ${agent.id}))
-                  AND (SELECT coalesce(sum(r.cost), 0) FROM crove_kernel.ai_run r
-                       WHERE r.org_id = b.org_id
-                         AND r.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
-                         AND (b.scope = 'org' OR (b.scope = 'module' AND r.module = b.target) OR (b.scope = 'agent' AND r.agent_id::text = b.target)))
-                      >= b.monthly_limit) AS spent,
+                  AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit) AS spent,
         (SELECT count(*)::int FROM crove_kernel.ai_run r WHERE r.org_id = ${ctx.orgId}::uuid AND r.agent_id = ${agent.id}::uuid
            AND r.started_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS today`.execute(ctx.trx);
     const gate = gates[0];
@@ -1489,8 +1611,8 @@ export const templateList = defineQuery({
   },
 });
 
-// The monthly AI budgets with what this month's runs they cover cost so far (the month in Asia/Ho_Chi_Minh, as the
-// run gate counts it). Amounts are decimal strings. Owners and admins: costs are management data.
+// The monthly AI budgets with what this month's model calls they cover cost so far (the month in Asia/Ho_Chi_Minh, read
+// through crove_kernel.ai_budget_spent as the run gate and the meter read it). Amounts are decimal strings. Owners and admins: costs are management data.
 export const budgetList = defineQuery({
   name: 'kernel.agent.budgets.list',
   input: z.object({}),
@@ -1507,10 +1629,7 @@ export const budgetList = defineQuery({
       spent: string;
     }>`
       SELECT b.id, b.scope, b.target, b.monthly_limit::text AS monthly_limit, b.warn_percent, b.hard_stop, b.updated_at,
-        (SELECT coalesce(sum(r.cost), 0)::text FROM crove_kernel.ai_run r
-         WHERE r.org_id = b.org_id
-           AND r.started_at >= pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
-           AND (b.scope = 'org' OR (b.scope = 'module' AND r.module = b.target) OR (b.scope = 'agent' AND r.agent_id::text = b.target))) AS spent
+        crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target)::text AS spent
       FROM crove_kernel.budget_policy b
       WHERE b.org_id = ${ctx.orgId}::uuid
       ORDER BY b.scope, b.target`.execute(ctx.trx);
@@ -1921,7 +2040,7 @@ export const executeAgentApproval = defineCommand({
     const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
     if (!proposal) return { approved: false, reason: 'not_found' };
     // A re-extraction in flight would replace the content the agent judged (issue #40); the job retries.
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     const decision = await decideAgentApproval(ctx.trx, ctx.orgId, { agentId, runId }, proposal, ctx.command(proposal.command), revision, {
       stoppedSince: event.createdAt,
     });
@@ -1956,6 +2075,7 @@ export const agentCommands = [
   releaseKillSwitch,
   createTask,
   createTaskFromTodo,
+  updateTask,
   checkoutTask,
   commentTask,
   setTaskStatus,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -22,6 +23,8 @@ import {
   accountParents,
   type FixedAsset,
   type MisaGoodsCode,
+  type StockCard,
+  type StockReportRow,
   type UploadPurpose,
 } from '@crove/kernel-contract';
 import {
@@ -37,10 +40,13 @@ import {
   sha256Hex,
   type BlobStore,
   type Runtime,
+  type UserActor,
 } from '@crove/kernel-runtime';
 import type { OrgExportView } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
+  MISA_SME_BANK_CREDIT,
+  MISA_SME_BANK_DEBIT,
   MISA_SME_CASH_PAYMENT,
   MISA_SME_CASH_RECEIPT,
   MISA_SME_PURCHASE_GOODS,
@@ -51,6 +57,7 @@ import {
   buildStatementsWorkbook,
   buildStatementsHtkkXml,
   buildFixedAssetsWorkbook,
+  buildStockWorkbook,
   buildMisaWorkbook,
   buildVat01Xml,
   buildVatWorkbook,
@@ -92,10 +99,19 @@ import {
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
-import { publicAuthUrl, type Config } from './config.ts';
+import { logEvent, runWithLogContext, setLogContext } from './log.ts';
+import { appUrl, publicAuthUrl, type Config } from './config.ts';
+import { corsMiddleware } from './cors.ts';
 import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
+import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
+import { FACEBOOK_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
+import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
+import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
+import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
@@ -121,11 +137,14 @@ import { WEB_MANIFEST_PATH, brandedManifest } from './web-manifest.ts';
 import { opsAlert } from './ops-alert.ts';
 import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
+import type { AiMeter } from '@crove/agent';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
+import type { ConversationReader } from './conversations-ai.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
 import type { PortalSync } from './portal-sync.ts';
 import { hasVideoTrack, imageSize, sniffVideo, videoDurationMs, type ImageSize } from './media-probe.ts';
 import { safeFilename, sniffType } from './sniff.ts';
+import { sniffConversationImage } from './conversation-media.ts';
 import { directTransferOrigin } from './storage.ts';
 import {
   MAX_BUFFERED_BYTES,
@@ -158,6 +177,34 @@ export interface HttpDeps {
   aiEnabled: boolean;
   // Outbound mail for invites (issue #129). Unset: off, and the inviter passes the one-time link on.
   mailer?: MailProvider;
+  // The bank feed adapters that take signed notices, by provider id (ADR-0039): POST /api/bank-feed/<id>/webhook exists
+  // for these alone, with finance installed.
+  bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
+  // Notices per minute per client address; one is checked and queued per call.
+  bankFeedWebhookLimit?: RateLimiter;
+  // Zalo OA's webhook for the conversation core (#2304): the app id and the OA secret key that sign its notices. Unset: the route does
+  // not exist.
+  zaloWebhook?: ZaloWebhookConfig;
+  // Notices per minute per client address for that route.
+  zaloWebhookLimit?: RateLimiter;
+  // The events that route has parked lately (replay guard); unset: its own, one per process.
+  zaloReplays?: ZaloReplayCache;
+  // Meta Page webhook for the conversation core (CV2, #2307): the app secret and verify token that guard it. Unset: the route does not exist.
+  facebookWebhook?: FacebookWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  facebookWebhookLimit?: RateLimiter;
+  // The comment events that route has parked lately (replay guard); unset: its own, one per process.
+  facebookReplays?: FacebookReplayCache;
+  // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
+  // (no Meta ads app configured): the route does not exist. With ads installed only.
+  adsDeletion?: { appSecret: string };
+  // The app that runs ads (the write connection's), when it is set (#2366): the same callback also verifies a request signed by it, and a
+  // person's write grant is found by the hash keyed with its secret. With ads installed only.
+  adsWriteDeletion?: { appSecret: string };
+  // The Pages app's secret for the conversations of the Facebook Pages and Instagram accounts, answered by the same callback (CV6, #2305).
+  conversationsDeletion?: { appSecret: string };
+  // Requests per minute per client address for that callback and its status page.
+  adsDeletionLimit?: RateLimiter;
   // Per-client budget for Supabase Auth's emails (#190). Unset: the database limiter on `pool`.
   emailLimiter?: EmailLimiter;
   // The member invite checks for AUTH_SIGNUP_POLICY (#350, #563). Unset: the database checks on `pool`.
@@ -187,13 +234,21 @@ export interface HttpDeps {
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
+  // Exports of the books (GET /api/export/*) building at once in this process (#2121). Default: EXPORT_CONCURRENCY, and
+  // two of them for one user.
+  exports?: ConcurrencyLimiter;
   // Channel connections (ADR-0025): the broker that seals tokens, and whether the sandbox channel is on. Unset: no
   // channel can be connected through the API.
   channels?: RpcChannels;
+  // The AI budget meter of an API request's model calls, as the member who made it (#2382). Unset (tests with fake
+  // writers): a call to the real model is refused, since the agent package sends none unmetered.
+  aiMeter?: (actor: UserActor) => AiMeter;
   // Drafts Social posts with the deployment's model (Social plan S7); unset: AI drafting answers 503.
   socialWriter?: SocialDrafter;
   // Reads a client's message for booking suggestions (#1440); unset: suggestions give the next free slots only.
   bookingReader?: BookingReader;
+  // The Inbox's suggested intent and likely contacts (CV3, #2306); unset: no suggestion.
+  conversationReader?: ConversationReader;
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
   taxLookup?: TaxCodeLookup;
   // The assisted purchase-invoice sync from the tax portal (issue #325); unset: off (TAX_PORTAL_SYNC).
@@ -344,11 +399,19 @@ const AUTH_PUBLIC_PATHS =
   /^\/(?:token|signup|verify|recover|user|logout|otp|resend|settings|health|authorize|callback|reauthenticate|factors(?:\/[\w-]+(?:\/(?:challenge|verify))?)?|\.well-known\/jwks\.json)$/;
 // The status page re-reads the prober's file at most this often (#678).
 const STATUS_CACHE_MS = 5_000;
+// Signed notices one client address may post a minute: a provider posts a few per bank event, from a handful of addresses.
+const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
+// Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
+const ZALO_WEBHOOKS_PER_MINUTE = 120;
+const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
+// Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
+const ADS_DELETION_PER_MINUTE = 60;
 const MAX_FILES_PER_UPLOAD = 5;
 // A Social video (#409) is one file of up to 100 MB; a batch of documents stays under 60 MB.
 const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
 // What a completion refused for lack of a slot tells the client to wait; the grant stays unused for 5 minutes.
 export const UPLOAD_BUSY_RETRY_SECONDS = 3;
+export const EXPORT_BUSY_RETRY_SECONDS = 5;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false): string {
@@ -395,11 +458,36 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, config.PUBLIC_URL, {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader);
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
-  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-origin' }));
+  // A request id per request (#2175): in every log line the request makes (JSON logs), and in the `x-request-id` answer
+  // header, so a report ("the upload failed at 10:42") can be matched to its lines. Always generated here: an id a caller
+  // sent is never trusted or logged. The access line carries the method, the matched route pattern (never the path, which
+  // can hold a token), the status and the time, and nothing of the request's headers, cookies, query or body; it is printed
+  // only with LOG_FORMAT=json, and not for the health probes that run every few seconds.
+  app.use('*', async (c, next) => {
+    const requestId = randomUUID();
+    const started = Date.now();
+    await runWithLogContext({ requestId }, async () => {
+      try {
+        await next();
+      } finally {
+        const status = c.res.status;
+        // Hono copies a finished response whose headers are fixed, so this reaches every answer.
+        c.header('x-request-id', requestId);
+        const route = c.req.routePath;
+        if (route !== '/healthz' && route !== '/readyz') {
+          logEvent(status >= 500 ? 'error' : 'info', 'request', { method: c.req.method, route, status, durationMs: Date.now() - started });
+        }
+      }
+    });
+  });
+  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site' }));
+  // A web app on another origin (APP_URL, #2261) calls this API cross-origin: the allowlisted origins get CORS headers and
+  // their preflights are answered here, before the rate limit and the session check (a preflight carries no token).
+  app.use('*', corsMiddleware(config.CORS_ALLOWED_ORIGINS));
 
   app.get('/healthz', (c) => c.json({ ok: true }));
   app.get('/readyz', async (c) => {
@@ -455,6 +543,9 @@ export function createHttpApp(deps: HttpDeps) {
       aiEnabled: deps.aiEnabled,
       // presigned: the app uploads to a staging key and downloads from the bucket (plan §7.6); direct: through the kernel.
       uploads: store.direct ? 'presigned' : 'direct',
+      // The store can sign a short-lived URL for a platform that fetches media (Zalo OA, Instagram, Threads), also when
+      // uploads are direct (R2, #2192): the composer then lets those channels take images.
+      platformMediaUrls: Boolean(store.fetchUrls),
       inboundEnabled: Boolean(config.INBOUND_DOMAIN && config.INBOUND_SECRET),
       mailEnabled: deps.mailer?.enabled ?? false,
       // The shell's feedback and support link (SUPPORT_URL, issue #310); null hides it.
@@ -480,6 +571,10 @@ export function createHttpApp(deps: HttpDeps) {
       signupPolicy: config.AUTH_SIGNUP_POLICY,
       // Channels the app may offer to connect without a platform account (ADR-0025).
       // OAuth providers only with a credential key: their tokens could not be sealed otherwise.
+      // Bank feeds (ADR-0039): which providers this deployment offers; none hides the feature.
+      bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox) },
+      // Ad platforms (ADR-0040): which this deployment offers; none leaves the Ads screen with nothing to connect.
+      ads: { sandbox: Object.hasOwn(deps.channels?.adsPlatforms ?? {}, 'sandbox_ads') },
       channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
     }),
   );
@@ -620,6 +715,148 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // A bank feed provider's signed notice (ADR-0039, #2044): public like the mail provider's, checked by the adapter's
+  // signature before anything else, rate limited per client address, and only queued: it asks the worker for a pull of a
+  // connection that lists the account it names. A provider name no adapter here takes notices for is a 404; with no
+  // adapter taking any, the route does not exist.
+  const bankFeedWebhooks = deps.bankFeedWebhooks;
+  if (bankFeedWebhooks && Object.keys(bankFeedWebhooks).length > 0 && runtime.installed('finance')) {
+    const noticeLimit = deps.bankFeedWebhookLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
+    app.post('/api/bank-feed/:provider/webhook', bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }), async (c) => {
+      const name = c.req.param('provider');
+      if (!Object.hasOwn(bankFeedWebhooks, name)) return c.json({ code: 'NOT_FOUND' }, 404);
+      const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      try {
+        const headers: Record<string, string | undefined> = {};
+        c.req.raw.headers.forEach((value, header) => {
+          headers[header.toLowerCase()] = value;
+        });
+        const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
+        if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+        return c.json({ queued: outcome.queued }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
+  // body is capped before it is read, and a verified message is only parked for the worker (the org comes from the stored connection).
+  // The body is capped (a chunked one is cut at the cap) and the signature checked, which is one SHA-256 over at most 64 KiB. Every
+  // refusal of the signature is the same 401. Zalo does not retry on an error status [S], so a verified notice is never refused for
+  // rate: the per-address limit is charged only to REFUSED requests (a bad signature or a body that is no notice), so a flood of forged
+  // ones from the address Zalo also posts from cannot cost a real notice, whatever TRUSTED_PROXY_HOPS says. That limit only shapes the
+  // answers (a 429 in place of a 401, for an address that sends many refused requests): it does not save the work of checking, so the
+  // CPU bound is the 64 KiB body cap above, one SHA-256 over at most that much per request. What a verified flood can do is bounded by
+  // the backlog cap of the provider (conversation_inbound_enqueue).
+  const zaloWebhook = deps.zaloWebhook;
+  if (zaloWebhook) {
+    const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });
+    const zaloReplays = deps.zaloReplays ?? new ZaloReplayCache();
+    app.post(ZALO_WEBHOOK_PATH, bodyLimit({ maxSize: ZALO_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptZaloWebhook(runtime, zaloWebhook, { signature: c.req.header(ZALO_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, zaloReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const decision = zaloLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+        }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  const facebookWebhook = deps.facebookWebhook;
+  if (facebookWebhook) {
+    const facebookLimit = deps.facebookWebhookLimit ?? new RateLimiter({ perMinute: FACEBOOK_WEBHOOKS_PER_MINUTE });
+    const facebookReplays = deps.facebookReplays ?? new FacebookReplayCache();
+    const chargeRefusal = (c: Context): Response | null => {
+      const decision = facebookLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.get(FACEBOOK_WEBHOOK_PATH, (c) => {
+      const outcome = verifyFacebookWebhookChallenge(facebookWebhook, {
+        mode: c.req.query('hub.mode'),
+        verifyToken: c.req.query('hub.verify_token'),
+        challenge: c.req.query('hub.challenge'),
+      });
+      if (outcome.status === 200) return c.text(outcome.challenge, 200);
+      const limited = chargeRefusal(c);
+      if (limited) return limited;
+      return c.json({ code: outcome.code }, outcome.status);
+    });
+    app.post(FACEBOOK_WEBHOOK_PATH, bodyLimit({ maxSize: FACEBOOK_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptFacebookWebhook(runtime, facebookWebhook, { signature: c.req.header(FACEBOOK_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, facebookReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const limited = chargeRefusal(c);
+          if (limited) return limited;
+        }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Meta's data deletion callback, the one URL of the deployment's Meta apps (ads plan section 9 #2219, conversations plan CV6
+  // #2305). POST is Meta's signed request, checked against every app secret held before anything else, rate limited per client
+  // address, stored nowhere and only queued for the worker, which erases the Ads accounts and the conversations of the connections
+  // that person granted; GET is the status page Meta shows the person, answered by the confirmation code.
+  const adsInstalled = runtime.installed('ads');
+  const adsDeletion = adsInstalled ? deps.adsDeletion : undefined;
+  const adsWriteDeletion = adsInstalled ? deps.adsWriteDeletion : undefined;
+  const conversationsDeletion = deps.conversationsDeletion;
+  if (adsDeletion || adsWriteDeletion || conversationsDeletion) {
+    const deletionLimit = deps.adsDeletionLimit ?? new RateLimiter({ perMinute: ADS_DELETION_PER_MINUTE });
+    const take = (c: Context): Response | null => {
+      const decision = deletionLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.post(ADS_DELETION_PATH, bodyLimit({ maxSize: MAX_ADS_DELETION_BYTES }), async (c) => {
+      const limited = take(c);
+      if (limited) return limited;
+      try {
+        const outcome = await acceptMetaDeletion(runtime, { ads: adsDeletion?.appSecret, adsWrite: adsWriteDeletion?.appSecret, conversations: conversationsDeletion?.appSecret }, await c.req.text());
+        if (outcome.status !== 200) return c.json({ code: outcome.code }, outcome.status);
+        // What Meta asks for: where the person can see the request's status, and the code that names it.
+        return c.json({ url: `${config.PUBLIC_URL}${ADS_DELETION_PATH}?code=${outcome.code}`, confirmation_code: outcome.code });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+    app.get(ADS_DELETION_PATH, async (c) => {
+      const limited = take(c);
+      if (limited) return limited;
+      try {
+        const status = await metaDeletionStatus(runtime, c.req.query('code') ?? '');
+        c.header('cache-control', 'no-store');
+        c.header('x-robots-tag', 'noindex');
+        return c.html(renderMetaDeletionStatus(status), status ? 200 : 404);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
   if (config.INBOUND_DOMAIN && config.INBOUND_SECRET) {
     const domain = config.INBOUND_DOMAIN;
     // The previous value too while a rotation is under way (#1214): the mail worker and the kernel switch apart.
@@ -744,11 +981,11 @@ export function createHttpApp(deps: HttpDeps) {
         let ics: string | null = null;
         if (token && socialFeeds) {
           const feed = await calendarFeed(runtime, token);
-          if (feed) ics = renderIcs(feed, config.PUBLIC_URL, now, config.BRAND_NAME);
+          if (feed) ics = renderIcs(feed, appUrl(config), now, config.BRAND_NAME);
         }
         if (token && ics === null && bookingFeeds) {
           const feed = await bookingFeed(runtime, token);
-          if (feed) ics = renderBookingFeedIcs(feed, config.PUBLIC_URL, now, config.BRAND_NAME);
+          if (feed) ics = renderBookingFeedIcs(feed, appUrl(config), now, config.BRAND_NAME);
         }
         if (ics === null) return c.text('Không tìm thấy lịch này', 404, headers);
         return c.body(ics, 200, { ...headers, 'content-type': 'text/calendar; charset=utf-8' });
@@ -973,6 +1210,8 @@ export function createHttpApp(deps: HttpDeps) {
       }
       const actor = ticketActor(binding);
       const orgId = binding.orgId;
+      // The stream's access line names the org the ticket was issued for (#2175).
+      setLogContext({ orgId });
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
       const check = () => runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }).then(streamScopeOf);
       let scope: StreamScope;
@@ -1394,6 +1633,38 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // A customer's image of a conversation message (CV5c, #2357): the bytes of one stored image, to the member who may read its message. The
+  // authorization is the database's (kernel.conversation.attachment_get reads under the row policy of the thread, so a member limited to
+  // other channels, one without the direct-message permission, and an agent get the same 404 as an id that does not exist). Only an image is
+  // ever served: the type is read from the bytes again here (never the stored label alone), anything else is 404, and the answer can neither
+  // be rendered as a page nor run a script (nosniff, a CSP that allows nothing, sandbox, no store in any cache).
+  app.get('/api/conversations/attachments/:id', async (c) => {
+    try {
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const file = await runtime.query<{ contentType: string; sizeBytes: number; sha256: string; generation: string; storageKey: string }>(
+        'kernel.conversation.attachment_get',
+        { attachmentId: c.req.param('id') },
+        { actor: actorOf(user), orgId },
+      );
+      const bytes = await readVerified(store, { key: file.storageKey, generation: file.generation, sha256: file.sha256 }, file.sizeBytes);
+      const type = sniffConversationImage(bytes);
+      if (!type) throw new DomainError('ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy ảnh này');
+      return new Response(body(bytes), {
+        headers: {
+          'content-type': type,
+          'content-disposition': `inline; filename="image.${type === 'image/jpeg' ? 'jpg' : type.slice('image/'.length)}"`,
+          'content-security-policy': "default-src 'none'; sandbox",
+          'x-content-type-options': 'nosniff',
+          'cross-origin-resource-policy': 'same-site',
+          'cache-control': 'private, no-store',
+        },
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
   // Finance routes exist only when the finance module is installed (CROVE_MODULES); otherwise they are 404 below.
   if (runtime.installed('finance')) {
     // The legal entity whose books an export is of (#1280): ?legalEntityId=<uuid>, as in zLegalEntityChoice; omitted,
@@ -1403,6 +1674,23 @@ export function createHttpApp(deps: HttpDeps) {
       const id = c.req.query('legalEntityId');
       return id ? { legalEntityId: id } : {};
     };
+    // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
+    // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
+    // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
+    // is held until the handler is done, the audit row included.
+    const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
+    app.use('/api/export/*', async (c, next) => {
+      const release = exportSlots.tryAcquire(c.get('user').userId);
+      if (!release) {
+        c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+        return problem(c, new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất sổ sách; hãy thử lại sau vài giây'));
+      }
+      try {
+        await next();
+      } finally {
+        release();
+      }
+    });
     app.get('/api/export/journal.xlsx', async (c) => {
       try {
         const user = c.get('user');
@@ -1528,11 +1816,14 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // Cash receipts and payments in MISA SME's "Phiếu thu" and "Phiếu chi" templates (#657), one file per voucher type
-    // (MISA imports one type per file), same roles, range and audit as the purchase export.
+    // Cash and bank receipts and payments in MISA SME's "Phiếu thu", "Phiếu chi", "Chứng từ thu tiền" (giấy báo Có) and
+    // "Chứng từ Chi tiền gửi" (giấy báo Nợ) templates (#657), one file per voucher type (MISA imports one type per file),
+    // same roles, range and audit as the purchase export.
     const cashExports = [
       { path: '/api/export/misa/receipts.xlsx', type: 'cash_receipt', template: MISA_SME_CASH_RECEIPT, format: 'misa_sme_cash_receipts', name: 'misa-phieu-thu' },
       { path: '/api/export/misa/payments.xlsx', type: 'cash_payment', template: MISA_SME_CASH_PAYMENT, format: 'misa_sme_cash_payments', name: 'misa-phieu-chi' },
+      { path: '/api/export/misa/bank-receipts.xlsx', type: 'bank_credit', template: MISA_SME_BANK_CREDIT, format: 'misa_sme_bank_credits', name: 'misa-bao-co' },
+      { path: '/api/export/misa/bank-payments.xlsx', type: 'bank_debit', template: MISA_SME_BANK_DEBIT, format: 'misa_sme_bank_debits', name: 'misa-bao-no' },
     ] as const;
     for (const cash of cashExports) {
       app.get(cash.path, async (c) => {
@@ -1700,6 +1991,41 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-tai-san', ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // The most rows one stock workbook holds (items in the report, moves in a card): the file is built in memory.
+    const STOCK_EXPORT_LIMIT = 20_000;
+    // The stock reports of one month (#2513), ?month=2026-09: Nhập xuất tồn and, with &itemId=<id>, the stock card of that item. The queries check the month and the roles (422 and 403
+    // otherwise), so the file name only holds a valid month.
+    app.get('/api/export/stock.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const month = c.req.query('month') ?? '';
+        const itemId = c.req.query('itemId') || undefined;
+        const report = await runtime.query<StockReportRow[]>('finance.stock.report', { month, ...entityQuery(c) }, { actor, orgId });
+        const card = itemId ? await runtime.query<StockCard>('finance.stock.card', { itemId, month }, { actor, orgId }) : null;
+        // The card is of an item of the entity asked for (the audit row names that entity), and the workbook is built in memory, so a catalog or a card too large for one file is refused.
+        const entity = entityQuery(c).legalEntityId;
+        if (card && entity && card.item.legalEntityId !== entity) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và pháp nhân đã chọn không khớp nhau');
+        if (report.length > STOCK_EXPORT_LIMIT || (card?.moves.length ?? 0) > STOCK_EXPORT_LIMIT) {
+          throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng để xuất một lần; hãy chọn một pháp nhân hoặc một mặt hàng');
+        }
+        const bytes = await buildStockWorkbook(month, report, card, orgSlug ?? '', config.BRAND_NAME);
+        // The export's audit row (the month, the number of items, whether a card is in it). No row, no download.
+        await runtime.execute('finance.stock.export', { month, items: report.length, card: card !== null, ...(entity ? { legalEntityId: entity } : card ? { legalEntityId: card.item.legalEntityId } : {}) }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'nhap-xuat-ton', month, ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });

@@ -25,17 +25,27 @@ const zPayload = z.object({
   startsAt: z.iso.datetime({ offset: true }),
   endsAt: z.iso.datetime({ offset: true }),
   timeZone: zText(64),
-  locationKind: z.enum(['in_person', 'phone', 'video']),
+  locationKind: z.enum(['in_person', 'phone', 'video', 'google_meet']),
   location: zText(500).nullable(),
 });
 type Payload = z.infer<typeof zPayload>;
-// The payload with the visitor's name as the booking holds it when the mail is sent.
-type Booking = Payload & { visitorName: string };
+// The payload with the visitor's name, and the Google Meet, as the booking holds them when the mail is sent.
+type Booking = Payload & { visitorName: string; meeting: BookingMailData['meeting'] };
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 const oneLine = (text: string) => text.replace(/[\r\n\t]+/g, ' ').trim();
 
-const LOCATIONS: Record<Payload['locationKind'], string> = { in_person: 'Gặp trực tiếp', phone: 'Gọi điện', video: 'Họp trực tuyến' };
+const LOCATIONS: Record<Payload['locationKind'], string> = { in_person: 'Gặp trực tiếp', phone: 'Gọi điện', video: 'Họp trực tuyến', google_meet: 'Google Meet' };
+
+// Where the meeting is, as the mail says it: for a Google Meet booking the join link when it is ready, else the type's fixed link (a Meet that could not be made, or
+// is not made yet, leaves the booking valid), else only that it is online. A cancelled booking names no link.
+export function bookingPlace(p: Pick<Payload, 'kind' | 'locationKind' | 'location'> & { meeting: BookingMailData['meeting'] }): { label: string; link: string | null } {
+  // A booking whose Meet is ready has its link whatever kind the type has now: the host may have changed the type since, and the visitor's reminders and moves keep the link.
+  if (p.kind !== 'cancelled' && p.meeting.state === 'ready' && p.meeting.url) return { label: LOCATIONS.google_meet, link: p.meeting.url };
+  if (p.locationKind !== 'google_meet') return { label: LOCATIONS[p.locationKind], link: p.location };
+  if (p.kind === 'cancelled') return { label: LOCATIONS.google_meet, link: null };
+  return { label: LOCATIONS.video, link: p.location };
+}
 
 const LEADS: Record<Payload['kind'], Record<Payload['recipient'], (p: Booking) => string>> = {
   confirmed: {
@@ -81,7 +91,8 @@ export function bookingWhen(startsAt: string, endsAt: string, timeZone: string):
 export function bookingIcs(p: Booking, brand: string, now: Date): string {
   const cancelled = p.kind === 'cancelled';
   const summary = p.recipient === 'host' ? `${p.title}: ${p.visitorName}` : `${p.title} - ${p.orgName}`;
-  const description = [`${LOCATIONS[p.locationKind]}${p.location ? `: ${p.location}` : ''}`, `Gửi từ ${brand}`].join('\n');
+  const place = bookingPlace(p);
+  const description = [`${place.label}${place.link ? `: ${place.link}` : ''}`, `Gửi từ ${brand}`].join('\n');
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -95,7 +106,8 @@ export function bookingIcs(p: Booking, brand: string, now: Date): string {
     `DTSTART:${icsTime(new Date(p.startsAt))}`,
     `DTEND:${icsTime(new Date(p.endsAt))}`,
     `SUMMARY:${escapeText(oneLine(summary))}`,
-    ...(p.location ? [`LOCATION:${escapeText(oneLine(p.location))}`] : []),
+    ...(place.link ? [`LOCATION:${escapeText(oneLine(place.link))}`] : []),
+    ...(place.link && place.link === p.meeting.url ? [`URL:${oneLine(place.link)}`] : []),
     `DESCRIPTION:${escapeText(description)}`,
     `STATUS:${cancelled ? 'CANCELLED' : 'CONFIRMED'}`,
     'END:VEVENT',
@@ -110,18 +122,26 @@ export async function renderBookingMail(input: MailTemplateInput, now: () => Dat
   const data = await input.execute<BookingMailData>('crm.booking.mail_data', { bookingId: parsed.data.bookingId, revision: parsed.data.revision });
   const visitor = data.visitor;
   const name = [...oneLine(visitor?.name ?? '')].slice(0, 100).join('');
-  const p: Booking = { ...parsed.data, visitorName: name || 'Khách' };
+  const p: Booking = { ...parsed.data, visitorName: name || 'Khách', meeting: data.meeting ?? { state: 'none', url: null } };
   const base = input.publicUrl.replace(/\/+$/, '');
   // The visitor's link to cancel or move, while the booking stands; its token goes in the fragment, which browsers never
   // send to a server.
   const manageUrl = p.recipient === 'visitor' && p.kind !== 'cancelled' && data.token ? `${base}/-/b/${p.org}/${p.type}#m=${data.token}` : null;
+  const place = bookingPlace(p);
   const lead = LEADS[p.kind][p.recipient](p);
   const details: Array<[string, string]> = [
     ['Lịch hẹn', oneLine(p.title)],
     ['Thời gian', bookingWhen(p.startsAt, p.endsAt, p.timeZone)],
-    ['Hình thức', `${LOCATIONS[p.locationKind]}${p.location ? `: ${oneLine(p.location)}` : ''}`],
+    ['Hình thức', `${place.label}${place.link ? `: ${oneLine(place.link)}` : ''}`],
   ];
   if (p.recipient === 'host') {
+    // The host is told, in the mail of a new booking, when the Google Meet could not be made: the booking stands, with the fixed link when the type has one. `failed` is only
+    // ever set for a booking whose type asked for a Meet when it was confirmed, so the type's kind now (the host may have switched it since) does not matter.
+    if (p.meeting.state === 'failed' && p.kind === 'confirmed') {
+      // The fixed link is the type's location only while the type is still an online one: after a switch to a place or a phone the value is an address or a number.
+      const fixedLink = place.link !== null && (p.locationKind === 'video' || p.locationKind === 'google_meet');
+      details.push(['Lưu ý', fixedLink ? 'Chưa tạo được liên kết Google Meet; đã dùng liên kết cố định của loại lịch hẹn này.' : 'Chưa tạo được liên kết Google Meet và loại lịch hẹn này chưa có liên kết cố định: hãy gửi liên kết cho khách.']);
+    }
     details.push(['Khách', p.visitorName]);
     if (visitor?.email) details.push(['Email', oneLine(visitor.email)]);
     if (visitor?.phone) details.push(['Điện thoại', oneLine(visitor.phone)]);

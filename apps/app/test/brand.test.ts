@@ -1,11 +1,11 @@
 // The product name users see comes from one setting, BRAND_NAME (issue #1040): messages and guides say {brand}, and
 // the i18n layer fills it in, so no screen hard-codes a name. With no name configured it is Ludy (#1683), and no screen
-// says Crove, the old name; the AI assistant is Vy, written {assistant}.
+// says Crove, the old name; the AI coworkers are named by what they cover ({gm}, {finance}, {sales}, {marketing}, {system}).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTranslator } from 'use-intl/core';
-import { ASSISTANT_NAME, DEFAULT_BRAND, brandCatalog, brandFileName, brandName, setBrandName, withBrand } from '../src/i18n/brand.ts';
+import { COWORKERS, DEFAULT_BRAND, brandCatalog, brandFileName, brandName, setBrandName, withBrand } from '../src/i18n/brand.ts';
 import { LOCALES } from '../src/i18n/locale.ts';
 import { SOURCE_CATALOGS, catalog, translator } from '../src/i18n/runtime.ts';
 import { firmGuide } from '../src/lib/firm-guide.ts';
@@ -123,32 +123,69 @@ describe('brand name (#1040)', () => {
     }
   });
 
-  // #1683: the assistant is Vy in both languages, whatever the brand, and the catalogs name it in the same messages.
-  it('names the AI assistant Vy in both languages', () => {
-    expect(ASSISTANT_NAME).toBe('Vy');
-    const named = (locale: (typeof LOCALES)[number]) =>
+  // #1683, #2410: the AI is a team of coworkers, never an assistant. Each app names the coworker of its role through a
+  // placeholder, the same in both languages and whatever the brand; the names themselves are the roster's, one place.
+  it('names the AI coworkers by role, one per app, in both languages', () => {
+    expect(Object.keys(COWORKERS).sort()).toEqual(['finance', 'gm', 'marketing', 'sales', 'system']);
+    const named = (locale: (typeof LOCALES)[number], role: string) =>
       messages(SOURCE_CATALOGS[locale])
-        .filter(([, text]) => text.includes('{assistant}'))
-        .map(([key]) => key);
-    expect(named('vi').length).toBeGreaterThan(0);
-    expect(named('en')).toEqual(named('vi'));
+        .filter(([, text]) => text.includes(`{${role}}`))
+        .map(([path]) => path);
+    // Where each coworker is named: the messages of the screens its app owns. The general manager names the work across apps
+    // (the AI budget); the system coworker is reserved and hidden, with no message.
+    const APP_OF: Record<string, RegExp> = {
+      finance: /^(auth\.|financeOverview\.|inboxDetail\.|paymentReminders\.|stock\.(suggest|low)\.|inbox\.(?!socialMails))/,
+      sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.)/,
+      marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
+      gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
+    };
+    for (const [role, where] of Object.entries(APP_OF)) {
+      expect(named('vi', role).length, role).toBeGreaterThan(0);
+      expect(named('en', role), role).toEqual(named('vi', role));
+      for (const path of named('en', role)) expect(path, `${role}: ${path}`).toMatch(where);
+    }
+    expect(named('en', 'system'), 'reserved').toEqual([]);
     setBrandName('Tên Mới');
     for (const locale of LOCALES) {
       const filled = Object.fromEntries(messages(catalog(locale)));
-      for (const key of named(locale)) expect(filled[key], `${locale} ${key}`).toMatch(/\bVy\b/);
-      expect(Object.values(filled).join('\n'), locale).not.toContain('{assistant}');
+      for (const [role, name] of Object.entries(COWORKERS)) {
+        for (const path of named(locale, role)) expect(filled[path], `${locale} ${path}`).toMatch(new RegExp(`\\b${name}\\b`));
+        expect(Object.values(filled).join('\n'), locale).not.toContain(`{${role}}`);
+      }
     }
-    expect(catalog('vi').auth.tagline).toBe('Hộp thư chứng từ: chuyển tiếp hóa đơn, trợ lý AI Vy đề xuất hạch toán, bạn duyệt.');
-    expect(catalog('en').auth.tagline).toBe('Document inbox: forward invoices; Vy, your AI assistant, proposes the entries; you approve.');
-    expect(withBrand('{assistant} của {brand}')).toBe('Vy của Tên Mới');
+    // Whoever holds a role, the message says so through the roster: the names are not written in the catalogs.
+    expect(catalog('vi').auth.tagline).toBe(`Chứng từ chờ duyệt: chuyển tiếp hóa đơn, đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt.`);
+    expect(catalog('en').auth.tagline).toBe(`Document inbox: forward invoices; ${COWORKERS.finance}, your AI coworker, proposes the entries; you approve.`);
+    expect(catalog('en').bookings.suggest.ai.noWindows).toMatch(new RegExp(`^${COWORKERS.sales} `));
+    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales}`);
+    expect(withBrand('{finance} của {brand}')).toBe(`${COWORKERS.finance} của Tên Mới`);
+  });
+
+  // #2410: no "assistant" or "trợ lý" in the catalogs or in any source of the app, comments included (the "AI agent"
+  // label, the badges, the kill switch and the AI budgets keep the word AI, never assistant).
+  it('never calls the AI an assistant', () => {
+    for (const locale of LOCALES) {
+      const found = messages(SOURCE_CATALOGS[locale])
+        .filter(([, text]) => /assistant|trợ lý/i.test(text.normalize('NFC')))
+        .map(([key]) => key);
+      expect(found, locale).toEqual([]);
+    }
+    const files = [src, join(src, 'i18n', 'messages')].flatMap((dir) => readdirSync(dir).filter((n) => /\.tsx?$/.test(n)).map((n) => join(dir, n)));
+    const all = [...sourceFiles(src), ...files];
+    const hits = all.flatMap((file) =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .flatMap((text, i) => (/assistant|trợ lý/i.test(text.normalize('NFC')) ? [`${relative(src, file)}:${i + 1}`] : [])),
+    );
+    expect(hits).toEqual([]);
   });
 
   // #1683: the products are named after the brand, so a deployment's own name carries over.
   it('names the apps after the brand', () => {
-    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', crm: 'Ludy CRM' });
-    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', crm: 'Ludy CRM' });
+    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', social: 'Ludy Engage' });
+    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', social: 'Ludy Engage' });
     setBrandName('Tên Mới');
-    expect(catalog('vi').nav.appNames.crm).toBe('Tên Mới CRM');
+    expect(catalog('vi').nav.appNames.social).toBe('Tên Mới Engage');
   });
 
   it('keeps an apostrophe literal inside ICU messages', () => {

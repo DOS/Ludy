@@ -51,6 +51,23 @@ test('a member adds, completes and reorders their own to-dos, which nobody else 
     await expect.poll(titles).toEqual(['Nộp tờ khai thuế', 'Kiểm tra hóa đơn nhà cung cấp']);
   });
 
+  await test.step('completing a to-do says so, and its undo, reached with F8, opens it again (#2003, #2026)', async () => {
+    await page.getByRole('checkbox', { name: 'Đánh dấu xong: Kiểm tra hóa đơn nhà cung cấp' }).click();
+    await expect.poll(titles).toEqual(['Nộp tờ khai thuế']);
+    const done = page.getByRole('status').filter({ hasText: 'Đã đánh dấu xong: Kiểm tra hóa đơn nhà cung cấp' });
+    const undo = done.getByRole('button', { name: 'Hoàn tác' });
+    await expect(undo).toBeVisible();
+    // From the quick add field, F8 reaches the undo; once the toast is gone the focus is back in the field.
+    const add = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
+    await add.focus();
+    await page.keyboard.press('F8');
+    await expect(undo).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(add).toBeFocused();
+    await expect(page.getByRole('status').filter({ hasText: 'Đã đưa việc trở lại: Kiểm tra hóa đơn nhà cung cấp' })).toBeVisible();
+    await expect(rows.filter({ hasText: 'Kiểm tra hóa đơn nhà cung cấp' })).toBeVisible();
+  });
+
   await test.step('another member of the org sees none of them', async () => {
     const otherEmail = newEmail('my-work-other');
     const other = await browser.newPage({ timezoneId: 'Asia/Ho_Chi_Minh' });

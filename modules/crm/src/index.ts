@@ -1,13 +1,29 @@
 import { crmAgentQueries } from './agent.ts';
 import { bookingFeedCommands, bookingFeedQueries } from './booking-feed.ts';
 import { bookingCommands, bookingQueries } from './bookings.ts';
+import { companySuggestQueries } from './company-suggest.ts';
+export { companyCandidates, companySuggestQueries, domainLabelOf, emailDomainOf, taxCodesIn } from './company-suggest.ts';
+import { contactQueries } from './contacts.ts';
+import { dealCommands, dealQueries } from './deals.ts';
+import { boardQueries, stageCommands } from './stages.ts';
 import { eventTypeCommands, eventTypeQueries } from './event-types.ts';
+import { importCommands, importQueries } from './import.ts';
+import { nextStepCommands, nextStepQueries } from './next-steps.ts';
+import { crmToday } from './today.ts';
 
+export { dealCommands, dealConversations, dealCreate, dealDelete, dealGet, dealList, dealMove, dealQueries, dealUpdate, partyConversations, partyDeals, partySearch, pipelineSetup, pipelineStages } from './deals.ts';
+export { boardQueries, dealBoard, stageAdd, stageCommands, stageRemove, stageRename, stageReorder } from './stages.ts';
 export * from './event-types.ts';
 export * from './bookings.ts';
 export * from './agent.ts';
 export * from './booking-feed.ts';
+export * from './contacts.ts';
+export { importCancel, importCommands, importCommit, importExpire, importPreview, importQueries, importStage } from './import.ts';
 
-export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries];
+export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextStepList, nextStepQueries, nextStepRaise, nextStepSnooze, staleDays } from './next-steps.ts';
+
+export { crmToday } from './today.ts';
+
+export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, crmToday];
 export { crmManifest } from './manifest.ts';

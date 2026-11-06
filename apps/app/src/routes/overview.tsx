@@ -12,6 +12,8 @@ import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { cn } from '@crove/ui/lib/utils';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
+import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
+import { TodayList } from '../components/today-list.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
 import { useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
@@ -21,25 +23,29 @@ import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { deadlineTone } from '../lib/clients.ts';
-import { allCounted, waitingItems, type WaitingKey } from '../lib/overview.ts';
+import { WAITING_LINKS, allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { useWorkNotifications } from './notifications.tsx';
 
 
+// The icon of each card; where it opens is WAITING_LINKS (lib/overview.ts).
 const TARGET = {
-  proposals: { to: '/o/$slug/inbox', icon: 'inbox' },
-  socialReviews: { to: '/o/$slug/inbox', icon: 'social' },
-  failedFiles: { to: '/o/$slug/inbox', icon: 'documents' },
-  notifications: { to: '/o/$slug/notifications', icon: 'alerts' },
-  tasks: { to: '/o/$slug/tasks', icon: 'tasks' },
-  bankLines: { to: '/o/$slug/bank', icon: 'bank' },
-} as const satisfies Record<WaitingKey, { to: string; icon: NavIconName }>;
+  proposals: { icon: 'inbox' },
+  socialReviews: { icon: 'social' },
+  failedFiles: { icon: 'documents' },
+  notifications: { icon: 'alerts' },
+  tasks: { icon: 'tasks' },
+  bankLines: { icon: 'bank' },
+} as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
 const APP_CARD = {
-  accounting: { to: '/o/$slug/vat', icon: 'appAccounting' },
+  // The Kế toán app opens on its Tổng quan (#2631).
+  accounting: { to: '/o/$slug/accounting', icon: 'appAccounting' },
+  // Engage holds the CRM's screens too (#2435), so its card shows the posts' figure and the bookings' one.
   social: { to: '/o/$slug/social', icon: 'appSocial' },
-  crm: { to: '/o/$slug/bookings', icon: 'appCrm' },
+  // The HR app opens on its staff list (#2530); its card has no figure, since a count of employees is a payroll read.
+  hr: { to: '/o/$slug/hr/employees', icon: 'appHr' },
 } as const satisfies Record<Exclude<AppId, 'home'>, { to: string; icon: NavIconName }>;
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -49,12 +55,15 @@ const LIST_CAP = 200;
 const counted = (n: number, page: number) => (page >= LIST_CAP ? `${n}+` : String(n));
 
 // One card per installed app (#1528): its key figure and a way in. Home is this screen, so it has none.
-function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: string; daysLeft: number } | null; vatLoaded: boolean }) {
+function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { period: string; daysLeft: number } | null; vatLoaded: boolean; manager: boolean }) {
   const t = useTranslations('overview.apps');
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
-  const apps = installedApps(getConfig().modules).filter((a) => a.id !== 'home');
-  const has = (id: AppId) => apps.some((a) => a.id === id);
+  const modules = getConfig().modules;
+  // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
+  // bookings, which need them, so it shows only where one of the two runs.
+  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || manager));
+  const has = (module: string) => modules.includes(module);
   // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
   // tab left open does not count last week's posts.
   const hour = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
@@ -63,27 +72,33 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
   const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'upcoming' } }), enabled: has('crm') });
   if (apps.length === 0) return null;
 
-  type Figure = { value: string | null; label: string; retry?: () => void };
-  const failed = (q: { refetch: () => unknown }): Figure => ({ value: '-', label: t('failed'), retry: () => void q.refetch() });
-  const figure = (id: Exclude<AppId, 'home'>): Figure => {
-    if (id === 'accounting') {
-      if (!vatLoaded) return { value: null, label: '' };
-      if (!vat) return { value: '-', label: t('accounting.noPeriod') };
-      return vat.daysLeft >= 0
-        ? { value: String(vat.daysLeft), label: t('accounting.vatDue', { days: vat.daysLeft, period: periodLabel(vat.period) }) }
-        : { value: String(-vat.daysLeft), label: t('accounting.vatOverdue', { days: -vat.daysLeft, period: periodLabel(vat.period) }) };
-    }
-    if (id === 'social') {
-      if (posts.isError) return failed(posts);
-      if (!posts.data) return { value: null, label: '' };
-      // The range holds every post with a time in it; only the scheduled ones are waiting to go out.
-      const scheduled = posts.data.filter((p) => p.status === 'scheduled').length;
-      return { value: counted(scheduled, posts.data.length), label: t('social.scheduled', { count: scheduled }) };
-    }
-    if (bookings.isError) return failed(bookings);
-    if (!bookings.data) return { value: null, label: '' };
+  type Figure = { key: string; value: string | null; label: string; retry?: () => void };
+  const failed = (key: string, q: { refetch: () => unknown }): Figure => ({ key, value: '-', label: t('failed'), retry: () => void q.refetch() });
+  const postsFigure = (): Figure => {
+    if (posts.isError) return failed('posts', posts);
+    if (!posts.data) return { key: 'posts', value: null, label: '' };
+    // The range holds every post with a time in it; only the scheduled ones are waiting to go out.
+    const scheduled = posts.data.filter((p) => p.status === 'scheduled').length;
+    return { key: 'posts', value: counted(scheduled, posts.data.length), label: t('social.scheduled', { count: scheduled }) };
+  };
+  const bookingsFigure = (): Figure => {
+    if (bookings.isError) return failed('bookings', bookings);
+    if (!bookings.data) return { key: 'bookings', value: null, label: '' };
     const upcoming = bookings.data.filter((b) => b.status === 'pending' || b.status === 'confirmed').length;
-    return { value: counted(upcoming, bookings.data.length), label: t('crm.upcoming', { count: upcoming }) };
+    return { key: 'bookings', value: counted(upcoming, bookings.data.length), label: t('crm.upcoming', { count: upcoming }) };
+  };
+  // The key figures of an app's card: one for the accounting, and for Engage one for each of its modules that runs.
+  const figures = (id: Exclude<AppId, 'home'>): Figure[] => {
+    if (id === 'accounting') {
+      if (!vatLoaded) return [{ key: 'vat', value: null, label: '' }];
+      if (!vat) return [{ key: 'vat', value: '-', label: t('accounting.noPeriod') }];
+      return [
+        vat.daysLeft >= 0
+          ? { key: 'vat', value: String(vat.daysLeft), label: t('accounting.vatDue', { days: vat.daysLeft, period: periodLabel(vat.period) }) }
+          : { key: 'vat', value: String(-vat.daysLeft), label: t('accounting.vatOverdue', { days: -vat.daysLeft, period: periodLabel(vat.period) }) },
+      ];
+    }
+    return [...(has('social') ? [postsFigure()] : []), ...(has('crm') ? [bookingsFigure()] : [])];
   };
 
   return (
@@ -94,7 +109,8 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
       <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {apps.map((app) => {
           const id = app.id as Exclude<AppId, 'home'>;
-          const { value, label, retry } = figure(id);
+          // Engage opens on its posts; with the social module off its card shows the bookings, so that is where it opens.
+          const to = id === 'social' && !has('social') ? '/o/$slug/bookings' : APP_CARD[id].to;
           return (
             <li key={id}>
               <Card className="flex h-full flex-col gap-2 p-4">
@@ -102,20 +118,24 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
                   <NavIcon name={APP_CARD[id].icon} className="text-muted-foreground" />
                   {tn(`appNames.${id}`)}
                 </span>
-                {value === null ? (
-                  <Spinner />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    <span className="mr-1.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</span>
-                    {label}
-                    {retry && (
-                      <button type="button" className="ml-2 text-xs text-link hover:underline" onClick={retry}>
-                        {t('retry')}
-                      </button>
-                    )}
-                  </p>
+                {figures(id).map(({ key, value, label, retry }) =>
+                  value === null ? (
+                    <div key={key}>
+                      <Spinner />
+                    </div>
+                  ) : (
+                    <p key={key} className="text-sm text-muted-foreground">
+                      <span className="mr-1.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</span>
+                      {label}
+                      {retry && (
+                        <button type="button" className="ml-2 text-xs text-link hover:underline" onClick={retry}>
+                          {t('retry')}
+                        </button>
+                      )}
+                    </p>
+                  ),
                 )}
-                <Link to={APP_CARD[id].to} params={{ slug }} className="mt-auto text-xs text-link hover:underline">
+                <Link to={to} params={{ slug }} className="mt-auto text-xs text-link hover:underline">
                   {t('open', { app: tn(`appNames.${id}`) })}
                 </Link>
               </Card>
@@ -157,8 +177,7 @@ function DueRow({ due, severalEntities, chosen }: { due: TaxDueView; severalEnti
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
         {markFor && (
-          <Button size="sm" variant="outline" onClick={() => done.mutate()} disabled={done.isPending}>
-            {done.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={done.isPending} size="sm" variant="outline" onClick={() => done.mutate()}>
             {severalEntities ? tt('markDoneFor', { entity: markName }) : tt('markDone')}
           </Button>
         )}
@@ -172,6 +191,7 @@ export function OverviewPage() {
   const t = useTranslations('overview');
   const tt = useTranslations('taxCalendar');
   const tcl = useTranslations('clients');
+  const tg = useTranslations('salesGaps');
   const f = useFormat();
   const periodLabel = usePeriodLabel();
   const { slug } = useParams({ strict: false }) as { slug: string };
@@ -225,7 +245,10 @@ export function OverviewPage() {
         actions={uploadAction}
       />
 
-      <section aria-labelledby="overview-waiting">
+      {/* What needs the member today across the apps (#2383), from each line's own read. */}
+      <TodayList slug={slug} />
+
+      <section className="mt-8" aria-labelledby="overview-waiting">
         <h2 id="overview-waiting" className="text-sm font-semibold">
           {t('waiting.title')}
         </h2>
@@ -233,13 +256,10 @@ export function OverviewPage() {
         {waiting.length > 0 ? (
           <Card className="mt-3 block overflow-hidden p-0">
             <ul className="divide-y">
-              {waiting.map(({ key, count }) => (
-                <li key={key}>
-                  <Link
-                    to={TARGET[key].to}
-                    params={{ slug }}
-                    className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50"
-                  >
+              {waiting.map(({ key, count }) => {
+                const rowClass = 'flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50';
+                const row = (
+                  <>
                     <NavIcon name={TARGET[key].icon} className="text-muted-foreground" />
                     <span className="w-8 shrink-0 text-right font-mono text-base font-semibold tabular-nums text-foreground">{count}</span>
                     <span className="min-w-0 flex-1">
@@ -248,9 +268,22 @@ export function OverviewPage() {
                     </span>
                     {/* The whole row is the link; on a phone the words would only squeeze what it counts. */}
                     <span className="hidden shrink-0 text-xs text-link sm:inline">{t(`waiting.${key}.open`)}</span>
-                  </Link>
-                </li>
-              ))}
+                  </>
+                );
+                return (
+                  <li key={key}>
+                    {key === 'socialReviews' ? (
+                      <Link to={WAITING_LINKS[key].to} params={{ slug }} search={WAITING_LINKS[key].search} className={rowClass}>
+                        {row}
+                      </Link>
+                    ) : (
+                      <Link to={WAITING_LINKS[key].to} params={{ slug }} className={rowClass}>
+                        {row}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </Card>
         ) : allCounted(counts, asked) && !failed ? (
@@ -266,7 +299,23 @@ export function OverviewPage() {
         )}
       </section>
 
-      <AppCards slug={slug} vat={vat} vatLoaded={overview.isSuccess} />
+      <AppCards slug={slug} vat={vat} vatLoaded={overview.isSuccess} manager={role === 'owner' || role === 'admin'} />
+
+      {/* Numbers missing in the org's own sales invoice series (#2140): this year's series, and last year's while its returns are filed. */}
+      {financeOn && (
+        <SalesNumberGaps
+          className="mt-8"
+          quiet
+          fromYear={gapsFromYear(new Date())}
+          legalEntityId={entity.legalEntityId}
+          enabled={entity.ready}
+          action={
+            <Link to="/o/$slug/vat" params={{ slug }} className="text-link underline">
+              {tg('open')}
+            </Link>
+          }
+        />
+      )}
 
       {/* The org's notes (#1671): in a client company's org, notes about the client. */}
       {notesOn && <OrgNotesPanel slug={slug} />}

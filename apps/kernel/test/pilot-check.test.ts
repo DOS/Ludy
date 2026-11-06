@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { vaultKeyId, type S3Sender } from '@crove/kernel-runtime';
-import { KNOWN_DEFAULTS, PILOT_EXIT, REQUIRED_SECRETS, checkEnv, parsePilotArgs, probeBuildChecks, probeDeployment, objectLockProbe, probeEvidenceHolds, runPilotCheck, type CheckResult, type Env, type Fetch } from '../src/pilot-check.ts';
+import { KNOWN_DEFAULTS, PILOT_EXIT, REQUIRED_SECRETS, checkEnv, parsePilotArgs, probeBuildChecks, probeCors, probeDeployment, objectLockProbe, probeEvidenceHolds, runPilotCheck, type CheckResult, type Env, type Fetch } from '../src/pilot-check.ts';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -28,6 +28,9 @@ const READY: Env = {
   ALERT_WEBHOOK_URL: `https://alerts.example.com/hook/${fake('hook')}`,
   PROBER_HEARTBEAT_URL: `https://hc.example.com/ping/${fake('check')}`,
   COMPOSE_PROFILES: 'prober',
+  COMPOSE_FILE: 'docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml',
+  CROVE_MODULES: 'finance',
+  LOG_FORMAT: 'json',
   BACKUP_S3_ENDPOINT: 'https://backups.storage.example',
   BACKUP_S3_BUCKET: 'crove-backups',
   BACKUP_S3_ACCESS_KEY_ID: fake('backup-key'),
@@ -40,6 +43,32 @@ const failures = (results: readonly CheckResult[]) => results.filter((r) => r.st
 const failing = (env: Env) => failures(checkEnv(env)).map((r) => `${r.item}: ${r.message}`);
 
 describe('pilot-check settings', () => {
+  // #2261: the web app on its own origin, calling the API cross-origin.
+  describe('split app and API (#2261)', () => {
+    const SPLIT = { ...READY, PUBLIC_URL: 'https://api.example.com', APP_URL: 'https://app.example.com', CORS_ALLOWED_ORIGINS: 'https://app.example.com' };
+
+    it('passes when the app origin is the only one listed, and a same-origin deployment needs neither setting', () => {
+      expect(failing(SPLIT)).toEqual([]);
+      expect(checkEnv(SPLIT).find((r) => r.item === 'Split app and API')?.status).toBe('pass');
+      expect(checkEnv(READY).some((r) => r.item === 'Split app and API')).toBe(false);
+    });
+
+    it('fails an app origin the API does not allow, a wildcard, a path and more origins than the app', () => {
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: '' })).toEqual([expect.stringMatching(/^Split app and API: APP_URL is https:\/\/app\.example\.com.*does not list it/)]);
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: '*' })).toEqual([expect.stringMatching(/^Split app and API: .*wildcard/)]);
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: 'https://app.example.com/' })).toEqual([expect.stringMatching(/^Split app and API: .*origin only/)]);
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: 'https://app.example.com,https://other.example.com' })).toEqual([expect.stringMatching(/^Split app and API: .*remove the others/)]);
+      expect(failing({ ...READY, CORS_ALLOWED_ORIGINS: 'https://app.example.com' })).toEqual([expect.stringMatching(/^Split app and API: CORS_ALLOWED_ORIGINS is set without APP_URL/)]);
+    });
+
+    it('fails an APP_URL that is not https and a CORS list that serves nobody', () => {
+      expect(failing({ ...SPLIT, APP_URL: 'http://app.example.com', CORS_ALLOWED_ORIGINS: 'https://app.example.com' })).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^TLS: APP_URL is http:\/\/app\.example\.com/)]),
+      );
+      expect(failing({ ...SPLIT, APP_URL: 'https://api.example.com' })).toEqual([expect.stringMatching(/^Split app and API: APP_URL is the same origin as PUBLIC_URL/)]);
+    });
+  });
+
   it('fails TLS when TRUSTED_PROXY_HOPS does not count the reverse proxy (#564)', () => {
     for (const hops of [undefined, '0', ' ', 'one', '6']) {
       expect(failing({ ...READY, TRUSTED_PROXY_HOPS: hops }), String(hops)).toEqual([expect.stringMatching(/^TLS: TRUSTED_PROXY_HOPS is .*one email budget/)]);
@@ -80,19 +109,36 @@ describe('pilot-check settings', () => {
     expect(line({ ...READY, CREDENTIAL_KEY_PREVIOUS: previous.toString('hex') })?.message).toContain(
       `the worker opens tokens sealed under the key in CREDENTIAL_KEY_FILE (docker compose: /data/keys/credential.key on the keys volume) and CREDENTIAL_KEY_PREVIOUS (${vaultKeyId(previous)}); `,
     );
-    expect(line(READY)?.message).toContain('docker compose logs crove | grep "cannot open"');
+    expect(line(READY)?.message).toContain('docker compose logs worker | grep "cannot open"');
     // A sample value fails as for every optional secret (Codex review): the worker would refuse it at start.
     expect(failing({ ...READY, CREDENTIAL_KEY_PREVIOUS: 'change-me' })).toEqual(['Secrets: CREDENTIAL_KEY_PREVIOUS still has a sample value']);
+    // The previous Zalo OA secret key: a sample value fails, and while it is set a manual item reminds to remove it (#2348).
+    expect(failing({ ...READY, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'change-me' })).toEqual(['Secrets: CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS still has a sample value']);
+    expect(checkEnv({ ...READY, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'an-older-oa-secret-key' }).some((r) => r.item === 'Zalo OA key rotation' && r.status === 'manual')).toBe(true);
+    expect(checkEnv(READY).some((r) => r.item === 'Zalo OA key rotation')).toBe(false);
     expect(failing({ ...READY, CREDENTIAL_KEY: 'not-a-key', CREDENTIAL_KEY_PREVIOUS: previous.toString('hex').slice(2) })).toEqual([
       'Secrets: CREDENTIAL_KEY is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)',
       'Secrets: CREDENTIAL_KEY_PREVIOUS is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)',
     ]);
   });
 
+  // #2175: JSON logs carry the request and org id, so a public deployment is asked to turn them on; a reminder, never a failure.
+  it('recommends LOG_FORMAT=json on a public URL as a manual item, not a failure', () => {
+    const logs = (env: Env) => checkEnv(env).filter((r) => r.item === 'Logs');
+    expect(logs(READY)).toEqual([]);
+    for (const env of [{ ...READY, LOG_FORMAT: undefined }, { ...READY, LOG_FORMAT: 'text' }, { ...READY, LOG_FORMAT: '' }]) {
+      expect(logs(env)).toEqual([{ item: 'Logs', status: 'manual', message: expect.stringContaining('LOG_FORMAT=json') }]);
+      expect(failures(checkEnv(env))).toEqual([]);
+    }
+    expect(logs({ ...READY, LOG_FORMAT: undefined })[0]?.message).toContain('docs/runbooks/observability.md');
+    // A laptop on localhost is not asked.
+    expect(logs({ ...READY, PUBLIC_URL: 'http://localhost:8080', LOG_FORMAT: undefined })).toEqual([]);
+  });
+
   it('passes a ready deployment and leaves the human items as manual', () => {
     const results = checkEnv(READY);
     expect(failures(results)).toEqual([]);
-    expect(results.filter((r) => r.status === 'manual').map((r) => r.item)).toEqual(['Alerts', 'Credential key', 'Extraction sandbox', 'RLS matrix', 'Backups', 'Evidence holds', 'Owner sign-off']);
+    expect(results.filter((r) => r.status === 'manual').map((r) => r.item)).toEqual(['Alerts', 'Credential key', 'Roles', 'WAL archiving', 'Extraction sandbox', 'RLS matrix', 'Backups', 'Evidence holds', 'Owner sign-off']);
     // Evidence holds (#1009): the bucket's Object Lock is confirmed by hand; without S3 or with holds off, the owner
     // accepts that posted files are not held.
     const holds = (env: Record<string, string | undefined>) => checkEnv(env).find((r) => r.item === 'Evidence holds')?.message;
@@ -111,6 +157,57 @@ describe('pilot-check settings', () => {
     const telegram = { ...READY, ALERT_WEBHOOK_URL: `https://api.telegram.org/bot${fake('token')}/sendMessage` };
     expect(failing(telegram)).toEqual([expect.stringContaining('ALERT_TELEGRAM_CHAT_ID')]);
     expect(failing({ ...telegram, ALERT_TELEGRAM_CHAT_ID: '-1001234567890' })).toEqual([]);
+    // A malformed archive setting disables only the prober's marker check (#2094): the preflight says so, naming the setting.
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', S3_ENDPOINT: 'not a url' })).toEqual([
+      'Alerts: the prober would not check the WORM verification marker: invalid archive settings: S3_ENDPOINT (docs/runbooks/worm-archive.md)',
+    ]);
+    // A bucket that is missing and a half pair of the prober's own key are reported as well.
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3' })).toEqual([
+      'Alerts: the prober would not check the WORM verification marker: ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET (docs/runbooks/worm-archive.md)',
+    ]);
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', PROBER_ARCHIVE_S3_ACCESS_KEY_ID: fake('reader') })).toEqual([
+      expect.stringContaining('set both PROBER_ARCHIVE_S3_ACCESS_KEY_ID and PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY, or neither'),
+    ]);
+    // No key of its own and no opt-in to the default credential chain (#2098): reported, naming both ways out.
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive' })).toEqual([
+      expect.stringContaining('PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true'),
+    ]);
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' })).toEqual([]);
+    // The worker's own key in the shared .env is never the prober's: Compose does not pass it, so with it in the .env and no
+    // key of the prober's own the preflight still reports that the prober has no credentials, and does not name the key.
+    const worker = { S3_ACCESS_KEY_ID: fake('worker-key'), S3_SECRET_ACCESS_KEY: fake('worker-secret') };
+    const withWorkerKey = failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', ...worker });
+    expect(withWorkerKey).toEqual([expect.stringContaining('PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true')]);
+    expect(JSON.stringify(withWorkerKey)).not.toContain(worker.S3_ACCESS_KEY_ID);
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', ...worker, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' })).toEqual([]);
+    // A prober key that is the worker's key is the same mistake whatever Compose passes: reported.
+    expect(
+      failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', ...worker, PROBER_ARCHIVE_S3_ACCESS_KEY_ID: worker.S3_ACCESS_KEY_ID, PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: fake('reader-secret') }),
+    ).toEqual([expect.stringContaining("PROBER_ARCHIVE_S3_ACCESS_KEY_ID is the worker's S3_ACCESS_KEY_ID")]);
+    expect(failing({ ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', ...worker, PROBER_ARCHIVE_S3_ACCESS_KEY_ID: fake('reader'), PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: fake('reader-secret') })).toEqual([]);
+  });
+
+  it("asks a person to confirm the prober's role when it shares the worker's default credential chain (#2109)", () => {
+    const manual = (env: Env) => checkEnv(env).filter((r) => r.item === 'Alerts' && r.status === 'manual').map((r) => r.message);
+    const shared = { ...READY, ARCHIVE_STORE: 's3', ARCHIVE_S3_BUCKET: 'crove-archive', S3_ACCESS_KEY_ID: undefined, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'true' };
+    // A warning, not a failure: the deployment may give the prober a role of its own on a host of its own.
+    expect(failing(shared)).toEqual([]);
+    expect(manual(shared)).toEqual([
+      expect.stringContaining('PUBLIC_URL/healthz every 5 minutes'),
+      expect.stringContaining("ARCHIVE_STORE=s3 with no S3_ACCESS_KEY_ID (the worker reads and writes the archive on the SDK's default credential chain) and PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true"),
+    ]);
+    // An empty S3_ACCESS_KEY_ID is the same as none, as the compose file passes it.
+    expect(manual({ ...shared, S3_ACCESS_KEY_ID: '' })).toHaveLength(2);
+    // Not when the worker has a static key (the prober's chain is then not the worker's), no opt-in, or another store.
+    expect(manual({ ...shared, S3_ACCESS_KEY_ID: fake('worker-key') })).toHaveLength(1);
+    expect(manual({ ...shared, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: undefined })).toHaveLength(1);
+    expect(manual({ ...shared, PROBER_ARCHIVE_S3_DEFAULT_CHAIN: 'false' })).toHaveLength(1);
+    expect(manual({ ...shared, ARCHIVE_STORE: 'local' })).toHaveLength(1);
+    // Not beside the failures it would only repeat: a pair of its own with the opt-in (refused), no bucket, a bad endpoint.
+    const reader = { PROBER_ARCHIVE_S3_ACCESS_KEY_ID: fake('reader'), PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: fake('reader-secret') };
+    expect(manual({ ...shared, ...reader })).toHaveLength(1);
+    expect(manual({ ...shared, ARCHIVE_S3_BUCKET: undefined })).toHaveLength(1);
+    expect(manual({ ...shared, S3_ENDPOINT: 'not a url' })).toHaveLength(1);
   });
 
   it('requires backups in a second location over https, apart from the files bucket (issues #307, #351)', () => {
@@ -128,11 +225,10 @@ describe('pilot-check settings', () => {
     // The same 32 bytes written as hex are the same key.
     expect(failing({ ...READY, BACKUP_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('hex') })).toEqual([expect.stringContaining('give each its own key')]);
     expect(failing({ ...READY, BACKUP_HEARTBEAT_URL: 'http://hc.example.com/ping/x' })).toEqual([expect.stringContaining('BACKUP_HEARTBEAT_URL is not https')]);
-    // Without a key or a heartbeat it passes, and asks the owner to accept or fix each.
-    const manual = checkEnv({ ...READY, BACKUP_ENCRYPTION_KEY: undefined, BACKUP_HEARTBEAT_URL: undefined }).filter((r) => r.item === 'Backups' && r.status !== 'pass');
-    expect(manual.map((r) => r.status)).toEqual(['manual', 'manual', 'manual']);
+    // Without a heartbeat it passes, and asks the owner to accept or fix it. Without a key it fails (#2118, below).
+    const manual = checkEnv({ ...READY, BACKUP_HEARTBEAT_URL: undefined }).filter((r) => r.item === 'Backups' && r.status !== 'pass');
+    expect(manual.map((r) => r.status)).toEqual(['manual', 'manual']);
     expect(manual.map((r) => r.message)).toEqual([
-      expect.stringContaining('BACKUP_ENCRYPTION_KEY is unset'),
       expect.stringContaining('BACKUP_HEARTBEAT_URL is unset'),
       expect.stringContaining('restore onto a scratch stack passed'),
     ]);
@@ -153,6 +249,101 @@ describe('pilot-check settings', () => {
     expect(problems.some((p) => p.includes('AUTH_AUTOCONFIRM is unset'))).toBe(true);
     expect(problems.some((p) => p.includes('SMTP_HOST is unset'))).toBe(true);
     expect(problems.some((p) => p.startsWith('Sign-up limited: AUTH_DISABLE_SIGNUP is unset'))).toBe(true);
+  });
+
+  // #2118: the settings that make a deployment other people reach safe by default.
+  describe('pilot defaults (#2118)', () => {
+    const stripped = (message: string) => message.replace(/^[^:]+: /, '');
+
+    it('fails when the API and the worker run as the one all-in-one process', () => {
+      for (const env of [{ COMPOSE_FILE: undefined }, { COMPOSE_FILE: 'docker-compose.yml:compose.host.yml' }, { COMPOSE_FILE: 'docker-compose.yml:docker-compose.split.yml' }]) {
+        expect(failing({ ...READY, ...env }), JSON.stringify(env)).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE (?:does not list compose\.pilot\.yml|and CROVE_ROLES are unset).*command all/)]);
+      }
+      expect(failing({ ...READY, COMPOSE_PROFILES: 'prober,all-in-one' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one/)]);
+      expect(failing({ ...READY, COMPOSE_PROFILES: 'all-in-one' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one/)]);
+      // The kernel's own opt-in is the same statement the other way round.
+      for (const allow of ['true', 'TRUE']) expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: allow }), allow).toEqual([expect.stringMatching(/^Roles: CROVE_ALLOW_ALL_IN_ONE is set: /)]);
+      expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: 'false' })).toEqual([]);
+      // `*` starts every profile.
+      for (const profiles of ['*', 'prober,*']) expect(failing({ ...READY, COMPOSE_PROFILES: profiles }), profiles).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one \(or \*\)/)]);
+    });
+
+    it('accepts the pilot compose file in any position, as a path, with either list separator', () => {
+      for (const file of ['compose.pilot.yml', '/opt/crove/docker-compose.yml:/opt/crove/compose.pilot.yml', 'docker-compose.yml;compose.pilot.yml;compose.host.yml', String.raw`C:\crove\docker-compose.yml;C:\crove\compose.pilot.yml`]) {
+        expect(failing({ ...READY, COMPOSE_FILE: file }), file).toEqual([]);
+      }
+      // A file that only ends the same way is another file.
+      expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml:my-compose.pilot.yml' })).toEqual([expect.stringContaining('Roles: COMPOSE_FILE does not list')]);
+    });
+
+    it('takes the roles a deployment without docker compose names in CROVE_ROLES', () => {
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api, worker' })).toEqual([]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'worker,api' })).toEqual([]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'all' })).toEqual([expect.stringContaining('Roles: CROVE_ROLES includes all')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api' })).toEqual([expect.stringContaining('Roles: CROVE_ROLES must name both api and worker')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api,worker,all' })).toEqual([expect.stringContaining('CROVE_ROLES includes all')]);
+      // A COMPOSE_FILE without the pilot file wins over the statement: docker compose would run all-in-one.
+      expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml', CROVE_ROLES: 'api,worker' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE does not list compose\.pilot\.yml/)]);
+    });
+
+    it('fails an empty or unknown CROVE_MODULES', () => {
+      for (const modules of [undefined, '', '  ', ' , ']) {
+        expect(failing({ ...READY, CROVE_MODULES: modules }), String(modules)).toEqual([expect.stringMatching(/^Modules: CROVE_MODULES is empty: .*Social's public routes/)]);
+      }
+      // The prober refuses the same list on its own (Alerts), so look at the item.
+      expect(failing({ ...READY, CROVE_MODULES: 'finance,sosial' })).toContainEqual(expect.stringContaining('Modules: CROVE_MODULES names 1 module(s) this build does not ship'));
+      expect(failing({ ...READY, CROVE_MODULES: 'Finance, CRM' })).toEqual([]);
+    });
+
+    it('fails backups with no BACKUP_ENCRYPTION_KEY and drops the manual line it replaces', () => {
+      const env = { ...READY, BACKUP_ENCRYPTION_KEY: undefined };
+      expect(failing(env)).toEqual([expect.stringMatching(/^Backups: BACKUP_ENCRYPTION_KEY is unset: whoever can read the backup bucket/)]);
+      expect(checkEnv(env).filter((r) => r.status === 'manual' && r.message.startsWith('BACKUP_ENCRYPTION_KEY is unset'))).toEqual([]);
+      expect(failing({ ...env, BACKUP_ENCRYPTION_KEY: ' ' })).toHaveLength(1);
+    });
+
+    it('fails an AI key with every AI_PRICE_* at 0, so the cost cap does nothing', () => {
+      const ai = { ...READY, AI_API_KEY: fake('ai') };
+      const expected = [expect.stringMatching(/^AI cost cap: AI_API_KEY is set while AI_PRICE_INPUT_PER_MTOK and AI_PRICE_OUTPUT_PER_MTOK are both 0/)];
+      expect(failing(ai)).toEqual(expected);
+      expect(failing({ ...ai, AI_PRICE_INPUT_PER_MTOK: '0', AI_PRICE_OUTPUT_PER_MTOK: '0.0' })).toEqual(expected);
+      expect(failing({ ...ai, AI_PRICE_INPUT_PER_MTOK: '3' })).toEqual([]);
+      expect(failing({ ...ai, AI_PRICE_OUTPUT_PER_MTOK: '15.5' })).toEqual([]);
+      // No key, no AI calls, nothing to cap.
+      expect(failing({ ...READY, AI_API_KEY: undefined })).toEqual([]);
+      expect(failing({ ...READY, AI_API_KEY: '' })).toEqual([]);
+    });
+
+    it('names the setting, never its value', () => {
+      const secret = fake('never-print-this', 40);
+      const env = { ...READY, COMPOSE_FILE: secret, CROVE_MODULES: secret, AI_API_KEY: secret, CROVE_ROLES: secret, BACKUP_ENCRYPTION_KEY: undefined };
+      const messages = failures(checkEnv(env)).map((r) => stripped(r.message));
+      expect(messages.length).toBeGreaterThanOrEqual(4);
+      for (const message of messages) expect(message).not.toContain(secret);
+    });
+
+    it('checks none of this on a loopback or unset PUBLIC_URL, where TLS already fails', () => {
+      const local = { ...READY, PUBLIC_URL: 'http://localhost:8080', COMPOSE_FILE: undefined, CROVE_MODULES: undefined, AI_API_KEY: fake('ai'), BACKUP_ENCRYPTION_KEY: undefined };
+      const items = failures(checkEnv(local)).map((r) => r.item);
+      expect(items).toEqual(['TLS']);
+      expect(checkEnv(local).some((r) => r.item === 'Roles' || r.item === 'Modules' || r.item === 'AI cost cap')).toBe(false);
+    });
+
+    // #2120: whether the database archives its WAL runs inside its container; the preflight sees only the overlay.
+    it('names the 24 hour recovery point of a stack without the WAL overlay, and asks to confirm one that lists it', () => {
+      const line = (env: Env) => checkEnv(env).find((r) => r.item === 'WAL archiving');
+      expect(line(READY)).toMatchObject({ status: 'manual', message: expect.stringContaining('archives no WAL, so a restore goes back to last night') });
+      const withOverlay = { ...READY, COMPOSE_FILE: `${String(READY.COMPOSE_FILE)}:tools/backup/compose.wal.yml` };
+      expect(line(withOverlay)).toMatchObject({ status: 'manual', message: expect.stringContaining('wal.sh info lists a full base backup') });
+      expect(line({ ...READY, COMPOSE_FILE: String(READY.COMPOSE_FILE).replace(/$/, ':my-compose.wal.yml') })?.message).toContain('archives no WAL');
+      // Never a failure: the checklist of the pilot decides when it is required.
+      expect(failing(withOverlay)).toEqual([]);
+      expect(failing(READY)).toEqual([]);
+    });
+
+    it('asks a person to confirm the running roles', () => {
+      expect(checkEnv(READY).find((r) => r.item === 'Roles' && r.status === 'manual')?.message).toMatch(/docker compose ps lists api and worker and no crove service/);
+    });
   });
 
   it('requires https on the public URLs browsers open', () => {
@@ -188,6 +379,13 @@ describe('pilot-check settings', () => {
     expect(failing({ ...READY, AUTH_STEP_UP: 'off' })).toEqual([expect.stringContaining('AUTH_STEP_UP=off')]);
     // Unset is the kernel's and docker compose's default, required.
     expect(failing({ ...READY, AUTH_STEP_UP: undefined })).toEqual([]);
+  });
+
+  it('refuses ADS_LIVE_LAUNCH=true: the worker creating campaign objects at Meta is for the owner\'s own live check, not for a deployment others reach (#2296)', () => {
+    expect(failing({ ...READY, ADS_LIVE_LAUNCH: 'true' })).toEqual([expect.stringContaining('ADS_LIVE_LAUNCH=true')]);
+    // Off, or unset (the default), passes.
+    expect(failing({ ...READY, ADS_LIVE_LAUNCH: 'false' })).toEqual([]);
+    expect(failing({ ...READY, ADS_LIVE_LAUNCH: undefined })).toEqual([]);
   });
 
   it('requires sign-up to be closed', () => {
@@ -391,6 +589,54 @@ describe('pilot-check probe', () => {
   });
 });
 
+describe('pilot-check CORS probe (#2261)', () => {
+  const API = 'https://api.example.com';
+  const APP = 'https://app.example.com';
+  // A fetch that answers a preflight the way an API with CORS_ALLOWED_ORIGINS=APP does, or a broken variant of it.
+  const preflight = (allow: (origin: string) => string | null, status = 204, headers = 'authorization, content-type, x-crove-org'): Fetch => async (_input, init) => {
+    const origin = new Headers(init?.headers).get('origin') ?? '';
+    const given = allow(origin);
+    return new Response(null, { status, headers: given === null ? {} : { 'access-control-allow-origin': given, 'access-control-allow-headers': headers } });
+  };
+
+  it('passes when the app origin is answered and any other is not', async () => {
+    expect(await probeCors(API, APP, preflight((o) => (o === APP ? APP : null)))).toMatchObject({ status: 'pass' });
+  });
+
+  it('fails when the app origin gets nothing, a wildcard, or another origin', async () => {
+    for (const given of [null, '*', 'https://other.example.com']) {
+      expect(await probeCors(API, APP, preflight(() => given)), String(given)).toMatchObject({ status: 'fail' });
+    }
+  });
+
+  it('fails when the preflight is not 2xx, or does not allow the headers the app sends', async () => {
+    const only = (o: string) => (o === APP ? APP : null);
+    expect(await probeCors(API, APP, preflight(only, 403))).toMatchObject({ status: 'fail', message: expect.stringMatching(/answered 403/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'content-type'))).toMatchObject({ status: 'fail', message: expect.stringMatching(/does not allow the header\(s\) authorization, x-crove-org/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'Authorization,Content-Type,X-Crove-Org'))).toMatchObject({ status: 'pass' });
+  });
+
+  it('fails when an origin off the list is answered too', async () => {
+    const result = await probeCors(API, APP, preflight((o) => o));
+    expect(result).toMatchObject({ status: 'fail' });
+    expect(result.message).toMatch(/origin off the list/);
+  });
+
+  it('fails when the API cannot be reached', async () => {
+    expect(await probeCors(API, APP, fakeFetch({}))).toMatchObject({ status: 'fail', message: expect.stringMatching(/CORS probe/) });
+  });
+
+  it('runs with --url on the API when APP_URL names another origin, and not on a same-origin deployment', async () => {
+    const lines: string[] = [];
+    const routes: Record<string, Route> = { [`${API}/api/rpc`]: (_input, init) => preflight((o) => (o === APP ? APP : null))(_input, init) };
+    await runPilotCheck(['--url', API], { ...READY, PUBLIC_URL: API, APP_URL: APP, CORS_ALLOWED_ORIGINS: APP }, fakeFetch(routes), (line) => lines.push(line));
+    expect(lines.join('\n')).toContain(`${API} answers CORS for ${APP} only`);
+    const same: string[] = [];
+    await runPilotCheck(['--url', 'https://crove.example.com'], READY, fakeFetch({}), (line) => same.push(line));
+    expect(same.join('\n')).not.toContain('CORS');
+  });
+});
+
 describe('pilot-check command', () => {
   it('parses --url to an origin and refuses anything else', () => {
     expect(parsePilotArgs([])).toEqual({ url: null });
@@ -402,7 +648,7 @@ describe('pilot-check command', () => {
     const lines: string[] = [];
     const print = (line: string) => lines.push(line);
     expect(await runPilotCheck([], READY, fakeFetch({}), print)).toBe(PILOT_EXIT.ok);
-    expect(lines.join('\n')).toContain('Automatic checks passed. Confirm the 7 manual item(s)');
+    expect(lines.join('\n')).toContain('Automatic checks passed. Confirm the 9 manual item(s)');
     expect(await runPilotCheck(['--url', 'https://crove.example.com'], READY, fakeFetch(healthy), print)).toBe(PILOT_EXIT.ok);
     lines.length = 0;
     expect(await runPilotCheck([], { ...READY, AUTH_DISABLE_SIGNUP: 'false' }, fakeFetch({}), print)).toBe(PILOT_EXIT.failed);

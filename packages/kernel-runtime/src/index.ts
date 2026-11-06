@@ -5,3 +5,4 @@ export * from './runtime.ts';
 export * from './vault.ts';
 export * from './egress.ts';
 export * from './event-payload.ts';
+export * from './subject-vault.ts';

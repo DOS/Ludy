@@ -38,10 +38,10 @@ The comparison on `created_xact_start` holds only while the new cluster's clock 
 
 ## What the restore lost
 
-The WORM archive ([worm-archive.md](worm-archive.md)) outlives the database. After a restore, it still holds every posting, voucher number and number allocation made after the backup point. `restore.sh` checks the restored database against it before the stack starts (`main.ts restore-report --reseed`, issue #2007). Any restore runs the same check: the steps above, a point-in-time recovery, or a logical restore. Run it by hand in the worker's container (the service `crove` on the all-in-one stack):
+The WORM archive ([worm-archive.md](worm-archive.md)) outlives the database. After a restore, it still holds every posting, voucher number and number allocation made after the backup point. `restore.sh` checks the restored database against it before the stack starts (`main.ts restore-report --reseed --acknowledge`, issues #2007 and #2020). Any restore runs the same check: the steps above, a point-in-time recovery, or a logical restore. Run it by hand in the worker's container, before the stack starts (the service `crove` on the all-in-one stack). Give it the backup's snapshot time, `SNAPSHOT_AT` in the run's `meta.env` (`FINISHED_AT` for a run made before it was recorded; for a point-in-time recovery, the recovery target time):
 
 ```sh
-docker compose run --rm --no-deps worker restore-report --reseed
+docker compose run --rm --no-deps worker restore-report --reseed --acknowledge --backup-point <SNAPSHOT_AT>
 ```
 
 **What it reports.**
@@ -56,6 +56,8 @@ docker compose run --rm --no-deps worker restore-report --reseed
 - A series the restore lost altogether is created again, with its archived id and key.
 - Each raise is one audited command (`kernel.number.reseed`, system actor), and it never lowers a number. Running it again changes nothing.
 - The numbers between the restored series and the new next number are the lost ones. They stay as the archive holds them, and the report names their allocations.
+- A series it raises or creates no longer knows the dates of its documents (its `last_doc_date` becomes `infinity`), so its document type's reset can no longer be switched from a future year (`kernel.number.policy.schedule`, #1595).
+- A switch scheduled after the backup point is lost with it: the reseed of a series that switch numbered then fails (`NUMBER_RESEED_PERIOD_MISFIT`). Schedule the switch again with `kernel.number.policy.schedule`, as the archive's audit event of it names, then run `--reseed` again.
 
 **Its exit code** (also the outcome of that step of `restore.sh`):
 
@@ -74,7 +76,7 @@ docker compose run --rm --no-deps worker restore-report --reseed
 3. Once every series the org numbered after the backup point has its floor, confirm it with `--floors-complete <org id>`. For example:
 
    ```sh
-   docker compose run --rm --no-deps worker restore-report --reseed --floor <org id>:<legal entity id>:finance.cash_voucher.pt:2026=41 --floor <org id>:<legal entity id>:finance.journal_voucher:2026=12 --floors-complete <org id>
+   docker compose run --rm --no-deps worker restore-report --reseed --acknowledge --backup-point <SNAPSHOT_AT> --floor <org id>:<legal entity id>:finance.cash_voucher.pt:2026=41 --floor <org id>:<legal entity id>:finance.journal_voucher:2026=12 --floors-complete <org id>
    ```
 
 4. The run exits 2 once every listed series has a floor that the reseed accepted, and the org is confirmed. A floor never lowers a number, so a run with a floor too high leaves a gap; one too low changes nothing.
@@ -84,7 +86,9 @@ docker compose run --rm --no-deps worker restore-report --reseed
 - **Each lost void and number void.** Repeat it.
 - **Provider-issued numbers.** E-invoice numbers are not in the WORM archive. Reconcile them with the e-invoice provider's list for the same period, until a provider integration does it.
 - Keep the report and the reconciliation with the incident record.
-- Until #2020, the nightly WORM verification fails on the rows the report named ([worm-archive.md](worm-archive.md), "After a restore").
+- **The acknowledgement.** Once every series is safe, `--acknowledge` writes the lost rows to the archive store. The nightly WORM verification then excuses exactly those rows ([worm-archive.md](worm-archive.md), "After a restore").
+  - Give it on the run that leaves every series safe, before the stack starts: the run that exits 2, or 0.
+  - Once the worker has archived after the restore, the batches after the backup point are recorded, and the check can no longer acknowledge them.
 
 ## How to restore the ledger tables
 

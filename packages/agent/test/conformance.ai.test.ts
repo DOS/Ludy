@@ -5,7 +5,7 @@ import { generateText, Output, stepCountIs, streamText, tool } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { chatModel, classifyAiError, InvoiceExtractor, type AiErrorInfo } from '../src/index.ts';
-import { aiConfigFromEnv, SKIP_NOTICE } from './support.ts';
+import { aiConfigFromEnv, SKIP_NOTICE, unmetered } from './support.ts';
 
 const config = aiConfigFromEnv();
 if (!config) console.warn(SKIP_NOTICE);
@@ -82,7 +82,7 @@ describe.skipIf(!config)('AI endpoint conformance', () => {
   });
 
   it('extracts an invoice through the production extractor', async () => {
-    const invoice = await new InvoiceExtractor(cfg).fromText(
+    const invoice = await unmetered(() => new InvoiceExtractor(cfg).fromText(
       [
         'HÓA ĐƠN GIÁ TRỊ GIA TĂNG',
         'Ngày 05 tháng 09 năm 2026. Ký hiệu: C26TZZ. Số: 0000042',
@@ -91,7 +91,7 @@ describe.skipIf(!config)('AI endpoint conformance', () => {
         '1 | Dịch vụ tư vấn | Gói | 1 | 100.000 | 100.000 | 10%',
         'Cộng tiền hàng: 100.000. Tiền thuế GTGT: 10.000. Tổng tiền thanh toán: 110.000',
       ].join('\n'),
-    );
+    ));
     expect(invoice).toMatchObject({ series: 'C26TZZ', number: '42', issueDate: '2026-09-05', subtotal: '100000', vatTotal: '10000', total: '110000' });
   });
 

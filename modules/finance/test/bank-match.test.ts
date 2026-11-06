@@ -84,6 +84,35 @@ describe('matchLine', () => {
     expect(matchLine(line('CK THUONG MAI HOA BINH'), parties, [], balances).suggested).toEqual({ partyId: P1, reason: 'name' });
   });
 
+  it('adds the parties a learned rule points at, between the invoice and the name, and leaves two on one key without a suggestion (#2402)', () => {
+    // Only the rule points at P3: nothing in the text names it.
+    expect(matchLine(line('CK NGUYEN VAN LAN'), parties, [], [], [P3])).toEqual({ suggested: { partyId: P3, reason: 'learned' }, candidates: [{ partyId: P3, reason: 'learned' }] });
+    // A tax code in the text is stronger than a rule; a name is weaker.
+    expect(matchLine(line('CK MST 0309876546 NGUYEN VAN LAN'), parties, [], [], [P3]).suggested).toEqual({ partyId: P2, reason: 'tax_code' });
+    expect(matchLine(line('CK THUONG MAI HOA BINH'), parties, [], [], [P3]).suggested).toEqual({ partyId: P3, reason: 'learned' });
+    // Two parties on one key: both are listed, none is chosen. A party a rule names that the org does not have is ignored.
+    const two = matchLine(line('CK NGUYEN VAN LAN'), parties, [], [], [P1, P3, '00000000-0000-7000-8000-000000000009']);
+    expect(two.suggested).toBeNull();
+    expect(two.candidates.map((c) => [c.partyId, c.reason])).toEqual([[P1, 'learned'], [P3, 'learned']]);
+  });
+
+  it('adds the party a counterparty account rule points at, below the tax code and the invoice and above the learned words, when one party holds it (#2402)', () => {
+    expect(matchLine(line('CK KHONG RO'), parties, [], [], [], [P3])).toEqual({ suggested: { partyId: P3, reason: 'account' }, candidates: [{ partyId: P3, reason: 'account' }] });
+    // A tax code in the text is stronger; the learned words are weaker.
+    expect(matchLine(line('CK MST 0309876546'), parties, [], [], [P1], [P3]).suggested).toEqual({ partyId: P2, reason: 'tax_code' });
+    // The invoice the text names stays the party's reason, whatever the account rule says: the line keeps its clean path.
+    const invoices: MatchInvoice[] = [{ partyId: P3, series: 'C26', number: '123', total: '1500000' }];
+    expect(matchLine(line('TT HD 0000123'), parties, invoices, [], [], [P3]).candidates).toEqual([{ partyId: P3, reason: 'invoice', invoice: { series: 'C26', number: '123' } }]);
+    // An account rule pointing at another party never outranks the invoice named in the text.
+    expect(matchLine(line('TT HD 0000123'), parties, invoices, [], [], [P1]).suggested).toEqual({ partyId: P3, reason: 'invoice', invoice: { series: 'C26', number: '123' } });
+    const both = matchLine(line('CK NGUYEN VAN LAN'), parties, [], [], [P1], [P3]);
+    expect(both.suggested).toEqual({ partyId: P3, reason: 'account' });
+    expect(both.candidates.map((c) => [c.partyId, c.reason])).toEqual([[P3, 'account'], [P1, 'learned']]);
+    // Two parties on one account (a settlement account): it points at none of them, and a tax code line keeps its single candidate.
+    expect(matchLine(line('CK'), parties, [], [], [], [P1, P3])).toEqual({ suggested: null, candidates: [] });
+    expect(matchLine(line('CK MST 0309876546'), parties, [], [], [], [P1, P3]).candidates).toEqual([{ partyId: P2, reason: 'tax_code' }]);
+  });
+
   it('lists each party once, under its strongest reason, and ignores parties it was not given', () => {
     const invoices: MatchInvoice[] = [{ partyId: '00000000-0000-7000-8000-000000000009', series: 'X', number: '7', total: '1500000' }];
     const match = matchLine(line('MST 0101234564 HOA BINH HD 7'), parties, invoices, [{ partyId: P1, balance: '1500000' }]);

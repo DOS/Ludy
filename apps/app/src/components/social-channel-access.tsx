@@ -109,6 +109,9 @@ export function ChannelAccessCard({ channels, canEdit }: { channels: readonly Ch
   const mine = useQuery({ ...orpc.social.channelAccess.mine.queryOptions({ input: {} }), enabled: !canEdit });
   const org = useQuery({ ...orpc.org.get.queryOptions(), enabled: canEdit });
   const lists = useQuery({ ...orpc.social.channelAccess.list.queryOptions({ input: {} }), enabled: canEdit });
+  // The Inbox's email connection is not a place to publish, so the lists of the Social screens leave it out; here it is a channel a limited member may be
+  // given to read (#2439).
+  const withEmail = useQuery({ ...orpc.channels.list.queryOptions({ input: { includeEmail: true } }), enabled: canEdit });
   if (!canEdit) {
     if (!scope.limited) return null;
     const names = new Map(channels.map((c) => [c.id, `${providerName(c.provider)} · ${c.displayName}`]));
@@ -136,7 +139,7 @@ export function ChannelAccessCard({ channels, canEdit }: { channels: readonly Ch
         <ul className="space-y-3">
           {limitable.map((m) => {
             const current = byUser.get(m.userId) ?? [];
-            return <MemberRow key={`${m.userId}:${current.join(',')}`} member={m} channels={channels} current={current} />;
+            return <MemberRow key={`${m.userId}:${current.join(',')}`} member={m} channels={(withEmail.data ?? channels).filter((c) => c.status !== 'revoked')} current={current} />;
           })}
         </ul>
       )}
