@@ -126,7 +126,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await withAdmin((c) =>
       c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
     );
-    const exec = <O>(userId: string, name: string, input: unknown = {}, actor = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
+    const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
     const add = (userId: string, extra: Record<string, unknown> = {}) =>
       exec<HrWritten>(userId, 'hr.payroll.employee.add', { displayName: NAME, address: ADDRESS, identityNumber: IDENTITY, accountNumber: ACCOUNT, employment: TERMS, ...extra });
