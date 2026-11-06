@@ -51,7 +51,10 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         path === 'ledger.period' ||
         path === 'ledger.account' ||
         path === 'vouchers.list' ||
-        path === 'parties.customers'
+        path === 'parties.customers' ||
+        // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
+        path === 'financeOverview.get' ||
+        path === 'financeOverview.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;

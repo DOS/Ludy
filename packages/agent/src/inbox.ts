@@ -13,6 +13,7 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
+import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
@@ -64,6 +65,10 @@ const zReminderOut = z.object({
 export type IntentGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zIntentOut> | null; usage?: AiUsage }>;
 export type RankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zRankOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
+const zOverviewOut = z.object({
+  sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
+});
+export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
 
 const INTENT_SYSTEM = [
@@ -119,9 +124,10 @@ export class InboxReader {
   private readonly generateRank: RankGenerator;
   private readonly generateCompanyRank: CompanyRankGenerator;
   private readonly generateReminder: ReminderGenerator;
+  private readonly generateOverview: OverviewGenerator;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator } = {}) {
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -152,6 +158,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.payment_reminder', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateOverview =
+      generators.overview ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.overview_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zOverviewOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -214,5 +228,15 @@ export class InboxReader {
     const { output, usage } = await this.generateReminder({ system: reminderInstructions(request), prompt: reminderPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkReminderWords(request, output);
+  }
+
+  /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,
+   * and its text is refused when it states a number the figures do not hold, a link, or is empty or too long (overview.ts). onUsage gets the tokens the call used,
+   * for the org's AI cost limit. */
+  async overviewSentence(facts: OverviewFacts, onUsage?: (usage: AiUsage) => void): Promise<OverviewSentenceResult> {
+    if (overviewQuiet(facts)) return { kind: 'none', code: 'QUIET' };
+    const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkOverviewSentence(facts, output);
   }
 }

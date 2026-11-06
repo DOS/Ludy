@@ -29,10 +29,8 @@ const NOT_SHOWN: Record<string, string> = {
   KILL_SWITCH_ON: 'agents',
   BUDGET_EXHAUSTED: 'agents',
   LEASE_LOST: 'agents',
-  TASK_CHECKED_OUT: 'agents',
   TASK_CLOSED: 'agents',
   OUTSIDE_SUBTREE: 'agents',
-  OUTSIDE_LEGAL_ENTITY: 'agents',
   DEPTH_LIMIT: 'agents',
   // The operator's org-purge command (#1024) runs in the worker's container, never from a browser.
   ORG_PURGE_REFUSED: 'operator',

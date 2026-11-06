@@ -55,7 +55,10 @@ const PUBLIC: Record<string, string> = {
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
-const PENDING: Record<string, string> = {};
+const PENDING: Record<string, string> = {
+  // #2582 (Step M8): unauthenticated PKCE code exchange endpoint; body size cap, per-client rate limit, single-use SHA-256 code + PKCE S256 check, 401 on invalid/expired code with no tenant data
+  '/api/extension/token': 'one-time PKCE authorization code exchange for Ludy extension token',
+};
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
 const WEB_DIST = mkdtempSync(join(tmpdir(), 'crove-route-coverage-'));
@@ -69,7 +72,7 @@ function app(authenticate: HttpDeps['authenticate']) {
     AUTH_UPSTREAM_URL: 'http://127.0.0.1:9',
     INBOUND_DOMAIN: 'inbound.example.com',
     INBOUND_SECRET: 'y'.repeat(32),
-    STATUS_FILE: join(WEB_DIST, 'status.json'),
+    STATUS_FILE: join(WEB_DIST, 'status.json').replace(/^[A-Za-z]:[\\/]/, '/').replace(/\\/g, '/'),
     WEB_DIST,
   });
   const runtime = { installed: () => true, modules: () => ['kernel', 'finance', 'social', 'crm'] } as unknown as Runtime;

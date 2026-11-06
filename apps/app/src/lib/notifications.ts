@@ -3,10 +3,10 @@
 
 // The kinds a member can turn off, by module, in the order the settings list them.
 export const NOTIFICATION_KINDS = {
-  // A task that came to me because its holder can no longer read its legal entity (#1799); an original e-invoice attached
+  // A task given or moved to my seat (#2588); a task that came to me because its holder can no longer read its legal entity (#1799); an original e-invoice attached
   // to a posted invoice that differs from it or is not verified (#2335).
   // A conversation that is New and needs an answer (CV3, #2306): told to the assignee, else the available members who read it, else owners and admins.
-  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new'],
+  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new'],
   finance: ['finance.bank_attention', 'finance.portal_attention', 'finance.period_closing'],
   // A to-do's reminder (#1675): it holds no text, the to-do shows in My work.
   notes: ['notes.todo_due'],
@@ -56,6 +56,7 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
       return item.subjectId ? { to: 'proposal', id: item.subjectId } : { to: 'inbox' };
     case 'kernel.file_unreadable':
       return { to: 'inbox' };
+    case 'kernel.task_assigned':
     case 'kernel.task_rerouted':
       return item.subjectId ? { to: 'task', id: item.subjectId } : { to: 'tasks' };
     // The thread that needs an answer opens in the Inbox, else the Inbox's New tab.
