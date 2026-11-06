@@ -387,7 +387,8 @@ export const employeeErase = defineCommand({
       throw new DomainError('HR_EMPLOYEE_NOT_ENDED', 409, 'Chỉ xóa được hồ sơ của nhân viên đã nghỉ việc');
     }
     const until = retentionEnds(iso(employee.ended_on));
-    if (vietnamDay(ctx.now) < until) {
+    // The record is kept through the end of that day: the erasure may run from the next one.
+    if (vietnamDay(ctx.now) <= until) {
       throw new DomainError('HR_RETENTION_NOT_PASSED', 409, `Hồ sơ phải được giữ đến hết ngày ${until} (thời hạn lưu trữ ${HR_RETENTION_YEARS} năm sau ngày nghỉ việc)`);
     }
     const dependents = await ctx.trx

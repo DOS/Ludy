@@ -278,15 +278,19 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const created = await o.add(o.owner, { displayName: name, address });
     await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: created.employeeId, displayName: child, relation: 'child', registeredOn: '2026-02-01' });
     const erase = () => o.exec<HrEmployeeErased>(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asMfa(o.owner));
-    // Not ended: refused. An admin is refused for the role, and an owner without a fresh second factor for the step-up.
+    // Not ended: refused. An admin is refused for the role.
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_NOT_ENDED' });
     await expect(o.exec(o.admin, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asMfa(o.admin))).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
     // Within the retention: refused, with the day it runs out.
     await expect(erase()).rejects.toMatchObject({ code: 'HR_RETENTION_NOT_PASSED', message: expect.stringContaining(retentionEnds('2026-08-31')) });
+    // The boundary: left exactly ten years ago, today is the last day it is kept; a day later it can go.
+    const leftOn = (years: string) => withAdmin((c) => c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '${years}')::date WHERE id = $1`, [created.employeeId]));
+    await leftOn('10 years');
+    await expect(erase()).rejects.toMatchObject({ code: 'HR_RETENTION_NOT_PASSED' });
     const before = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
-    // The date moved: the person left 11 years ago.
-    await withAdmin((c) => c.query("UPDATE crove_hr.payroll_employee SET ended_on = (now() - interval '11 years')::date WHERE id = $1", [created.employeeId]));
+    // The date moved: the person left ten years and a day ago.
+    await leftOn('10 years 1 day');
     const result = await erase();
     expect(result).toMatchObject({ employeeId: created.employeeId, shreddedKeys: 1 });
     expect(result.cleared).toContain('name');
