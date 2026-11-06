@@ -138,7 +138,7 @@ export type StockPeriod = z.infer<typeof zStockPeriod>;
 
 // An item's stock card for a month: its moves in order with the balance after each.
 export const zStockCard = z.object({
-  item: z.object({ id: zId, code: z.string(), name: z.string(), unit: z.string() }),
+  item: z.object({ id: zId, legalEntityId: zId, code: z.string(), name: z.string(), unit: z.string() }),
   month: zStockMonth,
   openingQuantity: z.string(),
   closingQuantity: z.string(),

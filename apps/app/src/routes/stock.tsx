@@ -250,29 +250,38 @@ function CardPanel({ item, month, legalEntityId, onClose }: { item: { id: string
 function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEntityId: string | undefined; slug: string }) {
   const t = useTranslations('stock');
   const [confirming, setConfirming] = useState(false);
+  // A month with no cost has no entry to approve: after asking, the person is told so and confirms the direct close on its own.
+  const [direct, setDirect] = useState(false);
   // One key per card: a retry of the same request returns the same proposal.
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const close = useMutation({
-    mutationFn: async (): Promise<{ proposalId: string | null }> => {
-      try {
-        return await client.inbox.request({ command: 'finance.stock.close_period', idempotencyKey, input: { month, legalEntityId } });
-      } catch (error) {
-        // A month with no cost has no entry to approve: it is closed at once.
-        if ((error as { code?: unknown } | null)?.code !== 'STOCK_CLOSE_NO_COST') throw error;
-        await client.stock.closeEmpty({ month, legalEntityId });
-        return { proposalId: null };
+    mutationFn: async (now: boolean): Promise<{ kind: 'requested'; proposalId: string } | { kind: 'needs_direct' } | { kind: 'closed' }> => {
+      if (!now) {
+        try {
+          const asked = await client.inbox.request({ command: 'finance.stock.close_period', idempotencyKey, input: { month, legalEntityId } });
+          return { kind: 'requested', proposalId: asked.proposalId };
+        } catch (error) {
+          if ((error as { code?: unknown } | null)?.code !== 'STOCK_CLOSE_NO_COST') throw error;
+          return { kind: 'needs_direct' };
+        }
       }
+      await client.stock.closeEmpty({ month, legalEntityId });
+      return { kind: 'closed' };
+    },
+    onSuccess: (outcome) => {
+      if (outcome.kind === 'needs_direct') setDirect(true);
     },
     onSettled: () => void queryClient.invalidateQueries(),
   });
-  if (close.data) {
+  const outcome = close.data;
+  if (outcome?.kind === 'requested' || outcome?.kind === 'closed') {
     return (
       <Alert className="mb-4" data-testid="stock-close-done">
         <AlertDescription>
-          {close.data.proposalId ? (
+          {outcome.kind === 'requested' ? (
             <>
               {t('closeRequested', { month })}{' '}
-              <Link to="/o/$slug/inbox/$id" params={{ slug, id: close.data.proposalId }} className="text-link underline">
+              <Link to="/o/$slug/inbox/$id" params={{ slug, id: outcome.proposalId }} className="text-link underline">
                 {t('closeViewProposal')}
               </Link>
             </>
@@ -283,17 +292,31 @@ function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEn
       </Alert>
     );
   }
-  return confirming ? (
+  const error = isStepUpRequired(close.error) ? (
+    // Closing a month with no cost is R3 (a closed month is not reopened): a second factor of the last 5 minutes, then the same request again.
+    <StepUpPrompt action={t('closeStepUp', { month })} onVerified={() => close.mutate(direct)} onCancel={() => close.reset()} />
+  ) : (
+    close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>
+  );
+  return direct ? (
+    <Card className="mb-4 block p-4" data-testid="stock-close-direct">
+      <p className="max-w-3xl text-sm text-foreground">{t('closeDirectWarning', { month })}</p>
+      {error}
+      <div className="mt-3 flex gap-2">
+        <Button loading={close.isPending} onClick={() => close.mutate(true)} data-testid="stock-close-direct-submit">
+          {t('closeDirectSubmit')}
+        </Button>
+        <Button variant="ghost" onClick={() => setDirect(false)} disabled={close.isPending}>
+          {t('cancel')}
+        </Button>
+      </div>
+    </Card>
+  ) : confirming ? (
     <Card className="mb-4 block p-4" data-testid="stock-close-confirm">
       <p className="max-w-3xl text-sm text-foreground">{t('closeWarning', { month })}</p>
-      {isStepUpRequired(close.error) ? (
-        // Closing a month with no cost is R3 (a closed month is not reopened): a second factor of the last 5 minutes, then the same request again.
-        <StepUpPrompt action={t('closeStepUp', { month })} onVerified={() => close.mutate()} onCancel={() => close.reset()} />
-      ) : (
-        close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>
-      )}
+      {error}
       <div className="mt-3 flex gap-2">
-        <Button loading={close.isPending} onClick={() => close.mutate()} data-testid="stock-close-submit">
+        <Button loading={close.isPending} onClick={() => close.mutate(false)} data-testid="stock-close-submit">
           {t('closeSubmit')}
         </Button>
         <Button variant="ghost" onClick={() => setConfirming(false)} disabled={close.isPending}>
@@ -321,13 +344,17 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
   const valid = /^20[0-9]{2}-(0[1-9]|1[0-2])$/.test(month);
   const exportXlsx = useStockExport(month, legalEntityId);
   const report = useQuery({ ...orpc.stock.report.queryOptions({ input: { month, legalEntityId } }), enabled: ready && valid });
-  // The month is closed when every item the report shows is read from what a close stored.
-  const closedAll = report.data !== undefined && report.data.length > 0 && report.data.every((r) => r.closed);
+  // The months a person has closed: a month with no item to show is known closed from here.
+  const periods = useQuery({ ...orpc.stock.periods.queryOptions({ input: { legalEntityId } }), enabled: ready });
+  // The month is closed when every item the report shows is read from what a close stored, or when the entity has a closed period for it.
+  const rowsClosed = report.data !== undefined && report.data.length > 0 && report.data.every((r) => r.closed);
   // The entity a close is for: the one chosen in the shell, or the only one the report shows. With several on screen and none chosen, none is closed from here.
   const shown = new Set((report.data ?? []).map((r) => r.legalEntityId));
   const closeEntity = legalEntityId ?? (shown.size === 1 ? [...shown][0] : undefined);
   // A month that is over and not closed can be closed by anyone who writes stock.
-  const closable = canWrite && valid && closeEntity !== undefined && month < vietnamToday().slice(0, 7) && !closedAll && report.data !== undefined && report.data.length > 0;
+  const periodClosed = (periods.data ?? []).some((p) => p.month === month && (closeEntity === undefined || p.legalEntityId === closeEntity));
+  const closedAll = rowsClosed || periodClosed;
+  const closable = canWrite && valid && closeEntity !== undefined && month < vietnamToday().slice(0, 7) && !closedAll && report.data !== undefined;
   return (
     <section className="mt-10" aria-label={t('reportTitle')} data-testid="stock-report">
       <div className="mb-2 flex flex-wrap items-end justify-between gap-3">

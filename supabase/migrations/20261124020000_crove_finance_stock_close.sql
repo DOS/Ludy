@@ -188,6 +188,9 @@ BEGIN
        FROM crove_finance.journal_voucher v
        JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL AND e.entry_date = v.voucher_date
        WHERE v.org_id = NEW.org_id AND v.id = NEW.voucher_id AND v.legal_entity_id = NEW.legal_entity_id AND v.stock_closing_month = NEW.period_month
+         -- Dated the last day of the month, and every line on 632 or on 156 or a sub-account of it (goods), returns included.
+         AND v.voucher_date = (NEW.period_month + interval '1 month')::date - 1
+         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id AND l.account_code <> '632' AND l.account_code NOT LIKE '156%')
          AND (SELECT coalesce(pg_catalog.sum(l.debit), 0) FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) = NEW.total_cost) THEN
     RAISE EXCEPTION 'STOCK_PERIOD_VOUCHER' USING ERRCODE = '23514';
   END IF;
@@ -237,7 +240,13 @@ BEGIN
       SELECT 1 FROM crove_finance.cash_voucher v
       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
       WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
-    WHEN p_command IN ('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period') THEN EXISTS (
+    -- The close's effect is its voucher and the month it closed, stored in this transaction: an untagged voucher with no period is not the effect.
+    WHEN p_command = 'finance.stock.close_period' THEN EXISTS (
+      SELECT 1 FROM crove_finance.journal_voucher v
+      JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
+      JOIN crove_finance.stock_period p ON p.org_id = v.org_id AND p.voucher_id = v.id
+      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND v.stock_closing_month IS NOT NULL AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    WHEN p_command IN ('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record') THEN EXISTS (
       SELECT 1 FROM crove_finance.journal_voucher v
       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
       WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())

@@ -1999,6 +1999,8 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
+    // The most rows one stock workbook holds (items in the report, moves in a card): the file is built in memory.
+    const STOCK_EXPORT_LIMIT = 20_000;
     // The stock reports of one month (#2513), ?month=2026-09: Nhập xuất tồn and, with &itemId=<id>, the stock card of that item. The queries check the month and the roles (422 and 403
     // otherwise), so the file name only holds a valid month.
     app.get('/api/export/stock.xlsx', async (c) => {
@@ -2011,9 +2013,15 @@ export function createHttpApp(deps: HttpDeps) {
         const itemId = c.req.query('itemId') || undefined;
         const report = await runtime.query<StockReportRow[]>('finance.stock.report', { month, ...entityQuery(c) }, { actor, orgId });
         const card = itemId ? await runtime.query<StockCard>('finance.stock.card', { itemId, month }, { actor, orgId }) : null;
+        // The card is of an item of the entity asked for (the audit row names that entity), and the workbook is built in memory, so a catalog or a card too large for one file is refused.
+        const entity = entityQuery(c).legalEntityId;
+        if (card && entity && card.item.legalEntityId !== entity) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và pháp nhân đã chọn không khớp nhau');
+        if (report.length > STOCK_EXPORT_LIMIT || (card?.moves.length ?? 0) > STOCK_EXPORT_LIMIT) {
+          throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng để xuất một lần; hãy chọn một pháp nhân hoặc một mặt hàng');
+        }
         const bytes = await buildStockWorkbook(month, report, card, orgSlug ?? '', config.BRAND_NAME);
         // The export's audit row (the month, the number of items, whether a card is in it). No row, no download.
-        await runtime.execute('finance.stock.export', { month, items: report.length, card: card !== null, ...entityQuery(c) }, { actor, orgId });
+        await runtime.execute('finance.stock.export', { month, items: report.length, card: card !== null, ...(entity ? { legalEntityId: entity } : card ? { legalEntityId: card.item.legalEntityId } : {}) }, { actor, orgId });
         return new Response(body(bytes), {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

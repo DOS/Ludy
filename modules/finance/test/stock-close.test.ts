@@ -91,12 +91,15 @@ describe('the cost of a closed month', () => {
         item('BOUGHT', [{ date: '2026-10-02', quantity: '10', value: '1000' }, { date: '2026-10-05', quantity: '-4', value: null }]),
         item('OPENED', [{ date: '2026-10-05', quantity: '-1', value: null }], { opening: { quantity: '4', value: '400' } }),
         item('RETURNED', [{ date: '2026-10-05', quantity: '2', value: null }]),
+        // A return and a shipment of the same quantity cancel out, and the shipment is still costed at zero.
+        item('OFFSET', [{ date: '2026-10-05', quantity: '5', value: null }, { date: '2026-10-09', quantity: '-5', value: null }]),
       ],
       '2026-10',
     );
     expect(result.unpriced.map((u) => [u.code, u.outQuantity])).toEqual([
       ['LOOSE', '-6'],
       ['RETURNED', '-2'],
+      ['OFFSET', '0'],
     ]);
   });
 
