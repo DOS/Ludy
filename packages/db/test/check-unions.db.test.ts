@@ -116,6 +116,9 @@ import {
   AD_CAP_PERIODS,
   AD_DRAFT_ORIGINS,
   AD_DRAFT_STATUSES,
+  HR_CONTRACT_TYPES,
+  HR_EMPLOYEE_STATUSES,
+  HR_REGIONS,
   AD_LAUNCH_STATES,
   AD_OBJECT_LEVELS,
   AD_OBJECT_STATUSES,
@@ -166,7 +169,7 @@ import {
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads'];
+const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr'];
 const suite = ADMIN ? describe : describe.skip;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -190,6 +193,9 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 
 // schema.table.column -> the const array of schema.ts the column is refined to.
 const UNIONS = unions({
+  'crove_hr.payroll_employee.status': HR_EMPLOYEE_STATUSES,
+  'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
+  'crove_hr.payroll_employment.region': HR_REGIONS,
   'crove_ads.ad_account.last_error_kind': AD_ERROR_KINDS,
   'crove_ads.ad_campaign_draft.objective': AD_OBJECTIVES,
   'crove_ads.ad_campaign_draft.origin': AD_DRAFT_ORIGINS,

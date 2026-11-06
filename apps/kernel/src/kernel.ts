@@ -70,6 +70,7 @@ import {
 import { financeAgentPrograms, financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
 import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewContributions, socialQueries } from '@crove/mod-social';
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
+import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
@@ -224,6 +225,7 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
     ads: () => ({ commands: adsCommands, queries: adsQueries }),
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
+    hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
   return { commands: enabled.flatMap((m) => m.commands), queries: enabled.flatMap((m) => m.queries) };
@@ -247,6 +249,7 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   ads: adsManifest,
   crm: crmManifest,
   notes: notesManifest,
+  hr: hrManifest,
 };
 
 export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {

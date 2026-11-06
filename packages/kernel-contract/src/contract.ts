@@ -257,6 +257,20 @@ import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCale
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
+  zHrDependentAdd,
+  zHrDependentEnd,
+  zHrEmployee,
+  zHrEmployeeAdd,
+  zHrEmployeeEdit,
+  zHrEmployeeEnd,
+  zHrEmployeeErased,
+  zHrEmployeeList,
+  zHrEmployeeRef,
+  zHrEmployeeSummary,
+  zHrEmploymentAdd,
+  zHrWritten,
+} from './hr.ts';
+import {
   zNote,
   zNoteCreate,
   zNoteLinkAdd,
@@ -594,6 +608,23 @@ export const contract = {
       get: oc.input(z.object({})).output(z.object({ createdAt: z.string() }).nullable()),
       create: oc.input(z.strictObject({})).output(z.object({ token: z.string() })),
       revoke: oc.input(z.strictObject({})).output(z.object({ revoked: z.boolean() })),
+    },
+  },
+  // HR (#2530, payroll plan 6.1), when the deployment runs the hr module: owners and admins only. Every read is a sensitive query (its audit row is written before it reads), and the
+  // identity number and the bank account number come back only from `get`, opened from their sealed form for the one employee asked for.
+  hr: {
+    payroll: {
+      employees: {
+        list: oc.input(zHrEmployeeList).output(z.array(zHrEmployeeSummary)),
+        get: oc.input(zHrEmployeeRef).output(zHrEmployee),
+        add: oc.input(zHrEmployeeAdd).output(zHrWritten),
+        edit: oc.input(zHrEmployeeEdit).output(zHrWritten),
+        end: oc.input(zHrEmployeeEnd).output(zHrWritten),
+        // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
+        erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+      },
+      employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
+      dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with

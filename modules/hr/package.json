@@ -1,0 +1,22 @@
+{
+  "name": "@crove/mod-hr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "HR module: the people payroll is run for, their employment terms and dependents, sealed personal data (plan docs/plan/payroll.md, ADR-0046)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crove/db": "workspace:*",
+    "@crove/kernel": "workspace:*",
+    "@crove/kernel-contract": "workspace:*",
+    "@crove/kernel-runtime": "workspace:*",
+    "kysely": "catalog:",
+    "zod": "catalog:"
+  }
+}

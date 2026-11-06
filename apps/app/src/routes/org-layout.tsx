@@ -39,8 +39,8 @@ function useSettled<T>(value: T, ms: number): T {
 }
 
 export function OrgLayout() {
-  const NAV = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
-  const apps = useMemo(() => installedApps(getConfig().modules), []);
+  const allNav = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
+  const allApps = useMemo(() => installedApps(getConfig().modules), []);
   // The app of the screen (#1528), from the URL so a deep link opens in its app; on the org's own screens (Settings,
   // the chart) the menu keeps the app last used.
   const { pathname } = useLocation();
@@ -74,6 +74,10 @@ export function OrgLayout() {
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And background work that failed (#1720), which only owners and admins see.
   const roleHere = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  // HR holds the people payroll is run for: owners and admins only (the queries and the database refuse everyone else too), so nobody else is offered its app or its palette entry.
+  const managerHere = roleHere === 'owner' || roleHere === 'admin';
+  const NAV = useMemo(() => (managerHere ? allNav : allNav.filter((n) => n.module !== 'hr')), [allNav, managerHere]);
+  const apps = useMemo(() => (managerHere ? allApps : allApps.filter((a) => a.id !== 'hr')), [allApps, managerHere]);
   const failedJobs = useQuery({
     ...orpc.inbox.raised.queryOptions({ input: {} }),
     enabled: roleHere === 'owner' || roleHere === 'admin',

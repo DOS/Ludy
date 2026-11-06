@@ -181,9 +181,17 @@ const ADS_SCREENS = {
   ],
 } as const satisfies ModuleScreens;
 
+// HR (#2530, payroll plan 6.1): the people payroll is run for, in an app of its own (Ludy Nhân sự, owner decision 2026-11-04). Owners and admins only, which the database's policies and
+// every query enforce; the item is hidden from everyone else by the app's role check.
+const HR_SCREENS = {
+  routes: [{ path: 'hr/employees' }],
+  nav: [{ app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' }],
+} as const satisfies ModuleScreens;
+
 export const MODULE_SCREENS = {
   kernel: KERNEL_SCREENS,
   finance: FINANCE_SCREENS,
+  hr: HR_SCREENS,
   social: SOCIAL_SCREENS,
   ads: ADS_SCREENS,
   crm: CRM_SCREENS,
