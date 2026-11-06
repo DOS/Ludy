@@ -44,6 +44,10 @@ const MACHINERY = new Set([
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
+  // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, no login role grant.
+  'crove_kernel.extension_auth_code',
+  // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, no login role grant.
+  'crove_kernel.extension_token',
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
@@ -69,6 +73,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_kernel.extension_auth_code',
+  'crove_kernel.extension_token',
   'crove_kernel.subject_key',
   'crove_meetings.action_item',
   'crove_meetings.audio_segment',
@@ -1366,6 +1372,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, connection_id: connection.id, key_id: 'rls-matrix', envelope: '\\x00' },
       };
     },
+  },
+  // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, in MACHINERY.
+  'crove_kernel.extension_auth_code': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        code_hash: `\\x${hex64()}`,
+        code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        code_challenge_method: 'S256',
+        user_id: o.owner,
+        scopes: '{meetings}',
+        device_name: 'Chrome on macOS',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-10-01T00:05:00Z',
+      },
+    }),
+  },
+  // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, in MACHINERY.
+  'crove_kernel.extension_token': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        token_hash: `\\x${hex64()}`,
+        device_name: 'Chrome on macOS',
+        scopes: '{meetings}',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-10-31T00:00:00Z',
+        created_by: o.owner,
+      },
+    }),
   },
   // The ledger of visible calls to outside services (Social plan §3.4, S4): one row per call key. Tenant roles read,
   // insert and update its outcome columns, never delete; the guard trigger refuses any change once a call has its
