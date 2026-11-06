@@ -732,9 +732,10 @@ function maskSealed(input: unknown, paths: readonly string[] | undefined): unkno
   return copy;
 }
 
-// The sealed values of an input: each as written, and its digits alone when it has four or more (an identity number typed with spaces or dots). A value of
-// fewer than four characters is masked but not searched for (it would match unrelated text). A path that holds an object, a list or anything but a string or
-// a number cannot be searched for, so the command fails rather than run unguarded.
+// The sealed values of an input: each as written, its digits alone when it has four or more (an identity number typed with spaces or dots), and those digits
+// with their leading zeros stripped when eight or more remain (a national id that went through Number() or a bigint column). A value of fewer than four
+// characters is masked but not searched for (it would match unrelated text). A path that holds an object, a list or anything but a string or a number cannot
+// be searched for, so the command fails rather than run unguarded.
 function sealedSetOf(input: unknown, paths: readonly string[] | undefined, inherited?: ReadonlySet<string>): ReadonlySet<string> {
   const values = new Set<string>(inherited ?? []);
   for (const path of paths ?? []) {
@@ -746,36 +747,61 @@ function sealedSetOf(input: unknown, paths: readonly string[] | undefined, inher
       const digits = onlyDigits(text);
       if (text.length >= 4) values.add(text);
       if (digits.length >= 4) values.add(digits);
+      const stripped = digits.replace(/^0+/, '');
+      if (stripped.length >= 8) values.add(stripped);
     });
   }
   return values;
 }
 
-// Whether a text holds a sealed value: the value as typed, or its digits within the text's digits (a number written inside a longer string, a jsonb text).
+// Whether a text holds a sealed value: the value as typed, or (for a value of eight or more digits) its digits within the text's digits (a number written
+// inside a longer string, a jsonb text).
 function mentionsSealed(text: string, sealed: ReadonlySet<string>): boolean {
   if (sealed.size === 0 || text.length === 0) return false;
   const digits = onlyDigits(text);
   for (const value of sealed) {
     if (text.includes(value)) return true;
-    if (digits.length >= value.length && value === onlyDigits(value) && digits.includes(value)) return true;
+    if (value.length >= 8 && digits.length >= value.length && value === onlyDigits(value) && digits.includes(value)) return true;
   }
   return false;
 }
 
-// Whether a value, or anything inside it (a key, an item, a text, a buffer), holds a sealed value. Deeper than 16 levels it answers yes: it fails closed.
+// Whether a value, or anything inside it, holds a sealed value, looking at what gets stored and logged: the serialization (toJSON, toPostgres), the bytes of a
+// typed array or buffer, the keys, and everything an Error carries (message, stack, cause, errors and its own properties). Deeper than 16 levels it answers
+// yes: it fails closed.
 function leaksSealed(value: unknown, sealed: ReadonlySet<string>, depth = 0): boolean {
   if (sealed.size === 0 || value === null || value === undefined) return false;
   if (depth > 16) return true;
   if (typeof value === 'string') return mentionsSealed(value, sealed);
   if (typeof value === 'number' || typeof value === 'bigint') return mentionsSealed(String(value), sealed);
   if (Buffer.isBuffer(value)) return mentionsSealed(value.toString('utf8'), sealed);
+  if (ArrayBuffer.isView(value)) return mentionsSealed(Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('utf8'), sealed);
   if (value instanceof Date || typeof value !== 'object') return false;
-  if (Array.isArray(value)) return value.some((item) => leaksSealed(item, sealed, depth + 1));
-  return Object.entries(value).some(([key, item]) => mentionsSealed(key, sealed) || leaksSealed(item, sealed, depth + 1));
+  const next = depth + 1;
+  const serializers = ['toJSON', 'toPostgres'] as const;
+  for (const name of serializers) {
+    const fn = (value as Record<string, unknown>)[name];
+    if (typeof fn === 'function') {
+      let produced: unknown;
+      try {
+        produced = (fn as () => unknown).call(value);
+      } catch {
+        return true;
+      }
+      if (leaksSealed(produced, sealed, next)) return true;
+    }
+  }
+  if (value instanceof Error) {
+    if (leaksSealed(value.message, sealed, next) || leaksSealed(value.stack, sealed, next) || leaksSealed((value as { cause?: unknown }).cause, sealed, next)) return true;
+    if (leaksSealed((value as { errors?: unknown }).errors, sealed, next)) return true;
+    return Object.getOwnPropertyNames(value).some((name) => leaksSealed((value as unknown as Record<string, unknown>)[name], sealed, next));
+  }
+  if (Array.isArray(value)) return value.some((item) => leaksSealed(item, sealed, next));
+  return Object.entries(value).some(([key, item]) => mentionsSealed(key, sealed) || leaksSealed(item, sealed, next));
 }
 
-// Refuses a statement of a command whose input has sealed values when one of its parameters, or its text (a literal inlined by sql.lit), holds such a value: a
-// job's data, a row of any table, a jsonb written as one string.
+// Refuses a statement of a command whose input has sealed values when one of its parameters (in its stored form), or its text (a literal inlined by sql.lit),
+// holds such a value: a job's data, a row of any table, a jsonb written as one string.
 function refuseSealedParams(command: string, sealed: ReadonlySet<string>): KyselyPlugin {
   const compiler = new PostgresQueryCompiler();
   return Object.freeze({
@@ -790,33 +816,45 @@ function refuseSealedParams(command: string, sealed: ReadonlySet<string>): Kysel
   } satisfies KyselyPlugin);
 }
 
-// An error a handler threw, with no sealed value in its message, details, audit facts or cause: the caller, the refusal audit row and the logs get this one.
+// An error a handler threw, with no sealed value in its message, details, audit facts, cause or stack: the caller, the refusal audit row and the logs get this
+// one (a DomainError is rebuilt, so it never carries the cause).
 function cleanedError(error: unknown, command: string, sealed: ReadonlySet<string>): unknown {
   if (sealed.size === 0) return error;
   const dropped = new Error(`command ${command} failed: the error quoted a sealed input value and was dropped (sealedInput, #2666)`);
   if (error instanceof DomainError) {
-    const message = mentionsSealed(error.message, sealed) ? 'Lỗi hệ thống' : error.message;
+    const message = mentionsSealed(error.message, sealed) || leaksSealed(error.stack, sealed) ? 'Lỗi hệ thống' : error.message;
     const details = leaksSealed(error.details, sealed) ? undefined : error.details;
     const audit = leaksSealed(error.audit, sealed) ? undefined : error.audit;
     if (message === error.message && details === error.details && audit === error.audit && !leaksSealed((error as { cause?: unknown }).cause, sealed)) return error;
     return new DomainError(error.code, error.status, message, details, audit === undefined ? {} : { audit });
   }
-  if (error instanceof Error) return mentionsSealed(error.message, sealed) || leaksSealed((error as { cause?: unknown }).cause, sealed) ? dropped : error;
-  // A thrown value that is not an Error (a string, an object): logged whole.
+  // Any other Error (its cause and its own properties included), or a thrown value that is not an Error: logged whole.
   return leaksSealed(error, sealed) ? dropped : error;
 }
 
-// register(): each sealed path resolves, through the input schema, to a string or a number (or a list of them), so a typo or an object cannot give false safety.
+// The audit target of a command whose input has sealed values, or null when it would carry one (a uuid column's driver message quotes its value).
+function safeTarget(def: CommandDef<unknown, unknown>, input: unknown): { type: string; id: string } | null {
+  const target = def.target?.(input) ?? null;
+  if (target === null || !def.sealedInput) return target;
+  return leaksSealed(target, sealedSetOf(input, def.sealedInput)) ? null : target;
+}
+
+// register(): each sealed path resolves, through the input schema, to a string or a number (or a list of them), so a typo, an object or a transform that renames
+// the field cannot give false safety.
 function sealedPathProblem(schema: unknown, path: string): string | null {
-  const unwrap = (node: unknown): { type: string; def: Record<string, unknown> } | null => {
+  const unwrap = (node: unknown, leaf: boolean): { type: string; def: Record<string, unknown> } | null => {
     let current = node as { _zod?: { def?: Record<string, unknown> } } | undefined;
     for (let i = 0; i < 12; i += 1) {
       const def = current?._zod?.def;
       if (!def) return null;
       const type = String(def.type);
       if (['optional', 'nullable', 'default', 'prefault', 'readonly', 'nonoptional', 'catch'].includes(type)) current = def.innerType as typeof current;
-      else if (type === 'pipe') current = def.in as typeof current;
-      else return { type, def };
+      else if (type === 'pipe') {
+        // A transform above the leaf may rename or reshape the parsed input: the path is not there to find.
+        const out = (def.out as { _zod?: { def?: { type?: unknown } } } | undefined)?._zod?.def?.type;
+        if (out === 'transform' && !leaf) return { type: 'transform', def };
+        current = def.in as typeof current;
+      } else return { type, def };
     }
     return null;
   };
@@ -824,18 +862,18 @@ function sealedPathProblem(schema: unknown, path: string): string | null {
   for (const segment of path.split('.')) {
     const list = segment.endsWith('[]');
     const key = list ? segment.slice(0, -2) : segment;
-    const object = unwrap(node);
-    if (!object || object.type !== 'object') return `${path}: ${key} is not under an object of the input schema`;
+    const object = unwrap(node, false);
+    if (!object || object.type !== 'object') return `${path}: ${key} is not under an object of the input schema (or a transform sits above it)`;
     const shape = object.def.shape as Record<string, unknown> | undefined;
     if (!shape || !Object.hasOwn(shape, key)) return `${path}: the input schema has no field ${key}`;
     node = shape[key];
     if (list) {
-      const array = unwrap(node);
+      const array = unwrap(node, false);
       if (!array || array.type !== 'array') return `${path}: ${key} is not a list`;
       node = array.def.element;
     }
   }
-  const leaf = unwrap(node);
+  const leaf = unwrap(node, true);
   if (!leaf || !['string', 'number', 'bigint'].includes(leaf.type)) return `${path}: the value is not a string or a number (it is ${leaf?.type ?? 'unknown'})`;
   return null;
 }
@@ -2085,6 +2123,8 @@ export class Runtime {
       seal: (ref, place, value) =>
         pending(async () => {
           refuseClosed('ctx.seal');
+          // The reference is stored in the clear: a sealed value is never part of it.
+          refuseSealed('ctx.seal reference', ref);
           return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
         }),
       permissionEntity: (legalEntityId) => {
@@ -2098,7 +2138,8 @@ export class Runtime {
       audit: (detail) => {
         refuseClosed('ctx.audit');
         refuseSealed('ctx.audit', detail);
-        const own = { ...detail };
+        // The checked copy, as it will be stored: later changes to the handler's objects change nothing.
+        const own = (sealed.size > 0 ? JSON.parse(JSON.stringify(detail)) : { ...detail }) as Record<string, unknown>;
         for (const key of RESERVED_OK_KEYS) delete own[key];
         auditDetail = { ...auditDetail, ...own };
       },
@@ -2160,7 +2201,7 @@ export class Runtime {
       // The row's input (canonical, hashed when the row is written) and target, from the input as parsed, before the
       // nested handler can change it.
       const canonicalInput = stableStringify(maskSealed(nested.input, nested.def.sealedInput));
-      const declared = nested.def.target?.(nested.input) ?? null;
+      const declared = safeTarget(nested.def, nested.input);
       const target = declared ? Object.freeze({ type: String(declared.type), id: String(declared.id) }) : null;
       // Unique per call, so a tryRun nested in another one never rolls back to the outer savepoint.
       this.#savepointSeq += 1;
@@ -2301,7 +2342,12 @@ export class Runtime {
     if ((await settleRunning()) || leftRunning) throw new Error(`command ${def.name}: the handler returned while a nested command was still running`);
     // The answer is stored for a replay (idempotency_key.response) and returned: it carries ids, never a sealed value. Checked as it will be stored, after the
     // nested commands and the runtime's own writes settled (a refusal earlier would roll back a savepoint under a late statement).
-    refuseSealed('the output', JSON.parse(JSON.stringify(output ?? null)));
+    if (sealed.size > 0) {
+      const stored = JSON.parse(JSON.stringify(output ?? null)) as unknown;
+      refuseSealed('the output', stored);
+      // What was checked is what is stored and returned: a getter or a toJSON cannot answer differently the second time.
+      output = stored as O;
+    }
     // An entity holder's command that never named its entity fails closed (#1507).
     if (permissionEntities !== null && !entityNamed) {
       throw new DomainError('FORBIDDEN', 403, 'Bạn không có quyền này với pháp nhân đó', { rule: 'permission_entity' });
@@ -2342,7 +2388,7 @@ export class Runtime {
         commandId,
         outcome: 'ok',
         input: canonicalInput,
-        target: def.target?.(input) ?? null,
+        target: safeTarget(def, input),
         proposalId: base.proposalId,
         ...(detail ? { detail } : {}),
       }),
@@ -2496,7 +2542,7 @@ export class Runtime {
           commandId,
           outcome,
           input: canonical,
-          target: def.target?.(input) ?? null,
+          target: safeTarget(def, input),
           proposalId: null,
           detail: refusalAuditDetail(refusal, actor),
         });

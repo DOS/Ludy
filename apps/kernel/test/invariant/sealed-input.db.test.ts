@@ -26,6 +26,8 @@ const suite = ADMIN ? describe : describe.skip;
 const NUMBER = '079 123 456 789';
 const DIGITS = '079123456789';
 const OTHER = '012 987 654 321';
+// What a Number() or a bigint column makes of the digits: the leading zero is gone.
+const STRIPPED = '79123456789';
 
 const input = z.object({ name: z.string(), idNumber: z.string(), dependents: z.array(z.object({ taxCode: z.string(), name: z.string() })).default([]) });
 const base = { risk: 'R1' as const, sideEffect: 'none' as const, access: ['owner' as const], writes: [] };
@@ -86,6 +88,32 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     command('t2666.audit_error', async (_ctx, i) => {
       throw new DomainError('T2666_DUP', 409, 'Trùng', undefined, { audit: { number: (i as z.infer<typeof input>).idNumber } });
     }),
+    // What storage serializes, not only what the handler holds: bytes, a value object with toJSON, a number that lost its zero, an error's cause.
+    command('t2666.bytes_parameter', async (ctx, i) => {
+      await sql`SELECT ${new TextEncoder().encode((i as z.infer<typeof input>).idNumber)}::bytea AS value`.execute(ctx.trx);
+      return {};
+    }),
+    command('t2666.json_object', async (ctx, i) => {
+      const value = (i as z.infer<typeof input>).idNumber;
+      class NationalId {
+        #v = value;
+        toJSON() {
+          return this.#v;
+        }
+      }
+      await sql`SELECT ${new NationalId() as unknown as string}::jsonb AS data`.execute(ctx.trx);
+      return {};
+    }),
+    command('t2666.number_parameter', async (ctx, i) => {
+      await sql`SELECT ${Number((i as z.infer<typeof input>).idNumber.replace(/\D/g, ''))}::bigint AS value`.execute(ctx.trx);
+      return {};
+    }),
+    command('t2666.seal_reference', async (ctx, i) => ({ sealed: await ctx.seal(`employee:${(i as z.infer<typeof input>).idNumber.replace(/\D/g, '')}`, 'crove_hr.payroll_employee.national_id', 'x') })),
+    command('t2666.cause', async (_ctx, i) => {
+      throw new Error('could not save the employee', { cause: new Error(`bad input ${(i as z.infer<typeof input>).idNumber}`) });
+    }),
+    // A target that would carry the value is dropped, not stored.
+    command('t2666.target', async () => ({ ok: true }), { target: (i) => ({ type: 't2666.person', id: (i as z.infer<typeof input>).idNumber }) }),
     command('t2666.fail', async (_ctx, i) => {
       const value = (i as z.infer<typeof input>).idNumber;
       throw new DomainError('T2666_FAILED', 422, `Sai số ${value}`, { idNumber: value, field: 'idNumber' });
@@ -118,12 +146,12 @@ suite('sealed input on PostgreSQL (#2666)', () => {
         await c.query<{ s: string; t: string; c: string; type: string }>(
           `SELECT c.table_schema AS s, c.table_name AS t, c.column_name AS c, c.data_type AS type
            FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
-           WHERE c.table_schema LIKE 'crove\\_%' AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED')`,
+           WHERE c.table_schema LIKE 'crove\\_%' AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
         )
       ).rows;
       const found: string[] = [];
       for (const { s, t, c: col, type } of cols) {
-        for (const needle of [NUMBER, DIGITS]) {
+        for (const needle of [NUMBER, DIGITS, STRIPPED]) {
           const expr = type === 'bytea' ? `position(convert_to($1, 'UTF8') in "${col}") > 0` : `"${col}"::text LIKE '%' || $1 || '%'`;
           const { rowCount } = await c.query(`SELECT 1 FROM "${s}"."${t}" WHERE ${expr} LIMIT 1`, [needle]);
           if (rowCount) found.push(`${s}.${t}.${col}`);
@@ -211,7 +239,7 @@ suite('sealed input on PostgreSQL (#2666)', () => {
 
   it('refuses a command whose output, audit detail, event, activity or statement carries a sealed value, and commits nothing of it', async () => {
     const o = await org();
-    for (const name of ['t2666.echo', 't2666.echo_digits', 't2666.echo_in_text', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.activity_in_text', 't2666.statement', 't2666.json_parameter', 't2666.literal']) {
+    for (const name of ['t2666.echo', 't2666.echo_digits', 't2666.echo_in_text', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.activity_in_text', 't2666.statement', 't2666.json_parameter', 't2666.literal', 't2666.bytes_parameter', 't2666.json_object', 't2666.number_parameter', 't2666.seal_reference']) {
       await refusedForSealed(() => o.run(name, body()), name);
       expect(await o.hashes(name), `${name} wrote an ok audit row`).toEqual([]);
     }
@@ -244,6 +272,26 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     expect(plain?.message).not.toContain(DIGITS);
   });
 
+  it('keeps the value out of an error cause, the stack and the failure log', async () => {
+    const o = await org();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(o.run('t2666.cause', body())).rejects.toBeInstanceOf(DomainError);
+      const text = logged.mock.calls.flat().map((a) => (a instanceof Error ? `${a.message} ${a.stack ?? ''} ${String((a as { cause?: unknown }).cause)}` : String(a))).join(' ');
+      expect(text).not.toContain(DIGITS);
+      expect(text).not.toContain(NUMBER);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it('drops an audit target that would carry the value instead of storing it or failing on it', async () => {
+    const o = await org();
+    expect(await o.run('t2666.target', body())).toEqual({ ok: true });
+    const rows = await withAdmin(async (c) => (await c.query<{ target_type: string | null; target_id: string | null }>("SELECT target_type, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2666.target'", [o.orgId])).rows);
+    expect(rows).toEqual([{ target_type: null, target_id: null }]);
+  });
+
   it('makes a nested command declare the sealed values it is given, and masks its row too', async () => {
     const o = await org();
     await expect(o.run('t2666.parent_undeclared', body())).rejects.toThrow();
@@ -261,7 +309,7 @@ suite('sealed input on PostgreSQL (#2666)', () => {
   it('finds the number, as typed and as digits, in no column of any crove table after all of it, and after a refused run', async () => {
     const o = await org();
     for (const name of ['t2666.ok', 't2666.parent']) await o.run(name, body());
-    for (const name of ['t2666.echo', 't2666.echo_in_text', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.activity_in_text', 't2666.statement', 't2666.json_parameter', 't2666.literal', 't2666.audit_error', 't2666.fail', 't2666.fail_plain', 't2666.parent_undeclared']) {
+    for (const name of ['t2666.echo', 't2666.echo_in_text', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.activity_in_text', 't2666.statement', 't2666.json_parameter', 't2666.literal', 't2666.audit_error', 't2666.bytes_parameter', 't2666.json_object', 't2666.number_parameter', 't2666.seal_reference', 't2666.cause', 't2666.target', 't2666.fail', 't2666.fail_plain', 't2666.parent_undeclared']) {
       await o.run(name, body()).catch(() => undefined);
     }
     expect(await hits()).toEqual([]);
@@ -276,6 +324,9 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     const fresh = () => new Runtime(createDb(pool), { manifests: TEST_MANIFESTS });
     const proposal = defineCommand({ name: 't2666.proposal', input, risk: 'R1', sideEffect: 'none', access: 'proposal', writes: [], sealedInput: SEALED, handler: async () => ({}) }) as CommandDef<unknown, unknown>;
     expect(() => fresh().register({ commands: [proposal] })).toThrow(/proposal/);
+    // A transform that reshapes the input hides the path from the runtime.
+    const reshaped = defineCommand({ name: 't2666.reshaped', input: z.object({ idNumber: z.string() }).transform((o) => ({ id: o.idNumber })), ...base, sealedInput: ['idNumber'], handler: async () => ({}) }) as CommandDef<unknown, unknown>;
+    expect(() => fresh().register({ commands: [reshaped] })).toThrow(/sealedInput/);
     // A path the schema does not have gives false safety, and so does one that holds an object.
     for (const sealedInput of [['idNumbr'], ['dependents'], ['dependents[].nme'], ['name.first']]) {
       expect(() => fresh().register({ commands: [command('t2666.bad', async () => ({}), { sealedInput })] }), JSON.stringify(sealedInput)).toThrow(/sealedInput/);
