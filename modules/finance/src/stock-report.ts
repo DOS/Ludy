@@ -220,7 +220,7 @@ export const stockCard = defineQuery({
       };
     });
     return {
-      item: { id: item.id, code: item.code, name: item.name, unit: item.unit },
+      item: { id: item.id, legalEntityId: item.legal_entity_id, code: item.code, name: item.name, unit: item.unit },
       month: input.month,
       openingQuantity: figures?.openingQuantity ?? '0',
       closingQuantity: figures?.closingQuantity ?? '0',

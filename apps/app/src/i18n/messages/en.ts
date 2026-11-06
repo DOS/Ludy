@@ -746,6 +746,8 @@ export const en = {
     closeRequested: 'The close of the stock of {month} was sent for approval.',
     closeViewProposal: 'View the proposal',
     closeStepUp: 'close the stock of {month}',
+    closeDirectWarning: 'The stock of {month} has no cost to post, so it needs no approval: closing it now locks the moves of the month and cannot be undone.',
+    closeDirectSubmit: 'Close the stock now',
     counts: {
       title: 'Stock counts',
       hint: 'Type what was counted on the day of the count; the difference from the books is priced at the month\'s average cost and posted once an owner or an admin approves it. A shortage within the norm goes to 632, the part beyond it to 1381 to be resolved, a surplus to 3381. A confirmed count cannot be changed; if it was wrong, count again.',
@@ -8557,7 +8559,11 @@ export const en = {
       stock: {
         assign: 'Assign an invoice line to an item',
         card: 'View the stock card of an item',
+        close_empty: 'Close the stock of a month with no cost',
+        close_period: 'Close the stock of a month and post its cost of goods sold',
+        export: 'Export the stock report',
         periods: 'View the months of stock that were closed',
+        prepare_close: 'Prepare the proposal to close the stock of a month',
         report: 'View the stock in and out report',
         unassigned: 'View the goods lines not assigned yet',
       },

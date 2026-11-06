@@ -70,7 +70,10 @@ export function closeMonth(items: readonly CloseItem[], month: string): CloseRes
     figured.push({ ...figures, itemId: item.itemId, code: item.code, name: item.name, unit: item.unit, stockAccount: item.stockAccount });
   }
   const negative = figured.filter((f) => money(f.closingQuantity).lessThan(0)).map((f) => ({ itemId: f.itemId, code: f.code, name: f.name, closingQuantity: f.closingQuantity }));
-  const unpriced = figured.filter((f) => f.unitCost === null && !money(f.outQuantity).isZero()).map((f) => ({ itemId: f.itemId, code: f.code, name: f.name, outQuantity: f.outQuantity }));
+  // An item is unpriced when it had a move with no value in the month and nothing to price it at: moves that cancel each other out (a return and a shipment of the same quantity) count too, since
+  // the shipment would be costed at zero.
+  const moved = new Set(items.filter((i) => i.moves.some((m) => m.value === null && m.date.slice(0, 7) === month)).map((i) => i.itemId));
+  const unpriced = figured.filter((f) => f.unitCost === null && moved.has(f.itemId)).map((f) => ({ itemId: f.itemId, code: f.code, name: f.name, outQuantity: f.outQuantity }));
   // What left each stock account: positive is cost out of it (credit), negative is cost back into it (debit).
   const byAccount = new Map<string, ReturnType<typeof money>>();
   for (const f of figured) byAccount.set(f.stockAccount, (byAccount.get(f.stockAccount) ?? money(0)).plus(money(f.outValue)));

@@ -79,10 +79,8 @@ suite('the stock month close command (#2513)', () => {
     return rt.execute<{ journalEntryId: string; voucherId: string; code: string; periodId: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
   }
   const report = (o: Org, month: string) => query<Row[]>(o, 'finance.stock.report', { month });
-  const currentMonth = () => {
-    const now = new Date();
-    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  };
+  // The month it is in Vietnam by the database's clock, which is the clock the close reads.
+  const currentMonth = async () => (await rows<{ month: string }>("SELECT pg_catalog.to_char(pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM') AS month"))[0]?.month as string;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -202,7 +200,7 @@ suite('the stock month close command (#2513)', () => {
   it('refuses a close that cannot be made: a month not over, a month after one that still holds moves, an item below zero, a month with nothing to post', async () => {
     const o = await org();
     const item = await makeItem(o, 'B');
-    await expect(ask(o, currentMonth())).rejects.toMatchObject({ code: 'STOCK_CLOSE_NOT_ENDED' });
+    await expect(ask(o, await currentMonth())).rejects.toMatchObject({ code: 'STOCK_CLOSE_NOT_ENDED' });
     // June holds a move and is not closed: August cannot close before it.
     await move(o, item, '2026-06-10', '3');
     await expect(ask(o, '2026-08')).rejects.toMatchObject({ code: 'STOCK_CLOSE_ORDER' });

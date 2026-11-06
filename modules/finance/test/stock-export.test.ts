@@ -27,7 +27,7 @@ const row = (over: Partial<StockReportRow> = {}): StockReportRow => ({
 });
 
 const card: StockCard = {
-  item: { id: '01900000-0000-7000-8000-000000000001', code: 'A1', name: 'Gói quảng cáo', unit: 'gói' },
+  item: { id: '01900000-0000-7000-8000-000000000001', legalEntityId: '01900000-0000-7000-8000-0000000000a1', code: 'A1', name: 'Gói quảng cáo', unit: 'gói' },
   month: '2026-09',
   openingQuantity: '5',
   closingQuantity: '3',

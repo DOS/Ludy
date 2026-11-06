@@ -744,6 +744,8 @@ export const vi = {
     closeRequested: 'Đã gửi đề xuất đóng sổ kho tháng {month}, chờ duyệt.',
     closeViewProposal: 'Xem đề xuất',
     closeStepUp: 'đóng sổ kho tháng {month}',
+    closeDirectWarning: 'Tháng {month} không có giá vốn để ghi sổ nên không cần duyệt: đóng sổ ngay sẽ khóa các phát sinh kho của tháng và không mở lại được.',
+    closeDirectSubmit: 'Đóng sổ kho ngay',
     counts: {
       title: 'Kiểm kê',
       hint: 'Đếm hàng ngày nào thì nhập số thực đếm của ngày đó; chênh lệch so với sổ được tính theo giá vốn bình quân của tháng và ghi sổ sau khi chủ sở hữu hoặc quản trị viên duyệt. Hao hụt trong định mức vào 632, phần vượt định mức vào 1381 chờ xử lý, hàng thừa vào 3381. Lần kiểm kê đã xác nhận không sửa được; nếu sai, kiểm kê lại.',
@@ -8554,7 +8556,11 @@ export const vi = {
       stock: {
         assign: 'Gán dòng hóa đơn cho mặt hàng',
         card: 'Xem thẻ kho của mặt hàng',
+        close_empty: 'Đóng sổ kho tháng không có giá vốn',
+        close_period: 'Đóng sổ kho và ghi giá vốn hàng bán',
+        export: 'Xuất báo cáo nhập xuất tồn',
         periods: 'Xem các tháng đã đóng sổ kho',
+        prepare_close: 'Chuẩn bị đề xuất đóng sổ kho',
         report: 'Xem báo cáo nhập xuất tồn',
         unassigned: 'Xem các dòng hàng chưa gán',
       },
