@@ -1809,7 +1809,8 @@ suite('ads on PostgreSQL (#2217)', () => {
               `SELECT key, step, state, calls, external_ref, error_kind, error_code FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2`,
               [orgId, `ads.launch:${id}:%`],
             );
-            return found.sort((a, b) => ORDER.indexOf(a.step) - ORDER.indexOf(b.step));
+            // The same step of two attempts has two rows: the key (which carries the attempt) breaks the tie, since the database gives no order of its own.
+            return found.sort((a, b) => ORDER.indexOf(a.step) - ORDER.indexOf(b.step) || a.key.localeCompare(b.key, 'en', { numeric: true }));
           };
           const objectsOf = async (id: string) => (await row<{ slot: string; level: string; external_id: string; name: string; configured_status: string }>(`SELECT slot, level, external_id, name, configured_status FROM crove_ads.ad_object WHERE org_id = $1 AND launch_id = $2`, [orgId, id])).sort((a, b) => ORDER.indexOf(a.slot) - ORDER.indexOf(b.slot));
           // The clock of a call the job began, put back (a dead worker, a minute that passed), as the Social publish tests do.
