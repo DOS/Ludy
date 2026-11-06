@@ -317,8 +317,9 @@ export interface ErasedValue {
   erased: true;
 }
 
-// A subject reference (`employee:<id>`) and the place of a sealed value (`crove_hr.payroll_employee.national_id`).
-const SUBJECT_REF = /^[a-z_]+:[A-Za-z0-9._-]{1,128}$/;
+// A subject reference (`employee:<id>`) and the place of a sealed value (`crove_hr.payroll_employee.national_id`). A `contact:` reference is a keyed hash
+// (64 hex characters), never the email or number itself: the reference is stored in the clear.
+const SUBJECT_REF = /^(?:contact:[0-9a-f]{64}|(?!contact:)[a-z_]+:[A-Za-z0-9._-]{1,128})$/;
 const SEAL_PLACE = /^[a-z][a-z0-9_.:-]{2,120}$/;
 
 export interface CommandContext extends QueryContext {
@@ -1350,7 +1351,9 @@ export class Runtime {
 
   // A query context for a handler: the transaction, the entered org and role (or agent grant), ctx.query for lookups
   // and the reviser registry.
-  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered): QueryContext {
+  // `canOpen`: ctx.open and ctx.openMany work only in a sensitive query, whose read is audited before it starts; in a command, in a nested ctx.query and in
+  // any other query they refuse, so a sealed value never reaches an answer or an audit detail without that audit.
+  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered, canOpen = false): QueryContext {
     return {
       trx,
       orgId,
@@ -1361,8 +1364,8 @@ export class Runtime {
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
       command: (name) => this.commandInfo(name),
-      open: async (sealed, place, ref) => (await this.openSealed(trx, orgId, actor, [{ sealed, place, ref }]))[0] as string | ErasedValue,
-      openMany: (items) => this.openSealed(trx, orgId, actor, items),
+      open: async (sealed, place, ref) => (await this.openSealed(trx, orgId, actor, [{ sealed, place, ref }], canOpen))[0] as string | ErasedValue,
+      openMany: (items) => this.openSealed(trx, orgId, actor, items, canOpen),
     };
   }
 
@@ -2497,7 +2500,8 @@ export class Runtime {
 
   // ctx.open and ctx.openMany: one lookup of the wrapped keys of the subjects named, then the values opened here. A subject with no key row reads as erased.
   // A value whose subject is not the one the caller says the row belongs to does not open.
-  private async openSealed(trx: Transaction<Database>, orgId: string, actor: Actor, items: readonly { sealed: string; place: string; ref: string }[]): Promise<(string | ErasedValue)[]> {
+  private async openSealed(trx: Transaction<Database>, orgId: string, actor: Actor, items: readonly { sealed: string; place: string; ref: string }[], canOpen: boolean): Promise<(string | ErasedValue)[]> {
+    if (!canOpen) throw new DomainError('FORBIDDEN', 403, 'Chỉ truy vấn nhạy cảm (có ghi nhật ký) được mở dữ liệu cá nhân', { rule: 'open_sensitive_only' });
     const vault = this.subjectVaultFor(actor);
     const parsed = items.map((item) => {
       const p = parseSealed(item.sealed);
@@ -2549,7 +2553,7 @@ export class Runtime {
         reached = true;
         this.authorizeQuery(def, options.actor, entered);
         refuseStreamed(def);
-        return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered), input)) as O;
+        return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input)) as O;
       });
     } catch (error) {
       const domain = toDomainError(error);
@@ -2594,7 +2598,7 @@ export class Runtime {
           const entered = await this.enterContext(trx, options.actor, options.orgId);
           reached = true;
           this.authorizeQuery(def, options.actor, entered);
-          return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered), input, sink)) as O;
+          return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input, sink)) as O;
         });
     } catch (error) {
       const domain = toDomainError(error);

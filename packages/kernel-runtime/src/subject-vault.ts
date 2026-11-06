@@ -120,8 +120,8 @@ export class SubjectVault {
 
   seal(dataKey: Buffer, orgId: string, subjectId: string, place: string, value: string): string {
     const plain = Buffer.from(value, 'utf8');
-    if (plain.length === 0 || plain.length > MAX_SEALED_VALUE_BYTES) throw new SubjectKeyError('a sealed value must be 1 byte to 4 KiB');
     try {
+      if (plain.length === 0 || plain.length > MAX_SEALED_VALUE_BYTES) throw new SubjectKeyError('a sealed value must be 1 byte to 4 KiB');
       return `${PREFIX}${subjectId}:${encrypt(dataKey, plain, aad('data', orgId, subjectId, place)).toString('base64url')}`;
     } finally {
       plain.fill(0);

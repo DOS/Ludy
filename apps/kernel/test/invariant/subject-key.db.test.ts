@@ -60,8 +60,25 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     name: 't2640.open',
     input: z.object({ sealed: z.string(), place: z.string().optional(), ref: z.string() }),
     access: ['owner', 'admin', 'member', 'viewer'],
+    sensitive: true,
     handler: async (ctx, input) => ctx.open(input.sealed, input.place ?? PLACE, input.ref),
   }) as QueryDef<unknown, unknown>;
+  // The same call from a query that is not sensitive, and from a command: refused, so a value never reaches an answer without its audited read.
+  const OPEN_PLAIN = defineQuery({
+    name: 't2640.open_plain',
+    input: z.object({ sealed: z.string(), ref: z.string() }),
+    access: ['owner'],
+    handler: async (ctx, input) => ctx.open(input.sealed, PLACE, input.ref),
+  }) as QueryDef<unknown, unknown>;
+  const OPEN_IN_COMMAND = defineCommand({
+    name: 't2640.open_in_command',
+    input: z.object({ sealed: z.string(), ref: z.string() }),
+    risk: 'R1',
+    sideEffect: 'none',
+    access: ['owner'],
+    writes: [],
+    handler: async (ctx, input) => ({ value: await ctx.open(input.sealed, PLACE, input.ref) }),
+  }) as CommandDef<unknown, unknown>;
   // The same two steps for the system, which must be refused them.
   const SEAL_AS_SYSTEM = defineCommand({
     name: 't2640.seal_as_system',
@@ -76,6 +93,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     name: 't2640.open_as_system',
     input: z.object({ sealed: z.string(), ref: z.string() }),
     access: 'system',
+    sensitive: true,
     handler: async (ctx, input) => ctx.open(input.sealed, PLACE, input.ref),
   }) as QueryDef<unknown, unknown>;
 
@@ -179,7 +197,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
-    const register = (runtime: Runtime) => runtime.register({ commands: [...kernelCommands, SEAL], queries: [...kernelQueries({ inboundDomain: null }), OPEN] });
+    const register = (runtime: Runtime) => runtime.register({ commands: [...kernelCommands, SEAL, OPEN_IN_COMMAND], queries: [...kernelQueries({ inboundDomain: null }), OPEN, OPEN_PLAIN] });
     rt = register(new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }));
     keylessRt = register(new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }));
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
@@ -352,6 +370,47 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     const { sealed } = await o.seal(o.owner, ref);
     const system = { type: 'system' as const, component: 't2640-worker' };
     await expect(workerRt.execute('t2640.seal_as_system', { ref }, { actor: system, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'subject_user_only' } });
-    await expect(workerRt.query('t2640.open_as_system', { sealed, ref }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'subject_user_only' } });
+    await expect(workerRt.query('t2640.open_as_system', { sealed, ref }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'sensitive_user_only' } });
+  });
+  it('opens a value only in a sensitive query: a command and an ordinary query are refused', async () => {
+    const o = await org();
+    const ref = `employee:${randomUUID()}`;
+    const { sealed } = await o.seal(o.owner, ref);
+    await expect(rt.execute('t2640.open_in_command', { sealed, ref }, { actor: user(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'open_sensitive_only' } });
+    await expect(rt.query('t2640.open_plain', { sealed, ref }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'open_sensitive_only' } });
+    // The sensitive query opens it, and its read is audited first.
+    expect(await o.open(o.owner, sealed, undefined, rt, ref)).toBe(CANARY);
+    expect(await withAdmin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2640.open'", [o.orgId])).rows[0]?.n))).toBe(1);
+  });
+
+  it('refuses a contact reference that is not a keyed hash, since the reference is stored in the clear', async () => {
+    const o = await org();
+    await expect(o.seal(o.owner, 'contact:079123456789')).rejects.toBeInstanceOf(DomainError);
+    await expect(o.seal(o.owner, `contact:${'ab'.repeat(32)}`)).resolves.toMatchObject({ sealed: expect.stringMatching(/^crove:s1:/) });
+    expect(await subjectRows(o.orgId)).toEqual([`contact:${'ab'.repeat(32)}`]);
+  });
+
+  it('makes a shred wait for the seal that holds the key, and then delete the key with its value', async () => {
+    const o = await org();
+    const ref = `employee:${randomUUID()}`;
+    await o.seal(o.owner, ref);
+    const sealing = await connect(appUrl);
+    const shredding = await connect(appUrl);
+    const enter = (c: pg.Client, who: string) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(who, o.orgId)]);
+    await sealing.query('BEGIN');
+    await enter(sealing, o.owner);
+    // A seal in progress: ensure answers the stored key and holds it until this transaction ends.
+    await sealing.query("SELECT * FROM crove_kernel.subject_key_ensure($1::uuid, $2, 'k1-x', decode(repeat('00', 60), 'hex'))", [randomUUID(), ref]);
+    await shredding.query('BEGIN');
+    await enter(shredding, o.owner);
+    await shredding.query("SET LOCAL lock_timeout = '400ms'");
+    await expect(shredding.query('SELECT crove_kernel.subject_key_shred($1::text[])', [[ref]])).rejects.toMatchObject({ code: '55P03' });
+    await shredding.query('ROLLBACK');
+    await sealing.query('COMMIT');
+    await shredding.query('BEGIN');
+    await enter(shredding, o.owner);
+    expect((await shredding.query<{ n: number }>('SELECT crove_kernel.subject_key_shred($1::text[]) AS n', [[ref]])).rows[0]?.n).toBe(1);
+    await shredding.query('COMMIT');
+    expect(await subjectRows(o.orgId)).toEqual([]);
   });
 });

@@ -52,7 +52,8 @@ BEGIN
   INSERT INTO crove_kernel.subject_key AS k (org_id, id, ref, key_id, wrapped_key)
   VALUES (v_org, p_id, p_ref, p_key_id, p_wrapped)
   ON CONFLICT (org_id, ref) DO NOTHING;
-  RETURN QUERY SELECT k.id, k.key_id, k.wrapped_key FROM crove_kernel.subject_key k WHERE k.org_id = v_org AND k.ref = p_ref;
+  -- FOR SHARE: the row stays until the caller's transaction ends, so a shred waits for the seal that holds this key to commit and then deletes the key with its value.
+  RETURN QUERY SELECT k.id, k.key_id, k.wrapped_key FROM crove_kernel.subject_key k WHERE k.org_id = v_org AND k.ref = p_ref FOR SHARE;
 END $$;
 
 -- The wrapped keys (and refs, so a caller checks a sealed value sits with its own subject) of the org's subjects with these ids. A subject whose key was shredded is absent from the answer: that is how a value reads as erased.
