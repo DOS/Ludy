@@ -224,11 +224,11 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const created = await o.add(o.owner);
     await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, identityNumber: '012 987 654 321' });
     expect(await hits()).toEqual([]);
-    const row = await withAdmin(async (c) => (await c.query<{ identity_sealed: string; account_sealed: string }>('SELECT identity_sealed, account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
-    expect(row?.identity_sealed).toMatch(/^crove:s1:/);
-    expect(row?.account_sealed).toMatch(/^crove:s1:/);
+    const row = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    expect(row?.national_id_sealed).toMatch(/^crove:s1:/);
+    expect(row?.bank_account_sealed).toMatch(/^crove:s1:/);
     // A plain number cannot be written into a sealed column, even by a statement that bypasses the commands.
-    await expect(withAdmin((c) => c.query("UPDATE crove_hr.payroll_employee SET identity_sealed = '079123456789' WHERE id = $1", [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(withAdmin((c) => c.query("UPDATE crove_hr.payroll_employee SET national_id_sealed = '079123456789' WHERE id = $1", [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
     // The edit changed the identity number only.
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect(detail).toMatchObject({ identityNumber: '012 987 654 321', accountNumber: ACCOUNT });
@@ -278,7 +278,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
     // Within the retention: refused, with the day it runs out.
     await expect(erase()).rejects.toMatchObject({ code: 'HR_RETENTION_NOT_PASSED', message: expect.stringContaining(retentionEnds('2026-08-31')) });
-    const before = await withAdmin(async (c) => (await c.query<{ identity_sealed: string; account_sealed: string }>('SELECT identity_sealed, account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    const before = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     // The date moved: the person left 11 years ago.
     await withAdmin((c) => c.query("UPDATE crove_hr.payroll_employee SET ended_on = (now() - interval '11 years')::date WHERE id = $1", [created.employeeId]));
     const result = await erase();
@@ -292,7 +292,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(detail.employments).toHaveLength(1);
     expect(detail.employments[0]?.baseWage).toBe('15000000.00');
     // The sealed text is byte for byte as it was; the key that opens it is gone.
-    const after = await withAdmin(async (c) => (await c.query<{ identity_sealed: string; account_sealed: string }>('SELECT identity_sealed, account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    const after = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     expect(after).toEqual(before);
     expect(await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(0);
     // Nothing about the person is found anywhere, and the record cannot be changed again.

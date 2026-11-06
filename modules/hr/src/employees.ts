@@ -42,12 +42,12 @@ const DEPENDENT = hrManifest.tables.crove_hr.payroll_dependent;
 const EMPLOYMENT = hrManifest.tables.crove_hr.payroll_employment;
 
 // Where the sealed values are stored: a value opens only at the place it was sealed for (ctx.open), so a sealed text copied to another column never reads.
-export const IDENTITY_PLACE = 'crove_hr.payroll_employee.identity_sealed';
-export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.account_sealed';
+export const IDENTITY_PLACE = 'crove_hr.payroll_employee.national_id_sealed';
+export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.bank_account_sealed';
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
-const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'identity_sealed', 'account_sealed', 'created_by', 'created_at', 'updated_at'] as const;
+const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'created_by', 'created_at', 'updated_at'] as const;
 const EMPLOYMENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'created_by', 'created_at'] as const;
 const DEPENDENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'display_name', 'relation', 'registered_on', 'created_by', 'created_at'] as const;
 
@@ -130,8 +130,8 @@ export const employeeAdd = defineCommand({
         legal_entity_id: legalEntityId,
         display_name: input.displayName,
         address: input.address ?? null,
-        identity_sealed: identity,
-        account_sealed: account,
+        national_id_sealed: identity,
+        bank_account_sealed: account,
         created_by: userId,
         created_at: ctx.now,
         updated_at: ctx.now,
@@ -179,12 +179,12 @@ export const employeeEdit = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'identity_sealed', 'account_sealed', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     await loadEmployee(ctx, input.employeeId);
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
-    const set: { display_name?: string; address?: string | null; identity_sealed?: string | null; account_sealed?: string | null; updated_at: Date } = { updated_at: ctx.now };
+    const set: { display_name?: string; address?: string | null; national_id_sealed?: string | null; bank_account_sealed?: string | null; updated_at: Date } = { updated_at: ctx.now };
     if (input.displayName !== undefined) {
       set.display_name = input.displayName;
       changed.push('displayName');
@@ -194,11 +194,11 @@ export const employeeEdit = defineCommand({
       changed.push('address');
     }
     if (input.identityNumber !== undefined) {
-      set.identity_sealed = input.identityNumber === null ? null : await ctx.seal(subject, IDENTITY_PLACE, input.identityNumber);
+      set.national_id_sealed = input.identityNumber === null ? null : await ctx.seal(subject, IDENTITY_PLACE, input.identityNumber);
       changed.push('identityNumber');
     }
     if (input.accountNumber !== undefined) {
-      set.account_sealed = input.accountNumber === null ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
+      set.bank_account_sealed = input.accountNumber === null ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
       changed.push('accountNumber');
     }
     await ctx.trx.updateTable('crove_hr.payroll_employee').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).execute();
@@ -446,7 +446,7 @@ export const employeeList = defineQuery({
   handler: async (ctx, input): Promise<HrEmployeeSummary[]> => {
     let q = ctx.trx
       .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'display_name', 'status', 'ended_on', 'identity_sealed', 'account_sealed'])
+      .select(['id', 'legal_entity_id', 'display_name', 'status', 'ended_on', 'national_id_sealed', 'bank_account_sealed'])
       .where('org_id', '=', ctx.orgId);
     if (input.status !== 'all') q = q.where('status', '=', input.status);
     const employees = await q.orderBy('display_name').orderBy('id').limit(input.limit).execute();
@@ -472,8 +472,8 @@ export const employeeList = defineQuery({
       status: e.status,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
       current: inForce(byEmployee.get(e.id) ?? [], today),
-      hasIdentityNumber: e.identity_sealed !== null,
-      hasAccountNumber: e.account_sealed !== null,
+      hasIdentityNumber: e.national_id_sealed !== null,
+      hasAccountNumber: e.bank_account_sealed !== null,
     }));
   },
 });
@@ -487,7 +487,7 @@ export const employeeGet = defineQuery({
   handler: async (ctx, input): Promise<HrEmployee> => {
     const e = await ctx.trx
       .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'identity_sealed', 'account_sealed'])
+      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'national_id_sealed', 'bank_account_sealed'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .executeTakeFirst();
@@ -524,8 +524,8 @@ export const employeeGet = defineQuery({
       // The sealed values opened, here and only here, for this one employee: the audit row of this read is already committed.
       const subject = subjectOf(e.id);
       const items: { sealed: string; place: string; ref: string }[] = [];
-      if (e.identity_sealed !== null) items.push({ sealed: e.identity_sealed, place: IDENTITY_PLACE, ref: subject });
-      if (e.account_sealed !== null) items.push({ sealed: e.account_sealed, place: ACCOUNT_PLACE, ref: subject });
+      if (e.national_id_sealed !== null) items.push({ sealed: e.national_id_sealed, place: IDENTITY_PLACE, ref: subject });
+      if (e.bank_account_sealed !== null) items.push({ sealed: e.bank_account_sealed, place: ACCOUNT_PLACE, ref: subject });
       const opened = items.length === 0 ? [] : await ctx.openMany(items);
       let next = 0;
       const take = (present: boolean): string | null => {
@@ -535,8 +535,8 @@ export const employeeGet = defineQuery({
         erased = true;
         return null;
       };
-      identityNumber = take(e.identity_sealed !== null);
-      accountNumber = take(e.account_sealed !== null);
+      identityNumber = take(e.national_id_sealed !== null);
+      accountNumber = take(e.bank_account_sealed !== null);
     }
     return {
       id: e.id,
@@ -545,8 +545,8 @@ export const employeeGet = defineQuery({
       status: e.status,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
       current: inForce(terms, vietnamDay(new Date())),
-      hasIdentityNumber: e.identity_sealed !== null,
-      hasAccountNumber: e.account_sealed !== null,
+      hasIdentityNumber: e.national_id_sealed !== null,
+      hasAccountNumber: e.bank_account_sealed !== null,
       address: e.address,
       identityNumber,
       accountNumber,

@@ -12,8 +12,8 @@
 -- policy, owner_admin, for every command. The actor is a user whose membership role is owner or admin; a member, a viewer, an agent, the system and the worker read
 -- and write nothing and cannot tell whether a row exists (plan section 6.6).
 --
--- The sealed columns are named identity_sealed and account_sealed, not national_id and bank_account: a name that looks like personal data must be in the personal-data
--- registry (apps/kernel/test/invariant/personal-data.db.test.ts) and a sealed column may not be (SEALED_COLUMNS), and a CHECK keeps a plain number out of them.
+-- The sealed columns are named for what they hold, national_id_sealed and bank_account_sealed, and are listed in SEALED_COLUMNS (@crove/kernel): the personal-data scan
+-- (apps/kernel/test/invariant/personal-data.db.test.ts) accepts a column that is sealed under its subject's key as well as one that is registered. A CHECK keeps a plain number out of them.
 SET LOCAL lock_timeout = '2s';
 
 CREATE SCHEMA IF NOT EXISTS crove_hr;
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS crove_hr.payroll_employee (
   display_name text NOT NULL CHECK (pg_catalog.length(display_name) BETWEEN 1 AND 200),
   address text CHECK (address IS NULL OR pg_catalog.length(address) BETWEEN 1 AND 500),
   -- Sealed under the subject key `employee:<id>` (ctx.seal); the shape is checked so a plain number cannot be written here.
-  identity_sealed text CHECK (identity_sealed IS NULL OR (pg_catalog.length(identity_sealed) <= 1000 AND identity_sealed ~ '^crove:s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$')),
-  account_sealed text CHECK (account_sealed IS NULL OR (pg_catalog.length(account_sealed) <= 1000 AND account_sealed ~ '^crove:s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$')),
+  national_id_sealed text CHECK (national_id_sealed IS NULL OR (pg_catalog.length(national_id_sealed) <= 1000 AND national_id_sealed ~ '^crove:s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$')),
+  bank_account_sealed text CHECK (bank_account_sealed IS NULL OR (pg_catalog.length(bank_account_sealed) <= 1000 AND bank_account_sealed ~ '^crove:s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$')),
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended')),
   ended_on date,
   -- Set by the erasure (hr.payroll.employee.erase): the name and address are cleared, the person's key is shredded, and nothing about the person can be edited again.
@@ -68,7 +68,7 @@ CREATE INDEX IF NOT EXISTS payroll_employee_entity_idx ON crove_hr.payroll_emplo
 SELECT crove_kernel.apply_tenant_rls('crove_hr.payroll_employee');
 -- An employee is never deleted by a tenant role (the org purge deletes as the table owner); the org, the entity and the creation never change.
 REVOKE DELETE, UPDATE ON crove_hr.payroll_employee FROM crove_tenant;
-GRANT UPDATE (display_name, address, identity_sealed, account_sealed, status, ended_on, erased_at, updated_at) ON crove_hr.payroll_employee TO crove_tenant;
+GRANT UPDATE (display_name, address, national_id_sealed, bank_account_sealed, status, ended_on, erased_at, updated_at) ON crove_hr.payroll_employee TO crove_tenant;
 
 CREATE TABLE IF NOT EXISTS crove_hr.payroll_employment (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,

@@ -1244,8 +1244,8 @@ export interface HrPayrollEmployeeTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   display_name: string;
   address: string | null;
-  identity_sealed: string | null;
-  account_sealed: string | null;
+  national_id_sealed: string | null;
+  bank_account_sealed: string | null;
   status: Generated<string>;
   ended_on: string | null;
   erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;

@@ -15,8 +15,8 @@ export const hrManifest = defineModule({
       payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
         address: 'pii',
-        identity_sealed: 'national_id',
-        account_sealed: 'payment',
+        national_id_sealed: 'national_id',
+        bank_account_sealed: 'payment',
       }),
       payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
     },

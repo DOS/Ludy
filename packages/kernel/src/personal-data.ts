@@ -276,11 +276,11 @@ export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 // `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
 // here is in no other registry above (apps/kernel/test/personal-data.test.ts).
 export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {
-  'crove_hr.payroll_employee.identity_sealed': {
+  'crove_hr.payroll_employee.national_id_sealed': {
     handling: 'shred',
     reason: "An employee's identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_hr.payroll_employee.account_sealed': {
+  'crove_hr.payroll_employee.bank_account_sealed': {
     handling: 'shred',
     reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },

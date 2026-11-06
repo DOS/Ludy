@@ -16,8 +16,8 @@ export type HrRelation = (typeof HR_RELATIONS)[number];
 export const HR_STATUSES = ['active', 'ended'] as const;
 export type HrStatus = (typeof HR_STATUSES)[number];
 
-// Years an ended employee's payroll records stay before an erasure may delete the person's key. A placeholder at the length the Accounting Law (88/2015, Art. 41) gives
-// accounting records, until the lawyer's answer (payroll plan, row 22) fixes it; the erase command reads this one constant.
+// Years an ended employee's payroll records stay before an erasure may delete the person's key: the ten years the Accounting Law (88/2015, Art. 41) keeps accounting
+// records, payroll being accounting evidence. An erasure cannot run earlier. A lawyer's later answer (payroll plan, row 22) may lengthen it, never shorten it.
 export const HR_RETENTION_YEARS = 10;
 
 // What an erased name reads as: the row keeps a name (it cannot be empty), nothing ties it to the person.
