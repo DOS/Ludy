@@ -42,6 +42,12 @@ describe('module manifests declare their permissions (#1630)', () => {
     expect(uses.map((u) => `${u.by}: ${u.permission}`).sort()).toEqual([
       'command finance.period.unlock: finance.period.unlock',
       'command finance.vat.return_mark: finance.vat.file',
+      'command hr.payroll.dependent.add: hr.payroll.run',
+      'command hr.payroll.dependent.end: hr.payroll.run',
+      'command hr.payroll.employee.add: hr.payroll.run',
+      'command hr.payroll.employee.edit: hr.payroll.run',
+      'command hr.payroll.employee.end: hr.payroll.run',
+      'command hr.payroll.employment.add: hr.payroll.run',
       'command kernel.proposal.approve: finance.proposal.approve',
       'command kernel.proposal.approve_many: finance.proposal.approve',
       'the approval policy (LEDGER_APPROVE_PERMISSION): finance.proposal.approve',

@@ -420,6 +420,22 @@ export function createRpcHandler(
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inNotes(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
+  // The HR module (#2530): its procedures answer 404 when the deployment leaves it out, as the notes module's do. Owners and admins only (the database's policy and
+  // every command's and query's access); every read is a sensitive query.
+  const hr = runtime.installed('hr');
+  const inHr = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!hr) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Nhân sự chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const hrCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inHr(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const hrQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inHr(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
   // The proposal request an ads change makes (kernel.proposal.request): the command it would run once approved, and what that
@@ -718,6 +734,23 @@ export function createRpcHandler(
         }),
       ),
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
+    },
+    hr: {
+      payroll: {
+        employees: {
+          list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
+          get: os.hr.payroll.employees.get.handler(hrQuery('hr.payroll.employee.get')),
+          add: os.hr.payroll.employees.add.handler(hrCommand('hr.payroll.employee.add')),
+          edit: os.hr.payroll.employees.edit.handler(hrCommand('hr.payroll.employee.edit')),
+          end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
+          erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+        },
+        employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
+        dependents: {
+          add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
+          end: os.hr.payroll.dependents.end.handler(hrCommand('hr.payroll.dependent.end')),
+        },
+      },
     },
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),

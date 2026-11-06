@@ -248,6 +248,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, party_id, created_by) VALUES ($1, $2, 'kernel.party', $3, $3, $4)`, [org.orgId, privateNote, stray, owner]);
       // A member's own to-do (#1673), made from the private note: deleted too, before the note it names.
       await c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
+      // The people payroll is run for (#2530): an employee, an append-only employment row and a dependent, all deleted with the org (the employment through its own guard).
+      const employee = (await c.query<{ id: string }>(`INSERT INTO crove_hr.payroll_employee (org_id, display_name) VALUES ($1, 'Nhân viên') RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query(`INSERT INTO crove_hr.payroll_employment (org_id, employee_id, effective_from, contract_type, region, base_wage) VALUES ($1, $2, '2026-01-01', 'indefinite', 'I', 1000000)`, [org.orgId, employee]);
+      await c.query(`INSERT INTO crove_hr.payroll_dependent (org_id, employee_id, display_name, relation, registered_on) VALUES ($1, $2, 'Người phụ thuộc', 'child', '2026-01-01')`, [org.orgId, employee]);
       return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft };
     });
     // The first step, draft to submitting, is a person's approved issue (finance-einvoice-issue.db.test.ts); here it is set up as the database owner with the triggers off.
@@ -500,6 +504,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['crove_notes.note']).toBe(2);
     expect(before['crove_notes.link']).toBe(1);
     expect(before['crove_notes.todo']).toBe(1);
+    expect([before['crove_hr.payroll_employee'], before['crove_hr.payroll_employment'], before['crove_hr.payroll_dependent']]).toEqual([1, 1, 1]);
 
     // One audit row: by the system, with counts and the reason, and no personal data.
     const audits = await purgeAudits(s.org.orgId);
@@ -537,6 +542,9 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_notes.note': 2,
             'crove_notes.link': 1,
             'crove_notes.todo': 1,
+            'crove_hr.payroll_employee': 1,
+            'crove_hr.payroll_employment': 1,
+            'crove_hr.payroll_dependent': 1,
           }),
           pinned: expect.objectContaining({ 'crove_kernel.task_comment': 0, 'crove_kernel.task': 0, 'crove_kernel.position': 0, 'crove_social.post_approval': 0, 'crove_social.post_variant': 0, 'crove_finance.stock_item': 1 }),
           anonymized: { 'crove_kernel.party': 2 },

@@ -2,6 +2,7 @@
 // whose name and 12-digit code are a person's) is kept by law, and only the org's default entity is the org's own.
 import { describe, expect, it } from 'vitest';
 import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@crove/kernel';
+import { hrManifest } from '@crove/mod-hr';
 import { notesManifest } from '@crove/mod-notes';
 
 const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
@@ -77,6 +78,38 @@ describe('sealed columns (ADR-0017, #2640)', () => {
       expect(entry.reason.length, place).toBeGreaterThan(10);
       expect(place in entries, `${place} is sealed: it is erased by its subject's key, not by the finder's clear`).toBe(false);
       expect(place in PERSONAL_DATA_PENDING, place).toBe(false);
+    }
+  });
+});
+
+// The people payroll is run for (#2530): crove_hr is scanned, and every column its manifest classifies as personal data (pii, a national id, a payment account) is either
+// registered with its handling or sealed under the person's key and listed as such, never both and never neither. The wage is `sensitive`, an amount that ties to no
+// person once the name is gone, so it is in neither.
+describe('personal-data registry: payroll people (#2530)', () => {
+  const personal = Object.entries(hrManifest.tables.crove_hr).flatMap(([table, cols]) =>
+    Object.entries(cols as Record<string, string>)
+      .filter(([, cls]) => cls === 'pii' || cls === 'national_id' || cls === 'payment' || cls === 'contact')
+      .map(([column]) => `crove_hr.${table}.${column}`),
+  );
+
+  it('scans crove_hr for columns named like personal data', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_hr');
+  });
+
+  it('registers or seals every personal-data column of crove_hr, and none twice', () => {
+    expect(personal.length).toBeGreaterThan(0);
+    for (const key of personal) {
+      const registered = key in PERSONAL_DATA_COLUMNS;
+      const sealed = key in SEALED_COLUMNS;
+      expect(registered || sealed, `${key} needs a decision: register it in PERSONAL_DATA_COLUMNS, or seal it and list it in SEALED_COLUMNS`).toBe(true);
+      expect(registered && sealed, `${key} is both registered and sealed`).toBe(false);
+    }
+  });
+
+  it('seals the two numbers, and clears the names and the address with the employee erasure', () => {
+    expect(Object.keys(SEALED_COLUMNS).sort()).toEqual(['crove_hr.payroll_employee.bank_account_sealed', 'crove_hr.payroll_employee.national_id_sealed']);
+    for (const key of ['crove_hr.payroll_employee.display_name', 'crove_hr.payroll_employee.address', 'crove_hr.payroll_dependent.display_name']) {
+      expect(entries[key]?.handling, key).toBe('erase');
     }
   });
 });

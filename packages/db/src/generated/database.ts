@@ -3,8 +3,8 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads that crove_tenant may read. */
-export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveKernelSchema & CroveNotesSchema & CroveSocialSchema;
+/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr that crove_tenant may read. */
+export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveNotesSchema & CroveSocialSchema;
 
 /**
  * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
@@ -83,6 +83,12 @@ export interface CroveFinanceSchema {
   'crove_finance.stock_period_item': FinanceStockPeriodItemTable;
   'crove_finance.vat_return_filed': FinanceVatReturnFiledTable;
   'crove_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
+}
+
+export interface CroveHrSchema {
+  'crove_hr.payroll_dependent': HrPayrollDependentTable;
+  'crove_hr.payroll_employee': HrPayrollEmployeeTable;
+  'crove_hr.payroll_employment': HrPayrollEmploymentTable;
 }
 
 export interface CroveKernelSchema {
@@ -1280,6 +1286,51 @@ export interface FinanceVendorAccountRuleTable {
   debit_account: string;
   confirmed_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.payroll_dependent */
+export interface HrPayrollDependentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  display_name: string;
+  relation: ColumnType<string, string, NotGranted>;
+  registered_on: ColumnType<string, string, NotGranted>;
+  ended_on: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_hr.payroll_employee */
+export interface HrPayrollEmployeeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  display_name: string;
+  address: string | null;
+  national_id_sealed: string | null;
+  bank_account_sealed: string | null;
+  status: Generated<string>;
+  ended_on: string | null;
+  erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.payroll_employment */
+export interface HrPayrollEmploymentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  effective_from: ColumnType<string, string, NotGranted>;
+  contract_type: ColumnType<string, string, NotGranted>;
+  region: ColumnType<string, string, NotGranted>;
+  base_wage: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_kernel.activity */

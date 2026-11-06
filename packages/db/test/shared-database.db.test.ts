@@ -178,7 +178,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
        CROSS JOIN pg_namespace n
        LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v')
        LEFT JOIN pg_proc p ON p.pronamespace = n.oid
-       WHERE r.rolname IN ('dos_reader', 'dos_app', 'anon', 'authenticated', 'service_role') AND n.nspname IN ('crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads')
+       WHERE r.rolname IN ('dos_reader', 'dos_app', 'anon', 'authenticated', 'service_role') AND n.nspname IN ('crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr')
        GROUP BY r.rolname ORDER BY 1`,
     );
     for (const row of reach.rows) expect(row, row.rolname).toMatchObject({ tables: false, schemas: false, functions: false });

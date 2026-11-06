@@ -44,6 +44,8 @@ const APP_CARD = {
   accounting: { to: '/o/$slug/accounting', icon: 'appAccounting' },
   // Engage holds the CRM's screens too (#2435), so its card shows the posts' figure and the bookings' one.
   social: { to: '/o/$slug/social', icon: 'appSocial' },
+  // The HR app opens on its staff list (#2530); its card has no figure, since a count of employees is a payroll read.
+  hr: { to: '/o/$slug/hr/employees', icon: 'appHr' },
 } as const satisfies Record<Exclude<AppId, 'home'>, { to: string; icon: NavIconName }>;
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -53,14 +55,14 @@ const LIST_CAP = 200;
 const counted = (n: number, page: number) => (page >= LIST_CAP ? `${n}+` : String(n));
 
 // One card per installed app (#1528): its key figure and a way in. Home is this screen, so it has none.
-function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: string; daysLeft: number } | null; vatLoaded: boolean }) {
+function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { period: string; daysLeft: number } | null; vatLoaded: boolean; manager: boolean }) {
   const t = useTranslations('overview.apps');
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
   const modules = getConfig().modules;
   // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
   // bookings, which need them, so it shows only where one of the two runs.
-  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social') || modules.includes('crm')));
+  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || manager));
   const has = (module: string) => modules.includes(module);
   // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
   // tab left open does not count last week's posts.
@@ -297,7 +299,7 @@ export function OverviewPage() {
         )}
       </section>
 
-      <AppCards slug={slug} vat={vat} vatLoaded={overview.isSuccess} />
+      <AppCards slug={slug} vat={vat} vatLoaded={overview.isSuccess} manager={role === 'owner' || role === 'admin'} />
 
       {/* Numbers missing in the org's own sales invoice series (#2140): this year's series, and last year's while its returns are filed. */}
       {financeOn && (
