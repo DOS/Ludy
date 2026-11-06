@@ -11,9 +11,10 @@ Hiện nay cơ hội trong Ludy dừng ở chỗ hóa đơn bắt đầu: ngư�
 1. **Tạo báo giá từ cơ hội** bằng một cú nhấp: khách và tên cơ hội đã điền sẵn; dòng hàng gõ tay, chép từ báo giá cũ, hoặc để Dy gợi ý từ cuộc trò chuyện; tổng tiền và VAT do mã tính, không do người gõ.
 2. **Gửi báo giá**, luôn do một người bấm gửi: dưới dạng đường dẫn trong cuộc trò chuyện Zalo hoặc Messenger của khách, hoặc qua email (kèm PDF), bằng tiếng Việt, có thông tin của chính công ty.
 3. **Ghi nhận khách đồng ý hoặc từ chối**; khi đồng ý, **đơn bán** được tạo ngay trong cùng một cú nhấp.
-4. **Từ đơn, tạo bản nháp hóa đơn điện tử** bên Kế toán chỉ bằng một cú nhấp, các dòng đã có sẵn, để không ai gõ một lần bán hai lần.
+4. **Trên đơn đã xác nhận, bấm "Lập hóa đơn"**: Kế toán tạo bản nháp hóa đơn điện tử từ các dòng của đơn (cả đơn, hoặc từng dòng khi giao hàng từng phần), các dòng đã có sẵn, để không ai gõ một lần bán hai lần. Phát hành vẫn do Kế toán duyệt.
+5. **Đánh dấu một dòng đã giao**: kho chỉ trừ khi hàng rời đi, không trừ khi xác nhận đơn.
 
-Một người dùng mặc định, không cài đặt gì, làm được bước 1 đến 3 trong vài phút. Tắt AI thì phần lõi vẫn chạy. Báo giá và đơn không ghi gì vào sổ: tiền chỉ vào sổ khi phát hành hóa đơn, theo đường của Kế toán hiện có.
+Một người dùng mặc định, không cài đặt gì, làm được bước 1 đến 3 trong vài phút. Tắt AI thì phần lõi vẫn chạy. Báo giá và đơn không ghi gì vào sổ và không đụng kho: tiền chỉ vào sổ khi phát hành hóa đơn, hàng chỉ trừ kho khi giao, cả hai theo đường của Kế toán hiện có.
 
 ## Các đối thủ làm thế nào (đọc trang công khai ngày 2026-11-06)
 
@@ -39,7 +40,9 @@ Rút ra:
 - **Tiền và thuế:** thập phân từ đầu đến cuối, chỉ đồng Việt Nam, qua các hàm tiền trong `@crove/l10n-vn`, không dùng số JavaScript cho tiền. Mỗi dòng làm tròn nửa lên về đồng; VAT mỗi dòng cũng làm tròn như vậy; tổng là tổng các dòng đã tròn. Đây chính là cách bản nháp hóa đơn hiện làm, nên tổng báo giá bằng tổng hóa đơn. VAT: 0, 5, 8, 10 phần trăm và không chịu thuế, lấy từ danh sách chung; ngày nào áp mức nào là luật của bên Kế toán.
 - **Gửi:** đường dẫn đọc được, in được, không cần đăng nhập, mã 32 byte ngẫu nhiên, một mã chỉ mở đúng một báo giá, sửa báo giá thì đường dẫn cũ bị thu hồi. Email đi qua đường gửi thư của hệ thống (ADR-0034), luôn do người bấm. PDF phía máy chủ cần thêm một thư viện và phông tiếng Việt, nên làm sau đường dẫn.
 - **Dy** (đồng nghiệp AI của hộp thư, khách hàng và bán hàng) giúp ở một chỗ: **gợi ý dòng hàng** khi người dùng bấm. Dy đọc cơ hội, tin nhắn gần đây của khách (chỉ khi tổ chức cho phép AI đọc lời khách) và các báo giá cũ. Gợi ý không được lưu: người dùng áp dụng, sửa hoặc bỏ từng dòng. Mã kiểm tra: mọi con số Dy nêu phải có trong nguồn; giá nào nguồn không có thì để trống; VAT ngoài danh sách bị từ chối; tổng do mã tính. Dy không bao giờ gửi, không ghi đồng ý, không tạo đơn. Mỗi lần gọi mô hình đi qua đồng hồ ngân sách AI; tắt AI thì trình soạn vẫn dùng bình thường.
-- **Bàn giao sang Kế toán và kho:** Engage chỉ phát ra một gói dữ liệu đơn (khách, các dòng, tổng). Kế toán có một lệnh "tạo bản nháp hóa đơn từ nguồn", **kiểm tra lại mọi thứ** và vẫn do người đọc rồi bấm Phát hành. Đơn không di chuyển kho và không ghi sổ; kho nhận từ các dòng của hóa đơn đã phát hành, theo đường hiện có. Cần thêm một ADR ngắn cho hợp đồng này, viết ở đầu bước Q4 sau khi PO Kế toán trả lời.
+- **Bàn giao sang Kế toán và kho** (theo quan điểm của PO Kế toán đăng trên issue #2690 ngày 2026-11-06): Engage không bao giờ ghi vào bảng của Kế toán. Kế toán tự tạo nháp hóa đơn bằng lệnh riêng khi người dùng bấm "Lập hóa đơn" trên **đơn đã xác nhận**, không bao giờ từ báo giá. Đơn mang theo: pháp nhân, người mua (tên, mã số thuế hoặc không có nếu là khách lẻ, địa chỉ, email nhận hóa đơn), tiền tệ, các dòng (mã mặt hàng nếu có, hoặc chữ; đơn vị, số lượng, đơn giá, chiết khấu, VAT, tất cả là chuỗi thập phân), số và ngày đơn. Không có khóa ngoại nào đi qua lược đồ khác: id của đơn chính là tham chiếu nguồn của dòng nháp. Có thể lập hóa đơn cả đơn hoặc từng dòng; dòng đã lập thì lần hai bị từ chối. Bản nháp tự kiểm tra lại mọi thứ nhận vào. Phát hành vẫn cần Kế toán duyệt (chủ hoặc quản trị, hai người). `{finance}` có thể gợi ý VAT và thông tin người mua trên bản nháp nhưng không bao giờ sửa đơn.
+- **Giao hàng và kho:** kho chỉ di chuyển khi hàng rời đi, không phải khi xác nhận đơn (cùng quy tắc với nhập đơn từ sàn). Trong Engage người dùng đánh dấu một dòng **đã giao**; lệnh này ghi việc giao rồi chạy lệnh kho của Kế toán với dòng đơn làm nguồn. Giao hai lần không trừ kho hai lần; dòng dịch vụ không trừ kho; trả hàng đảo lại qua cùng đường. Hai lệnh không chung một giao dịch nên dòng có thể hiện "Chưa ghi kho" kèm nút thử lại an toàn.
+- Cần thêm một ADR ngắn cho hợp đồng này, viết ở đầu bước Q4 sau khi PO Kế toán trả lời các câu hỏi bên dưới.
 
 ## Các bước xây (mỗi bước một PR đầy đủ, ưu tiên P2)
 
@@ -48,11 +51,12 @@ Rút ra:
 | Q1 | Dữ liệu báo giá và trình soạn: tạo từ cơ hội, dòng hàng, chép từ báo giá cũ, giá bán gần nhất, hàm tính tổng dùng chung | có (migration) |
 | Q2 | Gửi bằng đường dẫn trong cuộc trò chuyện và bằng email; trang công khai in được; theo dõi lần mở đầu tiên | có (migration, trang công khai) |
 | Q3 | PDF phía máy chủ, phông tiếng Việt, đính kèm email | có (thêm thư viện, đường gửi thư). Nếu không thư viện nào đạt thì bỏ bước này, vẫn còn in từ trình duyệt |
-| Q4 | Ghi nhận đồng ý hoặc từ chối, tạo đơn, bàn giao sang bản nháp hóa đơn (kèm phần Kế toán, do dòng Kế toán làm) | có |
+| Q4 | Ghi nhận đồng ý hoặc từ chối, tạo đơn, nút "Lập hóa đơn" trên đơn đã xác nhận (kèm phần Kế toán, do dòng Kế toán làm) | có |
+| Q4b | Đánh dấu dòng đã giao và ghi kho (kèm lệnh kho của Kế toán) | có |
 | Q5 | Dy gợi ý dòng hàng | không |
 | Q6 | Nhắc theo dõi báo giá chưa trả lời hoặc sắp hết hạn, tab báo cáo "Báo giá", kiểm thử toàn luồng, hướng dẫn | không |
 
-Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý trên đường dẫn, ngưỡng chiết khấu cần người duyệt, ngôn ngữ thứ hai, dòng tùy chọn, chọn hàng từ danh mục kho, xuất kho theo đơn, mã QR hoặc link thanh toán trên báo giá.
+Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý trên đường dẫn, ngưỡng chiết khấu cần người duyệt, ngôn ngữ thứ hai, dòng tùy chọn, chọn hàng từ danh mục kho, giao một phần số lượng của dòng, chứng từ giao hàng và vận chuyển, một cú nhấp "xác nhận và lập hóa đơn", mã QR hoặc link thanh toán trên báo giá.
 
 ## Câu hỏi cho anh (JOY): mỗi câu một quyết định
 
@@ -60,15 +64,22 @@ Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý t
 2. **O2. Chiết khấu trên một mức nào đó có cần người thứ hai duyệt không?** Khuyến nghị: không. Công ty một người không có người thứ hai; ngưỡng do chủ đặt có thể thêm sau cho đội. Nếu không trả lời: không duyệt, thành viên nào cũng được chiết khấu.
 3. **O3. Hình thức đầu tiên là đường dẫn trong chat, rồi PDF qua email, hay PDF phải đi trước?** Khuyến nghị: đường dẫn trước (Q2), PDF sau (Q3). Đường dẫn không cần thư viện mới và hợp cách báo giá thực sự đi; PDF theo sau cho email doanh nghiệp. Nếu không trả lời: đường dẫn trước.
 
-## Câu hỏi cho PO Kế toán: mỗi câu một quyết định
+4. **O4. Có nên cho người bán nhỏ một cài đặt "xác nhận đơn và lập hóa đơn luôn" chỉ bằng một cú nhấp không?** (Điểm PO Kế toán để mở cho anh.) Khuyến nghị: chưa, trong lát cắt đầu giữ hai bước (xác nhận, rồi "Lập hóa đơn"), như PO Kế toán; cài đặt tắt mặc định có thể thêm sau khi đã dùng đơn. Nếu không trả lời: hai bước.
 
-1. **A1. Bảng nháp hóa đơn có thể thêm hai cột tham chiếu nguồn (`source_kind`, `source_id`) và một lệnh tạo nháp từ nguồn, tự kiểm tra lại dữ liệu nhận vào không?** Phương án khác là một bảng đơn bán trong kernel mà cả hai module cùng tham chiếu. Khuyến nghị: tham chiếu mềm. Giữ đơn trong CRM, không cần bảng kernel mới, và dùng lại được cho lịch hẹn hay đơn sàn. Bảng kernel chắc hơn về toàn vẹn nhưng đưa một khái niệm CRM vào kernel được bảo vệ. Không trả lời: phần Kế toán của Q4 chờ; Q1 đến Q3 không phụ thuộc.
-2. **A2. Dòng nháp hóa đơn hiện chưa có cột chiết khấu. Nghị định 254 và API nhà cung cấp lấy chiết khấu theo dòng hay bằng một dòng chiết khấu, và có thể thêm cột `discount_amount` cho dòng không?** Việc kế toán đối chiếu nghị định (#2506) quyết định. Khuyến nghị: thêm cột sau khi đọc nghị định. Trước đó, đơn có chiết khấu chưa bàn giao được. Không trả lời: báo giá vẫn cho chiết khấu, nút tạo nháp bị tắt với các đơn đó.
-3. **A3. Xuất kho khi bán lấy từ các dòng của hóa đơn đã phát hành (đường hiện có) hay từ đơn khi giao hàng?** Khuyến nghị: từ hóa đơn trong lát cắt này, không thêm mã kho, đơn không di chuyển gì. Xuất kho theo đơn thuộc bước giao hàng mà dòng Kế toán chưa lên kế hoạch. Không trả lời: theo hóa đơn.
-4. **A4. Có mở cho CRM đọc danh sách mặt hàng của kho (mã, tên, đơn vị, VAT theo ngành) qua một cổng đọc, để dòng báo giá chọn được hàng?** Khuyến nghị: chưa, trong lát cắt này. Dòng tự do cùng giá bán gần nhất là đủ; khi kho dùng thật thì dùng một truy vấn đọc trong hợp đồng, không dùng khóa ngoại. Không trả lời: chưa chọn hàng từ danh mục.
+## Câu hỏi còn lại cho PO Kế toán: mỗi câu một quyết định
+
+PO Kế toán đã chốt: ai tạo nháp, khi nào, đơn mang gì, ai phát hành, khi nào kho di chuyển. Còn mở:
+
+1. **A1. Tham chiếu nguồn trên mỗi dòng nháp có đúng dạng này không:** `source_kind` (`crm.sales_order`), `source_id` (id đơn), `source_line_no`, kèm chỉ mục duy nhất trên các dòng của nháp chưa bị từ chối hoặc xóa, để dòng đã lập hóa đơn bị từ chối lần hai; và lệnh `finance.einvoice.draft_from_order` nhận cả đơn hoặc danh sách số dòng? Khuyến nghị: đúng cả hai, dùng lại được cho lịch hẹn hay đơn sàn. Không trả lời: phần Kế toán của Q4 chờ; Q1 đến Q3 không phụ thuộc.
+2. **A2. Dòng nháp hóa đơn chưa có cột chiết khấu. Nghị định 254 và API nhà cung cấp lấy chiết khấu theo dòng hay bằng một dòng chiết khấu, và có thể thêm cột `discount_amount` cho dòng không?** Đơn mang cả phần trăm lẫn số tiền đã làm tròn. Việc kế toán đối chiếu nghị định (#2506) quyết định. Khuyến nghị: thêm cột sau khi đọc nghị định; trước đó "Lập hóa đơn" bị tắt với dòng có chiết khấu. Không trả lời: báo giá vẫn cho chiết khấu, bàn giao dòng đó bị tắt.
+3. **A3. Mã mặt hàng đến dòng đơn bằng cách nào?** Hoặc Kế toán tự khớp dòng chữ với mặt hàng theo luật bí danh lúc tạo nháp và lúc giao (CRM không đổi gì), hoặc CRM có cổng đọc danh sách mặt hàng để dòng báo giá chọn được hàng. Khuyến nghị: chỉ khớp bí danh trong lát cắt này. Không trả lời: Kế toán khớp, chưa chọn từ danh mục.
+4. **A4. Tránh trừ kho hai lần:** kế hoạch kho 8.2 trừ kho từ các dòng của chứng từ bán, mà giao dòng đơn cũng trừ kho. Làm sao tránh lần thứ hai? Khuyến nghị: cột nguồn của dòng nháp đi tiếp sang dòng chứng từ bán, và đường kho theo chứng từ bỏ qua dòng có nguồn là dòng đơn (việc giao giữ việc trừ kho); kiểm thử phát hành và giao một dòng theo thứ tự nào cũng chỉ trừ một lần. Không trả lời: lệnh giao chưa được xây.
+5. **A5. Hình dạng lệnh giao `finance.stock.move_from_order_line`:** khóa (id đơn, số dòng), cả dòng, ngày chuyển kho là ngày giao, giá vốn lấy lúc chốt tháng, trả hàng bằng dòng đảo, cho phép tồn âm kèm cảnh báo, dòng dịch vụ không trừ kho. Đúng chưa? Khuyến nghị: đúng, và chưa có giao một phần số lượng. Không trả lời: chỉ cả dòng.
+6. **A6. Lập hóa đơn theo dòng: chỉ cả dòng, hay cả một phần số lượng?** Khuyến nghị: cả dòng; người bán nhỏ ít khi giao dở một dòng, nếu cần thì tách dòng trong báo giá trước khi gửi. Không trả lời: cả dòng.
 
 ## Rủi ro chính
 
+- Kho bị trừ hai lần cho một lần bán (giao dòng đơn và trừ kho theo chứng từ bán của hóa đơn): câu hỏi A4, và một kiểm thử phát hành rồi giao (hoặc ngược lại) cho ra đúng một lần trừ.
 - Bàn giao lệch so với kiểm tra của bản nháp: hàm tính tổng dùng chung và bản nháp tự kiểm tra lại mọi thứ nhận vào.
 - Đường dẫn công khai bị lộ: mã 32 byte, chỉ lưu băm, một mã một báo giá, thu hồi khi sửa, hết hạn, mọi mã sai nhận cùng một lời từ chối, và là thay đổi thuộc đường được bảo vệ nên có security review riêng.
 - Thư viện PDF và phông: phải qua chính sách chuỗi cung ứng và kiểm tra giấy phép; nếu không đạt thì bỏ Q3.

@@ -1,6 +1,6 @@
 # Ludy CRM, slice 2: quotes and sales orders from a deal (Báo giá từ cơ hội)
 
-> Plan for [#2690](https://github.com/DOS/Ludy/issues/2690), 2026-11-06. Owner decision of 2026-11-06 (JOY, in the Engage PO chat): the next CRM slice is "Báo giá từ cơ hội". It answers CRM-Q3 of [crm.md](crm.md) ("should a won deal offer create an invoice?") and the top gap of [competitors.md](../product/competitors.md) ("Where quotes and sales orders belong"). Design only: nothing here is built, no money is spent, and no price, date or promise to a customer is made by this page. Facts about competitors come from public pages read on 2026-11-06 (section 3). Vietnamese summary for the owner: [crm-quotes.vi.md](crm-quotes.vi.md).
+> Plan for [#2690](https://github.com/DOS/Ludy/issues/2690), 2026-11-06. Owner decision of 2026-11-06 (JOY, in the Engage PO chat): the next CRM slice is "Báo giá từ cơ hội". It answers CRM-Q3 of [crm.md](crm.md) ("should a won deal offer create an invoice?") and the top gap of [competitors.md](../product/competitors.md) ("Where quotes and sales orders belong"). Design only: nothing here is built, no money is spent, and no price, date or promise to a customer is made by this page. Facts about competitors come from public pages read on 2026-11-06 (section 3). The hand-off in section 6 is built on the Accounting PO's view posted on the issue on 2026-11-06 (finance makes the draft with its own command, on a person's click on a confirmed order). Vietnamese summary for the owner: [crm-quotes.vi.md](crm-quotes.vi.md).
 
 ## 1. Goal
 
@@ -9,9 +9,10 @@ Today a deal in Ludy ends where the e-invoice starts: the seller types the quote
 1. make a **quote** (báo giá) from a deal in one click: the customer and the deal's title are filled, lines are added (typed, copied from an earlier quote, or suggested by Dy from the conversation), totals and VAT are computed by code;
 2. **send** it, always by a person: as a link into the Zalo or Messenger conversation where the customer asked, or by email (with a PDF), in Vietnamese with the org's own details;
 3. record that the customer **accepted** or declined it, and, on acceptance, have a **sales order** (đơn bán) made in the same click;
-4. from the order, make the **e-invoice draft** of Kế toán in one click, with the lines already there, so nobody types the sale twice; the stock side learns from the invoice's lines as it does today.
+4. on the confirmed order, press **"Lập hóa đơn"**: Kế toán makes the e-invoice draft from the order's lines (all of them, or line by line for a partial delivery), so nobody types the sale twice; issuing stays Kế toán's approval;
+5. mark an order line **delivered**, which is when stock moves, never when the order is confirmed.
 
-One person with the defaults and no setup can do 1 to 3 in a few minutes. The core works with AI off. A quote and an order post nothing to the books: money enters the ledger only when an invoice is issued, by the existing paths of Kế toán.
+One person with the defaults and no setup can do 1 to 3 in a few minutes. The core works with AI off. A quote and an order post nothing to the books and move no stock: money enters the ledger only when an invoice is issued, and goods leave stock only on delivery, both by the existing paths of Kế toán.
 
 ## 2. Scope and non-goals
 
@@ -20,7 +21,7 @@ One person with the defaults and no setup can do 1 to 3 in a few minutes. The co
 - A quote document in Vietnamese: a public read-only page for a link (a signed token, no sign-in), printable, and a PDF for email.
 - Sending by link from a conversation and by email, both a person's click. A record of who sent what, when, and the first time the customer opened it.
 - A sales order from an accepted quote: a frozen copy of its lines and totals, one per accepted quote.
-- The hand-off to the e-invoice draft (section 6).
+- The hand-off to Kế toán (section 6): "Lập hóa đơn" on a confirmed order, and a delivery mark per order line that drives the stock move.
 - Dy's part (section 7): suggested lines from the deal and the conversation, checked and approved by a person.
 - Suggestions on the deal: offer to move it to "Báo giá" when a quote is sent and to "Thắng" when one is accepted, and to set its amount to the quote total. A person confirms each; nothing moves by itself.
 
@@ -30,10 +31,10 @@ One person with the defaults and no setup can do 1 to 3 in a few minutes. The co
 |---|---|
 | The customer accepts or pays on the link (a public write) | A public endpoint that creates a commitment needs the owner's decision first (question O1) and its own security review. Vietnamese sellers mostly agree in the chat; a person records it |
 | E-signature, contracts, deposit and payment links, a QR per order | Contracts and payment are their own plans; a QR per order is the small slice named in the suite page, later |
-| A product catalog with prices and stock on hand | The stock item catalog is per legal entity and lives in Kế toán (`crove_finance.stock_item`); the CRM module cannot reach it (section 5). First slice: free-text lines plus earlier prices; a catalog pick waits for a read port (question A4) |
+| A product catalog with prices and stock on hand | The stock item catalog is per legal entity and lives in Kế toán (`crove_finance.stock_item`); the CRM module cannot reach it (section 5). First slice: free-text lines plus earlier prices, with an optional stock item id that a catalog pick would fill; the pick waits for a read port (question A3) |
 | Multi-currency, price lists by customer group, optional lines, bundles, subscriptions | One currency (VND), as CRM-4. An SME quote is a list of lines |
 | Discount approval chains | A one-person company has no approver. An owner-set threshold is a later option (question O2) |
-| Delivery orders, order-driven stock-out, shipping carriers | Stock moves come from the issued invoice's lines today (stock plan 8.2); order-driven stock waits for the Accounting line (question A3) |
+| Delivery documents, shipping carriers, parcel tracking, partial quantities of a line | A delivery here is only a person marking an order line delivered (6.5). Carriers and tracking are the gap named in the suite page, later |
 | Quotes in English or in several languages | Vietnamese first; the layout keeps its strings in the i18n files, so a second language is a translation, not a rebuild |
 | Editing an issued invoice from an order | An issued invoice is never edited; corrections stay with the e-invoice plan (adjustment and replacement) |
 
@@ -84,7 +85,7 @@ A database guard makes a quote that is not a draft immutable (no header or line 
 
 ### 4.2 `crove_crm.quote_line`
 
-`quote_id` (composite FK, `ON DELETE CASCADE`), `line_no`, `kind` (`item` or `text`; a text line is a note row with no amounts), `description` (up to 500), `unit`, `quantity numeric(20,6)`, `unit_price numeric(24,8)` (the same domains as `crove_finance.quantity` and `unit_amount`, pinned equal by a test, so a line copies to an e-invoice draft line without rounding), `discount_percent numeric(5,2)` (0 to 100), `vat_rate` (text from the set of 4.4), `amount` and `vat_amount` (`numeric(20,4)`), and an optional `item_code` (text, up to 40, no foreign key: the stock side matches it, section 6). At most 100 lines.
+`quote_id` (composite FK, `ON DELETE CASCADE`), `line_no`, `kind` (`item` or `text`; a text line is a note row with no amounts), `description` (up to 500), `unit`, `quantity numeric(20,6)`, `unit_price numeric(24,8)` (the same domains as `crove_finance.quantity` and `unit_amount`, pinned equal by a test, so a line copies to an e-invoice draft line without rounding), `discount_percent numeric(5,2)` (0 to 100), `vat_rate` (text from the set of 4.4), `amount` and `vat_amount` (`numeric(20,4)`), and an optional `stock_item_id` (a uuid with **no foreign key**: the item lives in Kế toán; it is empty on a free-text line, and finance matches such a line to an item by its alias rules, section 6.2). At most 100 lines.
 
 ### 4.3 The status flow
 
@@ -108,7 +109,11 @@ For the link of section 5: `quote_id`, `token_sha256` (the database keeps only t
 
 ### 4.7 `crove_crm.sales_order`
 
-Made by `crm.quote.accept`, one per accepted quote (`UNIQUE (org_id, quote_id)`): `number` (`DH-2026-0003`, a counter like the quote's), `quote_id`, `deal_id`, `party_id`, `legal_entity_id`, `status` (`confirmed` or `cancelled`), a **frozen copy** of the buyer snapshot, the lines (`sales_order_line`, the same columns as `quote_line`) and the totals, `confirmed_at`, `cancelled_at`, `cancel_reason`. Immutable after creation except the cancellation, which is allowed only while no e-invoice draft was made from the order (6.3). Whether an order is invoiced is not stored on the order: it is read from the Kế toán draft that names it, so the two cannot disagree.
+Made by `crm.quote.accept`, one per accepted quote (`UNIQUE (org_id, quote_id)`): `number` (`DH-2026-0003`, a counter like the quote's), `order_date` (the day of acceptance in Vietnam's calendar), `quote_id`, `deal_id`, `party_id`, `legal_entity_id`, `currency` (`VND`), `status` (`confirmed` or `cancelled`), a **frozen copy** of the buyer snapshot (name, tax code or none for a consumer, address, invoice email), the lines (`sales_order_line`, the same columns as `quote_line`) and the totals, `confirmed_at`, `cancelled_at`, `cancel_reason`. Immutable after creation except the cancellation, which is allowed only while no line has an invoice draft or a delivery (6.3 and 6.5). Whether a line is invoiced is not stored on the order: it is read from the Kế toán draft that names it, so the two cannot disagree.
+
+### 4.8 `crove_crm.sales_order_delivery`
+
+Append-only: `order_id`, `line_no`, `delivered_on` (date), `delivered_by`, `created_at`; at most one delivery per order line (a whole line, no partial quantity in this slice), so `UNIQUE (org_id, order_id, line_no)`. A service line (`kind` text or marked service) takes no delivery. A wrongly marked delivery is reversed by a command that adds a reversing row, never by deleting (6.5).
 
 ## 5. Fit with what exists on main
 
@@ -118,8 +123,8 @@ Checked on 2026-11-06.
 |---|---|---|
 | The deal, the party, the board | `crove_crm.deal` and its commands ([crm.md](crm.md) 4.2 and 5), `crove_kernel.party`, the stage "Báo giá" of the default pipeline | `crm.deal.delete` refuses a deal with quotes; a "Tạo báo giá" button and a quotes tab in the deal panel |
 | Money and VAT | `@crove/l10n-vn` `money`, `toMoney`, `sum`, `parseVatRate`; the rounding of `computeDraft` | one shared line-totals function with a test table (4.4) |
-| The e-invoice draft | `crove_finance.einvoice_draft` and `einvoice_draft_line` (state `draft`, a series, the buyer fields, lines with quantity, unit price, amount, VAT rate and amount), `finance.einvoice_draft.save`, the series, the connection and the issue command (all on `main`) | a source reference on the draft and a command that makes a draft from a source (section 6). **The draft lines have no discount column**, which is question A2 |
-| Stock | `crove_finance.stock_item` per legal entity (code unique per entity), aliases and moves from document lines ([stock plan](stock-and-marketplaces.md) 8.1 and 8.2) | nothing: the module graph forbids CRM reading `stock_item`, so quote lines are free text with an optional `item_code`; the stock side matches by its alias rules when the issued sale lines arrive (A3, A4) |
+| The e-invoice draft | `crove_finance.einvoice_draft` and `einvoice_draft_line` (state `draft`, a series, the buyer fields, lines with quantity, unit price, amount, VAT rate and amount), `finance.einvoice_draft.save`, the series, the connection and the issue command (all on `main`) | a source reference on the draft lines and finance's own command that makes a draft from an order (6.2). **The draft lines have no discount column**, which is question A2 |
+| Stock | `crove_finance.stock_item` per legal entity (code unique per entity), aliases and moves from document lines ([stock plan](stock-and-marketplaces.md) 8.1 and 8.2) | a delivery mark per order line and a finance stock command that takes the line as its source (6.5). The module graph forbids CRM reading `stock_item`, so quote lines are free text with an optional stock item id, and finance matches a text line by its alias rules (A3, A4) |
 | Mail | The kernel pipeline of [ADR-0034](../adr/0034-outbound-email.md): `mail_message` before any provider call, the suppression check, the `external_call` key `mail:<message>:<attempt>`, the transactional stream, `fromName` set to the org's name | a quote mail template with the link and the validity. **`MailAttachment.content` is a text string today** (a booking's .ics), so a binary PDF needs the type widened to bytes or an attachment by file id; Q3 decides |
 | The PDF | Nothing server-side on `main`: the app prints a page with `window.print()` (`social-report.tsx`, `social-plan-print.tsx`); the kernel image parses no document (gate T12) | The public link page is printable (the browser's "Save as PDF"). A server-side PDF writer is a new dependency (`package.json` and the lockfile are protected paths) with an embedded Vietnamese font, chosen in Q3 after a licence, size and supply-chain check. It renders only Ludy's own data, never untrusted input |
 | Sending into a chat | The conversation reply command of [conversations.md](conversations.md) (a person sends; the platform's window rules apply) | The "Gửi báo giá" action puts the link text into the reply box; the person sends it. Outside the Zalo or Messenger window the action offers email instead |
@@ -130,40 +135,46 @@ Checked on 2026-11-06.
 
 ## 6. The hand-off to Kế toán and stock
 
-Engage emits; Kế toán takes; neither owns the other's work. Building the Kế toán side stays with the Accounting line and is listed as questions (A1 to A4).
+Built on the Accounting PO's view, posted on #2690 on 2026-11-06 and taken as the interface here: Engage never writes finance tables; Kế toán makes the draft and the stock move with its own commands; no foreign key crosses a schema; the order's id is the draft's source reference, as marketplace orders and the payroll posting do. Engage emits; Kế toán takes; neither owns the other's work. Building the Kế toán side stays with the Accounting line; what is still open for it is in section 10.
 
-### 6.1 What Engage emits
+### 6.1 What the order carries (and what Engage emits)
 
-A pure contract schema `SalesOrderHandoff` in `@crove/kernel-contract`, returned by the R0 query `crm.sales_order.handoff` (RLS decides who reads):
+A pure contract schema `SalesOrderHandoff` in `@crove/kernel-contract`, returned by the R0 query `crm.sales_order.handoff` (RLS decides who reads; it refuses a cancelled order). Everything finance needs and nothing it fills itself (the series, the template from the connection, the payment method):
 
 ```
-{ orderId, number, confirmedAt, legalEntityId, partyId | null,
-  buyer: { kind, taxCode, name, address, email },
-  currency: 'VND',
-  lines: [{ lineNo, description, unit | null, quantity, unitPrice, discountPercent,
-            amount, vatRate, vatAmount, itemCode | null }],
+{ orderId, orderNumber, orderDate, legalEntityId, currency: 'VND',
+  buyer: { kind, name, taxCode | null, address, email },
+  lines: [{ lineNo, stockItemId | null, description, unit | null,
+            quantity, unitPrice, discountPercent, discountAmount,
+            amount, vatRate, vatAmount }],
   subtotal, vatAmount, total }
 ```
 
-All money values are decimal strings. The query refuses a cancelled order. The order also emits the invalidation hint `crm.sales_order` (the id only), as the deals do. No other event is needed: Kế toán pulls on a person's click.
+All money and quantity values are decimal strings. `stockItemId` is set when the line maps to a stock item, else the line is text. `taxCode` is null for a consumer. The order also emits the invalidation hint `crm.sales_order` (the id only), as the deals do. No other event is needed: Kế toán acts on a person's click.
 
-### 6.2 What Kế toán takes (proposed, for the Accounting PO)
+### 6.2 "Lập hóa đơn" (Kế toán's command)
 
-- A nullable `source_kind` and `source_id` on `einvoice_draft` (a soft reference, since a module cannot hold a foreign key into another module's schema), with a partial unique index so one order makes one live draft.
-- A command `finance.einvoice_draft.from_source` (R1; owners, admins and members; no agent) that takes the `SalesOrderHandoff` the browser read from `crm.sales_order.handoff`, **re-runs every deterministic check of the draft** (buyer fields by buyer kind, the tax code checksum, the VAT rate set, totals by code) and refuses a payload whose line amounts do not add up to its own totals. It makes a normal draft in state `draft`; the person reads it and presses Phát hành as today. The command trusts nothing the model or the browser says: the draft is the person's, and issuing is the person's click (the e-invoice plan, section 8).
-- The payload goes through the browser because Kế toán cannot import the CRM module and the reverse. This is the pattern the plans already use ("the app reads Social through Social's own query", W1c of ads-write). Another reader of the same payload shape (a booking, a chat line, the marketplace order of the stock plan) reuses the command.
+- **Who and when.** A person clicks "Lập hóa đơn" on a **confirmed order**, never on a quote. It runs a finance command (working name `finance.einvoice.draft_from_order`, R1; owners, admins and members; no agent) with the facts the browser read from `crm.sales_order.handoff`. Kế toán cannot import the CRM module and the reverse, so the payload travels through the browser, the pattern the plans already use ("the app reads Social through Social's own query", W1c of ads-write).
+- **Whole order or by line.** The person may invoice all lines in one go, or pick lines for a partial delivery. A line already invoiced is refused a second time: the draft line stores `source_kind` (`crm.sales_order`), `source_id` (the order id) and `source_line_no`, with a unique index over the lines of drafts that are not rejected or deleted. No foreign key; the order id is a reference only.
+- **Re-checked, never trusted.** The command re-runs every deterministic check of the draft (buyer fields by buyer kind, the tax code checksum, the VAT rate set, totals by code) and refuses a payload whose line amounts do not add up to its own totals. A line with a `stockItemId` that is not an item of that entity, or a text line, is matched by the alias rules of the stock plan (8.2) or listed under "Chưa gán hàng". The draft is a normal draft in state `draft`.
+- **Issuing stays Kế toán's.** The person reads the draft; issuing needs finance's approval (owners and admins, four-eyes, ADR-0044 as amended). `{finance}` may suggest VAT rates and buyer details on the draft (#2505); it never changes the order.
+- **The order screen** shows, per line, "Chưa lập hóa đơn", "Đã lập nháp" or "Đã phát hành", read from the drafts that name the order; an order with a drafted line cannot be cancelled in Engage.
 
-### 6.3 What happens next, without Engage
+### 6.3 Discounts
 
-The draft is issued by the existing flow (`finance.einvoice.issue`, R3). On `issued` the signed XML goes through the intake and posting, the sale document's lines match stock items by the alias rules, and the stock-out is taken at the month's cost at close (stock plan 8.2). **The order itself moves no stock and posts nothing.** The order screen shows "Đã làm hóa đơn nháp" or "Đã phát hành", read from the draft that names it. An order with a draft cannot be cancelled in Engage; the draft is deleted first, or the invoice is corrected the e-invoice way.
+The e-invoice draft lines on `main` have no discount column. The order carries both `discountPercent` and `discountAmount` (the amount is what the percent came to on that line, rounded half up as in 4.4), so finance can take either. Until the draft has the column (question A2), "Lập hóa đơn" is disabled for an order line with a discount, with one line telling the person to give the net price instead; lines without a discount hand off unchanged.
 
-### 6.4 Discounts
+### 6.4 One click or two
 
-The e-invoice draft has no discount column on its lines. Until question A2 is answered, the "Tạo hóa đơn nháp" action is disabled for an order with a discount, with one line telling the person to give the net price instead; a quote with no discount hands off unchanged. This is a default, not a decision.
+The Accounting PO keeps two steps in the first slice: confirm the order, then "Lập hóa đơn". A setting "confirm the order and invoice now" in one click, off by default, is the owner's call (O4) and is not built here.
 
-### 6.5 ADR
+### 6.5 Delivery and stock
 
-The hand-off contract (the schema, the soft source reference, the rule that a draft re-checks what it is given) is a cross-module contract and gets one short ADR, written at the start of step Q4 before its code, with the Accounting PO's answers to A1 to A3 recorded in it. This plan adds none because those answers are not in yet.
+A stock move is made when goods leave, never when the order is confirmed: the rule of the marketplace import (#2515). In Engage a person marks an order line **delivered** (`crm.sales_order.deliver {orderId, lineNo, deliveredOn}`, R1, no agent; a service line takes none). That command records the delivery in `sales_order_delivery` (4.8) and the order screen then runs a finance stock command (working name `finance.stock.move_from_order_line`) with the line as its source (`source_type` the order, `source_id` the order, `line_no`, the quantity, the date, the stock item id when set), in the same way as 6.2: the browser reads the line from `crm.sales_order.handoff`, finance re-checks and makes the move at the month's cost taken at close. A delivery is idempotent on `(order, line)`: a second call makes no second move. A returned line reverses through the same path (a reversing row, not a deletion). A service line moves no stock. The two commands are not one transaction, so a delivery recorded in Engage whose stock command failed shows "Chưa ghi kho" on the line with a retry, and the retry is safe by the same key.
+
+### 6.6 ADR
+
+The hand-off contract (the schema, the source reference on draft lines, the rule that finance re-checks what it is given, the delivery key) is a cross-module contract and gets one short ADR, written at the start of step Q4 before its code, with the Accounting PO's answers to the questions of section 10 recorded in it.
 
 ## 7. Dy's part (the AI-first gate)
 
@@ -185,13 +196,14 @@ Each step is built in order after this plan merges. Milestone: the PO sets it wh
 | Q1 | **Quote data and the editor.** Migration for `quote`, `quote_line`, `quote_setting` (with purge, manifest, registry, check-union arrays, `db:types`); the shared line-totals function with its test table against `computeDraft`; commands `crm.quote.save`, `delete_draft`, `revise`, the queries `crm.quote.list`, `get`, `deal.quotes`; the "Tạo báo giá" button, a quotes tab in the deal panel, the editor (lines, copy from an earlier quote, last-sold-price default); `crm.deal.delete` refuses `DEAL_HAS_QUOTES`; timeline rows with fixed text | yes (migration) | A member makes a quote from a deal in one click, edits lines, and gets the same totals in SQL, in the contract function and in `computeDraft` on a table of cases (rounding half up at .5, a discount, exempt VAT); a viewer cannot write; cross-org cases refuse; the audit row holds no price or text; the org purge removes the rows; RLS, conformance, manifest and write-path suites pass; works at 375 px and with a keyboard |
 | Q2 | **Send by link and by email.** Migration for `quote_link` and the letterhead columns; `crm.quote.send` (needs a customer, a priced line and a validity date; takes the number, snapshots the buyer, marks `sent`), `crm.quote.link_create` and `revoke`; the public page and its definer; the printable Vietnamese document; "Gửi báo giá" in the conversation reply box (the person sends) and by mail through the ADR-0034 pipeline with the link; first-view tracking; the deal suggestions (move to "Báo giá", set the amount) | yes (migration, definer, public route) | The link opens with no sign-in and shows only that quote; a bad, expired or revoked token gets one refusal; a revision revokes the older link; the mail row exists before the provider call and a suppressed address is refused; the document prints on A4 with the org's details; nothing is sent without a person's click; a conversation outside the platform's window offers email |
 | Q3 | **The PDF.** A server-side PDF writer behind one port with an embedded Vietnamese font, the PDF attached to the email, a download on the quote; `MailAttachment` widened to bytes (or an attachment by file id) with its tests | yes (dependency, mail pipeline) | The PDF of a quote shows every Vietnamese mark correctly and the same totals as the screen; the attachment survives a retry of the mail send exactly once; the dependency passed the lockfile policy. If no library passes, Q3 is dropped and the browser's print stays |
-| Q4 | **Accept, the order and the hand-off.** The ADR for the contract (written first); migration for `sales_order`, its lines and its counter; `crm.quote.accept` and `decline` (record who and when); the order made in the same transaction; `crm.sales_order.list`, `get`, `handoff`, `cancel`; the Orders tab; the Kế toán side of section 6.2 (a PR of the Accounting line, linked) | yes (migration; the Kế toán side too) | Accepting makes exactly one order and a second call makes none; an expired quote refuses acceptance; the hand-off payload re-checks in the draft and a tampered total is refused; "Tạo hóa đơn nháp" opens a draft with the lines already filled; a cancelled order cannot be handed off; deleting the draft frees the order |
+| Q4 | **Accept, the order and "Lập hóa đơn".** The ADR for the contract (written first); migration for `sales_order`, its lines and its counter; `crm.quote.accept` and `decline` (record who and when); the order made in the same transaction; `crm.sales_order.list`, `get`, `handoff`, `cancel`; the Orders tab with the per-line invoice state; the Kế toán side of 6.2 (`finance.einvoice.draft_from_order` and the source reference on draft lines: a PR of the Accounting line, linked) | yes (migration; the Kế toán side too) | Accepting makes exactly one order and a second call makes none; an expired quote refuses acceptance; "Lập hóa đơn" on a confirmed order opens a draft with the lines already filled, never from a quote; the payload re-checks in the draft and a tampered total is refused; a line already invoiced is refused a second time; a cancelled order cannot be handed off; deleting the draft frees its lines |
+| Q4b | **Delivery and stock.** Migration for `sales_order_delivery`; `crm.sales_order.deliver` and its reversal; the "Đã giao" mark per line and the "Chưa ghi kho" retry; the Kế toán side of 6.5 (`finance.stock.move_from_order_line`: a PR of the Accounting line, linked) | yes (migration; the Kế toán side too) | Marking a line delivered makes exactly one stock move and a second call makes none; confirming an order moves nothing; a service line takes no delivery; a reversal reverses the move through the same path; a failed stock command leaves "Chưa ghi kho" and its retry is safe |
 | Q5 | **Dy suggests lines.** `crm.quote_suggest` in `AI_FEATURES`, the suggester in `packages/agent` over the fenced sources, the figure check, the read procedure, the editor panel with apply and drop per line | no (unless the agent allowlist changes, which it must not) | With a conversation that says "10 hộp A giá 120k" the editor offers that line; a price no source holds is left empty; a model that states a number the sources do not hold is refused; model off, spent or failing leaves the editor working; no word reaches the model when the org's switch is off; no agent can save, send or accept |
 | Q6 | **Follow-up and close-out.** The two next-step reasons and their Home items, a "Báo giá" report tab (quotes sent, accepted, declined, the value by status), an e2e of the whole slice (deal, quote, link, accept, order, draft), the user guide entry, the summary for the owner refreshed | no | `docker compose up` runs the flow with no external account (the offline e-invoice provider, the log mailer); with `crm` off the app shows none of it; the exit criteria of section 9 are checked one by one in the PR |
 
-Q1 is the step all the others need. Q2 and Q3 can swap if the owner wants the PDF first (O3). Q4's Kế toán side is the Accounting line's issue, "Part of" the same epic. Anything a review finds that does not block goes to the Icebox as P3.
+Q1 is the step all the others need. Q2 and Q3 can swap if the owner wants the PDF first (O3). The Kế toán sides of Q4 and Q4b are the Accounting line's issues, "Part of" the same epic. Anything a review finds that does not block goes to the Icebox as P3.
 
-**Icebox, P3, not built unless the owner reopens it (O1, O2):** the customer accepts on the link; a discount threshold with an approver; a second language; optional lines; a catalog pick with stock on hand; order-driven stock-out; a QR or a payment link on the quote.
+**Icebox, P3, not built unless the owner reopens it (O1, O2, O4):** the customer accepts on the link; a discount threshold with an approver; a second language; optional lines; a catalog pick with stock on hand; partial quantities of a line; delivery documents, carriers and tracking; one-click "confirm and invoice"; a QR or a payment link on the quote.
 
 ## 9. Exit criteria (slice 2)
 
@@ -200,7 +212,8 @@ Q1 is the step all the others need. Q2 and Q3 can swap if the owner wants the PD
 - A sent quote never changes: a revision is a new row, an accepted quote is final, an order is a frozen copy.
 - Nothing is sent without a person's click: not a link, not a mail, not a chat message. The model proposes; a person applies.
 - The public link shows one quote and nothing else, and reveals nothing about other tokens or quotes.
-- A one-person company with the defaults, no setup and no AI can make, send and accept a quote and make the invoice draft from the order.
+- A one-person company with the defaults, no setup and no AI can make, send and accept a quote, press "Lập hóa đơn" on the order and get a draft with the lines already in it, and mark a line delivered to move its stock.
+- Confirming an order moves no stock and posts nothing; issuing an invoice stays behind finance's approval; no foreign key crosses a schema.
 
 ## 10. Decisions and open questions
 
@@ -208,16 +221,16 @@ Decisions this plan makes (the line's PO and the coordinator can overturn any of
 
 | # | Decision | Why |
 |---|---|---|
-| QT-1 | Quotes and orders live in the `crm` module, not the kernel; Kế toán holds a soft source reference and re-checks | Only CRM makes them; a module cannot hold a foreign key into another; the browser reads one module's query and another module's command takes the payload, the pattern W1c of ads-write uses. The kernel alternative is question A1 |
+| QT-1 | Quotes and orders live in the `crm` module, not the kernel; Kế toán makes the draft and the stock move with its own commands, holds the order id as a soft source reference and re-checks what it is given (the Accounting PO's view on #2690) | Only CRM makes them; a module cannot hold a foreign key into another; the browser reads one module's query and another module's command takes the payload, the pattern W1c of ads-write uses |
 | QT-2 | A revision is a new row with the same number; a sent quote is immutable | A quote is what the customer saw; HubSpot warns against sharing mutable lines, Base keeps every version |
 | QT-3 | Expiry is derived from `valid_until`, not stored or swept | No job, no race; the next-step rule of Q6 reads the same date |
 | QT-4 | The number is taken at first send, per org and year | A deleted draft leaves no gap; a quote is not a tax document, so a gapless guarantee is not needed |
 | QT-5 | The buyer is a snapshot at send time | Editing a contact must not rewrite a document the customer holds |
-| QT-6 | Free-text lines first, with an optional `item_code`; no catalog | The catalog is Kế toán's, per entity, and the CRM module cannot read it; the last-sold-price default covers repeat goods |
+| QT-6 | Free-text lines first, with an optional stock item id (no foreign key); no catalog pick | The catalog is Kế toán's, per entity, and the CRM module cannot read it; finance matches a text line by its alias rules; the last-sold-price default covers repeat goods |
 | QT-7 | Prices are stored before VAT; per-line rounding as in `computeDraft` | The invoice total must equal the quote total |
 | QT-8 | A person records acceptance; the customer's own accept button is out of this slice | A public write needs the owner's yes (O1) |
-| QT-9 | The order is created inside the accept command, one per quote, frozen | One click for a one-person company; nothing to confirm twice. An order can be cancelled until a draft names it |
-| QT-10 | A quote and an order post nothing and move no stock | Money enters the books at the invoice; the existing paths decide the rest |
+| QT-9 | The order is created inside the accept command, one per quote, frozen | One click for a one-person company; nothing to confirm twice. An order can be cancelled until a line has a draft or a delivery |
+| QT-10 | A quote and an order post nothing and move no stock; invoicing is "Lập hóa đơn" on a confirmed order (all lines or by line), and stock moves when a line is marked delivered | The Accounting PO's rules: the draft only from a confirmed order, issuing behind finance's approval, stock on delivery as in the marketplace import (#2515) |
 | QT-11 | Dy suggests lines as a read; it never stores, sends or accepts | As `suggestIntents`: no agent write path, no allowlist change |
 | QT-12 | The quote document is a public link first and a PDF second | The Vietnamese chat is where quotes travel; the link needs no dependency, the PDF does |
 
@@ -228,20 +241,26 @@ Decisions this plan makes (the line's PO and the coordinator can overturn any of
 | O1 | May a customer press "Đồng ý" on the quote link themselves, or does a person always record the acceptance? | A person records it in this slice. Vietnamese sellers close in Zalo or Messenger; a public button that creates a commitment needs its own security review and abuse rules, and can be a later step once quotes are in use | A person records it |
 | O2 | Should a discount above some percent need a second person's approval? | No. A one-person company has no second person; an owner-set threshold can come later for teams | No approval; any member may discount |
 | O3 | Is "send the quote as a link in the chat, and as a PDF by email" the right first form, or must the PDF come first? | Link first (Q2), PDF next (Q3). The link needs no new dependency and matches how quotes travel; the PDF follows for B2B email | Link first |
+| O4 | Should a small seller get a setting "confirm the order and invoice now" as one click (the Accounting PO's open point)? | No in the first slice: keep two steps (confirm, then "Lập hóa đơn"), as the Accounting PO does. A setting, off by default, can follow once orders are in use | Two steps |
 
 ### For the Accounting PO, one decision each
 
+The Accounting PO's view on #2690 settled who makes the draft, when, what the order carries, who issues, and when stock moves (section 6). What is still open:
+
 | # | Question | Recommendation | Without an answer |
 |---|---|---|---|
-| A1 | May `einvoice_draft` get a nullable `source_kind` and `source_id` and a command `finance.einvoice_draft.from_source` that takes a payload and re-checks it? The alternative is a kernel `sales_order` table that both modules reference | Yes, the soft reference. It keeps the order in CRM, needs no kernel table and also serves a booking or a marketplace order as a source. The kernel table is stronger on integrity but moves a CRM concept into the protected kernel | Q4's Kế toán side waits for this; Q1 to Q3 do not |
-| A2 | The draft lines have no discount. Does Decree 254 (and the provider's API) take a discount per line or a discount line, and may the draft gain a `discount_amount` per line with `amount = quantity x price - discount`? The accountant's reading of the decree (#2506) decides the form | Add the column once the decree reading confirms how a discount shows on the invoice. Until then orders with a discount cannot be handed off (6.4) | Discounts on quotes allowed, hand-off disabled for them |
-| A3 | Is the stock-out for a sale taken from the issued invoice's lines (today's path, stock plan 8.2) or from the order at delivery? | From the invoice's lines in this slice: no new stock code, and the order moves nothing. An order-driven stock-out belongs with a delivery step the Accounting line does not plan yet | Invoice-driven |
-| A4 | May the stock item list be offered to CRM through a read port (code, name, unit, VAT rate by trade), so a quote line can pick an item? | Not in this slice. Free text and the last sold price suffice; when stock is in real use, a read query in the contract (not a foreign key) is the way | No catalog pick |
+| A1 | Is this the shape of the source reference: `source_kind` (`crm.sales_order`), `source_id` (the order id) and `source_line_no` on each draft line, with a unique index over the lines of drafts that are not rejected or deleted, so a line already invoiced is refused a second time? Is `finance.einvoice.draft_from_order` the command, taking the whole order or a list of line numbers? | Yes to both. It also serves a booking or a marketplace order as another source kind | Q4's Kế toán side waits; Q1 to Q3 do not |
+| A2 | The draft lines have no discount. Does Decree 254 (and the providers' APIs) take a discount per line or a discount line, and may the draft gain a `discount_amount` per line with `amount = quantity x price - discount`? The order carries both the percent and the rounded amount. The accountant's reading of the decree (#2506) decides the form | Add the column once the decree reading confirms how a discount shows on the invoice. Until then "Lập hóa đơn" is disabled for a discounted line (6.3) | Discounts on quotes allowed; hand-off disabled for those lines |
+| A3 | How does a stock item id reach an order line? Either finance matches a text line to an item by its alias rules at draft time and at delivery (nothing in CRM), or CRM gets a read port for the stock item list (code, name, unit) so a quote line can pick an item | Alias matching only in this slice. Free text and the last sold price suffice; a read query in the contract (never a foreign key) when stock is in real use | Text lines matched by finance; no catalog pick |
+| A4 | A sale document made from an issued invoice whose draft came from an order: stock plan 8.2 takes a stock-out from the sale lines, and the delivery of the order line takes one too. How is the second one avoided? | The draft line's source columns carry into the sale document line, and the document-line stock path skips a line whose source is an order line (the delivery owns the move). Needs a test that issuing and delivering one line moves stock once, in either order | The delivery command is not built until this is answered |
+| A5 | Shape of the delivery command `finance.stock.move_from_order_line`: key `(order id, line no)`, the whole line only, move date = the delivery date, cost at the month's close, a reversal row for a return, negative stock allowed with the stock plan's warning, a service line takes none. Is that right? | Yes, and no partial quantity of a line in this slice | Whole lines only |
+| A6 | Invoicing by line: whole lines only, or partial quantity of a line too? | Whole lines. A partly delivered line is rare for a small seller; split the line in the quote before it is sent if two deliveries are expected | Whole lines |
 
-Other checks written into the steps: the VAT set and its dates are the Accounting line's rule, taken from `@crove/l10n-vn` (4.4); the total of a quote is not a tax figure, so the quote itself needs no accountant sign-off; the e-invoice rules of [einvoice-issue.md](einvoice-issue.md) section 3 apply only from the hand-off on.
+Other checks written into the steps: the VAT set and its dates are the Accounting line's rule, taken from `@crove/l10n-vn` (4.4); the total of a quote is not a tax figure, so the quote itself needs no accountant sign-off; the e-invoice rules of [einvoice-issue.md](einvoice-issue.md) section 3 apply only from "Lập hóa đơn" on.
 
 ## 11. Risks
 
+- **Stock moves twice for one sale.** The delivery of an order line and the stock-out of the sale document made from its invoice must not both fire (question A4); a test issues and delivers one line in either order and expects one move.
 - **The hand-off drifts from the draft's checks.** The line-totals function is shared and pinned by a table of cases that runs both; the draft re-checks whatever it is given.
 - **A quote is mistaken for a promise.** The document carries the validity date and the terms, a sent quote is immutable, and expiry is shown. This plan gives no legal text for the terms: an org writes its own (the default text is empty).
 - **A public link leaks.** A 32-byte token, only its hash stored, one quote per token, revocation on revision, expiry, the same refusal for every bad token, no listing, and a definer that reads nothing else. A protected-path change with the independent security review.
@@ -259,6 +278,7 @@ Read on 2026-11-06. Each vendor's list is its public page at that date and chang
 - MISA AMIS CRM: https://helpcrm.misa.vn/kb/co-hoi/ ("Sinh báo giá"), https://amis.misa.vn/226423/phan-mem-bao-gia-san-pham/ (quote to order in one step, templates, expiry alerts), https://helpcrm.misa.vn/kb/thiet-lap-chung-ve-hang-hoa-va-don-hang/ (default last sold price, price after tax), https://helpcrm.misa.vn/kb/tinh-nang-moi-ban-web/ (a chat image of a quote, sync to AMIS Kế toán), https://amis.misa.vn/224665/cach-su-dung-phan-mem-crm/ (order to invoice).
 - Base.vn: https://base.vn/crm, https://base.vn/ (quote versions, signed quote to contract, a discount above 10% to Deal Desk), https://base.vn/blog/b2b-crm/ (a general article, not product documentation).
 - Pancake: https://pos.pancake.vn/e-invoice, https://api-docs.pancake.vn/, https://partners.pancake.vn/Optimize-Purchase (order in the chat, e-invoice from the POS); no quote feature was found. The docs page for creating an order (docs.pancake.vn) did not open (an expired certificate).
+- The Accounting PO's view on the hand-off, posted on https://github.com/DOS/Ludy/issues/2690 on 2026-11-06 (who makes the draft, the fields the order carries, issuing behind finance's approval, stock on delivery).
 - Ludy: [crm.md](crm.md) (CRM-4, CRM-6, CRM-Q3, section 4), [einvoice-issue.md](einvoice-issue.md) and [ADR-0044](../adr/0044-einvoice-provider-adapters.md), [stock-and-marketplaces.md](stock-and-marketplaces.md) 8.1 and 8.2, [conversations.md](conversations.md), [ADR-0034](../adr/0034-outbound-email.md), [competitors.md](../product/competitors.md) ("Where quotes and sales orders belong"), [scope.md](../product/scope.md), [DESIGN.md](../../DESIGN.md) 1.1, and the code on `main`: `modules/crm`, `modules/finance/src/einvoice-drafts.ts` and `domain/einvoice-draft.ts`, `packages/l10n-vn`, `packages/mail`, `packages/agent/src/meter.ts`, `modules/social/src/report-links.ts`, `supabase/migrations/20261122110000_crove_finance_einvoice_drafts.sql`.
 
 Limits of this research: it reads vendor help pages and guides, not feature depth; several pages came through search summaries because the page itself did not load; a "not confirmed" needs a closer look before anyone relies on it.
