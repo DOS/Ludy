@@ -34,6 +34,8 @@ BEGIN
     ALTER TABLE crove_finance.channel_settlement ADD CONSTRAINT channel_settlement_reversal_ck CHECK (reversal_of IS NULL OR reversal_of <> id);
   END IF;
 END $$;
+-- Backs the reversal foreign key (every tenant foreign key has an index that leads with its columns); the overlap guard also asks "has this settlement been reversed" by it.
+CREATE INDEX IF NOT EXISTS channel_settlement_reversal_fk_idx ON crove_finance.channel_settlement (org_id, legal_entity_id, reversal_of);
 -- One reversal per settlement.
 CREATE UNIQUE INDEX IF NOT EXISTS channel_settlement_reversal_uq ON crove_finance.channel_settlement (org_id, reversal_of) WHERE reversal_of IS NOT NULL;
 -- The overlap rule replaces the exact-match key (a reversal and a corrected re-import share the original's period).
