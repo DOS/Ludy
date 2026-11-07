@@ -451,7 +451,15 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   });
 
   it('serializes a reversal against a line added to its original, whichever comes first', async () => {
-    const waitBlocked = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // Waits, for at most 10 seconds, until another backend is queued on an advisory lock, so the test fails (not passes by luck) when the guard takes no lock.
+    const waitBlocked = async () => {
+      for (let i = 0; i < 100; i += 1) {
+        const waiting = await admin(async (c) => (await c.query("SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())")).rowCount ?? 0);
+        if (waiting > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('no backend waited on an advisory lock: the guard took none');
+    };
     // 1. The reversal holds the lock (not yet committed) while a new line for its original waits: the line is refused once the reversal commits.
     const original = randomUUID();
     const o1 = await order(orgId);
@@ -465,7 +473,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
       const reversal = randomUUID();
       for (const [text, values] of [settlementSql(reversal, { ...period, net: '-95000', reversalOf: original }), lineSql(reversal, o1, { adjustment: 'true' }, 'S1')]) await holder.query(text, values);
       const late = insertLine(owner, original, await order(orgId), {}, 'S2');
-      await waitBlocked(400);
+      await waitBlocked();
       await holder.query('COMMIT');
       expect((await late).code, 'a line that waited for the reversal').toBe('23514');
     } finally {
@@ -485,7 +493,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
       await writer.query(text, values);
       const reversal2 = randomUUID();
       const racing = inTxn(owner, orgId, [settlementSql(reversal2, { ...period2, net: '-95000', reversalOf: second }), lineSql(reversal2, o2, { adjustment: 'true' }, 'S1')]);
-      await waitBlocked(400);
+      await waitBlocked();
       await writer.query('COMMIT');
       expect((await racing).code, 'a reversal that waited for a new line').toBe('23514');
     } finally {
