@@ -57,7 +57,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
     const newDeal = async (partyId: string, title = 'Gói kế toán năm') => {
       await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
-      return exec<Deal>(member, 'crm.deal.create', { partyId, title, amount: '15000000' });
+      return exec<Deal>(member, 'crm.deal.create', { partyId, title, amount: '15000000', expectedClose: '2026-12-31' });
     };
     const draft = (dealId: string) => exec<Quote>(member, 'crm.quote.save', { dealId, lines: [] });
     // The row as the database owner makes a send (Q2's step): the commands refuse everything that is not a draft.
