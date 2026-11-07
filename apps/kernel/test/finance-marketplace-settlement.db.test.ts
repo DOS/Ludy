@@ -71,7 +71,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   const periodDay = () => new Date(Date.UTC(2026, 0, 1 + day++)).toISOString().slice(0, 10);
 
   // One statement as a tenant role in the context of a user of the org, in a transaction that is rolled back on a refusal and committed otherwise. Returns the error code (empty when it ran).
-  async function asTenant(user: string, org: string, text: string, values: unknown[] = []): Promise<{ code: string; rowCount: number; constraint?: string }> {
+  async function asTenant(user: string, org: string, text: string, values: unknown[] = []): Promise<{ code: string; rowCount: number; constraint?: string | undefined }> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
