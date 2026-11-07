@@ -139,6 +139,7 @@ export class PostingRefusedError extends Error {
   }
 }
 
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ZERO = (): Decimal => money(0);
 const FUND_GROUP: Record<InsuranceFund, 'social' | 'health' | 'unemployment'> = {
   retirement_death: 'social',
@@ -206,11 +207,12 @@ export function buildPosting(regime: PayrollRegime, lines: readonly PostingLine[
     totals.otherDeductions = totals.otherDeductions.plus(other);
     totals.net = totals.net.plus(net);
   }
+  const side = (l: JournalLine): number => (money(l.debit).greaterThan(0) ? 0 : 1);
   const journal: JournalLine[] = [...balances.entries()]
     .filter(([, balance]) => !balance.isZero())
     .map(([account, balance]) => ({ account, debit: balance.isPositive() ? toMoney(balance) : '0', credit: balance.isNegative() ? toMoney(balance.negated()) : '0' }))
     // Debits first, then credits, each by account code: the same run always gives the same entry.
-    .sort((a, b) => Number(money(b.debit).greaterThan(0)) - Number(money(a.debit).greaterThan(0)) || (a.account < b.account ? -1 : a.account > b.account ? 1 : 0));
+    .sort((a, b) => side(a) - side(b) || (a.account < b.account ? -1 : a.account > b.account ? 1 : 0));
   const debit = journal.reduce((acc, l) => acc.plus(l.debit), ZERO());
   const credit = journal.reduce((acc, l) => acc.plus(l.credit), ZERO());
   if (!debit.equals(credit)) throw new PostingRefusedError('unbalanced', 'the posting does not balance');
@@ -309,7 +311,7 @@ export interface BankFileTable {
 
 /** One row per person with the net pay, in the layout's column order. Ludy writes a file; it never initiates a payment. A person whose net is zero or less has no row. */
 export function buildBankFile(people: readonly BankFilePerson[], month: string, layout: BankFileLayout = DEFAULT_BANK_FILE_LAYOUT): BankFileTable {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error(`not a month (YYYY-MM): ${month}`);
+  if (!MONTH.test(month)) throw new Error(`not a month (YYYY-MM): ${month}`);
   const [year, m] = month.split('-') as [string, string];
   const content = layout.content.replaceAll('{month}', `${m}/${year}`);
   const paid = people.filter((p) => money(p.net).greaterThan(0));
