@@ -211,6 +211,8 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
     for (const needle of [IDENTITY_DIGITS, ACCOUNT_DIGITS, 'crove:s1:']) expect(text).not.toContain(needle);
     for (const who of [o.admin, o.member]) expect((await get('hr.payroll_employee', who, o.slug)).status).toBe(403);
     expect((await get('hr.payroll_employee', other.owner, o.slug)).status).toBe(403);
+    // A key of Object.prototype is not an owner-run table: it takes the stored-export path and finds no export.
+    expect((await get('constructor', o.owner, o.slug)).status).toBe(404);
     // The other org's owner reads their own people, not this org's.
     const own = JSON.parse((await (await get('hr.payroll_dependent', other.owner, other.slug)).text()).trim()) as { org_id: string };
     expect(own.org_id).toBe(other.orgId);

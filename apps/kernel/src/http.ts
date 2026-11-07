@@ -430,7 +430,7 @@ const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
 export const UPLOAD_BUSY_RETRY_SECONDS = 3;
 export const EXPORT_BUSY_RETRY_SECONDS = 5;
 // The most an owner-run export table (payroll people, #2676) holds in memory before the download answers EXPORT_TOO_LARGE.
-export const OWNER_RUN_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
+export const OWNER_RUN_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false): string {
