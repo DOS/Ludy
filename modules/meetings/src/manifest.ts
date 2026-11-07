@@ -32,6 +32,7 @@ export const meetingsManifest = defineModule({
           'ended_at',
           'length_seconds',
           'keep_video',
+          'extension_token_id',
           'consent_method',
           'consent_confirmed_by',
           'consent_confirmed_at',

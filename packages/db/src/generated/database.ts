@@ -2393,6 +2393,7 @@ export interface MeetingsMeetingTable {
   text_retention_date: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  extension_token_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_meetings.meeting_video */

@@ -90,6 +90,7 @@ describe('module screens against the router (#1652)', () => {
     expect(routes).toEqual([
       '/',
       '/-/b/$org/$type',
+      '/-/extension/connect',
       '/-/invite',
       '/-/report',
       '/-/review',

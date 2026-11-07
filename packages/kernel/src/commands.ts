@@ -33,6 +33,7 @@ import {
 } from '@crove/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
+import { extensionCommands } from './extension.ts';
 import { conversationCommands } from './conversations.ts';
 import {
   actorRef,
@@ -350,9 +351,14 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
     risk: 'R1',
     sideEffect: 'internal',
     access: MEMBERS,
+    // The Ludy extension's meetings scope may ask for a grant for a meeting's audio or video, and for nothing else (#2582).
+    extension: { scope: 'meetings' },
     handler: async (ctx, input) => {
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
       const userId = ctx.actor.userId;
+      if (ctx.actor.extension && input.purpose !== 'meeting_audio' && input.purpose !== 'meeting_video') {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ tải lên được âm thanh và hình của cuộc họp', { rule: 'extension_scope' });
+      }
       // import: a spreadsheet for a module's import (#465), at most 10 MB.
       const maxBytes = input.purpose === 'meeting_audio'
         ? MAX_MEETING_AUDIO_BYTES
@@ -405,6 +411,8 @@ export const claimUpload = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
+  // The extension's meetings scope uses a grant it asked for, which is one for a meeting's audio or video (#2582).
+  extension: { scope: 'meetings' },
   target: (input) => ({ type: 'kernel.file_upload', id: input.uploadId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
@@ -417,6 +425,8 @@ export const claimUpload = defineCommand({
       .executeTakeFirst();
     // Another user's grant reads as missing.
     if (!row || row.created_by !== ctx.actor.userId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
+    // A grant made for anything but a meeting's media reads as missing to an extension token.
+    if (ctx.actor.extension && row.purpose !== 'meeting_audio' && row.purpose !== 'meeting_video') throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
     if (row.used_at) throw new DomainError('UPLOAD_USED', 409, 'Lượt tải lên này đã được dùng');
     if (row.expired) throw new DomainError('UPLOAD_EXPIRED', 409, 'Lượt tải lên đã hết hạn; hãy tải lại tệp');
     await ctx.trx
@@ -1187,6 +1197,7 @@ const otherKernelCommands = [
   ...offboardingCommands,
   ...agentCommands,
   ...channelCommands,
+  ...extensionCommands,
   ...conversationCommands,
   setTaxCode,
   setVatFilingPeriod,

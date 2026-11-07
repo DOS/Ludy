@@ -8,6 +8,7 @@ import { resolveIdentity } from '@crove/kernel';
 import { DomainError, toDomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
 import type { Config } from './config.ts';
 import { createLiveCheck, type LiveCheck } from './sessions.ts';
+import { isExtensionBearer, verifyExtensionBearer, type ExtensionIdentity } from './auth-extension.ts';
 
 export interface AuthUser {
   userId: string;
@@ -24,6 +25,9 @@ export interface AuthUser {
   tokenExp?: number;
   // R3 live check of this request's token with Supabase Auth (jwt session check only); see UserActor.confirmLive.
   confirmLive?: () => Promise<void>;
+  // Set when the request carried a Ludy extension token (issue #2582): the token, its one org and its scopes. The
+  // user is the token's member; there is no browser session (sessionId is empty, email and name are not loaded).
+  extension?: ExtensionIdentity;
 }
 
 export interface VerifiedToken {
@@ -55,6 +59,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLOCK_TOLERANCE_S = 30;
 
 export function actorOf(user: AuthUser): UserActor {
+  // An extension token has no session and no second factor; the runtime checks the token itself in each transaction.
+  if (user.extension) {
+    return { type: 'user', userId: user.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: user.extension.tokenId, scopes: user.extension.scopes } };
+  }
   const actor: UserActor = { type: 'user', userId: user.userId, aal: user.aal, sessionId: user.sessionId, mfaAt: user.mfaAt };
   if (user.confirmLive) actor.confirmLive = user.confirmLive;
   return actor;
@@ -192,6 +200,11 @@ export function createAuthenticator(
   return async function authenticate(header: string | undefined): Promise<AuthUser> {
     const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : null;
     if (!token) throw new DomainError('UNAUTHENTICATED', 401, 'Bạn cần đăng nhập');
+    // The Ludy extension's own kind of credential (issue #2582): never a JWT, never the identity cache.
+    if (isExtensionBearer(token)) {
+      const extension = await verifyExtensionBearer(db, token);
+      return { userId: extension.userId, email: '', name: null, aal: 'aal1', sessionId: '', mfaAt: null, extension };
+    }
     const verified = await verify(token);
     // Bound to this token; called only by the runtime, for R3 (ADR-0028 section 5). No call to Auth otherwise.
     const confirmLive = liveCheck ? () => liveCheck(token, verified.subject) : undefined;

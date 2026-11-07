@@ -7,6 +7,7 @@ import { accessToken, auth, getConfig, needsSecondFactor, needsSecondFactorNow }
 import { landingFor } from './lib/clients.ts';
 import { outsideInstalled, screenInstalled } from './lib/modules.ts';
 import { pendingInvite, rememberInvite, takeTokenFromHash } from './lib/invite.ts';
+import { CONNECT_PATH, parseConnectRequest, pendingConnect, rememberConnect } from './lib/extension-connect.ts';
 import { signOut } from './lib/session-actions.ts';
 import { AdsPage } from './routes/ads.tsx';
 import { AdsCampaignsPage } from './routes/ads-campaigns.tsx';
@@ -22,6 +23,7 @@ import { InboxPage } from './routes/inbox.tsx';
 import { OverviewPage } from './routes/overview.tsx';
 import { ReportsPage } from './routes/reports.tsx';
 import { InvitePage } from './routes/invite.tsx';
+import { ExtensionConnectPage } from './routes/extension-connect.tsx';
 import { JournalPage } from './routes/journal.tsx';
 import { NotificationsPage } from './routes/notifications.tsx';
 import { LedgerPage } from './routes/ledger.tsx';
@@ -185,6 +187,8 @@ const indexRoute = createRoute({
     await requireAuth();
     // An invite opened before signing in (or signing up) is answered first.
     if (pendingInvite()) throw redirect({ to: '/-/invite' });
+    // So is the Ludy extension's sign-in (#2582), opened in a window before the member signed in.
+    if (pendingConnect()) throw redirect({ to: CONNECT_PATH });
     // So is a page shared before signing in (#1235), where social runs; elsewhere it is dropped.
     if (pendingShare()) {
       if (outsideInstalled(getConfig().modules, SHARE_PATH)) throw redirect({ to: SHARE_PATH });
@@ -245,6 +249,22 @@ const inviteRoute = createRoute({
     await requireAuth();
   },
   component: InvitePage,
+});
+
+// The Ludy extension's sign-in window (#2582, ADR-0047 point 10): /-/extension/connect?code_challenge=&redirect_uri=&state=.
+// The request is moved from the address bar to this tab's storage before the sign-in check, so it survives the detour
+// through /login and /mfa; a request that is not the extension's (its redirect address is not a chromiumapp.org one) is
+// dropped and the page says so.
+const extensionConnectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: CONNECT_PATH,
+  beforeLoad: async () => {
+    const request = parseConnectRequest(window.location.search);
+    if (request) rememberConnect(request);
+    if (window.location.search) window.history.replaceState(window.history.state, '', window.location.pathname);
+    await requireAuth();
+  },
+  component: ExtensionConnectPage,
 });
 
 // A page shared into a new Social draft (#1235): the share target's query, already moved to the fragment by
@@ -540,6 +560,7 @@ const routeTree = rootRoute.addChildren([
   shareRoute,
   socialPlanPrintRoute,
   inviteRoute,
+  extensionConnectRoute,
   mfaRoute,
   resetPasswordRoute,
   onboardingRoute,
