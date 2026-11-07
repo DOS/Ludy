@@ -1588,7 +1588,9 @@ export function createHttpApp(deps: HttpDeps) {
           { uploadId: c.req.param('id') },
           { actor: actorOf(user), orgId },
         );
-        if (claim.purpose !== purpose) {
+        // Staged meeting media is sealed only by POST /api/meetings/:id/media: completing it here would store plaintext.
+        // (Other purposes keep their old, lenient pairing of begin and complete.)
+        if (claim.purpose === 'meeting_audio' || claim.purpose === 'meeting_video') {
           throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
         }
         try {
