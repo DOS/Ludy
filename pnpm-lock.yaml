@@ -523,6 +523,9 @@ importers:
       '@crove/mod-hr':
         specifier: workspace:*
         version: link:../../modules/hr
+      '@crove/mod-meetings':
+        specifier: workspace:*
+        version: link:../../modules/meetings
       '@crove/mod-notes':
         specifier: workspace:*
         version: link:../../modules/notes
@@ -727,6 +730,21 @@ importers:
       '@crove/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
+      '@crove/kernel-contract':
+        specifier: workspace:*
+        version: link:../../packages/kernel-contract
+      '@crove/kernel-runtime':
+        specifier: workspace:*
+        version: link:../../packages/kernel-runtime
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.6
+
+  modules/meetings:
+    dependencies:
+      '@crove/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@crove/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract

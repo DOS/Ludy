@@ -73,6 +73,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
+import { meetingsCommands, meetingsManifest, meetingsQueries } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
@@ -225,6 +226,7 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
     ads: () => ({ commands: adsCommands, queries: adsQueries }),
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
+    meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -249,6 +251,7 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   ads: adsManifest,
   crm: crmManifest,
   notes: notesManifest,
+  meetings: meetingsManifest,
   hr: hrManifest,
 };
 

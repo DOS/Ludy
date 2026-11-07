@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -14,6 +14,8 @@ import {
   ACCEPTED_UPLOAD_TYPES,
   DIRECT_UPLOAD_MAX_BYTES,
   MAX_IMPORT_BYTES,
+  MAX_MEETING_AUDIO_BYTES,
+  MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
@@ -38,10 +40,21 @@ import {
   putFile,
   readVerified,
   sha256Hex,
+  decryptBlobChunks,
+  encryptBlobBuffer,
+  generateMediaDataKey,
+  mapPlaintextRangeToChunks,
+  plaintextLengthFromCiphertextLength,
+  unwrapMediaKeyWithSubkey,
+  wrapMediaKeyWithSubkey,
+  type BlobMediaBinding,
   type BlobStore,
+  type CredentialBroker,
+  type MediaKeyBinding,
   type Runtime,
   type UserActor,
 } from '@crove/kernel-runtime';
+import { detectMediaContainer } from '@crove/mod-meetings';
 import type { OrgExportView } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
@@ -113,6 +126,7 @@ import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
+import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
@@ -172,6 +186,7 @@ export interface HttpDeps {
   workerBuildCheck?: boolean;
   runtime: Runtime;
   store: BlobStore;
+  broker?: CredentialBroker;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -1294,7 +1309,8 @@ export function createHttpApp(deps: HttpDeps) {
   app.use('/api/*', async (c, next) => {
     let user: AuthUser;
     try {
-      user = await authenticate(c.req.header('authorization'));
+      const authHeader = c.req.header('authorization');
+      user = await authenticate(authHeader);
     } catch (error) {
       return problem(c, error);
     }
@@ -1440,6 +1456,10 @@ export function createHttpApp(deps: HttpDeps) {
     if (value === undefined || value === null || value === '' || value === 'document') return 'document';
     if (value === 'social') return 'social';
     if (value === 'import') return 'import';
+    if (value === 'meeting_audio' || value === 'meeting_video') {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+      return value;
+    }
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
   }
 
@@ -1484,6 +1504,9 @@ export function createHttpApp(deps: HttpDeps) {
       const body = await c.req.parseBody({ all: true });
       const files = ([] as unknown[]).concat(body.file ?? []).filter((f): f is File => f instanceof File);
       const purpose = uploadPurpose(body.purpose);
+      if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
+        throw new DomainError('STAGED_UPLOAD_REQUIRED', 400, 'Tệp phương tiện cuộc họp phải tải lên qua cơ chế phân đoạn (POST /api/files/uploads)');
+      }
       const legalEntityId = uploadEntity(body.legalEntityId);
       if (files.length === 0) throw new DomainError('NO_FILE', 400, 'Chưa chọn tệp');
       if (files.length > MAX_FILES_PER_UPLOAD) throw new DomainError('TOO_MANY_FILES', 413, `Tối đa ${MAX_FILES_PER_UPLOAD} tệp mỗi lần`);
@@ -1549,6 +1572,10 @@ export function createHttpApp(deps: HttpDeps) {
         c.header('retry-after', String(UPLOAD_BUSY_RETRY_SECONDS));
         throw new DomainError('UPLOAD_BUSY', 503, 'Máy chủ đang xử lý nhiều tệp; hãy thử lại sau vài giây');
       }
+      if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
+        release();
+        throw new DomainError('INVALID_PURPOSE', 400, 'Tệp phương tiện cuộc họp phải được ghi nhận qua kênh meetings để mã hóa đầu-cuối');
+      }
       // A Social upload may be a video of up to 100 MB: it also takes a large slot, before the grant is used.
       const releaseLarge = purpose === 'social' ? large.tryAcquire(user.userId) : () => undefined;
       if (!releaseLarge) {
@@ -1556,11 +1583,16 @@ export function createHttpApp(deps: HttpDeps) {
         throw busy(c);
       }
       try {
-        const claim = await runtime.execute<{ stagingKey: string; maxBytes: number }>(
+        const claim = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
           'kernel.file.upload.claim',
           { uploadId: c.req.param('id') },
           { actor: actorOf(user), orgId },
         );
+        // Staged meeting media is sealed only by POST /api/meetings/:id/media: completing it here would store plaintext.
+        // (Other purposes keep their old, lenient pairing of begin and complete.)
+        if (claim.purpose === 'meeting_audio' || claim.purpose === 'meeting_video') {
+          throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+        }
         try {
           // A document is read up to 25 MB whatever its grant allowed.
           const staged = await direct.readStaged(claim.stagingKey, Math.min(claim.maxBytes, purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : MAX_UPLOAD_BYTES)).catch((error: unknown) => {
@@ -1585,11 +1617,14 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       const user = c.get('user');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      const file = await runtime.query<{ filename: string; content_type: string; storage_key: string; generation: string | null; sha256: string; size_bytes: string }>(
+      const file = await runtime.query<{ filename: string; content_type: string; storage_key: string; generation: string | null; sha256: string; size_bytes: string; source: string }>(
         'kernel.file.get',
         { id: c.req.param('id') },
         { actor: actorOf(user), orgId },
       );
+      if (file.source === 'meeting_audio' || file.source === 'meeting_video') {
+        throw new DomainError('FORBIDDEN', 403, 'Tệp phương tiện cuộc họp không tải trực tiếp được; hãy nghe/xem qua giao diện cuộc họp');
+      }
       const ref = { key: file.storage_key, generation: file.generation, sha256: file.sha256 };
       // With S3, a presigned GET of the exact version the row recorded (60 seconds, as an attachment), after the
       // same authorization as a streamed download. A generation that cannot be pinned streams, checked by sha256.
@@ -1628,6 +1663,483 @@ export function createHttpApp(deps: HttpDeps) {
           'cache-control': 'private, no-store',
         },
       });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
+  const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
+  const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
+  const playbackAudited = new Map<string, number>();
+  async function streamMeetingMedia(c: Context, kind: 'audio' | 'video') {
+    if (!runtime.installed('meetings')) return c.notFound();
+
+    const user = c.get('user');
+    const releaseLarge = large ? large.tryAcquire(user.userId) : () => undefined;
+    if (!releaseLarge) return problem(c, busy(c));
+
+    let dataKey: Buffer | null = null;
+    let wrapSubkey: Buffer | null = null;
+    let heldReturned = false;
+
+    try {
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id');
+
+      const rangeHeader = c.req.header('range');
+
+      // The first request of a (member, meeting, kind) in a window is the audited sensitive read, whatever its Range; the
+      // continuation ranges of the same playback then use the unaudited metadata read, so scrubbing writes one audit row.
+      const auditKey = `${orgId}:${user.userId}:${meetingId}:${kind}`;
+      const now = Date.now();
+      const auditedUntil = playbackAudited.get(auditKey);
+      const continuation = auditedUntil !== undefined && auditedUntil > now;
+      const queryName = continuation
+        ? 'meetings.meeting.media_meta'
+        : kind === 'audio'
+          ? 'meetings.meeting.audio_read'
+          : 'meetings.meeting.video_read';
+      const queryInput = continuation ? { meetingId, kind } : { meetingId };
+      const media = await runtime.query<{
+        meetingId: string;
+        fileId: string;
+        storageKey: string;
+        generation: string | null;
+        sizeBytes: number;
+        sha256: string;
+        contentType: string;
+        keyId: string;
+        wrappedKey: Buffer;
+      }>(queryName, queryInput, { actor: actorOf(user), orgId });
+      // Marked only after the audited read succeeded, so a failed audit write cannot let the retry skip it.
+      if (!continuation) {
+        if (playbackAudited.size >= 10_000) for (const [k, until] of playbackAudited) if (until <= now) playbackAudited.delete(k);
+        if (playbackAudited.size >= 10_000) playbackAudited.clear();
+        playbackAudited.set(auditKey, now + PLAYBACK_AUDIT_WINDOW_MS);
+      }
+
+      const broker = deps.broker ?? createCredentialBroker(config);
+      wrapSubkey = broker.deriveKey
+        ? broker.deriveKey(media.keyId, 'crove.meetings.v1|wrap')
+        : broker.derive && broker.keyId === media.keyId
+          ? broker.derive('crove.meetings.v1|wrap')
+          : null;
+      if (!wrapSubkey) {
+        throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
+      }
+
+      const binding: MediaKeyBinding = {
+        orgId,
+        meetingId: media.meetingId,
+        kind,
+        keyId: media.keyId,
+      };
+      dataKey = unwrapMediaKeyWithSubkey(media.wrappedKey, binding, wrapSubkey);
+
+      const totalPlaintextLength = plaintextLengthFromCiphertextLength(media.sizeBytes);
+      const maxCiphertextCap = (kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES) + 2 * 1024 * 1024;
+      const readCiphertextSlice = async (ctStart: number, ctEnd: number): Promise<Uint8Array> => {
+        const sliceLen = ctEnd - ctStart + 1;
+        return store.getRange
+          ? store.getRange(media.storageKey, ctStart, ctEnd, media.generation, sliceLen)
+          : (await store.get(media.storageKey, media.generation, Math.min(media.sizeBytes, maxCiphertextCap))).subarray(ctStart, ctEnd + 1);
+      };
+
+      const mediaHeaders: Record<string, string> = {
+        'content-type': media.contentType,
+        'accept-ranges': 'bytes',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+        'cross-origin-resource-policy': 'same-site',
+        'cache-control': 'private, no-store',
+      };
+
+      if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+        const spec = rangeHeader.slice(6).trim();
+        let start: number;
+        let end: number;
+
+        if (spec.startsWith('-')) {
+          const suffix = parseInt(spec.slice(1), 10);
+          if (isNaN(suffix) || suffix <= 0 || totalPlaintextLength === 0) {
+            return new Response(null, {
+              status: 416,
+              headers: { 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
+            });
+          }
+          start = Math.max(0, totalPlaintextLength - suffix);
+          end = totalPlaintextLength - 1;
+        } else {
+          const parts = spec.split('-');
+          start = parseInt(parts[0] ?? '', 10);
+          end = parts[1] && parts[1].length > 0 ? parseInt(parts[1], 10) : totalPlaintextLength - 1;
+          if (isNaN(start) || isNaN(end) || start < 0 || start > end || start >= totalPlaintextLength) {
+            return new Response(null, {
+              status: 416,
+              headers: { 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
+            });
+          }
+          end = Math.min(end, totalPlaintextLength - 1);
+        }
+
+        end = Math.min(end, start + MEETING_STREAM_WINDOW_BYTES - 1);
+
+        const map = mapPlaintextRangeToChunks(start, end, media.sizeBytes);
+        const ctSlice = await readCiphertextSlice(map.ctStart, map.ctEnd);
+        const decryptedChunks = decryptBlobChunks(
+          Buffer.from(ctSlice),
+          dataKey,
+          { orgId, meetingId: media.meetingId, kind },
+          map.firstChunk,
+          map.lastChunk,
+          map.totalChunks,
+        );
+        const chunk = decryptedChunks.subarray(map.offsetInFirstChunk, map.offsetInFirstChunk + map.requestedLength);
+
+        heldReturned = true;
+        return new Response(held(new Uint8Array(chunk), releaseLarge), {
+          status: 206,
+          headers: {
+            ...mediaHeaders,
+            'content-range': `bytes ${start}-${end}/${totalPlaintextLength}`,
+            'content-length': String(chunk.length),
+          },
+        });
+      }
+
+      if (totalPlaintextLength === 0) {
+        return new Response(new Uint8Array(0), {
+          status: 200,
+          headers: {
+            ...mediaHeaders,
+            'content-length': '0',
+          },
+        });
+      }
+
+      if (totalPlaintextLength <= MEETING_STREAM_WINDOW_BYTES) {
+        const map = mapPlaintextRangeToChunks(0, totalPlaintextLength - 1, media.sizeBytes);
+        const ctSlice = await readCiphertextSlice(map.ctStart, map.ctEnd);
+        const decrypted = decryptBlobChunks(
+          Buffer.from(ctSlice),
+          dataKey,
+          { orgId, meetingId: media.meetingId, kind },
+          map.firstChunk,
+          map.lastChunk,
+          map.totalChunks,
+        );
+
+        heldReturned = true;
+        return new Response(held(new Uint8Array(decrypted), releaseLarge), {
+          status: 200,
+          headers: {
+            ...mediaHeaders,
+            'content-length': String(decrypted.length),
+          },
+        });
+      }
+
+      // Stream unranged large files in bounded 4 MiB chunk windows so heap stays O(1).
+      const streamDataKey = Buffer.from(dataKey);
+      let streamOffset = 0;
+      let streamReleased = false;
+      // An idle stream (a client that stopped reading) is closed after 5 minutes; every pull restarts the clock, so a slow
+      // link on a 2 GiB video is not cut off while it is still being read.
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const cleanupStream = () => {
+        if (streamReleased) return;
+        streamReleased = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        streamDataKey.fill(0);
+        releaseLarge();
+      };
+      const armIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(cleanupStream, 5 * 60_000);
+        idleTimer.unref();
+      };
+      armIdleTimer();
+
+      const streamBody = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            armIdleTimer();
+            // Each window first asks again whether the meeting and its key still exist: the query fails once the meeting or its
+            // key is deleted, so the stream stops and the key copy is cleared. A reseal changes only the wrapping key id, not
+            // the media key this stream holds, so the id is not compared.
+            if (streamOffset > 0) {
+              await runtime.query('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+            }
+            if (streamOffset >= totalPlaintextLength) {
+              controller.close();
+              cleanupStream();
+              return;
+            }
+            const windowEnd = Math.min(totalPlaintextLength - 1, streamOffset + MEETING_STREAM_WINDOW_BYTES - 1);
+            const map = mapPlaintextRangeToChunks(streamOffset, windowEnd, media.sizeBytes);
+            const ctSlice = await readCiphertextSlice(map.ctStart, map.ctEnd);
+            const decryptedWindow = decryptBlobChunks(
+              Buffer.from(ctSlice),
+              streamDataKey,
+              { orgId, meetingId: media.meetingId, kind },
+              map.firstChunk,
+              map.lastChunk,
+              map.totalChunks,
+            );
+            const slice = decryptedWindow.subarray(map.offsetInFirstChunk, map.offsetInFirstChunk + map.requestedLength);
+            streamOffset = windowEnd + 1;
+            controller.enqueue(new Uint8Array(slice));
+            if (streamOffset >= totalPlaintextLength) {
+              controller.close();
+              cleanupStream();
+            }
+          } catch (err) {
+            cleanupStream();
+            controller.error(err);
+          }
+        },
+        cancel() {
+          cleanupStream();
+        },
+      });
+
+      heldReturned = true;
+      return new Response(streamBody, {
+        status: 200,
+        headers: {
+          ...mediaHeaders,
+          'content-length': String(totalPlaintextLength),
+        },
+      });
+    } catch (error) {
+      return problem(c, error);
+    } finally {
+      dataKey?.fill(0);
+      wrapSubkey?.fill(0);
+      if (!heldReturned) {
+        releaseLarge();
+      }
+    }
+  }
+
+  app.get('/api/meetings/:id/audio', (c) => streamMeetingMedia(c, 'audio'));
+  app.get('/api/meetings/:id/video', (c) => streamMeetingMedia(c, 'video'));
+
+  // Everything that must hold before one byte of the body is read into memory: the module is on, the caller is the meeting's
+  // recorder, a large-transfer slot is held (kept until the response is done) and the declared size is within the cap. A JSON
+  // body (a staged upload's id) is tiny; a file larger than its cap is refused from the declared Content-Length, and the body
+  // limit below stops a chunked one at the same cap, with at most two such transfers in the process at once.
+  const META_BODY_MAX_BYTES = 16 * 1024;
+  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser } }> = async (c, next) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meeting = await runtime.query<{ isRecorder: boolean }>('meetings.meeting.get', { meetingId: c.req.param('id') ?? '' }, { actor: actorOf(user), orgId });
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
+      const json = (c.req.header('content-type') ?? '').includes('application/json');
+      const declared = Number(c.req.header('content-length') ?? '0');
+      if (!Number.isFinite(declared) || declared < 0) throw new DomainError('BAD_REQUEST', 400, 'Content-Length is not valid');
+      if (declared > (json ? META_BODY_MAX_BYTES : MAX_MEETING_VIDEO_BYTES + 1024 * 1024)) {
+        throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
+      }
+      release = large.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+    } catch (error) {
+      return problem(c, error);
+    }
+    try {
+      await next();
+    } finally {
+      release?.();
+    }
+  };
+  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser } }> = (c, next) =>
+    bodyLimit({ maxSize: (c.req.header('content-type') ?? '').includes('application/json') ? META_BODY_MAX_BYTES : MAX_MEETING_VIDEO_BYTES + 1024 * 1024 })(c, next);
+  app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
+    try {
+      if (!runtime.installed('meetings')) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      }
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id');
+      const release = completes.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+
+      let dataKey: Buffer | null = null;
+      let wrapSubkey: Buffer | null = null;
+      let stagingKeyToDelete: string | null = null;
+
+      try {
+        const contentTypeHeader = c.req.header('content-type') ?? '';
+        let kind: 'audio' | 'video';
+        let lengthSeconds: number | undefined;
+        let plaintext: Buffer | null = null;
+
+        const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
+          const meeting = await runtime.query<{ isRecorder: boolean; keepVideo: boolean }>(
+            'meetings.meeting.get',
+            { meetingId },
+            { actor: actorOf(user), orgId },
+          );
+          if (!meeting.isRecorder) {
+            throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
+          }
+          if (mediaKind === 'video' && !meeting.keepVideo) {
+            throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
+          }
+        };
+
+        if (contentTypeHeader.includes('application/json')) {
+          const body = (await c.req.json().catch(() => null)) as {
+            uploadId?: unknown;
+            kind?: unknown;
+            lengthSeconds?: unknown;
+          } | null;
+          if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
+            throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
+          }
+          kind = body.kind;
+          if (body.lengthSeconds !== undefined) {
+            if (typeof body.lengthSeconds !== 'number' || !Number.isInteger(body.lengthSeconds) || body.lengthSeconds <= 0) {
+              throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
+            }
+            lengthSeconds = body.lengthSeconds;
+          }
+
+          await verifyRecorderAndKind(kind);
+
+          const claim = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
+            'kernel.file.upload.claim',
+            { uploadId: body.uploadId },
+            { actor: actorOf(user), orgId },
+          );
+          stagingKeyToDelete = claim.stagingKey;
+
+          const expectedPurpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+          if (claim.purpose !== expectedPurpose) {
+            throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+          }
+
+          const limit = kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
+          if (direct) {
+            const staged = await direct.readStaged(claim.stagingKey, Math.min(claim.maxBytes, limit)).catch((error: unknown) => {
+              if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
+              throw error;
+            });
+            plaintext = Buffer.from(staged.bytes);
+          } else {
+            const raw = await store.get(claim.stagingKey, null, Math.min(claim.maxBytes, limit)).catch((error: unknown) => {
+              if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
+              throw error;
+            });
+            plaintext = Buffer.from(raw);
+          }
+        } else if (contentTypeHeader.includes('multipart/form-data')) {
+          const formData = await c.req.formData().catch(() => null);
+          if (!formData) throw new DomainError('BAD_REQUEST', 400, 'Invalid form data');
+          const kindVal = formData.get('kind');
+          if (kindVal !== 'audio' && kindVal !== 'video') {
+            throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
+          }
+          kind = kindVal;
+          await verifyRecorderAndKind(kind);
+
+          const fileVal = formData.get('file');
+          if (!fileVal || !(fileVal instanceof Blob)) {
+            throw new DomainError('NO_FILE', 400, 'Tệp tải lên không hợp lệ');
+          }
+          const maxBytes = kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
+          if (fileVal.size > maxBytes) {
+            throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${kind === 'video' ? '2 GB' : '300 MB'})`);
+          }
+          const lengthVal = formData.get('lengthSeconds');
+          if (typeof lengthVal === 'string' && lengthVal.trim().length > 0) {
+            const parsedLen = Number(lengthVal.trim());
+            if (!Number.isInteger(parsedLen) || parsedLen <= 0) {
+              throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
+            }
+            lengthSeconds = parsedLen;
+          }
+          plaintext = Buffer.from(await fileVal.arrayBuffer());
+        } else {
+          throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be application/json or multipart/form-data');
+        }
+
+        if (plaintext.length === 0) {
+          throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
+        }
+
+        const sniffedContentType = detectMediaContainer(plaintext, kind);
+        if (!sniffedContentType) {
+          throw new DomainError('INVALID_MEDIA_CONTAINER', 400, 'Uploaded media is not a supported audio/video container');
+        }
+
+        dataKey = generateMediaDataKey();
+        const binding: BlobMediaBinding = {
+          orgId,
+          meetingId,
+          kind,
+        };
+        const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
+        plaintext = null;
+        const sha256 = createHash('sha256').update(ciphertext).digest('hex');
+        const storageKey = fileKey(orgId, sha256);
+
+        const generation = await store.put(storageKey, ciphertext, sniffedContentType);
+
+        const broker = deps.broker ?? createCredentialBroker(config);
+        const keyId = broker.keyId;
+        if (!keyId || (!broker.derive && !broker.deriveKey)) {
+          throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
+        }
+        wrapSubkey = broker.deriveKey
+          ? broker.deriveKey(keyId, 'crove.meetings.v1|wrap')
+          : broker.derive && broker.keyId === keyId
+            ? broker.derive('crove.meetings.v1|wrap')
+            : null;
+        if (!wrapSubkey) {
+          throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key derivation failed');
+        }
+        const keyBinding: MediaKeyBinding = { ...binding, keyId };
+        const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
+
+        let result: { fileId: string };
+        try {
+          result = await runtime.execute<{ fileId: string }>(
+            'meetings.media.record',
+            {
+              meetingId,
+              kind,
+              keyId,
+              wrappedKeyHex: wrappedKey.toString('hex'),
+              storageKey,
+              generation,
+              sizeBytes: ciphertext.length,
+              sha256,
+              contentType: sniffedContentType,
+              lengthSeconds: lengthSeconds ?? 1800,
+            },
+            { actor: actorOf(user), orgId },
+          );
+        } catch (error) {
+          // The record was refused (a second upload of the kind, a lost race): the sealed bytes have no row, so drop them.
+          await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
+          throw error;
+        }
+
+        return c.json(result);
+      } finally {
+        if (stagingKeyToDelete) {
+          await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
+        }
+        dataKey?.fill(0);
+        wrapSubkey?.fill(0);
+        release();
+      }
     } catch (error) {
       return problem(c, error);
     }

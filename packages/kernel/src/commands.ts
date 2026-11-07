@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   ANOMALY_CHECK_PREFIX,
   MAX_IMPORT_BYTES,
+  MAX_MEETING_AUDIO_BYTES,
+  MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
   UPLOAD_PURPOSES,
@@ -351,7 +353,15 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
       const userId = ctx.actor.userId;
       // import: a spreadsheet for a module's import (#465), at most 10 MB.
-      const maxBytes = input.purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : input.purpose === 'import' ? MAX_IMPORT_BYTES : MAX_UPLOAD_BYTES;
+      const maxBytes = input.purpose === 'meeting_audio'
+        ? MAX_MEETING_AUDIO_BYTES
+        : input.purpose === 'meeting_video'
+          ? MAX_MEETING_VIDEO_BYTES
+          : input.purpose === 'social'
+            ? MAX_SOCIAL_VIDEO_BYTES
+            : input.purpose === 'import'
+              ? MAX_IMPORT_BYTES
+              : MAX_UPLOAD_BYTES;
       // Serializes begins of one user in one org, so concurrent requests cannot pass either cap together.
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.file_upload:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
       // Both counts use the database clock: the insert trigger sets created_at and expires_at from now(), the start
@@ -375,7 +385,7 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       }
       const row = await ctx.trx
         .insertInto('crove_kernel.file_upload')
-        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes) })
+        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes), purpose: input.purpose })
         .returning(['id', 'staging_key', 'max_bytes', 'expires_at'])
         .executeTakeFirstOrThrow();
       ctx.audit({ upload_id: row.id });
@@ -399,7 +409,7 @@ export const claimUpload = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
     const row = await ctx.trx
       .selectFrom('crove_kernel.file_upload')
-      .select(['staging_key', 'created_by', 'max_bytes', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
+      .select(['staging_key', 'created_by', 'max_bytes', 'purpose', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .forUpdate()
@@ -414,7 +424,7 @@ export const claimUpload = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .execute();
-    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes) };
+    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes), purpose: row.purpose };
   },
 });
 

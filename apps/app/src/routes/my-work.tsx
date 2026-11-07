@@ -22,6 +22,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
@@ -537,6 +538,7 @@ export function MyWorkPage() {
   return (
     <div className="space-y-4">
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
+      <NotesSubnav slug={slug} active="my-work" />
       <QuickAdd inputRef={quickAdd} />
       <Tabs
         value={view}
