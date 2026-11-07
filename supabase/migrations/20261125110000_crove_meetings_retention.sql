@@ -96,7 +96,7 @@ BEGIN
     v_n := v_n + v_k;
   ELSE
     IF NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_video v WHERE v.org_id = p_org_id AND v.meeting_id = p_meeting_id AND v.video_retention_date <= v_today) THEN
-      -- A video key with no video row left (an interrupted record) goes with the meeting's audio date at the latest; nothing here.
+      -- Nothing to shred: no video row is due. (The key and the video row are written in one transaction, so a key never outlives its row; the text purge takes any key.)
       RETURN 0;
     END IF;
     DELETE FROM crove_meetings.media_key WHERE org_id = p_org_id AND meeting_id = p_meeting_id AND kind = 'video';

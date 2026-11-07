@@ -409,6 +409,19 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await rows('DELETE FROM crove_kernel.file WHERE id = $1', [other]).catch(() => undefined);
   });
 
+  it('is final from the day a period ends, before the nightly job has run', async () => {
+    const meetingId = await createMeeting('recorder', { title: 'Due today' });
+    await upload('recorder', meetingId, 'audio', 'a');
+    expect((await play('recorder', meetingId, 'audio')).status).toBe(200);
+    await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [meetingId]);
+    expect((await play('recorder', meetingId, 'audio')).status).toBe(404);
+    expect((await rpc('meetings/get', 'recorder', { meetingId })).status).toBe(200);
+    await rows(`UPDATE crove_meetings.meeting SET text_retention_date = ${yesterday} WHERE id = $1`, [meetingId]);
+    expect((await rpc('meetings/get', 'recorder', { meetingId })).status).toBe(404);
+    const listed = await rpc('meetings/list', 'recorder', {});
+    expect(JSON.stringify(listed.body)).not.toContain(meetingId);
+  });
+
   it('keeps text until a person deletes it when the org chose that, and never shreds before the date', async () => {
     await rpc('meetings/settings/set', 'owner', { audioRetentionDays: 30, videoRetentionDays: 7, textRetentionDays: 0 });
     const meetingId = await createMeeting('recorder', { title: 'Keep the words' });

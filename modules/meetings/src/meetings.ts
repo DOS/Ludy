@@ -477,7 +477,9 @@ export const meetingList = defineQuery({
     let query = ctx.trx
       .selectFrom('crove_meetings.meeting')
       .selectAll()
-      .where('org_id', '=', ctx.orgId);
+      .where('org_id', '=', ctx.orgId)
+      // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
+      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(new Date()))]));
 
     if (input.visibility) {
       query = query.where('visibility', '=', input.visibility);
@@ -535,7 +537,7 @@ export const meetingGet = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst()) as unknown as MeetingRow | undefined;
-    if (!meeting) {
+    if (!meeting || (meeting.text_retention_date !== null && dayText(meeting.text_retention_date) <= vnDay(new Date()))) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
 
@@ -591,12 +593,16 @@ export const meetingAudioRead = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id'])
+      .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
     if (!meeting) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // A period that has ended is final from its day, not from the nightly job's run (#2579).
+    if (meeting.audio_day <= vnDay(new Date()) || (meeting.text_day !== null && meeting.text_day <= vnDay(new Date()))) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
@@ -650,12 +656,16 @@ export const meetingVideoRead = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id'])
+      .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
     if (!meeting) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // A period that has ended is final from its day, not from the nightly job's run (#2579).
+    if (meeting.text_day !== null && meeting.text_day <= vnDay(new Date())) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
@@ -677,13 +687,14 @@ export const meetingVideoRead = defineQuery({
       .innerJoin('crove_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
       )
-      .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
+      .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.meeting_id', '=', input.meetingId)
       .executeTakeFirst();
     if (!video) {
       throw new DomainError('VIDEO_NOT_FOUND', 404, 'Meeting video not found');
     }
+    if (video.videoDay <= vnDay(new Date())) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
 
     return {
       meetingId: input.meetingId,
@@ -708,12 +719,16 @@ export const meetingMediaMeta = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id'])
+      .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
     if (!meeting) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // A period that has ended is final from its day, not from the nightly job's run (#2579).
+    if ((input.kind === 'audio' && meeting.audio_day <= vnDay(new Date())) || (meeting.text_day !== null && meeting.text_day <= vnDay(new Date()))) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
@@ -760,13 +775,14 @@ export const meetingMediaMeta = defineQuery({
         .innerJoin('crove_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
         )
-        .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
+        .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
         .where('v.org_id', '=', ctx.orgId)
         .where('v.meeting_id', '=', input.meetingId)
         .executeTakeFirst();
       if (!video) {
         throw new DomainError('VIDEO_NOT_FOUND', 404, 'Meeting video not found');
       }
+      if (video.videoDay <= vnDay(new Date())) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
       return {
         meetingId: input.meetingId,
         fileId: video.fileId,

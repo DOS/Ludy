@@ -30,6 +30,7 @@ export const SHRED_REF_PREFIX = 'shred/v1/';
 export const SHRED_REF_LOCK_DAYS = 90;
 // The first sync of a worker reads this far back, so a worker that was down still writes the references of deletions it missed.
 export const SHRED_REF_FIRST_LOOKBACK_DAYS = 45;
+export const SHRED_REF_PAGE = 10_000;
 const DUE_BATCH = 200;
 const MAX_BATCHES = 50;
 const ORPHAN_BATCH = 100;
@@ -47,9 +48,13 @@ export interface RetentionRun {
 export async function runMeetingsRetention(deps: { runtime: Runtime; workerDb: Db; log?: Log; batch?: number }): Promise<RetentionRun> {
   const log = deps.log ?? console;
   const run: RetentionRun = { shredded: { audio: 0, video: 0, text: 0 }, failed: 0 };
+  // Meetings that failed in this run: asked for again past them, so a few failing rows never stall the others (the next run tries them again).
+  const failedNow = new Set<string>();
   for (let pass = 0; pass < MAX_BATCHES; pass++) {
-    const { rows } = await sql<{ org_id: string; meeting_id: string; kind: 'audio' | 'video' | 'text' }>`
-      SELECT org_id, meeting_id, kind FROM crove_meetings.meetings_due(${deps.batch ?? DUE_BATCH}::int)`.execute(deps.workerDb);
+    const size = deps.batch ?? DUE_BATCH;
+    const { rows: listed } = await sql<{ org_id: string; meeting_id: string; kind: 'audio' | 'video' | 'text' }>`
+      SELECT org_id, meeting_id, kind FROM crove_meetings.meetings_due(${Math.min(size + failedNow.size, 1000)}::int)`.execute(deps.workerDb);
+    const rows = listed.filter((r) => !failedNow.has(`${r.meeting_id}:${r.kind}`));
     let applied = 0;
     for (const row of rows) {
       try {
@@ -60,12 +65,13 @@ export async function runMeetingsRetention(deps: { runtime: Runtime; workerDb: D
         }
       } catch (error) {
         run.failed += 1;
+        failedNow.add(`${row.meeting_id}:${row.kind}`);
         // Ids and the error's name only.
         log.error(`[meetings-retention] ${row.kind} of meeting ${row.meeting_id.slice(0, 8)} in org ${row.org_id.slice(0, 8)} failed`, error instanceof Error ? error.name : typeof error);
       }
     }
     // A batch that shredded nothing would list the same meetings again.
-    if (rows.length < (deps.batch ?? DUE_BATCH) || applied === 0) break;
+    if (listed.length < Math.min(size + failedNow.size, 1000) || applied === 0) break;
   }
   log.log(`[meetings-retention] audio=${run.shredded.audio} video=${run.shredded.video} text=${run.shredded.text} failed=${run.failed}`);
   if (run.failed > 0) opsAlert(`[meetings-retention] ALERT ${run.failed} meeting(s) could not be shredded; the next run tries again`);
@@ -81,9 +87,12 @@ export interface MediaSweep {
 export async function sweepMeetingMedia(deps: { runtime: Runtime; workerDb: Db; store: BlobStore; log?: Log }): Promise<MediaSweep> {
   const log = deps.log ?? console;
   const out: MediaSweep = { deleted: 0, failed: 0 };
+  const failedNow = new Set<string>();
   for (let pass = 0; pass < MAX_ORPHAN_BATCHES; pass++) {
-    const { rows } = await sql<{ org_id: string; file_id: string }>`
-      SELECT org_id, file_id FROM crove_meetings.meetings_orphan_media(${ORPHAN_BATCH}::int)`.execute(deps.workerDb);
+    const limit = Math.min(ORPHAN_BATCH + failedNow.size, 1000);
+    const { rows: listed } = await sql<{ org_id: string; file_id: string }>`
+      SELECT org_id, file_id FROM crove_meetings.meetings_orphan_media(${limit}::int)`.execute(deps.workerDb);
+    const rows = listed.filter((r) => !failedNow.has(r.file_id));
     if (rows.length === 0) break;
     const byOrg = new Map<string, string[]>();
     for (const r of rows) byOrg.set(r.org_id, [...(byOrg.get(r.org_id) ?? []), r.file_id]);
@@ -105,6 +114,7 @@ export async function sweepMeetingMedia(deps: { runtime: Runtime; workerDb: Db; 
                 }
               } catch (error) {
                 out.failed += 1;
+                failedNow.add(k.fileId);
                 log.error(`[meetings-retention] media file ${k.fileId.slice(0, 8)} in org ${orgId.slice(0, 8)} not removed`, error instanceof Error ? error.name : typeof error);
               }
             }),
@@ -112,11 +122,12 @@ export async function sweepMeetingMedia(deps: { runtime: Runtime; workerDb: Db; 
         }
       } catch (error) {
         out.failed += fileIds.length;
+        for (const id of fileIds) failedNow.add(id);
         log.error(`[meetings-retention] media files of org ${orgId.slice(0, 8)} not listed`, error instanceof Error ? error.name : typeof error);
       }
     }
     // A batch that removed nothing would list the same rows again; they are tried on the next sweep.
-    if (progress === 0 || rows.length < ORPHAN_BATCH) break;
+    if (progress === 0 || listed.length < limit) break;
   }
   if (out.deleted > 0 || out.failed > 0) log.log(`[meetings-retention] media files removed=${out.deleted} failed=${out.failed}`);
   return out;
@@ -141,7 +152,7 @@ export function shredRefKey(orgId: string, meetingId: string): string {
  * Writes the shred reference of every meeting deleted since `since`, once each (an existing object is the same reference). Returns how many are in the
  * store for those deletions, and the number new.
  */
-export async function syncShredRefs(deps: { workerDb: Db; store: ArchiveStore; since: Date; written?: Set<string> }): Promise<{ seen: number; written: number }> {
+export async function syncShredRefs(deps: { workerDb: Db; store: ArchiveStore; since: Date; written?: Set<string> }): Promise<{ seen: number; written: number; truncatedAt: Date | null }> {
   const { rows } = await sql<{ org_id: string; meeting_id: string; occurred_at: Date }>`
     SELECT org_id, meeting_id, occurred_at FROM crove_meetings.meetings_deleted_since(${deps.since}::timestamptz)`.execute(deps.workerDb);
   let written = 0;
@@ -158,13 +169,17 @@ export async function syncShredRefs(deps: { workerDb: Db; store: ArchiveStore; s
     }
     deps.written?.add(key);
   }
-  return { seen: rows.length, written };
+  // The definer answers at most this many, oldest first: when it did, the next read starts at the last one's time, so none is skipped for good.
+  const last = rows.at(-1);
+  return { seen: rows.length, written, truncatedAt: rows.length >= SHRED_REF_PAGE && last ? last.occurred_at : null };
 }
 
 export interface ShredReplay {
   listed: number;
   deleted: number;
   failed: number;
+  // References of an org that is closed or gone (purged): nothing is left to delete there.
+  skipped: number;
 }
 
 /**
@@ -173,7 +188,7 @@ export interface ShredReplay {
  */
 export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore; log?: Log }): Promise<ShredReplay> {
   const log = deps.log ?? console;
-  const out: ShredReplay = { listed: 0, deleted: 0, failed: 0 };
+  const out: ShredReplay = { listed: 0, deleted: 0, failed: 0, skipped: 0 };
   for (const key of await deps.store.list(SHRED_REF_PREFIX)) {
     out.listed += 1;
     try {
@@ -187,10 +202,14 @@ export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore
       const { deleted } = await deps.runtime.execute<{ deleted: boolean }>('meetings.shred.replay', { meetingId: parsed.data.meetingId }, { actor: ACTOR, orgId: parsed.data.orgId });
       if (deleted) out.deleted += 1;
     } catch (error) {
+      if (error instanceof Error && /TENANT_NOT_ACTIVE|TENANT_NOT_FOUND/.test(error.message)) {
+        out.skipped += 1;
+        continue;
+      }
       out.failed += 1;
       log.error(`[shred-replay] ${key} not replayed`, error instanceof Error ? error.name : typeof error);
     }
   }
-  log.log(`[shred-replay] references=${out.listed} meetings deleted again=${out.deleted} failed=${out.failed}`);
+  log.log(`[shred-replay] references=${out.listed} meetings deleted again=${out.deleted} closed orgs skipped=${out.skipped} failed=${out.failed}`);
   return out;
 }

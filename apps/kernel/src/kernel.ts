@@ -85,7 +85,7 @@ import { exportSealer } from './export-seal.ts';
 import { webhookTarget, type WebhookTarget } from './alert.ts';
 import type { SecurityThresholds } from './security-signals.ts';
 import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
-import { replayShreds, sweepMeetingMedia } from './meetings-retention.ts';
+import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
 import { createHttpApp, type StreamDeps } from './http.ts';
@@ -781,8 +781,10 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
       const replay = await replayShreds({ runtime, store: createArchiveStore(config) });
+      // What the retention shredded since the restore point came back too: shred it again before anything else opens.
+      const due = await runMeetingsRetention({ runtime, workerDb: db });
       const sweep = await sweepMeetingMedia({ runtime, workerDb: db, store: resolved.storage });
-      return replay.failed > 0 || sweep.failed > 0 ? 1 : 0;
+      return replay.failed > 0 || due.failed > 0 || sweep.failed > 0 ? 1 : 0;
     } finally {
       // Best effort: a failure to close never hides the run's own outcome.
       await pool.end().catch((error: unknown) => console.error('[shred-replay] could not close the pool', error));

@@ -1785,7 +1785,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           const synced = await syncShredRefs({ workerDb: deps.workerDb, store: deps.archive.store, since: shredRefsSince, written: shredRefsWritten });
           if (synced.written > 0) console.log(`[meetings-retention] shred references written=${synced.written}`);
           // The next pass reads from just before this one started: a deletion committed while it ran is still seen.
-          shredRefsSince = new Date(passStart.getTime() - 10 * 60_000);
+          shredRefsSince = synced.truncatedAt ?? new Date(passStart.getTime() - 10 * 60_000);
         } catch (error) {
           console.error('[meetings-retention] shred references', error instanceof Error ? error.name : typeof error);
         }
@@ -1803,6 +1803,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // At start: whatever a restore brought back is deleted again before the first sweep, which then removes what that left.
     void (async () => {
       if (deps.archive) await replayShreds({ runtime: deps.runtime, store: deps.archive.store }).catch((error: unknown) => console.error('[shred-replay]', error instanceof Error ? error.name : typeof error));
+      // A restore also brings back what the retention shredded since its point: shred it again now, not at the next nightly run.
+      await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => console.error('[meetings-retention]', error instanceof Error ? error.name : typeof error));
       await meetingsMaintenance();
     })();
   }
