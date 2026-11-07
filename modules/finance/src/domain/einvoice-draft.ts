@@ -3,7 +3,9 @@
 // its lines (decimal arithmetic, never a typed total) and the checks Decree 254 Art. 10 and the provider's rules ask of it. Pure:
 // no database, no provider. A failed check is a code on a field; nothing is sent either way.
 import type { BuyerKind, DraftIssue, DraftIssueCode } from '@crove/kernel-contract';
-import { money, parseTaxCode, parseVatRate, toMoney } from '@crove/l10n-vn';
+import { computeLineTotals, money, normalizeVatRate, parseTaxCode, sumLineTotals } from '@crove/l10n-vn';
+
+export { normalizeVatRate };
 
 
 export interface DraftLineInput {
@@ -42,45 +44,13 @@ export interface ComputedDraft {
   total: string;
 }
 
-// The VAT rates a provider accepts on a line (plan section 8 step 2): 0, 5, 8 and 10 percent, not subject to tax (KCT), not
-// declared (KKKNT), and another rate written KHAC:<ratio>.
-const ALLOWED_PERCENTS = ['0', '5', '8', '10'] as const;
-
-// The rate as it is written on the invoice, or null for one that is not allowed.
-export function normalizeVatRate(raw: string): string | null {
-  const parsed = parseVatRate(raw);
-  if (parsed.kind === 'exempt') return parsed.code;
-  if (parsed.kind === 'percent') {
-    const percent = parsed.percent.toFixed();
-    return (ALLOWED_PERCENTS as readonly string[]).includes(percent) ? `${percent}%` : null;
-  }
-  if (parsed.kind === 'other') return parsed.percent ? `KHAC:${parsed.percent.toFixed()}%` : null;
-  return null;
-}
-
-function ratePercent(rate: string): ReturnType<typeof money> {
-  const parsed = parseVatRate(rate);
-  return parsed.kind === 'exempt' || parsed.kind === 'unknown' ? money(0) : (parsed.percent ?? money(0));
-}
-
-// Amounts of a draft to the whole dong: each line is the quantity times the unit price and its VAT the rate of that amount, each
-// rounded half up; the totals are the sums of the rounded lines, so the invoice adds up as printed. A line that cannot be
-// computed (a quantity or price that is not a decimal) is left to the checks.
+// The VAT rates and the rounding come from the one shared line-totals rule (@crove/l10n-vn), which a quote uses too. Amounts of a
+// draft to the whole dong: each line is the quantity times the unit price and its VAT the rate of that amount, each rounded half
+// up; the totals are the sums of the rounded lines, so the invoice adds up as printed. A line that cannot be computed (a quantity
+// or price that is not a decimal) is left to the checks.
 export function computeDraft(lines: readonly DraftLineInput[]): ComputedDraft {
-  const computed: ComputedLine[] = lines.map((line) => {
-    const rate = normalizeVatRate(line.vatRate) ?? line.vatRate;
-    let amount = money(0);
-    try {
-      amount = money(line.quantity).times(money(line.unitPrice)).toDecimalPlaces(0);
-    } catch {
-      // Reported by the checks.
-    }
-    const vat = amount.times(ratePercent(rate)).dividedBy(100).toDecimalPlaces(0);
-    return { ...line, vatRate: rate, amount: toMoney(amount), vatAmount: toMoney(vat) };
-  });
-  const subtotal = computed.reduce((acc, line) => acc.plus(money(line.amount)), money(0));
-  const vat = computed.reduce((acc, line) => acc.plus(money(line.vatAmount)), money(0));
-  return { lines: computed, subtotal: toMoney(subtotal), vatAmount: toMoney(vat), total: toMoney(subtotal.plus(vat)) };
+  const computed: ComputedLine[] = lines.map((line) => ({ ...line, ...computeLineTotals({ quantity: line.quantity, unitPrice: line.unitPrice, vatRate: line.vatRate }) }));
+  return { lines: computed, ...sumLineTotals(computed) };
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
