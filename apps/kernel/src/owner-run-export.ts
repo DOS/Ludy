@@ -5,17 +5,26 @@
 // own status; once the headers are sent a failure cuts the download.
 // The body ends with one line, {"_end":true,"rows":N}, so a download cut short can never look complete: the app checks it (OWNER_RUN_END).
 // A client that goes away (the request's signal aborts, or the body is cancelled) settles the waiting sink, which stops the query and its
-// transaction, and lets go of the slot, whether or not the response had started.
+// transaction; so does a client that stops taking batches for MAX_WAIT_MS. The slot is let go only once the query itself has settled, so the
+// slots bound the database connections the exports hold, not only the responses.
 import { DomainError, type QuerySink } from '@crove/kernel-runtime';
 
 const encoder = new TextEncoder();
+
+// The longest the query waits for the client to take a batch; past it the download is cancelled, whatever the transport does.
+export const OWNER_RUN_MAX_WAIT_MS = 5 * 60 * 1000;
 
 // The refusal a sink raises when the client is gone: a known code, not an internal error.
 export const DOWNLOAD_CANCELLED = 'DOWNLOAD_CANCELLED';
 
 // `run` runs the streamed query with the sink it is given; `done` is called once when the body has ended, failed or been cancelled, to let go of
 // what the caller holds (a concurrency slot); `signal` is the request's, which aborts when the client disconnects.
-export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, done: () => void, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+export async function streamedBody(
+  run: (sink: QuerySink) => Promise<unknown>,
+  done: () => void,
+  signal?: AbortSignal,
+  maxWaitMs: number = OWNER_RUN_MAX_WAIT_MS,
+): Promise<ReadableStream<Uint8Array>> {
   let slot: Uint8Array | null = null;
   let taken: (() => void) | null = null;
   let wake: (() => void) | null = null;
@@ -36,7 +45,6 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
     cancelled = true;
     taken?.();
     wake?.();
-    release();
   }
   const cancelledError = () => new DomainError(DOWNLOAD_CANCELLED, 409, 'Người dùng đã hủy tải xuống');
 
@@ -53,22 +61,32 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
     if (lines.length === 0) return;
     rows += lines.length;
     slot = encoder.encode(`${lines.join('\n')}\n`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const consumed = new Promise<void>((resolve) => {
       taken = resolve;
+      // A client that never takes the batch (and never disconnects) must not hold the query, its transaction and the slot for ever.
+      timer = setTimeout(() => {
+        cancelled = true;
+        resolve();
+        wake?.();
+      }, maxWaitMs);
     });
     wake?.();
     await consumed;
+    clearTimeout(timer);
     if (cancelled) throw cancelledError();
   };
   void run(sink).then(
     () => {
       finished = true;
       wake?.();
+      release();
     },
     (error: unknown) => {
       finished = true;
       failure = error;
       wake?.();
+      release();
     },
   );
 
@@ -94,42 +112,26 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
   };
 
   let first: Uint8Array | null;
-  try {
-    first = await next();
-  } catch (error) {
-    release();
-    throw error;
-  }
-  if (cancelled) {
-    release();
-    throw cancelledError();
-  }
+  first = await next();
+  if (cancelled) throw cancelledError();
   return new ReadableStream<Uint8Array>(
     {
       start(controller) {
         if (first) controller.enqueue(first);
-        else {
-          controller.close();
-          release();
-        }
+        else controller.close();
       },
       async pull(controller) {
         try {
           const chunk = await next();
           if (chunk) controller.enqueue(chunk);
-          else {
-            controller.close();
-            release();
-          }
+          else controller.close();
         } catch (error) {
           controller.error(error);
-          release();
         }
       },
       cancel() {
         cancelled = true;
         taken?.();
-        release();
       },
     },
     { highWaterMark: 0 },

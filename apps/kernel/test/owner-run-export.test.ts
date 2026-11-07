@@ -115,4 +115,28 @@ describe('streamedBody', () => {
     expect(released).toBe(1);
     expect(ran).toBe(false);
   });
+
+  it('stops waiting for a client that takes no batch, and lets go of the slot once the query has settled', async () => {
+    let released = 0;
+    let stopped: unknown = null;
+    await streamedBody(
+      async (sink) => {
+        try {
+          await sink({ lines: ['x'], last: false });
+          await sink({ lines: ['y'], last: false });
+        } catch (error) {
+          stopped = error;
+          throw error;
+        }
+      },
+      () => released++,
+      undefined,
+      30,
+    );
+    // The first batch was read to start the response; the client never takes the second, and never disconnects.
+    expect(released).toBe(0);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(stopped).toMatchObject({ code: 'DOWNLOAD_CANCELLED' });
+    expect(released).toBe(1);
+  });
 });

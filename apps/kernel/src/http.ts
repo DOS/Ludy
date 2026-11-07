@@ -2672,6 +2672,8 @@ export function createHttpApp(deps: HttpDeps) {
       // sensitive stream, audited before it reads (it names the table), served only while the org is closing, which carries the fresh second factor
       // of kernel.org.offboard. The sealed identity and account numbers are not in it. The response streams, under a slot of the export limiter.
       if (Object.hasOwn(OWNER_RUN_EXPORT_TABLES, part)) {
+        // A HEAD request would run the whole audited read and throw the body away.
+        if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
         const table = part as OwnerRunExportTable;
         const state = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
         if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');

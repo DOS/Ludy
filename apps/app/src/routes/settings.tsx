@@ -338,8 +338,15 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
             {data.ownerRunTables.map((table) => (
               <li key={table} className="flex items-center justify-between gap-3 py-2">
                 <p className="min-w-0 truncate font-mono text-foreground">{table}</p>
-                <Button variant="ghost" size="sm" disabled={download.isPending} onClick={() => download.mutate(table)} aria-label={`${t('download')} ${table}`}>
-                  {download.isPending && download.variables === table ? t('downloading') : t('download')}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={download.isPending}
+                  loading={download.isPending && download.variables === table}
+                  onClick={() => download.mutate(table)}
+                  aria-label={`${t('download')} ${table}`}
+                >
+                  {t('download')}
                 </Button>
               </li>
             ))}
