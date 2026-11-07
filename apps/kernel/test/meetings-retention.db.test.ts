@@ -628,9 +628,9 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect((await rpc('meetings/delete', 'recorder', { meetingId })).status).toBe(200);
     let down = true;
     const flaky = {
-      put: async (key: string, body: Uint8Array, options?: { retentionDays?: number }) => {
+      put: async (key: string, body: Uint8Array) => {
         if (down) throw new Error('archive store unavailable');
-        return archive.put(key, body, options);
+        return archive.put(key, body);
       },
       get: (key: string) => archive.get(key),
       list: (prefix: string) => archive.list(prefix),

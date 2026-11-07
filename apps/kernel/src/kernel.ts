@@ -183,6 +183,8 @@ export interface Kernel {
   // After a restore: what the WORM archive holds that the database lacks, and with --reseed the number series raised
   // above it, as the worker (issue #2007, restore-report.ts). Resolves to the exit code.
   restoreReport(argv: readonly string[]): Promise<number>;
+  // After a restore (#2579): deletes again the meetings the shred references name, re-runs the retention and removes the objects that leaves; 0 or 1.
+  shredReplay(): Promise<number>;
 }
 
 // No-op defaults for the optional ports: nothing can be bound, no connector is installed, every module is on.
