@@ -6,11 +6,16 @@ export const meetingsManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_meetings: {
-      audio_segment: columns(
-        ['org_id', 'id', 'meeting_id', 'segment_order', 'start_offset_seconds', 'length_seconds', 'created_at'],
-        // The reference to the ciphertext of recorded voices (ADR-0047 point 7: audio and video references are sensitive).
-        { file_id: 'sensitive' },
-      ),
+      audio_segment: columns([
+        'org_id',
+        'id',
+        'meeting_id',
+        'file_id',
+        'segment_order',
+        'start_offset_seconds',
+        'length_seconds',
+        'created_at',
+      ]),
       media_key: columns(
         ['org_id', 'id', 'meeting_id', 'key_id', 'kind', 'created_at'],
         { wrapped_key: 'sensitive' },
@@ -39,7 +44,15 @@ export const meetingsManifest = defineModule({
         { title: 'pii' },
       ),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
-      meeting_video: columns(['org_id', 'id', 'meeting_id', 'length_seconds', 'video_retention_date', 'created_at'], { file_id: 'sensitive' }),
+      meeting_video: columns([
+        'org_id',
+        'id',
+        'meeting_id',
+        'file_id',
+        'length_seconds',
+        'video_retention_date',
+        'created_at',
+      ]),
     },
   },
   permissions: [],

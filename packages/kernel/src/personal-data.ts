@@ -256,7 +256,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
-  // Meetings (ADR-0047 point 7, issue #2579): a recording holds voices, a title may name a person, and the text a meeting gains later (transcript, summary, items) joins this
+  // Meetings (ADR-0047 point 7, issue #2579): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), a title may name a person, and the text a meeting gains later (transcript, summary, items) joins this
   // list in the step that adds it. None of it has an email, a phone number or a tax code a finder could match, so none is searched (kind other); a person's
   // request is answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an owner may do without reading it (meetings.meeting.owner_delete,
   // R3). The nightly job deletes every meeting at its own text date and shreds audio and video at theirs.
@@ -264,16 +264,6 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'other',
     handling: 'erase',
     reason: "A meeting's title, which may name a person: deleted with the meeting (its recorder, or an owner for a personal-data request, or the retention job at the text date)",
-  },
-  'crove_meetings.audio_segment.file_id': {
-    kind: 'other',
-    handling: 'erase',
-    reason: "The reference to the ciphertext of a meeting's recorded voices: shredded with the audio key at the audio date or with the meeting, the object and its file row removed after",
-  },
-  'crove_meetings.meeting_video.file_id': {
-    kind: 'other',
-    handling: 'erase',
-    reason: "The reference to the ciphertext of a meeting's kept video (faces, screens): shredded with the video key at the video date or with the meeting, the object and its file row removed after",
   },
   'crove_meetings.media_key.wrapped_key': {
     kind: 'other',
