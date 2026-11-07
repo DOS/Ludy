@@ -69,8 +69,6 @@ export const zQuoteSave = z
 export type QuoteSave = z.infer<typeof zQuoteSave>;
 
 export const zQuoteRef = z.strictObject({ quoteId: zId });
-export const zQuoteDeleteDraft = zQuoteRef;
-export const zQuoteRevise = zQuoteRef;
 export const zDealQuotesQuery = z.strictObject({ dealId: zId });
 export const zQuoteDefaultsQuery = z.strictObject({ partyId: zId });
 export const zQuoteListQuery = z.strictObject({

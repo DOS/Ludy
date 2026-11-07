@@ -254,7 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleteDraft, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteRevise, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -611,8 +611,8 @@ export const contract = {
       byDeal: oc.input(zDealQuotesQuery).output(z.array(zQuoteSummary)),
       defaults: oc.input(zQuoteDefaultsQuery).output(zQuoteDefaults),
       save: oc.input(zQuoteSave).output(zQuote),
-      deleteDraft: oc.input(zQuoteDeleteDraft).output(zQuoteDeleted),
-      revise: oc.input(zQuoteRevise).output(zQuote),
+      deleteDraft: oc.input(zQuoteRef).output(zQuoteDeleted),
+      revise: oc.input(zQuoteRef).output(zQuote),
       setSetting: oc.input(zQuoteSettingSet).output(zQuoteSetting),
     },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their

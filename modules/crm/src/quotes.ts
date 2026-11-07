@@ -16,10 +16,8 @@ import {
   vietnamToday,
   zDealQuotesQuery,
   zQuoteDefaultsQuery,
-  zQuoteDeleteDraft,
   zQuoteListQuery,
   zQuoteRef,
-  zQuoteRevise,
   zQuoteSave,
   zQuoteSettingSet,
   type Quote,
@@ -428,7 +426,7 @@ export const quoteSave = defineCommand({
 
 export const quoteDeleteDraft = defineCommand({
   name: 'crm.quote.delete_draft',
-  input: zQuoteDeleteDraft,
+  input: zQuoteRef,
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
@@ -456,7 +454,7 @@ export const quoteDeleteDraft = defineCommand({
 // draft is edited in place, an accepted quote is final, and a quote already superseded has a newer one. One revision of a quote exists at a time.
 export const quoteRevise = defineCommand({
   name: 'crm.quote.revise',
-  input: zQuoteRevise,
+  input: zQuoteRef,
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
