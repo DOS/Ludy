@@ -1412,6 +1412,15 @@ export class Runtime {
     return this.#sessions?.mode ?? null;
   }
 
+  // What the reseal pass of the subject keys (#2643) may do with the subject vault, and no more: the key ids the vault opens and one wrapped key wrapped again under the current key.
+  // The vault itself stays private, so no caller gets an unwrap, an open or a data key out of this; null without a vault. The worker's runtime is built like the API's (serverRuntime),
+  // so the pass wraps under the key the API opens.
+  get subjectKeyReseal(): { keyId: string; keyIds: string[]; rewrap: (orgId: string, subjectId: string, keyId: string, wrapped: Buffer) => { keyId: string; wrapped: Buffer } } | null {
+    const vault = this.#subjectVault;
+    if (!vault) return null;
+    return { keyId: vault.keyId, keyIds: vault.keyIds, rewrap: (orgId, subjectId, keyId, wrapped) => vault.rewrap(orgId, subjectId, keyId, wrapped) };
+  }
+
   // Checks each definition on its own; validate() checks how they fit together once every module is registered.
   register(defs: { commands?: CommandDef<any, any>[]; queries?: QueryDef<any, any>[] }): this {
     for (const given of defs.commands ?? []) {

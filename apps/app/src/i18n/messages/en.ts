@@ -9276,6 +9276,9 @@ export const en = {
       sessions: {
         list: 'List sessions',
       },
+      subject_key: {
+        reseal: 'Wrap subject keys again under the current key after a key rotation',
+      },
       stream: {
         check: 'Recheck the live update stream',
       },
