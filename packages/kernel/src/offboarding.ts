@@ -27,7 +27,8 @@ export const EXPORT_TABLES = {
   'kernel.legal_entity': { from: 'crove_kernel.legal_entity', omit: [] },
   'kernel.member_invite': { from: 'crove_kernel.member_invite', omit: ['token_sha256'] },
   'kernel.party': { from: 'crove_kernel.party', omit: ['search'] },
-  'kernel.file': { from: 'crove_kernel.file', omit: [] },
+  // The file rows of meeting audio and video are left out (ADR-0047 point 7, #2579): no export carries a recording, and the rows name the meeting.
+  'kernel.file': { from: "(SELECT f.* FROM crove_kernel.file f WHERE f.source NOT IN ('meeting_audio', 'meeting_video'))", omit: [] },
   'kernel.inbound_message': { from: 'crove_kernel.inbound_message', omit: [] },
   'kernel.extraction': { from: 'crove_kernel.extraction', omit: [] },
   'kernel.proposal': { from: 'crove_kernel.proposal', omit: [] },
@@ -113,6 +114,10 @@ export const EXPORT_TABLES = {
   'social.metric_snapshot': { from: 'crove_social.metric_snapshot', omit: [] },
   'social.queue': { from: 'crove_social.queue', omit: [] },
   'social.queue_slot': { from: 'crove_social.queue_slot', omit: [] },
+  // Meetings (ADR-0047 point 7, #2579): the meetings shared with the whole org, and per recorder how many attendees-only meetings were left out (crove_kernel.
+  // meeting_private_counts, a definer that answers counts only). Never audio or video.
+  'meetings.meeting': { from: 'crove_kernel.meeting_export_rows()', omit: [] },
+  'meetings.private_count': { from: 'crove_kernel.meeting_private_counts()', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;

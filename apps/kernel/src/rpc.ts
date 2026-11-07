@@ -818,6 +818,10 @@ export function createRpcHandler(
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
+      settings: {
+        get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
+        set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
+      },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
         remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),

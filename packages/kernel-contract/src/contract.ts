@@ -311,6 +311,9 @@ import {
   zMeetingReaderRemove,
   zMeetingReaderResult,
   zMeetingRef,
+  zMeetingSettings,
+  zMeetingSettingsGet,
+  zMeetingSettingsSet,
   zMeetingSummary,
 } from './meetings.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -686,6 +689,11 @@ export const contract = {
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
+    settings: {
+      get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
+      set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
       remove: oc.input(zMeetingReaderRemove).output(zMeetingReaderResult),

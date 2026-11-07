@@ -2276,6 +2276,9 @@ export interface KernelTenantTable {
   approval_preset: Generated<string>;
   approval_policy_version: Generated<number>;
   conversation_token: string | null;
+  meeting_audio_retention_days: Generated<number>;
+  meeting_video_retention_days: Generated<number>;
+  meeting_text_retention_days: Generated<number>;
 }
 
 /** crove_kernel.today_mail */
@@ -2338,8 +2341,8 @@ export interface MeetingsMeetingTable {
   consent_confirmed_by: ColumnType<string, string, NotGranted>;
   consent_confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   consent_notice_version: ColumnType<string, string | undefined, NotGranted>;
-  audio_retention_date: string;
-  text_retention_date: string;
+  audio_retention_date: ColumnType<string, string, NotGranted>;
+  text_retention_date: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }

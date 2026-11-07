@@ -37,6 +37,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
+import { SHRED_REF_FIRST_LOOKBACK_DAYS, replayShreds, runMeetingsRetention, sweepMeetingMedia, syncShredRefs } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
@@ -226,6 +227,8 @@ interface YearArchiveJob {
   requestCommandId: string | null;
 }
 const YEAR_ARCHIVE_RETRY_LIMIT = 3;
+// How often the meetings maintenance runs (#2579): shred references, and the objects and file rows of deleted meetings.
+const MEETINGS_SWEEP_MS = 60_000;
 
 interface PortalListJob {
   orgId: string;
@@ -934,6 +937,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Threads past their org's retention (CV6, #2305), each org in its own system context.
       const conversations = await purgeExpiredConversations({ runtime: deps.runtime, workerDb: deps.workerDb });
       console.log(`[retention] conversation_threads=${conversations}`);
+      // Meeting audio, video and text past the periods stamped on them (#2579), each in its meeting's own org. A failure is logged and alerted by the job
+      // itself and never stops the rest of the run.
+      if (deps.runtime.installed('meetings')) {
+        await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
+          opsAlert('[meetings-retention] ALERT the nightly shred failed; the error is in the worker log', error);
+        });
+      }
     } finally {
       // Each catches its own errors; they run even when a database purge failed.
       await sweepStaging(deps.store);
@@ -1757,6 +1767,44 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (resealTimer) {
     resealTimer.unref();
     void resealSweep();
+  }
+
+  // Meetings (#2579): the shred references of meetings a person deleted are written to the archive store, and the ciphertext objects and file rows of every
+  // deleted or expired meeting are removed, every minute; after a restore, the references delete again what the restore brought back (ADR-0017 section 8).
+  // Each pass catches its own errors: a store that is down is tried again on the next one.
+  let meetingsMaintaining = false;
+  let shredRefsSince = new Date(Date.now() - SHRED_REF_FIRST_LOOKBACK_DAYS * 86_400_000);
+  const shredRefsWritten = new Set<string>();
+  const meetingsMaintenance = async () => {
+    if (meetingsMaintaining) return;
+    meetingsMaintaining = true;
+    try {
+      if (deps.archive) {
+        const passStart = new Date();
+        try {
+          const synced = await syncShredRefs({ workerDb: deps.workerDb, store: deps.archive.store, since: shredRefsSince, written: shredRefsWritten });
+          if (synced.written > 0) console.log(`[meetings-retention] shred references written=${synced.written}`);
+          // The next pass reads from just before this one started: a deletion committed while it ran is still seen.
+          shredRefsSince = new Date(passStart.getTime() - 10 * 60_000);
+        } catch (error) {
+          console.error('[meetings-retention] shred references', error instanceof Error ? error.name : typeof error);
+        }
+      }
+      await sweepMeetingMedia({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store });
+    } catch (error) {
+      console.error('[meetings-retention] sweep', error instanceof Error ? error.name : typeof error);
+    } finally {
+      meetingsMaintaining = false;
+    }
+  };
+  const meetingsTimer = deps.runtime.installed('meetings') ? setInterval(() => void meetingsMaintenance(), MEETINGS_SWEEP_MS) : null;
+  if (meetingsTimer) {
+    meetingsTimer.unref();
+    // At start: whatever a restore brought back is deleted again before the first sweep, which then removes what that left.
+    void (async () => {
+      if (deps.archive) await replayShreds({ runtime: deps.runtime, store: deps.archive.store }).catch((error: unknown) => console.error('[shred-replay]', error instanceof Error ? error.name : typeof error));
+      await meetingsMaintenance();
+    })();
   }
 
   // Channel tokens are renewed before they expire (S6.4), whatever module uses the channel.
@@ -2601,6 +2649,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (refreshTimer) clearInterval(refreshTimer);
     if (calendarTimer) clearInterval(calendarTimer);
     if (resealTimer) clearInterval(resealTimer);
+    if (meetingsTimer) clearInterval(meetingsTimer);
     if (metricsTimer) clearInterval(metricsTimer);
     if (sizeTimer) clearInterval(sizeTimer);
     if (holdTimer) clearInterval(holdTimer);
