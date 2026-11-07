@@ -117,8 +117,10 @@ CREATE INDEX IF NOT EXISTS payroll_line_employment_idx ON crove_hr.payroll_line 
 CREATE INDEX IF NOT EXISTS payroll_line_adjusts_idx ON crove_hr.payroll_line (org_id, adjusts_run_id) WHERE adjusts_run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS payroll_line_entity_idx ON crove_hr.payroll_line (legal_entity_id, org_id);
 SELECT crove_kernel.apply_tenant_rls('crove_hr.payroll_line');
--- A line is never deleted by a tenant role; the identity, the run, the person and the creation never change.
+-- The identity, the run, the person and the creation of a line never change. A tenant role may delete a line, and only the draft run's: recalculating a draft removes the pay line of a
+-- person no longer paid that month (ended before it, erased). The frozen_row guard below refuses every delete of a line of an approved run, whoever asks.
 REVOKE DELETE, UPDATE ON crove_hr.payroll_line FROM crove_tenant;
+GRANT DELETE ON crove_hr.payroll_line TO crove_tenant;
 GRANT UPDATE (employment_id, status, inputs, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost, breakdown, checks, rules_used, refusal, updated_at)
   ON crove_hr.payroll_line TO crove_tenant;
 
@@ -177,6 +179,14 @@ CREATE TRIGGER frozen_row BEFORE INSERT OR UPDATE OR DELETE ON crove_hr.payroll_
 -- Both guards fire in replica mode as well.
 ALTER TABLE crove_hr.payroll_run ENABLE ALWAYS TRIGGER frozen_row;
 ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row;
+-- TRUNCATE ignores the row-level guard, so a statement-level refusal stands beside it, as make_append_only does for the other kept records: no role empties either table (the org
+-- purge deletes row by row under the guard's own checks).
+DROP TRIGGER IF EXISTS append_only_truncate ON crove_hr.payroll_run;
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON crove_hr.payroll_run FOR EACH STATEMENT EXECUTE FUNCTION crove_kernel.reject_mutation();
+ALTER TABLE crove_hr.payroll_run ENABLE ALWAYS TRIGGER append_only_truncate;
+DROP TRIGGER IF EXISTS append_only_truncate ON crove_hr.payroll_line;
+CREATE TRIGGER append_only_truncate BEFORE TRUNCATE ON crove_hr.payroll_line FOR EACH STATEMENT EXECUTE FUNCTION crove_kernel.reject_mutation();
+ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER append_only_truncate;
 
 -- The row's legal entity: the org's default for a run, the run's for a line. Both fire in replica mode as well.
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.payroll_run;

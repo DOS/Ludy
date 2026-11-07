@@ -8,7 +8,8 @@
 //
 // No model call is made in this build: the flags are deterministic checks over stored facts, and the sheet works with AI off (the coworker is #2534).
 //
-// Audit facts carry ids, counts, field names and the fingerprint, never an amount or a name.
+// Audit facts carry ids, counts and field names, never an amount, a name or the fingerprint: audit rows reach the WORM archive, and a plain hash over a small run's inputs and figures
+// could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
 import { money, toMoney, calculatePayroll, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
@@ -367,7 +368,24 @@ export const runRecalculate = defineCommand({
         added += 1;
       }
     }
-    ctx.audit({ runId: run.id, recalculated: people.length - added, added, workingDaysChanged: workingDays !== run.working_days });
+    // A person no longer paid in this month (ended before it, erased, or left with no terms in force since it was opened) leaves the sheet: their pay line is removed from the draft.
+    // Only a draft run's lines can be deleted (the frozen_row guard), so an approved month never loses one.
+    const paidNow = new Set(people.map((p) => p.employeeId));
+    const gone = lines.filter((l) => !paidNow.has(l.employee_id));
+    if (gone.length > 0) {
+      await ctx.trx
+        .deleteFrom('crove_hr.payroll_line')
+        .where('org_id', '=', ctx.orgId)
+        .where('run_id', '=', run.id)
+        .where('kind', '=', 'pay')
+        .where(
+          'id',
+          'in',
+          gone.map((l) => l.id),
+        )
+        .execute();
+    }
+    ctx.audit({ runId: run.id, recalculated: people.length - added, added, removed: gone.length, workingDaysChanged: workingDays !== run.working_days });
     return { runId: run.id, lines: people.length };
   },
 });
@@ -603,7 +621,11 @@ export const runApprove = defineCommand({
       const same = (a: string | null, b: string | null) => (a === null || b === null ? a === b : money(a).equals(money(b)));
       return !(same(f.gross, l.gross) && same(f.employee_insurance, l.employee_insurance) && same(f.employer_insurance, l.employer_insurance) && same(f.union_fee, l.union_fee) && same(f.taxable_income, l.taxable_income) && same(f.pit, l.pit) && same(f.net, l.net) && same(f.employer_cost, l.employer_cost));
     });
-    if (stale.length > 0) throw new DomainError('HR_RUN_STALE', 409, `${stale.length} dòng không còn khớp với hợp đồng, người phụ thuộc hoặc quy tắc hiện tại; hãy bấm tính lại cả bảng rồi xem lại`, { stale: stale.length });
+    // A pay line of a person no longer paid in this month (ended before it, erased, no terms in force) is stale too: approving would freeze pay for someone who is not paid.
+    const paidNow = new Set(people.map((p) => p.employeeId));
+    const orphaned = [...payLines.keys()].filter((employeeId) => !paidNow.has(employeeId));
+    const staleCount = stale.length + orphaned.length;
+    if (staleCount > 0) throw new DomainError('HR_RUN_STALE', 409, `${staleCount} dòng không còn khớp với hợp đồng, người phụ thuộc, nhân sự hoặc quy tắc hiện tại; hãy bấm tính lại cả bảng rồi xem lại`, { stale: staleCount });
     const { used, blocking } = rulesOfLines(lines);
     // The gate: a rule still `commentary` (not yet read against its primary text by the accountant) blocks the month. The answer lists the rows with where each comes from.
     if (blocking.length > 0) {
@@ -628,7 +650,7 @@ export const runApprove = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', run.id)
       .execute();
-    ctx.audit({ runId: run.id, month: run.month, lines: lines.length, rules: used.length, flaggedLines: flagged, fingerprint, approval: auditValue(RUN, 'approval', totals) });
+    ctx.audit({ runId: run.id, month: run.month, lines: lines.length, rules: used.length, flaggedLines: flagged, approval: auditValue(RUN, 'approval', totals) });
     return { runId: run.id, lines: lines.length };
   },
 });

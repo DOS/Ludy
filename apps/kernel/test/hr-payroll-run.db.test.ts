@@ -309,6 +309,36 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     setRuleStatus('commentary');
   });
 
+  it('takes a person no longer paid out of the sheet on recalculation, and refuses to approve while their line is still there', async () => {
+    setRuleStatus('confirmed');
+    const o = await org();
+    const ids = await o.team();
+    const run = await o.open();
+    expect((await o.sheet(run.runId)).lines).toHaveLength(3);
+    // The second employee is ended on the last day of the month before: they are not paid in November, but their line was opened with the sheet.
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: ids[1], endedOn: '2026-10-31' });
+    const before = await o.sheet(run.runId);
+    await expect(o.approve(run.runId, before.fingerprint)).rejects.toMatchObject({ code: 'HR_RUN_STALE' });
+    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
+    const after = await o.sheet(run.runId);
+    expect(after.lines.map((l) => l.employeeId).sort()).toEqual([ids[0], ids[2]].sort());
+    expect(Number(after.totals.gross)).toBe(45_000_000);
+    await o.approve(run.runId, after.fingerprint);
+    const [recalc] = (await o.audits('hr.payroll.run.recalculate')).slice(-1);
+    expect(recalc?.detail).toMatchObject({ removed: 1 });
+    // An approved month never loses a line, not even to a recalculation or a direct delete.
+    await expect(o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId })).rejects.toMatchObject({ code: 'HR_RUN_NOT_DRAFT' });
+    await expect(withAdmin((c) => c.query('DELETE FROM crove_hr.payroll_line WHERE id = $1', [after.lines[0]?.id]))).rejects.toThrow(/frozen/);
+    setRuleStatus('commentary');
+  });
+
+  it('refuses TRUNCATE of the pay run tables to every role, the table owner included', async () => {
+    await org();
+    for (const table of ['crove_hr.payroll_line', 'crove_hr.payroll_run']) {
+      await expect(withAdmin((c) => c.query(`TRUNCATE ${table} CASCADE`)), table).rejects.toThrow(/is append-only/);
+    }
+  });
+
   it('never changes an approved run or its lines: the commands refuse, and so does the database for anyone', async () => {
     setRuleStatus('confirmed');
     const o = await org();
@@ -401,7 +431,10 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
     for (const needle of [...NAMES, '15000000', '9000000', '30000000', '54000000']) expect(all, needle).not.toContain(needle);
     const [approval] = await o.audits('hr.payroll.run.approve');
-    expect(approval?.detail).toMatchObject({ runId: run.runId, month: MONTH, lines: 3, fingerprint: s.fingerprint, approval: { redacted: 'sensitive' } });
+    expect(approval?.detail).toMatchObject({ runId: run.runId, month: MONTH, lines: 3, approval: { redacted: 'sensitive' } });
+    // The fingerprint is a plain hash over inputs and figures: audit rows reach the WORM archive, so it stays in the run's own approval record and out of every audit row.
+    expect(approval?.detail).not.toHaveProperty('fingerprint');
+    expect(all, 'the approval fingerprint').not.toContain(s.fingerprint);
     setRuleStatus('commentary');
   });
 });
