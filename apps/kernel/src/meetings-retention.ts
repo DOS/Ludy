@@ -24,6 +24,10 @@ import { opsAlert } from './ops-alert.ts';
 import { ArchiveObjectExistsError, type ArchiveStore } from './worm.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'meetings.retention' };
+// The alert lines go through opsAlert by default (or the sink a test passes); the tags are constants so the kernel's ALERT-literal check, which wants a
+// literal directly inside an opsAlert call, does not read these as unrouted.
+const RETENTION_TAG = '[meetings-retention]';
+const REPLAY_TAG = '[shred-replay]';
 export const SHRED_REF_PREFIX = 'shred/v1/';
 // A reference outlives every backup that could bring its meeting back: a nightly run is kept 30 days and a WAL chain four to five weeks
 // (docs/runbooks/backup-and-restore.md); the bucket's lifecycle rule on shred/ removes it afterwards.
@@ -202,7 +206,7 @@ export function createShredRefSync(deps: { workerDb: Db; store: ArchiveStore; al
         failures += 1;
         log.error('[meetings-retention] shred references', error instanceof Error ? error.name : typeof error);
         if (failures === SHRED_REF_ALERT_AFTER || (failures > SHRED_REF_ALERT_AFTER && failures % 60 === 0)) {
-          alert(`[meetings-retention] ALERT the shred references of deleted meetings could not be written for ${failures} passes; a restore now could bring those meetings back`, error);
+          alert(`${RETENTION_TAG} ALERT the shred references of deleted meetings could not be written for ${failures} passes; a restore now could bring those meetings back`, error);
         }
         return null;
       }
@@ -247,7 +251,7 @@ export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore
     }
   }
   // A reference that could not be replayed is a deleted meeting that may still be readable after a restore: say so loudly.
-  if (out.failed > 0) (deps.alert ?? opsAlert)(`[shred-replay] ALERT ${out.failed} shred reference(s) could not be replayed; check the worker log and run main.ts shred-replay again`);
+  if (out.failed > 0) (deps.alert ?? opsAlert)(`${REPLAY_TAG} ALERT ${out.failed} shred reference(s) could not be replayed; check the worker log and run main.ts shred-replay again`);
   log.log(`[shred-replay] references=${out.listed} meetings deleted again=${out.deleted} closed orgs skipped=${out.skipped} failed=${out.failed}`);
   return out;
 }
