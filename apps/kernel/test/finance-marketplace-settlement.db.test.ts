@@ -20,8 +20,9 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
-const SETTLEMENT_COLUMNS = ['created_at', 'id', 'legal_entity_id', 'org_id', 'payout_ref', 'period_end', 'period_start', 'platform', 'report_net', 'source_sha256'];
+const SETTLEMENT_COLUMNS = ['created_at', 'id', 'legal_entity_id', 'org_id', 'payout_ref', 'period_end', 'period_start', 'platform', 'report_net', 'reversal_of', 'source_sha256'];
 const LINE_COLUMNS = [
+  'adjustment',
   'commission',
   'created_at',
   'id',
@@ -95,13 +96,13 @@ suite('marketplace income reports as stored rows (#2516)', () => {
       await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, 'shopee', `ST${randomUUID().slice(0, 12)}`]);
       return id;
     });
-  const insertSettlement = (user: string, id: string, extra: { platform?: string; start?: string; end?: string; net?: string; ref?: string | null } = {}) => {
+  const insertSettlement = (user: string, id: string, extra: { platform?: string; start?: string; end?: string; net?: string; ref?: string | null; reversalOf?: string | null } = {}) => {
     const d = periodDay();
     return asTenant(
       user,
       orgId,
-      'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, payout_ref, report_net) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [orgId, id, extra.platform ?? 'shopee', extra.start ?? d, extra.end ?? d, extra.ref ?? null, extra.net ?? '95000'],
+      'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, payout_ref, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [orgId, id, extra.platform ?? 'shopee', extra.start ?? d, extra.end ?? d, extra.ref ?? null, extra.net ?? '95000', extra.reversalOf ?? null],
     );
   };
   const insertLine = (user: string, settlement: string, orderId: string, columns: Record<string, string> = {}, key = 'L1', org = orgId) => {
@@ -217,7 +218,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     );
     for (const table of ['channel_settlement', 'channel_settlement_line']) {
       for (const statement of [`UPDATE crove_finance.${table} SET org_id = org_id`, `DELETE FROM crove_finance.${table}`, `TRUNCATE crove_finance.${table} CASCADE`]) {
-        await expect(admin((c) => c.query(statement)), `${statement} as the table's owner`).rejects.toMatchObject({ message: expect.stringMatching(/./) });
+        await expect(admin((c) => c.query(statement)), `${statement} as the table's owner`).rejects.toMatchObject({ message: expect.stringMatching(/append-only/i) });
       }
     }
   });
@@ -248,8 +249,8 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   });
 
   it('is inserted by an owner and a member of the org and refused to a viewer, and what is stored is the entity of the org', async () => {
-    const orderId = await order(orgId);
     for (const [who, user] of [['owner', owner], ['member', member]] as const) {
+      const orderId = await order(orgId);
       const settlement = randomUUID();
       expect(await insertSettlement(user, settlement), `${who} stores a settlement`).toEqual({ code: '', rowCount: 1 });
       expect(await insertLine(user, settlement, orderId, { sales: '120000', commission: '6000', service_fee: '2000', payment_fee: '1000', shipping: '500', tax_withheld: '1200', net: '109300' }), `${who} stores a line`).toEqual({
@@ -269,7 +270,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const refused = randomUUID();
     expect((await insertSettlement(viewer, refused)).code, 'a viewer stores a settlement').toBe('42501');
     const settlement = await seedSettlement();
-    expect((await insertLine(viewer, settlement, orderId, {}, 'LV')).code, 'a viewer stores a line').toBe('42501');
+    expect((await insertLine(viewer, settlement, await order(orgId), {}, 'LV')).code, 'a viewer stores a line').toBe('42501');
   });
 
   it('reads only the rows of the org, and stores nothing in another org', async () => {
@@ -315,7 +316,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const start = '2027-03-01';
     const end = '2027-03-31';
     expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'tiktok_shop' })).code).toBe('');
-    expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'tiktok_shop' })).code, 'the same report again').toBe('23505');
+    expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'tiktok_shop' })).code, 'the same report again').toBe('23P01');
     expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'lazada' })).code, 'the same period of another platform').toBe('');
     expect((await insertSettlement(owner, randomUUID(), { platform: 'temu' })).code, 'a platform that is none of the three').toBe('23514');
     const settlement = await seedSettlement();
@@ -326,6 +327,59 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     expect((await insertLine(owner, settlement, orderId, {}, '')).code, 'an empty line key').toBe('23514');
     expect((await insertLine(owner, settlement, orderId, {}, 'x'.repeat(121))).code, 'a line key past its cap').toBe('23514');
     expect((await insertSettlement(owner, randomUUID(), { ref: 'y'.repeat(121) })).code, 'a payout reference past its cap').toBe('23514');
+  });
+
+  it('refuses a period that overlaps another that stands, for the same entity and platform only', async () => {
+    const first = randomUUID();
+    expect((await insertSettlement(owner, first, { start: '2027-04-01', end: '2027-04-15' })).code).toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-10', end: '2027-04-30' })).code, 'a later part of it').toBe('23P01');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-03-20', end: '2027-04-01' })).code, 'an earlier part of it').toBe('23P01');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-05', end: '2027-04-06' })).code, 'inside it').toBe('23P01');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-16', end: '2027-04-30' })).code, 'the day after it').toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-01', end: '2027-04-15', platform: 'lazada' })).code, 'another platform').toBe('');
+  });
+
+  it('undoes a wrong confirmation by a reversal that mirrors it, once, and then takes the corrected report', async () => {
+    const original = randomUUID();
+    const orderId = await order(orgId);
+    const period = { start: '2027-05-01', end: '2027-05-31' };
+    expect((await insertSettlement(owner, original, { ...period, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, original, orderId, {}, 'S1')).code).toBe('');
+    const bad = [
+      ['a net that is not the negative', { ...period, net: '95000' }],
+      ['another period', { start: '2027-05-01', end: '2027-05-30', net: '-95000' }],
+      ['another platform', { ...period, net: '-95000', platform: 'lazada' }],
+    ] as const;
+    for (const [why, extra] of bad) expect((await insertSettlement(owner, randomUUID(), { ...extra, reversalOf: original })).code, `a reversal with ${why}`).toBe('23514');
+    const reversal = randomUUID();
+    expect((await insertSettlement(owner, reversal, { ...period, net: '-95000', reversalOf: original })).code, 'the reversal').toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { ...period, net: '-95000', reversalOf: original })).code, 'a second reversal').toBe('23505');
+    expect((await insertSettlement(owner, randomUUID(), { ...period, net: '95000', reversalOf: reversal })).code, 'a reversal of a reversal').toBe('23514');
+    // Its lines repeat the original's, marked as adjustments, and nothing else.
+    expect((await insertLine(owner, reversal, orderId, {}, 'S1')).code, 'a mirrored line not marked as an adjustment').toBe('23514');
+    expect((await insertLine(owner, reversal, orderId, { adjustment: 'true', sales: '90000', net: '85000' }, 'S1')).code, 'a line with other figures').toBe('23514');
+    expect((await insertLine(owner, reversal, orderId, { adjustment: 'true' }, 'S9')).code, 'a line the original does not have').toBe('23514');
+    expect((await insertLine(owner, reversal, orderId, { adjustment: 'true' }, 'S1')).code, 'the mirrored line').toBe('');
+    // The corrected report for the same period stands, its sale line is the same order and key, and a third import of the period is refused.
+    const corrected = randomUUID();
+    expect((await insertSettlement(owner, corrected, { ...period, net: '94000' })).code, 'the corrected report').toBe('');
+    expect((await insertLine(owner, corrected, orderId, { commission: '6000', net: '94000' }, 'S1')).code, 'its sale line').toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { ...period, net: '94000' })).code, 'the same period a third time').toBe('23P01');
+  });
+
+  it('refuses a sale line already stored for the order and line in another settlement that stands, unless it is a marked later adjustment', async () => {
+    const orderId = await order(orgId);
+    const a = randomUUID();
+    const b = randomUUID();
+    expect((await insertSettlement(owner, a, { start: '2027-06-01', end: '2027-06-15' })).code).toBe('');
+    expect((await insertSettlement(owner, b, { start: '2027-06-16', end: '2027-06-30' })).code).toBe('');
+    expect((await insertLine(owner, a, orderId, {}, 'S1')).code).toBe('');
+    expect((await insertLine(owner, b, orderId, {}, 'S1')).code, 'the same sale again').toBe('23505');
+    expect((await insertLine(owner, b, orderId, { adjustment: 'true' }, 'S1')).code, 'marked as a later adjustment').toBe('');
+    expect((await insertLine(owner, b, orderId, { sales: '0', commission: '0', refund: '30000', net: '-30000' }, 'R1')).code, 'a refund line is not a sale line').toBe('');
+    const c = randomUUID();
+    expect((await insertSettlement(owner, c, { start: '2027-07-01', end: '2027-07-15' })).code).toBe('');
+    expect((await insertLine(owner, c, await order(orgId), {}, 'S1')).code, 'the same key of another order').toBe('');
   });
 
   it('names an order and a settlement of its own org, and no other', async () => {
