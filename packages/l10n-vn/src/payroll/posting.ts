@@ -170,9 +170,11 @@ export function buildPosting(regime: PayrollRegime, lines: readonly PostingLine[
     let employer = ZERO();
     const groups = { social: ZERO(), health: ZERO(), unemployment: ZERO() };
     for (const f of line.funds) {
-      employee = employee.plus(f.employee);
-      employer = employer.plus(f.employer);
-      groups[FUND_GROUP[f.fund]] = groups[FUND_GROUP[f.fund]].plus(f.employee).plus(f.employer);
+      const fe = money(f.employee);
+      const fr = money(f.employer);
+      employee = employee.plus(fe);
+      employer = employer.plus(fr);
+      groups[FUND_GROUP[f.fund]] = groups[FUND_GROUP[f.fund]].plus(fe).plus(fr);
     }
     const union = money(line.unionFee);
     const pit = money(line.pit);
@@ -307,6 +309,7 @@ export interface BankFileTable {
 
 /** One row per person with the net pay, in the layout's column order. Ludy writes a file; it never initiates a payment. A person whose net is zero or less has no row. */
 export function buildBankFile(people: readonly BankFilePerson[], month: string, layout: BankFileLayout = DEFAULT_BANK_FILE_LAYOUT): BankFileTable {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error(`not a month (YYYY-MM): ${month}`);
   const [year, m] = month.split('-') as [string, string];
   const content = layout.content.replaceAll('{month}', `${m}/${year}`);
   const paid = people.filter((p) => money(p.net).greaterThan(0));
