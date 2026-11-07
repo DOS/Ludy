@@ -20,13 +20,17 @@ import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import type { SealedChannelCredential } from '@crove/kernel';
+import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@crove/kernel';
 import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
+import type { SubjectKeyResealDeps, SubjectKeyResealOutcome } from './subject-key-reseal.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.reseal' };
 const CHAT_ACTOR: SystemActor = { type: 'system', component: 'social.chat_alert.reseal' };
 export const RESEAL_SWEEP_MS = 10 * 60_000;
 const RESEAL_LIMIT = 200;
+const SUBJECT_ACTOR: SystemActor = { type: 'system', component: 'kernel.subject_key.reseal' };
+const SUBJECT_LOCK_KEY = 'crove.subject-key-reseal';
+const SUBJECT_RESEAL_LIMIT = SUBJECT_KEY_RESEAL_BATCH;
 // At most this many pages a pass; the rest waits for the next pass.
 const RESEAL_PAGES = 5;
 const LOCK_KEY = 'crove.credential-reseal';
@@ -69,9 +73,6 @@ const openableKeysOf = (broker: CredentialBroker): ReadonlySet<string> | null =>
   const ids = (broker as { keyIds?: unknown }).keyIds;
   return Array.isArray(ids) && ids.every((id) => typeof id === 'string') ? new Set(ids as string[]) : null;
 };
-
-// One session of the worker's own login, for the other reseal passes (the subject keys, #2643): this file is the one listed to hold such a handle (apps/kernel/test/invariant/write-path.test.ts).
-export const workerConnection = (db: Db) => db.connection();
 
 export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome> {
   const outcome: ResealOutcome = { resealed: 0, failed: 0, leftActive: 0, leftInactive: 0, leftWaiting: 0, unopenable: [], skipped: false };
@@ -234,4 +235,62 @@ async function resealChatAlert(deps: ResealDeps, row: { org_id: string; alert_id
     options,
   );
   return stored.resealed;
+}
+
+// The subject keys of people (#2643, ADR-0017 section 7): see subject-key-reseal.ts for what the pass does. It lives here because the worker's one database handle for the reseal passes does.
+export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<SubjectKeyResealOutcome> {
+  const outcome: SubjectKeyResealOutcome = { resealed: 0, failed: 0, left: 0, unopenable: [], skipped: false };
+  const vault = deps.runtime.subjectKeyReseal;
+  if (!vault) return { ...outcome, skipped: true };
+  const current = vault.keyId;
+  // Only the rows under a key this vault opens are read: one under a lost key (or damaged bytes under it) can never hide openable rows behind it, and stays in the database, counted below.
+  const openable = vault.keyIds;
+  return deps.workerDb.connection().execute(async (db) => {
+    const { rows: lock } = await sql<{ locked: boolean }>`SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended(${SUBJECT_LOCK_KEY}, 0)) AS locked`.execute(db);
+    if (!lock[0]?.locked) return { ...outcome, skipped: true };
+    try {
+      let after = null as { orgId: string; id: string } | null;
+      for (let page = 0; page < RESEAL_PAGES; page += 1) {
+        const { rows } = await sql<{ org_id: string; id: string; key_id: string; wrapped_key: Buffer }>`
+          SELECT org_id, id, key_id, wrapped_key FROM crove_kernel.subject_key_reseal_due(${current}, ${openable}::text[], ${SUBJECT_RESEAL_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
+        // Rows come in (org, id) order: one batch per org.
+        const byOrg = new Map<string, Array<{ id: string; fromKeyId: string; fromWrapped: string; keyId: string; wrapped: string }>>();
+        for (const row of rows) {
+          try {
+            const next = vault.rewrap(row.org_id, row.id, row.key_id, row.wrapped_key);
+            const items = byOrg.get(row.org_id) ?? [];
+            items.push({ id: row.id, fromKeyId: row.key_id, fromWrapped: Buffer.from(row.wrapped_key).toString('base64'), keyId: next.keyId, wrapped: next.wrapped.toString('base64') });
+            byOrg.set(row.org_id, items);
+          } catch (error) {
+            // The key id only: never the subject, the bytes or what they wrap.
+            outcome.failed += 1;
+            console.error(`[subject-key-reseal] a subject key under ${row.key_id} did not unwrap`, error instanceof Error ? error.name : typeof error);
+          }
+        }
+        for (const [orgId, items] of byOrg) {
+          try {
+            const done = await deps.runtime.execute<{ resealed: number; skipped: number }>('kernel.subject_key.reseal', { items }, { actor: SUBJECT_ACTOR, orgId });
+            outcome.resealed += done.resealed;
+          } catch (error) {
+            outcome.failed += items.length;
+            console.error(`[subject-key-reseal] org ${createHash('sha256').update(orgId).digest('hex').slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+          }
+        }
+        const last = rows.at(-1);
+        if (!last || rows.length < SUBJECT_RESEAL_LIMIT) break;
+        after = { orgId: last.org_id, id: last.id };
+      }
+      const { rows: counts } = await sql<{ key_id: string; n: string }>`SELECT key_id, n FROM crove_kernel.subject_key_key_counts()`.execute(db);
+      const openableIds = new Set(openable);
+      for (const c of counts) {
+        if (c.key_id === current) continue;
+        outcome.left += Number(c.n);
+        if (!openableIds.has(c.key_id)) outcome.unopenable.push({ keyId: c.key_id, count: Number(c.n) });
+      }
+      outcome.unopenable.sort((a, b) => a.keyId.localeCompare(b.keyId));
+      return outcome;
+    } finally {
+      await sql`SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended(${SUBJECT_LOCK_KEY}, 0))`.execute(db);
+    }
+  });
 }

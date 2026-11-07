@@ -13,7 +13,7 @@ import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
-import { resealSubjectKeys, subjectVaultOfBroker, unopenableSubjectKeysLog } from '../src/subject-key-reseal.ts';
+import { resealSubjectKeys, unopenableSubjectKeysLog } from '../src/subject-key-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -72,7 +72,9 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     return { orgId, person, seal, open, rowOf };
   }
 
-  const pass = (vault: SubjectVault) => resealSubjectKeys({ runtime: workerRt, vault, workerDb: createDb(workerPool) });
+  // The worker's runtime holds the vault, as the API's does (serverRuntime): the pass takes it from there.
+  const workerRtWith = (vault: SubjectVault) => new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, subjectVault: vault }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
+  const pass = (vault: SubjectVault) => resealSubjectKeys({ runtime: workerRtWith(vault), workerDb: createDb(workerPool) });
   const rotatedRuntime = () =>
     new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootNew) }).register({ commands: [...kernelCommands, SEAL], queries: [...kernelQueries({ inboundDomain: null }), OPEN] });
 
@@ -152,21 +154,20 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     // Re-wrapped by a key the worker no longer holds: a key id of another root, as if CREDENTIAL_KEY_PREVIOUS had been removed too early.
     const unknownId = 'k1-ffffffffffffffff';
     await withAdmin((c) => c.query('UPDATE crove_kernel.subject_key SET key_id = $1 WHERE org_id = $2 AND ref = $3', [unknownId, o.orgId, lost.ref]));
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const done = await pass(vaultOf(rootNew, rootOld));
-      expect(done.failed).toBeGreaterThanOrEqual(1);
-      expect(done.unopenable).toContainEqual({ keyId: unknownId, count: 1 });
-      const text = logged.mock.calls.flat().map(String).join(' ');
-      expect(text).not.toContain(VALUE);
-      expect(text).toContain(unknownId);
-      // Key ids and counts only: no subject id and no wrapped bytes.
-      const lostRow = await o.rowOf(lost.ref);
-      expect(text).not.toContain(lostRow?.id ?? 'x');
-      expect(text).not.toContain(Buffer.from(lostRow?.wrapped_key ?? Buffer.alloc(1)).toString('base64'));
-    } finally {
-      logged.mockRestore();
-    }
+    const done = await pass(vaultOf(rootNew, rootOld));
+    // The pass reads only rows under a key its vault opens: the lost one is not read (so it never crowds the others out), not counted as failed, and reported by its key id.
+    expect(done.failed).toBe(0);
+    expect(done.unopenable).toContainEqual({ keyId: unknownId, count: 1 });
+    expect(done.left).toBeGreaterThanOrEqual(1);
+    const readable = await workerPool.query<{ id: string }>('SELECT id FROM crove_kernel.subject_key_reseal_due($1, $2::text[], 1000, NULL, NULL)', [vaultOf(rootNew).keyId, [vaultOf(rootNew).keyId, vaultOf(rootOld).keyId]]);
+    const lostRow = await o.rowOf(lost.ref);
+    expect(readable.rows.map((r) => r.id)).not.toContain(lostRow?.id);
+    // Key ids and counts only: no subject id and no wrapped bytes.
+    const text = unopenableSubjectKeysLog(done.unopenable).join(' ');
+    expect(text).toContain(unknownId);
+    expect(text).not.toContain(VALUE);
+    expect(text).not.toContain(lostRow?.id ?? 'x');
+    expect(text).not.toContain(Buffer.from(lostRow?.wrapped_key ?? Buffer.alloc(1)).toString('base64'));
     expect((await o.rowOf(lost.ref))?.key_id).toBe(unknownId);
     expect((await o.rowOf(fine.ref))?.key_id).toBe(vaultOf(rootNew).keyId);
     expect(unopenableSubjectKeysLog([{ keyId: unknownId, count: 1 }])[0]).toContain(unknownId);
@@ -208,7 +209,7 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     if (!row) throw new Error('no row');
     const call = (client: pg.Pool, text: string, params: unknown[] = []) => client.query(text, params);
     // The API login has no EXECUTE on any of the three definers.
-    await expect(call(pool, 'SELECT * FROM crove_kernel.subject_key_reseal_due($1, 10, NULL, NULL)', ['x'])).rejects.toMatchObject({ code: '42501' });
+    await expect(call(pool, 'SELECT * FROM crove_kernel.subject_key_reseal_due($1, $2::text[], 10, NULL, NULL)', ['x', ['x']])).rejects.toMatchObject({ code: '42501' });
     await expect(call(pool, 'SELECT * FROM crove_kernel.subject_key_key_counts()')).rejects.toMatchObject({ code: '42501' });
     await expect(call(pool, 'SELECT crove_kernel.subject_key_reseal($1::uuid, $2, $3, $4, $5)', [row.id, row.key_id, row.wrapped_key, 'k-new', Buffer.alloc(60)])).rejects.toMatchObject({ code: '42501' });
     // The worker login reads, but the write needs the system context of an org: outside one it is refused.
@@ -219,11 +220,14 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     expect((await o.rowOf(sealed.ref))?.key_id).toBe(row.key_id);
   });
 
-  it('builds the worker vault from the broker, wiping what it derived, and none without a key', () => {
-    expect(subjectVaultOfBroker(undefined)).toBeNull();
-    const credentials = new CredentialVault([rootNew, rootOld]);
-    const vault = subjectVaultOfBroker(credentials as never);
-    expect(vault?.keyId).toBe(vaultOf(rootNew).keyId);
-    expect(vault?.keyIds).toEqual([vaultOf(rootNew).keyId, vaultOf(rootOld).keyId]);
+  it('takes the vault from the runtime, which shows the pass key ids and a rewrap only, and does nothing without one', async () => {
+    const vault = vaultOf(rootNew, rootOld);
+    const view = workerRtWith(vault).subjectKeyReseal;
+    expect(view?.keyId).toBe(vault.keyId);
+    expect(view?.keyIds).toEqual(vault.keyIds);
+    expect(Object.keys(view ?? {}).sort()).toEqual(['keyId', 'keyIds', 'rewrap']);
+    // No vault (no credential key): no view, and the pass skips.
+    expect(workerRt.subjectKeyReseal).toBeNull();
+    expect(await resealSubjectKeys({ runtime: workerRt, workerDb: createDb(workerPool) })).toMatchObject({ skipped: true, resealed: 0 });
   });
 });
