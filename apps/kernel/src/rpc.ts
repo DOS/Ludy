@@ -433,6 +433,20 @@ export function createRpcHandler(
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inNotes(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
+  // The meetings module (#2576): its procedures answer 404 when the deployment leaves it out.
+  const meetings = runtime.installed('meetings');
+  const inMeetings = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!meetings) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Cuộc họp chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const meetingsCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inMeetings(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const meetingsQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inMeetings(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
   // The HR module (#2530): its procedures answer 404 when the deployment leaves it out, as the notes module's do. Owners and admins only (the database's policy and
   // every command's and query's access); every read is a sensitive query.
   const hr = runtime.installed('hr');
@@ -763,6 +777,18 @@ export function createRpcHandler(
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
           end: os.hr.payroll.dependents.end.handler(hrCommand('hr.payroll.dependent.end')),
         },
+        runs: {
+          list: os.hr.payroll.runs.list.handler(hrQuery('hr.payroll.run.list')),
+          sheet: os.hr.payroll.runs.sheet.handler(hrQuery('hr.payroll.run.sheet')),
+          open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
+          recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
+          approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        lines: {
+          setInputs: os.hr.payroll.lines.setInputs.handler(hrCommand('hr.payroll.line.inputs.set')),
+          adjust: os.hr.payroll.lines.adjust.handler(hrCommand('hr.payroll.line.adjust')),
+          payslip: os.hr.payroll.lines.payslip.handler(hrQuery('hr.payroll.line.payslip')),
+        },
       },
     },
     notes: {
@@ -796,6 +822,17 @@ export function createRpcHandler(
         handOver: os.notes.todos.handOver.handler(notesCommand('notes.todo.hand_over')),
         myWork: os.notes.todos.myWork.handler(notesQuery('notes.my_work')),
         counts: os.notes.todos.counts.handler(notesQuery('notes.todo.counts')),
+      },
+    },
+    meetings: {
+      list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
+      get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
+      create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
+      delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
+      ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
+      readers: {
+        add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
+        remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),
       },
     },
     crm: {

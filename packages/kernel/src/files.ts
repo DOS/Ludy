@@ -15,7 +15,8 @@ export const zIngestFile = z.object({
   generation: z.string().regex(GENERATION_PATTERN),
   // social: an image or video for a Social post (#372, #409), stored like any file but never sent to extraction.
   // import: a spreadsheet for a module's import (#465), also never sent to extraction.
-  source: z.enum(['upload', 'email', 'social', 'import']),
+  // meeting_audio, meeting_video: encrypted meeting media (issue #2576, ADR-0047), never sent to extraction.
+  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video']),
   // A video's duration, read by the server from the file (#409).
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   // An image's size as shown, read by the server from its header (#636); both or neither.

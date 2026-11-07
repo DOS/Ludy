@@ -16,6 +16,7 @@
     "@crove/kernel": "workspace:*",
     "@crove/kernel-contract": "workspace:*",
     "@crove/kernel-runtime": "workspace:*",
+    "@crove/l10n-vn": "workspace:*",
     "kysely": "catalog:"
   }
 }

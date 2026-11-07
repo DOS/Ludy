@@ -271,6 +271,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
+import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -302,6 +303,18 @@ import {
   zTodoUpdate,
   zTodoWritten,
 } from './notes.ts';
+import {
+  zMeetingCreate,
+  zMeetingCreated,
+  zMeetingDeleted,
+  zMeetingDetail,
+  zMeetingListInput,
+  zMeetingReaderAdd,
+  zMeetingReaderRemove,
+  zMeetingReaderResult,
+  zMeetingRef,
+  zMeetingSummary,
+} from './meetings.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -638,6 +651,20 @@ export const contract = {
       },
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
+      // The monthly pay run (#2531): open a month, type its inputs, read the sheet, approve it (R3, a fresh second factor), and correct an approved month by an adjustment line in a later run.
+      // Every read is a sensitive query. The payslip is a view of a stored line.
+      runs: {
+        list: oc.input(zHrRunList).output(z.array(zHrRunSummary)),
+        sheet: oc.input(zHrRunRef).output(zHrRunSheet),
+        open: oc.input(zHrRunOpen).output(zHrRunWritten),
+        recalculate: oc.input(zHrRunRecalculate).output(zHrRunWritten),
+        approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      lines: {
+        setInputs: oc.input(zHrLineInputsSet).output(zHrRunWritten),
+        adjust: oc.input(zHrLineAdjust).output(zHrRunWritten),
+        payslip: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
@@ -678,6 +705,18 @@ export const contract = {
       myWork: oc.input(zMyWorkInput).output(zMyWork),
       // How many to-dos each member has, for an owner or admin before removing one; no text.
       counts: oc.input(z.strictObject({})).output(z.array(zTodoCount)),
+    },
+  },
+  // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2).
+  meetings: {
+    list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
+    get: oc.input(zMeetingRef).output(zMeetingDetail),
+    create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    delete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    readers: {
+      add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
+      remove: oc.input(zMeetingReaderRemove).output(zMeetingReaderResult),
     },
   },
   // Crove Social (Social plan §3.3), when the deployment runs the social module.
