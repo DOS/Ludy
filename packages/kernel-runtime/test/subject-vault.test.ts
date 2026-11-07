@@ -109,6 +109,16 @@ describe('SubjectVault', () => {
     expect(rotated.keyIds).toEqual([rotated.keyId, keyId]);
   });
 
+  it('binds the new envelope to the new key id: the old envelope claimed under the new key id fails to open, and the new one claimed under the old id too (#2643)', () => {
+    const [oldRoot, newRoot] = [root(), root()];
+    const { keyId, wrapped } = vaultOf(oldRoot).newDataKey(org, subject);
+    const rotated = vaultOf(newRoot, oldRoot);
+    const next = rotated.rewrap(org, subject, keyId, wrapped);
+    expect(() => rotated.unwrap(org, subject, next.keyId, wrapped)).toThrow(SubjectKeyError);
+    expect(() => rotated.unwrap(org, subject, keyId, next.wrapped)).toThrow(SubjectKeyError);
+    expect(rotated.unwrap(org, subject, next.keyId, next.wrapped).length).toBe(32);
+  });
+
   it('refuses to wrap again a key under an unknown key id, damaged bytes, or another org or subject', () => {
     const [oldRoot, newRoot] = [root(), root()];
     const { keyId, wrapped } = vaultOf(oldRoot).newDataKey(org, subject);

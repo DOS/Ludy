@@ -142,6 +142,7 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     expect(rows[0]?.detail).toMatchObject({ resealed: 1, unchanged: 0, from_key_ids: [vaultOf(rootOld).keyId], key_ids: [vaultOf(rootNew).keyId] });
     expect(rows[0]?.row).not.toContain(Buffer.from(row?.wrapped_key ?? Buffer.alloc(0)).toString('base64'));
     expect(rows[0]?.row).not.toContain(VALUE);
+    expect(rows[0]?.row).not.toContain(row?.id ?? 'x');
   });
 
   it('reports a key under an unknown key id and leaves it as it is, never dropping it', async () => {
@@ -159,6 +160,10 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
       const text = logged.mock.calls.flat().map(String).join(' ');
       expect(text).not.toContain(VALUE);
       expect(text).toContain(unknownId);
+      // Key ids and counts only: no subject id and no wrapped bytes.
+      const lostRow = await o.rowOf(lost.ref);
+      expect(text).not.toContain(lostRow?.id ?? 'x');
+      expect(text).not.toContain(Buffer.from(lostRow?.wrapped_key ?? Buffer.alloc(1)).toString('base64'));
     } finally {
       logged.mockRestore();
     }
