@@ -18,6 +18,21 @@ export const hrManifest = defineModule({
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
       }),
+      // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the
+      // approval record holds the totals, so it is too. The ids, the status and the dates are internal.
+      payroll_line: columns(['org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'checks', 'rules_used', 'refusal', 'adjusts_run_id', 'note', 'created_by', 'created_at', 'updated_at'], {
+        inputs: 'sensitive',
+        gross: 'sensitive',
+        employee_insurance: 'sensitive',
+        employer_insurance: 'sensitive',
+        union_fee: 'sensitive',
+        taxable_income: 'sensitive',
+        pit: 'sensitive',
+        net: 'sensitive',
+        employer_cost: 'sensitive',
+        breakdown: 'sensitive',
+      }),
+      payroll_run: columns(['org_id', 'id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_by', 'approved_at', 'created_by', 'created_at', 'updated_at'], { approval: 'sensitive' }),
       payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
     },
   },
@@ -30,6 +45,8 @@ export const hrManifest = defineModule({
   entities: [
     { type: 'hr.payroll_dependent', table: 'payroll_dependent', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_employee', table: 'payroll_employee', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.hr,

@@ -763,6 +763,18 @@ export function createRpcHandler(
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
           end: os.hr.payroll.dependents.end.handler(hrCommand('hr.payroll.dependent.end')),
         },
+        runs: {
+          list: os.hr.payroll.runs.list.handler(hrQuery('hr.payroll.run.list')),
+          sheet: os.hr.payroll.runs.sheet.handler(hrQuery('hr.payroll.run.sheet')),
+          open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
+          recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
+          approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        lines: {
+          setInputs: os.hr.payroll.lines.setInputs.handler(hrCommand('hr.payroll.line.inputs.set')),
+          adjust: os.hr.payroll.lines.adjust.handler(hrCommand('hr.payroll.line.adjust')),
+          payslip: os.hr.payroll.lines.payslip.handler(hrQuery('hr.payroll.line.payslip')),
+        },
       },
     },
     notes: {

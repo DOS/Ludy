@@ -270,6 +270,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
+import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -625,6 +626,20 @@ export const contract = {
       },
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
+      // The monthly pay run (#2531): open a month, type its inputs, read the sheet, approve it (R3, a fresh second factor), and correct an approved month by an adjustment line in a later run.
+      // Every read is a sensitive query. The payslip is a view of a stored line.
+      runs: {
+        list: oc.input(zHrRunList).output(z.array(zHrRunSummary)),
+        sheet: oc.input(zHrRunRef).output(zHrRunSheet),
+        open: oc.input(zHrRunOpen).output(zHrRunWritten),
+        recalculate: oc.input(zHrRunRecalculate).output(zHrRunWritten),
+        approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      lines: {
+        setInputs: oc.input(zHrLineInputsSet).output(zHrRunWritten),
+        adjust: oc.input(zHrLineAdjust).output(zHrRunWritten),
+        payslip: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with

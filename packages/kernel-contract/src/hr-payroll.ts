@@ -118,7 +118,7 @@ export type HrRunSummary = z.infer<typeof zHrRunSummary>;
 
 // What the calculator's check says (the minimum wage, the cap on deductions), and the flags the sheet raises beside the figures: a failed check, a refused month, a person hired
 // or leaving this month (their days not employed are typed by the person).
-export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing'] as const;
+export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing', 'net_below_minimum'] as const;
 export type HrLineFlag = (typeof HR_LINE_FLAGS)[number];
 
 export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });
