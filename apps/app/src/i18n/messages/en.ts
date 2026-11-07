@@ -9215,6 +9215,7 @@ export const en = {
           live_keys: 'List the data exports still kept',
           record: 'Record a data export',
           snapshot: 'Read the data to export',
+          people: 'Export the payroll people (owner)',
         },
         get: 'Read the organization',
         offboard: 'Offboard the organization and export its data',

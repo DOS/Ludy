@@ -72,8 +72,8 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
   'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/offboarding.ts': {
-    modules: ['ads', 'crm', 'finance', 'notes', 'social'],
-    why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says',
+    modules: ['ads', 'crm', 'finance', 'hr', 'notes', 'social'],
+    why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says; hr is read only by the owner-run people export (#2676)',
   },
   'packages/kernel/src/parties.ts': {
     modules: ['crm', 'finance'],

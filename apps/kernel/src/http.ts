@@ -55,7 +55,7 @@ import {
   type UserActor,
 } from '@crove/kernel-runtime';
 import { detectMediaContainer } from '@crove/mod-meetings';
-import type { OrgExportView } from '@crove/kernel';
+import { OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
   MISA_SME_BANK_CREDIT,
@@ -429,6 +429,8 @@ const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
 // What a completion refused for lack of a slot tells the client to wait; the grant stays unused for 5 minutes.
 export const UPLOAD_BUSY_RETRY_SECONDS = 3;
 export const EXPORT_BUSY_RETRY_SECONDS = 5;
+// The most an owner-run export table (payroll people, #2676) holds in memory before the download answers EXPORT_TOO_LARGE.
+export const OWNER_RUN_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false): string {
@@ -2664,8 +2666,39 @@ export function createHttpApp(deps: HttpDeps) {
       const user = c.get('user');
       const orgSlug = c.req.header(ORG_HEADER) ?? null;
       const orgId = await resolveOrg(runtime, user, orgSlug);
-      const view = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
       const part = c.req.param('part');
+      // The payroll people (#2676) are read live by the owner's own session, never by the export job: a sensitive stream, audited
+      // before it reads. The sealed identity and account numbers are not in it (OWNER_RUN_EXPORT_NOTE).
+      if (Object.hasOwn(OWNER_RUN_EXPORT_TABLES, part)) {
+        const table = part as OwnerRunExportTable;
+        const encoder = new TextEncoder();
+        const lines: Uint8Array[] = [];
+        let size = 0;
+        await runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, async (raw) => {
+          for (const text of (raw as { lines: string[] }).lines) {
+            const line = encoder.encode(`${text}\n`);
+            size += line.byteLength;
+            if (size > OWNER_RUN_EXPORT_MAX_BYTES) throw new DomainError('EXPORT_TOO_LARGE', 422, 'Dữ liệu nhân sự quá lớn để tải một lần');
+            lines.push(line);
+          }
+        });
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const line of lines) {
+          bytes.set(line, offset);
+          offset += line.byteLength;
+        }
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/x-ndjson; charset=utf-8',
+            'content-length': String(bytes.byteLength),
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), ORG_SLUG, part], 'ndjson'),
+            'x-content-type-options': 'nosniff',
+            'cache-control': 'private, no-store',
+          },
+        });
+      }
+      const view = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
       const exported = view.export;
       const missing = () => new DomainError('NOT_FOUND', 404, 'Chưa có bản xuất dữ liệu này');
       if (!exported) throw missing();

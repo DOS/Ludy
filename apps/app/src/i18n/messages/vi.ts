@@ -9212,6 +9212,7 @@ export const vi = {
           live_keys: 'Xem các bản xuất dữ liệu còn hạn',
           record: 'Ghi bản xuất dữ liệu',
           snapshot: 'Đọc dữ liệu để xuất',
+          people: 'Xuất danh sách nhân sự (chủ sở hữu)',
         },
         get: 'Xem thông tin tổ chức',
         offboard: 'Ngừng dùng và xuất dữ liệu tổ chức',

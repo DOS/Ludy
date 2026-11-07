@@ -292,6 +292,55 @@ export const exportSnapshot = defineQuery({
   },
 });
 
+// The tables an owner's export adds by an owner-run read (#2676). Their policy (owner_admin, #2530) refuses the system actor
+// the worker runs as, so they are not in EXPORT_TABLES and the snapshot cannot be asked for them: the owner's own session
+// reads them live, through a sensitive stream (kernel.org.export.people) that is audited before it reads and that no system
+// or agent actor can run. The sealed identity and bank account numbers are left out (they open only with the org's subject
+// keys, ADR-0017, and an owner reads them in the app); the pay run tables (#2531) join with one more entry here.
+export const OWNER_RUN_EXPORT_TABLES = {
+  'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed'] },
+  'hr.payroll_employment': { from: 'crove_hr.payroll_employment', omit: [] },
+  'hr.payroll_dependent': { from: 'crove_hr.payroll_dependent', omit: [] },
+} as const satisfies Record<string, { from: string; omit: readonly string[] }>;
+export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
+export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
+export const zOwnerRunExportTable = z.enum(OWNER_RUN_EXPORT_TABLE_NAMES);
+// The columns an owner-run table leaves out, for the note an owner reads next to the download.
+export const OWNER_RUN_EXPORT_NOTE =
+  'Số định danh và số tài khoản ngân hàng của nhân sự được niêm phong bằng khóa của tổ chức (ADR-0017) nên không nằm trong bản xuất; chỉ mở được bằng khóa của tổ chức.';
+
+// One owner-run table as NDJSON, for the signed-in owner (sensitive: the audit row is committed before the read, and only a
+// signed-in person runs it, so the system actor and agents are refused). The tables' own policy lets only an owner or admin
+// of this org read a row; access is narrowed to owners here, as the rest of the export. Runs through Runtime.stream().
+export const exportPeople = defineQuery({
+  name: 'kernel.org.export.people',
+  input: z.object({ table: zOwnerRunExportTable }),
+  access: OWNERS,
+  stream: true,
+  sensitive: true,
+  handler: async (ctx, input, sink) => {
+    if (!sink) throw new DomainError('STREAM_ONLY', 400, 'Truy vấn này chỉ đọc theo luồng');
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    const spec = OWNER_RUN_EXPORT_TABLES[input.table];
+    // spec.from is one of the constant names above, never input.
+    await sql`
+      DECLARE crove_people_export NO SCROLL CURSOR FOR
+      SELECT (to_jsonb(t) - ${sql.val([...spec.omit])}::text[])::text AS line
+      FROM ${sql.raw(spec.from)} t
+      WHERE t.org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+    let rows = 0;
+    for (;;) {
+      const batch = await sql<{ line: string }>`FETCH ${sql.raw(String(EXPORT_FETCH_ROWS))} FROM crove_people_export`.execute(ctx.trx);
+      const last = batch.rows.length < EXPORT_FETCH_ROWS;
+      rows += batch.rows.length;
+      await sink({ table: input.table, lines: batch.rows.map((r) => r.line), last });
+      if (last) break;
+    }
+    await sql`CLOSE crove_people_export`.execute(ctx.trx);
+    return { table: input.table, rows };
+  },
+});
+
 // What a rebind may change of the export it re-records: the object versions, nothing else.
 const withoutGenerations = (record: Omit<ExportRecord, 'rebind'>) =>
   JSON.stringify({
@@ -534,4 +583,4 @@ async function currentExport(trx: QueryContext['trx'], orgId: string): Promise<E
   };
 }
 
-export const offboardingQueries = [exportSnapshot, orgExportGet, exportLiveKeys, exportCurrent];
+export const offboardingQueries = [exportSnapshot, exportPeople, orgExportGet, exportLiveKeys, exportCurrent];
