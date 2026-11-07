@@ -45,6 +45,8 @@ export const KEPT: Readonly<Record<string, string>> = {
   'crove_finance.vat_return_filed': 'the rest of the books (#1400)',
   'crove_finance.channel_order': 'the marketplace orders the stock moves of shipments and returns name, kept with the stock book (#2515)',
   'crove_finance.channel_order_line': 'the lines of those orders, which the stock moves reference, kept with the stock book (#2515)',
+  'crove_finance.channel_settlement': 'the income reports of the marketplaces a member confirmed, which the entry that posts them will name, kept with the books (#2516)',
+  'crove_finance.channel_settlement_line': 'what a platform paid for each order of a settlement, kept with the books (#2516)',
   'crove_finance.stock_move': 'the stock book: goods in and out, kept with the ledger (Accounting Law 88/2015, Art. 41) (#2512)',
   'crove_finance.stock_count': 'the counts of the stock book (kiểm kê): the day, the norm and the voucher that posted the differences, part of the books (#2513)',
   'crove_finance.stock_count_line': 'what each count found of each item, the figures the adjustment moves were made from (#2513)',

@@ -325,6 +325,7 @@ const UNIONS = unions({
   'crove_finance.einvoice_connection.last_test_state': EINVOICE_CONNECTION_STATES,
   'crove_finance.channel_order.platform': CHANNEL_PLATFORMS,
   'crove_finance.channel_order_line.stage': CHANNEL_STAGES,
+  'crove_finance.channel_settlement.platform': CHANNEL_PLATFORMS,
   'crove_finance.stock_count.status': STOCK_COUNT_STATUSES,
   'crove_finance.stock_item.kind': STOCK_ITEM_KINDS,
   'crove_finance.stock_item.trade': STOCK_TRADES,
