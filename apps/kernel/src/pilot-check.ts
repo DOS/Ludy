@@ -491,8 +491,8 @@ export function checkEnv(env: Env): CheckResult[] {
       item: 'Credential key',
       status: 'manual',
       message:
-        `the worker opens tokens sealed under ${credentialKeys.length > 0 ? credentialKeys.join(' and ') : 'no valid key (see Secrets)'}; ` +
-        'confirm its log since its last start has no "[credential-reseal] ERROR sealed under a key this worker cannot open" line (docker compose logs worker | grep "cannot open"; ' +
+        `the worker opens tokens and subject keys sealed under ${credentialKeys.length > 0 ? credentialKeys.join(' and ') : 'no valid key (see Secrets)'}; ` +
+        'confirm its log since its last start has no "[credential-reseal] ERROR sealed under a key this worker cannot open" and no "[subject-key-reseal] ERROR" line (docker compose logs worker | grep "cannot open"; ' +
         'the crove service in the all-in-one layout): the key was lost, or CREDENTIAL_KEY_PREVIOUS removed before every channel token and team chat target was resealed (docs/runbooks/credential-key.md)',
     },
     ...(publicDeployment

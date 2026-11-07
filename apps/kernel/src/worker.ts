@@ -12,6 +12,7 @@ import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
+import { resealSubjectKeys, unopenableSubjectKeysLog } from './subject-key-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
 import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
@@ -1733,6 +1734,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // After a credential key rotation (#776), envelopes still sealed with the previous key are sealed again with the
   // current one, a batch at a time, until none is left; the log says how many remain.
+  // The subject keys of people (#2643) go through the same sweep: only their wrapped data keys are wrapped again, in this worker's memory.
   let resealing = false;
   const resealSweep = async () => {
     if (resealing || !channels) return;
@@ -1749,6 +1751,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       for (const { level, line } of unopenableKeysLog(done.unopenable)) (level === 'error' ? console.error : console.warn)(line);
     } catch (error) {
       console.error('[credential-reseal] sweep', error instanceof Error ? error.name : typeof error);
+    }
+    try {
+      if (deps.runtime.subjectKeyReseal) {
+        const subjects = await resealSubjectKeys({ runtime: deps.runtime, workerDb: deps.workerDb });
+        if (subjects.resealed + subjects.failed + subjects.left > 0) {
+          console.log(`[subject-key-reseal] resealed ${subjects.resealed}, failed ${subjects.failed}; left under an older key: ${subjects.left}`);
+        }
+        for (const line of unopenableSubjectKeysLog(subjects.unopenable)) console.error(line);
+      }
+    } catch (error) {
+      console.error('[subject-key-reseal] sweep', error instanceof Error ? error.name : typeof error);
     } finally {
       resealing = false;
     }
