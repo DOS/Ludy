@@ -307,21 +307,26 @@ export const OWNER_RUN_EXPORT_TABLES = {
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
 export const zOwnerRunExportTable = z.enum(OWNER_RUN_EXPORT_TABLE_NAMES);
-// The columns an owner-run table leaves out, for the note an owner reads next to the download.
-export const OWNER_RUN_EXPORT_NOTE =
-  'Số định danh và số tài khoản ngân hàng của nhân sự được niêm phong bằng khóa của tổ chức (ADR-0017) nên không nằm trong bản xuất; chỉ mở được bằng khóa của tổ chức.';
 
-// One owner-run table as NDJSON, for the signed-in owner (sensitive: the audit row is committed before the read, and only a
-// signed-in person runs it, so the system actor and agents are refused). The tables' own policy lets only an owner or admin
-// of this org read a row; access is narrowed to owners here, as the rest of the export. Runs through Runtime.stream().
+// The refusal of an owner-run table while the org is not closing: the download is part of closing the org, which carries the
+// fresh second factor of kernel.org.offboard (R3), so an owner's ordinary session on an active org cannot bulk-read the staff.
+export const ORG_NOT_OFFBOARDING = 'ORG_NOT_OFFBOARDING';
+
+// One owner-run table as NDJSON, for the signed-in owner (sensitive: the audit row, which names the table, is committed before
+// the read, and only a signed-in person runs it, so the system actor and agents are refused). The tables' own policy lets only an
+// owner or admin of this org read a row; access is narrowed to owners here, as the rest of the export, and to an org that is
+// closing. Runs through Runtime.stream().
 export const exportPeople = defineQuery({
   name: 'kernel.org.export.people',
   input: z.object({ table: zOwnerRunExportTable }),
   access: OWNERS,
   stream: true,
   sensitive: true,
+  auditDetail: (input) => ({ table: input.table }),
   handler: async (ctx, input, sink) => {
     if (!sink) throw new DomainError('STREAM_ONLY', 400, 'Truy vấn này chỉ đọc theo luồng');
+    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    if (tenant.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
     const spec = OWNER_RUN_EXPORT_TABLES[input.table];
     // spec.from is one of the constant names above, never input.
@@ -429,6 +434,8 @@ export interface ExportTableSummary {
 export interface OrgExportView {
   status: 'active' | 'offboarding' | 'closed';
   requestedAt: string | null;
+  // The tables the owner downloads live while the org is closing (OWNER_RUN_EXPORT_TABLES, #2676).
+  ownerRunTables: OwnerRunExportTable[];
   export: {
     createdAt: string;
     expiresAt: string;
@@ -496,6 +503,7 @@ export const orgExportGet = defineQuery({
     return {
       status: tenant.status,
       requestedAt: requested ? requested.occurred_at.toISOString() : null,
+      ownerRunTables: [...OWNER_RUN_EXPORT_TABLE_NAMES],
       export:
         recorded && detail?.success
           ? {

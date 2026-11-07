@@ -278,6 +278,9 @@ export interface QueryDef<I = unknown, O = unknown> {
   // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
   // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
   target?: (input: I) => { type: string; id: string } | null;
+  // Facts of the read to keep in its audit row's detail, from its parsed input: names of what is read (a table), never a value or personal data. The
+  // keys of the runtime's own detail (read, stage, the actor's) are kept as they are. Ignored without `sensitive`.
+  auditDetail?: (input: I) => Record<string, string>;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -2695,7 +2698,7 @@ export class Runtime {
           target,
           proposalId: null,
           // The row says a read was started: the handler may still fail after it.
-          detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+          detail: { ...def.auditDetail?.(input), ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
           inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
         });
       });

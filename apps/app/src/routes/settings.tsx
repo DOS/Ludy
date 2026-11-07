@@ -327,6 +327,23 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
           {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
         </div>
       )}
+      {data.status === 'offboarding' && data.ownerRunTables.length > 0 && (
+        <div className="mt-3 space-y-2 text-sm">
+          <p className="text-foreground">{t('people')}</p>
+          <p className="text-subtle-foreground">{t('peopleNote')}</p>
+          <ul className="divide-y">
+            {data.ownerRunTables.map((table) => (
+              <li key={table} className="flex items-center justify-between gap-3 py-2">
+                <p className="min-w-0 truncate font-mono text-foreground">{table}</p>
+                <Button variant="ghost" size="sm" disabled={download.isPending} onClick={() => download.mutate(table)} aria-label={`${t('download')} ${table}`}>
+                  {download.isPending && download.variables === table ? t('downloading') : t('download')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {!(exported && downloadable) && download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+        </div>
+      )}
       {data.status !== 'closed' && !confirming && (
         <div className="mt-4">
           <Button

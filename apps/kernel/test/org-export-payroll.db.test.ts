@@ -56,6 +56,7 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
   let workerRt: Runtime;
   const root = parseVaultKey(randomBytes(32).toString('base64'));
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+  const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const system = { type: 'system' as const, component: 'org-export' };
 
   async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -68,7 +69,8 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
     }
   }
 
-  async function org() {
+  // `closing`: the org is moved to offboarding (R3, a fresh second factor), as the export is taken when an owner closes it.
+  async function org(closing = false) {
     const tag = randomUUID().slice(0, 8);
     const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'hr', subject: `${name}-${tag}`, email: `${name}-${tag}@hr.test`, name: null });
     const owner = await person('owner');
@@ -90,6 +92,7 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
     await rt.execute('hr.payroll.dependent.add', { employeeId: added.employeeId, displayName: DEPENDENT, relation: 'child', registeredOn: '2026-02-01' }, { actor: asUser(owner), orgId });
     // One pay month: a run with one line, from the stored terms.
     await rt.execute('hr.payroll.run.open', { month: '2026-06' }, { actor: asUser(owner), orgId });
+    if (closing) await rt.execute('kernel.org.offboard', { confirmSlug: slug }, { actor: asMfa(owner), orgId });
     return { orgId, slug, owner, admin, member };
   }
 
@@ -141,7 +144,7 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
   });
 
   it('streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
-    const o = await org();
+    const o = await org(true);
     expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line']);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
     const employments = await read(rt, 'hr.payroll_employment', asUser(o.owner), o.orgId);
@@ -159,9 +162,12 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
     const text = JSON.stringify([employees, employments, dependents, runs, lines]);
     for (const needle of [IDENTITY, IDENTITY_DIGITS, ACCOUNT, ACCOUNT_DIGITS, 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
-      async (c) => (await c.query<{ outcome: string; row: string }>(`SELECT outcome, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
+      async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
     expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok']);
+    // Each row names the table read (not personal data) and says the read was started.
+    expect(audits.map((a) => (JSON.parse(a.detail) as { table: string }).table)).toEqual([...OWNER_RUN_EXPORT_TABLE_NAMES]);
+    expect(JSON.parse(audits[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read' });
     for (const a of audits) for (const needle of [IDENTITY_DIGITS, ACCOUNT_DIGITS, NAME, DEPENDENT]) expect(a.row, needle).not.toContain(needle);
   });
 
@@ -176,22 +182,26 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
       await expect(read(workerRt, table, system, o.orgId), 'system (worker)').rejects.toMatchObject({ status: 403 });
       await expect(workerRt.stream('kernel.org.export.snapshot', { table }, { actor: system, orgId: o.orgId }, async () => {}), 'snapshot').rejects.toMatchObject({ code: 'VALIDATION' });
     }
+    // An agent is refused too, and the owner of an org that is not closing reads nothing: the download is part of closing the org.
+    await expect(read(rt, 'hr.payroll_line', { type: 'agent', agentId: randomUUID(), runId: randomUUID() }, o.orgId), 'agent').rejects.toMatchObject({ status: 403 });
+    await expect(read(rt, 'hr.payroll_line', asUser(o.owner), o.orgId), 'active org').rejects.toMatchObject({ code: 'ORG_NOT_OFFBOARDING' });
     // The export job's snapshot reads no payroll row: no hr table is among the tables it streams.
     const tables = new Set<string>();
     await workerRt.stream('kernel.org.export.snapshot', {}, { actor: system, orgId: o.orgId }, async (raw) => {
       tables.add((raw as { table: string }).table);
     });
     expect([...tables].filter((t) => t.startsWith('hr.'))).toEqual([]);
-    // Refused reads leave no audit row of a read.
+    // Refused reads leave no audit row of a read: only the owner's attempt on the active org, which passed access and was refused after its row, has one.
     const rows = await withAdmin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people'`, [o.orgId])).rowCount);
-    expect(rows).toBe(0);
+    expect(rows).toBe(1);
   });
 
   it('serves the tables on the owner download route and nobody else', async () => {
     const o = await org();
-    const other = await org();
+    const closing = await org(true);
+    const other = await org(true);
     const users = new Map<string, AuthUser>(
-      [o.owner, o.admin, o.member, other.owner].map((id) => [id, { userId: id, email: '', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null }]),
+      [o.owner, o.admin, o.member, other.owner, closing.owner].map((id) => [id, { userId: id, email: '', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null }]),
     );
     const app = createHttpApp({
       config: loadConfig({
@@ -208,19 +218,31 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
       aiEnabled: false,
     });
     const get = (table: string, userId: string, slug: string) => app.request(`/api/org-export/${table}`, { headers: { authorization: `Bearer ${userId}`, 'x-crove-org': slug } });
-    // Works with no finished export: the people are read live.
-    const ok = await get('hr.payroll_employee', o.owner, o.slug);
-    expect(ok.status).toBe(200);
-    expect(ok.headers.get('content-type')).toContain('application/x-ndjson');
-    const text = await ok.text();
-    expect(JSON.parse(text.trim())).toMatchObject({ display_name: NAME });
-    for (const needle of [IDENTITY_DIGITS, ACCOUNT_DIGITS, 'crove:s1:']) expect(text).not.toContain(needle);
+    // The org is not closing: the owner is refused with a clear code, a member and an admin and another org's owner are refused too.
+    const active = await get('hr.payroll_employee', o.owner, o.slug);
+    expect(active.status).toBe(409);
+    expect(await active.json()).toMatchObject({ code: 'ORG_NOT_OFFBOARDING' });
     for (const who of [o.admin, o.member]) expect((await get('hr.payroll_employee', who, o.slug)).status).toBe(403);
     expect((await get('hr.payroll_employee', other.owner, o.slug)).status).toBe(403);
-    // A key of Object.prototype is not an owner-run table: it takes the stored-export path and finds no export.
-    expect((await get('constructor', o.owner, o.slug)).status).toBe(404);
-    // The other org's owner reads their own people, not this org's.
+    // The org is closing: works with no finished export (the people are read live), as streamed NDJSON with the download headers.
+    for (const table of OWNER_RUN_EXPORT_TABLE_NAMES) {
+      const ok = await get(table, closing.owner, closing.slug);
+      expect(ok.status, table).toBe(200);
+      expect(ok.headers.get('content-type')).toContain('application/x-ndjson');
+      expect(ok.headers.get('cache-control')).toBe('private, no-store');
+      expect(ok.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(ok.headers.get('content-disposition')).toContain('attachment');
+      const text = await ok.text();
+      const rows = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string });
+      expect(rows.length, table).toBe(1);
+      expect(rows[0]?.org_id).toBe(closing.orgId);
+      for (const needle of [IDENTITY_DIGITS, ACCOUNT_DIGITS, 'crove:s1:']) expect(text).not.toContain(needle);
+    }
+    // Another org's owner reads their own people, never this org's.
     const own = JSON.parse((await (await get('hr.payroll_dependent', other.owner, other.slug)).text()).trim()) as { org_id: string };
     expect(own.org_id).toBe(other.orgId);
+    expect((await get('hr.payroll_employee', other.owner, closing.slug)).status).toBe(403);
+    // A key of Object.prototype is not an owner-run table: it takes the stored-export path and finds no export.
+    expect((await get('constructor', closing.owner, closing.slug)).status).toBe(404);
   });
 });

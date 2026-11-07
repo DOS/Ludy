@@ -4816,6 +4816,8 @@ export const vi = {
     download: 'Tải về',
     downloading: 'Đang tải...',
     tableRows: '{rows} dòng, {size}',
+    people: 'Dữ liệu nhân sự và bảng lương, tải ngay khi bạn đóng tổ chức (NDJSON, mỗi dòng một bản ghi).',
+    peopleNote: 'Số định danh và số tài khoản ngân hàng của nhân sự được niêm phong bằng khóa của tổ chức (ADR-0017) nên không nằm trong các tệp này; chỉ khóa của tổ chức mới mở được, hãy xem trong ứng dụng trước khi đóng. Các tệp này không được lưu sau khi tải: hãy lưu ngay.',
     stepUpAction: 'đóng tổ chức {name} và xuất dữ liệu',
     errors: {
       stepUp: 'Thao tác này cần xác thực hai lớp trong 5 phút gần nhất. Hãy xác minh lại mã hai lớp rồi thử lại.',
