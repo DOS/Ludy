@@ -3,7 +3,7 @@
 // issued and no provider is called from this screen yet: a draft is a working copy. The amounts are the server's, computed from the lines (the form has no
 // total to type), and the checks of the invoice's required fields show on the fields as the draft is typed.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
@@ -94,10 +94,17 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
 function CoworkerBox({ date, room, onProposal }: { date: string; room: number; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
   const [text, setText] = useState('');
-  const [state, setState] = useState<'filled' | 'partial' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
+  const current = useRef(date);
+  current.current = date;
+  const [state, setState] = useState<'filled' | 'partial' | 'stale' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
   const ask = useMutation({
     mutationFn: () => client.einvoice.drafts.suggest({ text: text.trim(), date: date === '' ? vietnamToday() : date }),
     onSuccess: (proposal) => {
+      // The VAT rates were checked for the date asked with: if the invoice date was changed meanwhile, nothing is filled.
+      if (proposal.ai === 'used' && current.current !== date) {
+        setState('stale');
+        return;
+      }
       if (proposal.ai === 'used') onProposal(proposal);
       setState(proposal.ai === 'used' ? (proposal.lines.length > room ? 'partial' : 'filled') : proposal.ai);
     },
@@ -210,7 +217,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           const computed = check.data?.lines[index];
           return (
             <div key={index}>
-            <div className="grid items-end gap-2 sm:grid-cols-[2fr_0.6fr_0.8fr_1fr_0.8fr_1fr_auto]" data-testid="invoice-line">
+            <div className={`grid items-end gap-2 sm:grid-cols-[2fr_0.6fr_0.8fr_1fr_0.8fr_1fr_auto]${line.ai !== null ? ' rounded-md border border-dashed border-proposal/60 p-2' : ''}`} data-testid="invoice-line">
               <div className="space-y-1">
                 <Label htmlFor={`${id}-d${index}`} className={index === 0 ? undefined : 'sr-only'}>
                   {t('description')}

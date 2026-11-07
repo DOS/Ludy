@@ -117,6 +117,11 @@ describe('buyerOf', () => {
     expect(buyerOf({ ...party, taxCode: 'abc' }).taxCode).toBeNull();
     expect(buyerOf(SOURCE.parties[0]!).taxCode).toBe(VALID_TAX_CODE);
   });
+
+  it('leaves out a field longer than the draft takes, and keeps the rest', () => {
+    const party = { ...SOURCE.parties[0]!, email: `${'a'.repeat(250)}@example.com`, address: 'x'.repeat(501), name: 'y'.repeat(401) };
+    expect(buyerOf(party)).toMatchObject({ email: null, address: null, name: null, partyId: party.id });
+  });
 });
 
 describe('usualRate', () => {

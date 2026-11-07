@@ -1026,6 +1026,7 @@ export const en = {
       state: {
         filled: '{finance} filled in the lines below. These are suggestions: every quantity and unit price comes from your text, and the amounts are computed by the system. Review them before you save.',
         partial: '{finance} filled in the lines that fit in this draft; some suggested lines did not fit and were left out. Review them, save this draft, then draft the rest in another one.',
+        stale: 'The invoice date changed while {finance} was drafting, so nothing was filled in: the VAT rate depends on the date. Ask again.',
         refused: '{finance} could not draft from this text because the result held a figure or a VAT rate that is not in your text. Type the lines as usual.',
         off: 'AI is not switched on on this server. You still write the draft by hand as usual.',
         busy: '{finance} is handling many requests at once. Try again in a few minutes, or type the lines.',

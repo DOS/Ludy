@@ -67,6 +67,7 @@ describe('the figures and rates of a text', () => {
     expect([...ratesOfText('thuế suất 10')]).toEqual(['10%']);
     expect([...ratesOfText('hàng không chịu thuế')]).toEqual(['KCT']);
     expect([...ratesOfText('giảm 10% cho khách quen')]).toEqual([]);
+    expect([...ratesOfText('giảm giá 10% cho khách quen')]).toEqual([]);
     expect([...ratesOfText('bán 8 cái giá 120k')]).toEqual([]);
   });
 });

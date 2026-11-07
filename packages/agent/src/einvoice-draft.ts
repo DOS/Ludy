@@ -124,7 +124,7 @@ export function figuresOfText(text: string): Set<string> {
 
 // The VAT rates the text states: a number before a percent sign, a number after "VAT", "GTGT" or "thuế (suất)", and the words of the two exemptions.
 // A percent after a discount word is a discount, not a rate.
-const RATE_BEFORE_SIGN = /(?<!(?:giảm|giam|chiết khấu|chiet khau|ck|discount|off)\s{0,3})(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)\s*%/gu;
+const RATE_BEFORE_SIGN = /(?<!(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết khấu|chiet khau|ck|discount|off)\s{0,3})(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)\s*%/gu;
 const RATE_AFTER_WORD = /(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*:?\s*(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)/gu;
 export function ratesOfText(text: string): Set<string> {
   const body = read(text);

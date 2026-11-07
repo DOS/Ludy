@@ -40,7 +40,9 @@ export function usualRate(rates: readonly RateCount[], allowed: readonly string[
 export function buyerOf(party: EInvoiceSuggestParty): NonNullable<EInvoiceSuggested['buyer']> {
   const info = party.taxCode ? parseTaxCode(party.taxCode) : null;
   const taxCode = party.taxCode && info !== null && info.checksumValid !== false ? party.taxCode : null;
-  return { kind: party.kind === 'organization' ? 'business' : 'individual', partyId: party.id, taxCode, name: party.name, address: party.address, email: party.email };
+  // A field longer than the draft takes is left out, so one odd record does not refuse the lines as well.
+  const within = (value: string | null, max: number) => (value !== null && value.length <= max ? value : null);
+  return { kind: party.kind === 'organization' ? 'business' : 'individual', partyId: party.id, taxCode, name: within(party.name, 400), address: within(party.address, 500), email: within(party.email, 254) };
 }
 
 export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId: string, source: EInvoiceSuggestSource, input: EInvoiceSuggestInput): Promise<EInvoiceSuggested> {
