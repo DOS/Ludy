@@ -154,6 +154,13 @@ const leScopePredicate = (c: string) =>
 // The same policy for a nullable column whose NULL rows are org-level (20261101060000 role_assignment_scope, #1716).
 const leScopeOrOrgPredicate = (c: string) =>
   `((${c} IS NULL) OR ('*'::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])) OR ((${c})::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])))`;
+// Tables no tenant role may update or delete: the rows are the record of what a member confirmed (an import, a posting), and a correction is a new row. The matrix checks, for every table
+// listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
+// listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
+const APPEND_ONLY = new Set<string>([
+  'crove_finance.channel_settlement',
+  'crove_finance.channel_settlement_line',
+]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
 type Values = Record<string, string | number>;
@@ -2693,6 +2700,9 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(authorOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'AUTHOR_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(authorOnly.filter((t) => !ROW_FACTORIES[t]), 'AUTHOR_ONLY lists tables with no row factory').toEqual([]);
     expect(authorOnly, 'AUTHOR_ONLY is kept sorted, one table per line').toEqual([...authorOnly].sort());
+    const appendOnly = [...APPEND_ONLY];
+    expect(appendOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'APPEND_ONLY lists tables that no longer have org_id').toEqual([]);
+    expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
   });
 
   it('limits the scoped member to its branch', async () => {
@@ -2985,6 +2995,20 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         const { rows } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [orgs.B.id]);
         expect(rows[0]?.n, `${table} still has its org B rows`).toBeGreaterThan(0);
       });
+
+      if (APPEND_ONLY.has(table)) {
+        it('is append-only: no tenant role holds UPDATE or DELETE on it, and an update or delete of its own rows is refused', async () => {
+          factoryFor(table);
+          for (const actor of actors.filter((a) => a.role !== 'crove_definer_tenant')) {
+            const who = `${actor.name} on ${table}`;
+            expect(can(table, actor.role, 'UPDATE'), `${who}: holds UPDATE`).toBe(false);
+            expect(can(table, actor.role, 'DELETE'), `${who}: holds DELETE`).toBe(false);
+            expect(updatable.get(table)?.get(actor.role) ?? [], `${who}: holds UPDATE on columns`).toEqual([]);
+            expectDenied(await probe(actor, (c) => c.query(`UPDATE ${table} SET org_id = org_id WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: updating its own rows`);
+            expectDenied(await probe(actor, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: deleting its own rows`);
+          }
+        });
+      }
 
       if (relation.entityColumn) {
         const column = relation.entityColumn;
