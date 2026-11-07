@@ -937,15 +937,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Threads past their org's retention (CV6, #2305), each org in its own system context.
       const conversations = await purgeExpiredConversations({ runtime: deps.runtime, workerDb: deps.workerDb });
       console.log(`[retention] conversation_threads=${conversations}`);
-      // Meeting audio, video and text past the periods stamped on them (#2579), each in its meeting's own org. A failure is logged and alerted by the job
-      // itself and never stops the rest of the run.
+    } finally {
+      // Each catches its own errors; they run even when a database purge failed.
+      // Meeting audio, video and text past the periods stamped on them (#2579), each in its meeting's own org. It runs even when a database purge above
+      // failed (a shred is not to wait for an unrelated failure), and its own failure is alerted and never stops the rest.
       if (deps.runtime.installed('meetings')) {
         await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
           opsAlert('[meetings-retention] ALERT the nightly shred failed; the error is in the worker log', error);
         });
       }
-    } finally {
-      // Each catches its own errors; they run even when a database purge failed.
       await sweepStaging(deps.store);
       await sweepInboundBlobs(deps.store, deps.workerDb);
       await expireExports(deps.store, deps.runtime, exportRetentionDays);

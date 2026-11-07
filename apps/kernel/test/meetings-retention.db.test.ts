@@ -360,6 +360,55 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(JSON.stringify(audit)).not.toContain('Text ends');
   });
 
+  it('stops a playback that is streaming when the retention shreds its audio, and when the segment it reads is replaced', async () => {
+    const long = async (title: string) => {
+      const meetingId = await createMeeting('recorder', { title });
+      // Over two 4 MiB stream windows, so each window after the first asks again whether the meeting and its file are the same.
+      const bytes = Buffer.concat([OGG, Buffer.alloc(9 * 1024 * 1024, 0x61)]);
+      const form = new FormData();
+      form.append('kind', 'audio');
+      form.append('file', new Blob([bytes], { type: 'audio/ogg' }), 'long.ogg');
+      const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+      expect(up.status).toBe(200);
+      const res = await play('recorder', meetingId, 'audio');
+      expect(res.status).toBe(200);
+      return { meetingId, res, size: bytes.length };
+    };
+    const drain = async (res: Response) => {
+      const reader = res.body!.getReader();
+      let received = 0;
+      let failed = false;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.length;
+        }
+      } catch {
+        failed = true;
+      }
+      return { received, failed };
+    };
+
+    // The retention shreds the audio while the first window is out: the stream does not complete.
+    const shredded = await long('Shredded while playing');
+    await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [shredded.meetingId]);
+    await retention();
+    const out = await drain(shredded.res);
+    expect(out.failed).toBe(true);
+    expect(out.received).toBeLessThan(shredded.size);
+
+    // The segment the meeting names is replaced by another file while the key stays: the stream notices the file changed and stops.
+    const replaced = await long('Replaced while playing');
+    const other = randomUUID();
+    await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'swap.opus', 'audio/ogg', 10, $3, $4, 'meeting_audio', $5)", [orgId, other, 'b'.repeat(64), `org/${orgId}/${'b'.repeat(64)}`, userIds.get('recorder')]);
+    await rows('UPDATE crove_meetings.audio_segment SET file_id = $1 WHERE meeting_id = $2', [other, replaced.meetingId]);
+    const swapped = await drain(replaced.res);
+    expect(swapped.failed).toBe(true);
+    expect(swapped.received).toBeLessThan(replaced.size);
+    await rows('DELETE FROM crove_kernel.file WHERE id = $1', [other]).catch(() => undefined);
+  });
+
   it('keeps text until a person deletes it when the org chose that, and never shreds before the date', async () => {
     await rpc('meetings/settings/set', 'owner', { audioRetentionDays: 30, videoRetentionDays: 7, textRetentionDays: 0 });
     const meetingId = await createMeeting('recorder', { title: 'Keep the words' });
