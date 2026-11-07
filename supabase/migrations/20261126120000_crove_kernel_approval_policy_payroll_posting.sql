@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove approval policy for the posting of a pay run (issue #2532, ADR-0046): finance.payroll_posting.record is an R3 ledger proposal command, a general journal voucher built from the frozen run
 -- (gross by function, the funds, the PIT): the roles that post approve (owner, admin) and a member holding finance.proposal.approve through an org-wide assignment, four-eyes with the one-person
--- path (P10), and a ledger effect required before the proposal moves to 'executed' (crove_finance.ledger_effect_recorded, 20261126030000). Kept equal to approval.ts (POLICIES,
+-- path (P10), and a ledger effect required before the proposal moves to 'executed' (crove_finance.ledger_effect_recorded, 20261126110000). Kept equal to approval.ts (POLICIES,
 -- APPROVAL_POLICY_VERSION 8) by apps/kernel/test/invariant/proposal-approve-gate.db.test.ts.
 --
 -- crove_kernel.approval_command_policy  the policy table, with the new command in the ledger list: the body of 20261124050000 with the command added (the signature and OUT columns are unchanged).
