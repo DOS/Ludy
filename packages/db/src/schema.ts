@@ -198,13 +198,17 @@ export type PartyTable = Refine<
 // A file row never changes, for every role (trigger file_guard; a move to another org is refused by RLS): crove_tenant
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
-// extracted or shown in the Inbox.
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import'] as const;
+// extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
+
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
+export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
 
 // archive: a ZIP whose entries were filed as files of their own (#314); such a run never has a proposal.
 export const EXTRACTION_METHODS = ['einvoice_xml', 'pdf_text_ai', 'image_ai', 'unsupported', 'archive'] as const;
@@ -970,6 +974,26 @@ export type HrPayrollEmploymentTable = Refine<
   { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never> }
 >;
 
+// The meetings module (#2576, ADR-0047): recorded meetings with consent records, retention dates and reader permissions.
+export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
+export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
+export const MEETING_LANGUAGES = ['vi', 'en'] as const;
+export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
+export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
+export type MeetingStatus = (typeof MEETING_STATUSES)[number];
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
+
+export type MeetingsMeetingTable = Refine<
+  G.MeetingsMeetingTable,
+  {
+    visibility: Generated<MeetingVisibility>;
+    language: Generated<MeetingLanguage>;
+    status: Generated<MeetingStatus>;
+    consent_method: MeetingConsentMethod;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -989,6 +1013,7 @@ type Refined = Tables<{
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
@@ -1007,6 +1032,7 @@ type Refined = Tables<{
   'crove_kernel.audit_event': AuditEventTable;
   'crove_kernel.party': PartyTable;
   'crove_kernel.file': FileTable;
+  'crove_kernel.file_upload': FileUploadTable;
   'crove_kernel.extraction': ExtractionTable;
   'crove_kernel.notification': NotificationTable;
   'crove_kernel.inbox_item': InboxItemTable;

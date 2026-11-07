@@ -11,6 +11,7 @@ import { financeManifest } from '@crove/mod-finance';
 import { hrManifest } from '@crove/mod-hr';
 import { notesManifest } from '@crove/mod-notes';
 import { socialManifest } from '@crove/mod-social';
+import { meetingsManifest } from '@crove/mod-meetings';
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 export const SCANNED = ['packages', 'modules', 'apps/kernel/src'];
@@ -23,7 +24,7 @@ const CONTROL_PLANE_CLASSIFIED = ['subject', 'email', 'display_name', 'token', '
 // national_id_if_individual, sensitive).
 export function classifiedColumns(): Set<string> {
   const out = new Set<string>(CONTROL_PLANE_CLASSIFIED);
-  for (const manifest of [kernelManifest, financeManifest, crmManifest, notesManifest, socialManifest, hrManifest] as ModuleManifest[]) {
+  for (const manifest of [kernelManifest, financeManifest, crmManifest, notesManifest, socialManifest, hrManifest, meetingsManifest] as ModuleManifest[]) {
     for (const tables of Object.values(manifest.tables)) {
       for (const cols of Object.values(tables)) {
         for (const [column, cls] of Object.entries(cols) as Array<[string, DataClass]>) if (cls !== 'internal') out.add(column);
