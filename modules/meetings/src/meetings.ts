@@ -4,6 +4,18 @@ import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import {
+  dayText,
+  meetingMediaDiscard,
+  meetingMediaOrphanKeys,
+  meetingRetentionShred,
+  meetingSettingsGet,
+  meetingSettingsSet,
+  meetingShredReplay,
+  readRetentionSettings,
+  retentionDates,
+  vnDay,
+} from './retention.ts';
+import {
   auditValue,
   zMeetingCreate,
   zMeetingListInput,
@@ -94,7 +106,7 @@ interface MeetingRow {
   consent_confirmed_at: Date | string;
   consent_notice_version: string;
   audio_retention_date: Date | string;
-  text_retention_date: Date | string;
+  text_retention_date: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -111,8 +123,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
-    audioRetentionDate: typeof r.audio_retention_date === 'string' ? r.audio_retention_date.slice(0, 10) : new Date(r.audio_retention_date).toISOString().slice(0, 10),
-    textRetentionDate: typeof r.text_retention_date === 'string' ? r.text_retention_date.slice(0, 10) : new Date(r.text_retention_date).toISOString().slice(0, 10),
+    audioRetentionDate: dayText(r.audio_retention_date),
+    textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
     hasVideo,
     readersCount,
@@ -131,8 +143,8 @@ export const meetingCreate = defineCommand({
     const userId = userOf(ctx.actor);
     const meetingId = randomUUID();
     const startedAt = ctx.now;
-    const audioRetentionDate = new Date(startedAt.getTime() + 30 * 86_400_000).toISOString().slice(0, 10);
-    const textRetentionDate = new Date(startedAt.getTime() + 365 * 86_400_000).toISOString().slice(0, 10);
+    // The periods the org's settings give today, stamped on the meeting so the period the participants were told stays true (plan section 9).
+    const dates = retentionDates(startedAt, await readRetentionSettings(ctx.trx, ctx.orgId));
 
     await ctx.trx
       .insertInto('crove_meetings.meeting')
@@ -152,8 +164,8 @@ export const meetingCreate = defineCommand({
         consent_confirmed_by: userId,
         consent_confirmed_at: startedAt,
         consent_notice_version: CONSENT_NOTICE_VERSION,
-        audio_retention_date: audioRetentionDate,
-        text_retention_date: textRetentionDate,
+        audio_retention_date: dates.audio,
+        text_retention_date: dates.text,
       })
       .execute();
 
@@ -207,7 +219,7 @@ export const meetingMediaRecord = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id', 'recorder_user_id', 'keep_video'])
+      .select(['id', 'recorder_user_id', 'keep_video', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
@@ -219,6 +231,11 @@ export const meetingMediaRecord = defineCommand({
     }
     if (input.kind === 'video' && !meeting.keep_video) {
       throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
+    }
+    // Media is not accepted for a meeting whose period for it has ended: the nightly job would shred it at once, and it was told to the participants that
+    // it would not be kept past that day (#2579).
+    if (meeting.audio_retention_day <= vnDay(ctx.now)) {
+      throw new DomainError('MEDIA_RETENTION_PASSED', 409, 'The retention period of this meeting has ended');
     }
     if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) {
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
@@ -265,7 +282,9 @@ export const meetingMediaRecord = defineCommand({
         })
         .execute();
     } else {
-      const videoRetentionDate = new Date(ctx.now.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+      // The org's video period from the recording, never past the meeting's own audio date.
+      const videoDay = retentionDates(ctx.now, await readRetentionSettings(ctx.trx, ctx.orgId)).video;
+      const videoRetentionDate = videoDay < meeting.audio_retention_day ? videoDay : meeting.audio_retention_day;
       await ctx.trx
         .insertInto('crove_meetings.meeting_video')
         .values({
@@ -458,7 +477,9 @@ export const meetingList = defineQuery({
     let query = ctx.trx
       .selectFrom('crove_meetings.meeting')
       .selectAll()
-      .where('org_id', '=', ctx.orgId);
+      .where('org_id', '=', ctx.orgId)
+      // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
+      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(new Date()))]));
 
     if (input.visibility) {
       query = query.where('visibility', '=', input.visibility);
@@ -516,7 +537,7 @@ export const meetingGet = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst()) as unknown as MeetingRow | undefined;
-    if (!meeting) {
+    if (!meeting || (meeting.text_retention_date !== null && dayText(meeting.text_retention_date) <= vnDay(new Date()))) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
 
@@ -572,12 +593,16 @@ export const meetingAudioRead = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id'])
+      .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
     if (!meeting) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // A period that has ended is final from its day, not from the nightly job's run (#2579).
+    if (meeting.audio_day <= vnDay(new Date()) || (meeting.text_day !== null && meeting.text_day <= vnDay(new Date()))) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
@@ -631,12 +656,16 @@ export const meetingVideoRead = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id'])
+      .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
     if (!meeting) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // A period that has ended is final from its day, not from the nightly job's run (#2579).
+    if (meeting.text_day !== null && meeting.text_day <= vnDay(new Date())) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
@@ -658,13 +687,14 @@ export const meetingVideoRead = defineQuery({
       .innerJoin('crove_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
       )
-      .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
+      .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.meeting_id', '=', input.meetingId)
       .executeTakeFirst();
     if (!video) {
       throw new DomainError('VIDEO_NOT_FOUND', 404, 'Meeting video not found');
     }
+    if (video.videoDay <= vnDay(new Date())) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
 
     return {
       meetingId: input.meetingId,
@@ -689,12 +719,16 @@ export const meetingMediaMeta = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id'])
+      .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
     if (!meeting) {
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // A period that has ended is final from its day, not from the nightly job's run (#2579).
+    if ((input.kind === 'audio' && meeting.audio_day <= vnDay(new Date())) || (meeting.text_day !== null && meeting.text_day <= vnDay(new Date()))) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
@@ -741,13 +775,14 @@ export const meetingMediaMeta = defineQuery({
         .innerJoin('crove_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
         )
-        .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
+        .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
         .where('v.org_id', '=', ctx.orgId)
         .where('v.meeting_id', '=', input.meetingId)
         .executeTakeFirst();
       if (!video) {
         throw new DomainError('VIDEO_NOT_FOUND', 404, 'Meeting video not found');
       }
+      if (video.videoDay <= vnDay(new Date())) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
       return {
         meetingId: input.meetingId,
         fileId: video.fileId,
@@ -771,6 +806,10 @@ export const meetingsCommands = [
   meetingReaderAdd,
   meetingReaderRemove,
   meetingMediaKeyReseal,
+  meetingSettingsSet,
+  meetingRetentionShred,
+  meetingShredReplay,
+  meetingMediaDiscard,
 ];
 
 export const meetingsQueries = [
@@ -779,4 +818,6 @@ export const meetingsQueries = [
   meetingAudioRead,
   meetingVideoRead,
   meetingMediaMeta,
+  meetingSettingsGet,
+  meetingMediaOrphanKeys,
 ];

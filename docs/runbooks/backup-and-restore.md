@@ -156,6 +156,7 @@ unset COMPOSE_PROJECT_NAME COMPOSE_FILE
 - What is left is the reconciliation: the entries and vouchers the report names as lost, and the e-invoice providers. Who decides and what to enter again is in [What the restore lost](ledger-after-restore.md#what-the-restore-lost).
 - Accounts, password hashes, MFA factors and sessions come back with the `auth` schema, so users sign in with their usual passwords. Sessions created after the backup are gone; a user whose session is gone signs in again.
 - The `crove_jobs` queue and the outbox come back as they were at backup time, and the worker picks them up. Work done after the backup (an extraction, a sent invite) is not in the restored database and may run again.
+- A restore brings back meetings a person deleted after the backup point, with their keys. The worker deletes them again when it starts, from the shred references in the archive store (`main.ts shred-replay` runs it on demand: [worm-archive.md](worm-archive.md#shred-references-for-deleted-meetings-2579)); a meeting whose audio, video or text date has passed since is shredded again by the next nightly run. `restore.sh` runs `shred-replay` itself before it starts the stack and fails the restore if it exits non-zero; a hand-made restore must run it before the API opens.
 - If the restored copy left your control (a laptop, another environment), rotate the context key there again; that copy and production must never share one.
 
 ## Point in time recovery

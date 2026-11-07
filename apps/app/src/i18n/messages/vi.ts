@@ -1515,6 +1515,19 @@ export const vi = {
       submit: 'Tạo cuộc họp và mã hóa tệp',
       submitting: 'Đang tải lên và mã hóa…',
     },
+    settings: {
+      title: 'Thời gian lưu cuộc họp',
+      hint: 'Thay đổi chỉ áp dụng cho các cuộc họp ghi sau đó, nên thời hạn đã báo cho người tham dự vẫn đúng. Hết hạn, âm thanh hoặc video không thể mở được nữa và phần văn bản bị xóa.',
+      audio: 'Âm thanh',
+      video: 'Video (không bao giờ lâu hơn âm thanh)',
+      text: 'Văn bản và hồ sơ đồng ý ghi âm',
+      audioChoice: { '0': 'Ngay sau khi có bản chép lời (7 ngày nếu chưa có)', '7': '7 ngày', '30': '30 ngày', '90': '90 ngày' },
+      videoChoice: { '7': '7 ngày', '30': '30 ngày' },
+      textChoice: { '0': 'Đến khi cuộc họp bị xóa', '90': '3 tháng', '365': '12 tháng', '730': '24 tháng' },
+      save: 'Lưu',
+      saved: 'Đã lưu thời gian lưu cuộc họp.',
+      adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được các thời hạn này.',
+    },
     detail: {
       back: 'Quay lại danh sách',
       delete: 'Xóa cuộc họp',
@@ -1539,6 +1552,7 @@ export const vi = {
       consentConfirmedAt: 'Xác nhận lúc',
       audioRetention: 'Hạn lưu âm thanh',
       textRetention: 'Hạn lưu văn bản',
+      untilDeleted: 'Đến khi cuộc họp bị xóa',
       readerUserId: 'ID người dùng của người xem',
       readerUserIdPlaceholder: 'ID người dùng của người xem',
       ownerDelete: 'Xóa tuân thủ (chủ sở hữu)',
@@ -8059,6 +8073,8 @@ export const vi = {
       NOTE_LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
       NOTE_LINK_TARGET_NOT_FOUND: 'Không tìm thấy bản ghi để gắn ghi chú',
       MEETING_NOT_FOUND: 'Không tìm thấy cuộc họp này',
+      MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
       INVALID_MEDIA_CONTAINER: 'Tệp này không phải định dạng âm thanh hoặc video được hỗ trợ.',
       VIDEO_NOT_ENABLED: 'Cuộc họp này không được đặt để giữ video.',
@@ -9490,10 +9506,22 @@ export const vi = {
     },
     meetings: {
       media: {
+        discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',
+        orphan_keys: 'Liệt kê bản lưu của tệp cuộc họp đã bị hủy',
         record: 'Ghi nhận tệp phương tiện mã hóa cuộc họp',
       },
       media_key: {
         reseal: 'Niêm phong lại khóa phương tiện cuộc họp sau khi đổi khóa',
+      },
+      retention: {
+        shred: 'Tiêu hủy âm thanh hoặc video, hoặc xóa cuộc họp, khi hết hạn lưu',
+      },
+      settings: {
+        get: 'Xem thời gian lưu cuộc họp',
+        set: 'Đổi thời gian lưu cuộc họp',
+      },
+      shred: {
+        replay: 'Xóa lại cuộc họp sau khi khôi phục dữ liệu',
       },
       meeting: {
         audio_read: 'Nghe ghi âm cuộc họp',

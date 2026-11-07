@@ -1517,6 +1517,19 @@ export const en = {
       submit: 'Create meeting and encrypt files',
       submitting: 'Uploading and encrypting…',
     },
+    settings: {
+      title: 'How long meetings are kept',
+      hint: 'A change applies to meetings recorded afterwards, so the period the participants were told stays true. When the time is up the audio or video can no longer be opened, and the text is deleted.',
+      audio: 'Audio',
+      video: 'Video (never longer than the audio)',
+      text: 'Text and consent record',
+      audioChoice: { '0': 'Right after the transcript (7 days while there is none)', '7': '7 days', '30': '30 days', '90': '90 days' },
+      videoChoice: { '7': '7 days', '30': '30 days' },
+      textChoice: { '0': 'Until the meeting is deleted', '90': '3 months', '365': '12 months', '730': '24 months' },
+      save: 'Save',
+      saved: 'The retention settings were saved.',
+      adminOnly: 'Only an owner or admin changes these periods.',
+    },
     detail: {
       back: 'Back to meetings',
       delete: 'Delete meeting',
@@ -1541,6 +1554,7 @@ export const en = {
       consentConfirmedAt: 'Confirmed at',
       audioRetention: 'Audio retention date',
       textRetention: 'Text retention date',
+      untilDeleted: 'Until the meeting is deleted',
       readerUserId: 'Reader user ID',
       readerUserIdPlaceholder: 'User ID of the reader',
       ownerDelete: 'Compliance delete (owner)',
@@ -8065,6 +8079,8 @@ export const en = {
       INVALID_READER: 'A reader must be an active owner, admin or member of this organization.',
       INVALID_MEDIA_CONTAINER: 'This file is not a supported audio or video format.',
       VIDEO_NOT_ENABLED: 'This meeting was not set up to keep video.',
+      MEDIA_RETENTION_PASSED: 'The period this meeting was to be kept has ended, so no new audio or video is accepted.',
+      MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',
       FILE_TOO_LARGE: 'The uploaded meeting file exceeds the maximum allowed size (300 MB for audio, 2 GB for video).',
       TODO_NOT_FOUND: 'This to-do was not found.',
       TODO_IN_TRASH: 'This to-do is in the trash; restore it first.',
@@ -9493,10 +9509,22 @@ export const en = {
     },
     meetings: {
       media: {
+        discard: 'Remove the stored copy of deleted meeting media',
+        orphan_keys: 'List the stored copies of deleted meeting media',
         record: 'Record meeting encrypted media',
       },
       media_key: {
         reseal: 'Reseal a meeting media key after a key rotation',
+      },
+      retention: {
+        shred: 'Shred meeting audio or video, or delete a meeting, at its retention date',
+      },
+      settings: {
+        get: 'Read the meeting retention settings',
+        set: 'Change the meeting retention settings',
+      },
+      shred: {
+        replay: 'Delete a meeting again after a restore',
       },
       meeting: {
         audio_read: 'Listen to meeting audio',
