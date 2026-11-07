@@ -156,7 +156,7 @@ const maxBytesFor = (purpose: UploadPurpose) =>
           : MAX_UPLOAD_BYTES;
 const tooLarge = (file: File, purpose: UploadPurpose) =>
   purpose === 'meeting_audio' || purpose === 'meeting_video'
-    ? new ClientError('FILE_TOO_LARGE', (t) => t('errors.FILE_TOO_LARGE'))
+    ? new ClientError('FILE_TOO_LARGE', (t) => t('kernelErrors.codes.FILE_TOO_LARGE'))
     : purpose === 'social'
     ? new ClientError('inbox.socialFileTooLarge', (t) => t('inbox.socialFileTooLarge', { name: file.name }))
     : new ClientError('inbox.fileTooLarge', (t) => t('inbox.fileTooLarge', { name: file.name }));
