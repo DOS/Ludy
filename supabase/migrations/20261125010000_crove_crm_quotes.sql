@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS crove_crm.quote_line (
   CONSTRAINT quote_line_quote_fk FOREIGN KEY (org_id, quote_id) REFERENCES crove_crm.quote (org_id, id) ON DELETE CASCADE,
   CONSTRAINT quote_line_no_uq UNIQUE (org_id, quote_id, line_no),
   CONSTRAINT quote_line_shape_check CHECK (
-    (kind = 'item' AND quantity > 0 AND unit_price > 0 AND vat_rate IS NOT NULL)
+    (kind = 'item' AND quantity IS NOT NULL AND unit_price IS NOT NULL AND quantity > 0 AND unit_price > 0 AND vat_rate IS NOT NULL)
     OR (kind = 'text' AND quantity IS NULL AND unit_price IS NULL AND vat_rate IS NULL AND discount_percent = 0 AND amount = 0 AND vat_amount = 0 AND stock_item_id IS NULL))
 );
 SELECT crove_kernel.apply_tenant_rls('crove_crm.quote_line');

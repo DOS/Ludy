@@ -50,6 +50,11 @@ function userOf(actor: QueryContext['actor']): string {
 
 const iso = (value: Date | string): string => new Date(value).toISOString();
 const day = (value: Date | string): string => (typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10));
+// The row lock of a draft. It is taken after the status is read, because a SELECT ... FOR UPDATE applies the UPDATE policy too, which shows a tenant role
+// drafts only: a quote that has left `draft` is read plainly and refused by its status, not reported as missing.
+async function lockDraft(ctx: Pick<CommandContext, 'trx' | 'orgId'>, quoteId: string): Promise<{ version: number } | undefined> {
+  return ctx.trx.selectFrom('crove_crm.quote').select('version').where('org_id', '=', ctx.orgId).where('id', '=', quoteId).forUpdate().executeTakeFirst();
+}
 const notFound = () => new DomainError('QUOTE_NOT_FOUND', 404, 'Không tìm thấy báo giá này');
 const stale = () => new DomainError('STALE_VERSION', 409, 'Báo giá này vừa được người khác sửa; hãy mở lại để xem bản mới');
 const notDraft = () => new DomainError('QUOTE_NOT_DRAFT', 409, 'Báo giá đã gửi không sửa được; hãy tạo bản sửa đổi');
@@ -391,12 +396,13 @@ export const quoteSave = defineCommand({
       .select(['id', 'deal_id', 'party_id', 'status', 'version', 'valid_until', 'remarks', 'terms'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
-      .forUpdate()
       .executeTakeFirst();
     if (!before) throw notFound();
     if (input.dealId !== undefined && input.dealId !== before.deal_id) throw new DomainError('QUOTE_DEAL_MISMATCH', 422, 'Báo giá này thuộc về một cơ hội khác');
     if (before.status !== 'draft') throw notDraft();
-    if (before.version !== input.version) throw stale();
+    const locked = await lockDraft(ctx, before.id);
+    if (!locked) throw notFound();
+    if (locked.version !== input.version) throw stale();
     await ctx.trx.deleteFrom('crove_crm.quote_line').where('org_id', '=', ctx.orgId).where('quote_id', '=', before.id).execute();
     await insertLines(ctx, before.id, computed.rows);
     await ctx.trx
@@ -408,7 +414,7 @@ export const quoteSave = defineCommand({
         subtotal: computed.subtotal,
         vat_amount: computed.vatAmount,
         total: computed.total,
-        version: before.version + 1,
+        version: locked.version + 1,
         updated_by: userId,
         updated_at: ctx.now,
       })
@@ -434,10 +440,10 @@ export const quoteDeleteDraft = defineCommand({
       .select(['id', 'deal_id', 'party_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
-      .forUpdate()
       .executeTakeFirst();
     if (!quote) throw notFound();
     if (quote.status !== 'draft') throw new DomainError('QUOTE_NOT_DRAFT', 409, 'Chỉ xóa được báo giá nháp');
+    await lockDraft(ctx, quote.id);
     // The lines go with the quote (the foreign key cascades).
     await ctx.trx.deleteFrom('crove_crm.quote').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).execute();
     ctx.audit({ quoteId: quote.id, dealId: quote.deal_id, partyId: quote.party_id });
@@ -462,7 +468,6 @@ export const quoteRevise = defineCommand({
       .select(['id', 'deal_id', 'party_id', 'status', 'revision', 'remarks', 'terms'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
-      .forUpdate()
       .executeTakeFirst();
     if (!source) throw notFound();
     if (source.status !== 'sent' && source.status !== 'declined') {
@@ -500,7 +505,12 @@ export const quoteRevise = defineCommand({
         updated_at: ctx.now,
       })
       .returning('id')
-      .executeTakeFirstOrThrow();
+      .executeTakeFirstOrThrow()
+      // Two people reviving the same quote at once: the unique index on revises_id lets one in.
+      .catch((error: unknown) => {
+        if ((error as { code?: string }).code === '23505') throw new DomainError('QUOTE_ALREADY_REVISED', 409, 'Báo giá này đã có một bản sửa đổi');
+        throw error;
+      });
     await insertLines(ctx, copy.id, rows);
     ctx.audit({ quoteId: copy.id, revisesId: source.id, dealId: source.deal_id, partyId: source.party_id, lines: rows.length });
     await ctx.activity('kernel.party', source.party_id, 'quote.revised', 'Tạo bản sửa đổi của một báo giá');

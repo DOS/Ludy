@@ -25,6 +25,16 @@ describe('computeDraft and computeLineTotals', () => {
     });
   });
 
+  it('keep the amounts the e-invoice draft always had, pinned as literals', () => {
+    const draft = computeDraft([
+      { description: 'a', unit: null, quantity: '3', unitPrice: '333.5', vatRate: '10%' },
+      { description: 'b', unit: null, quantity: '1', unitPrice: '25', vatRate: '10%' },
+      { description: 'c', unit: null, quantity: '1.5', unitPrice: '100001', vatRate: 'KCT' },
+    ]);
+    expect(draft.lines.map((l) => [l.amount, l.vatAmount])).toEqual([['1001', '100'], ['25', '3'], ['150002', '0']]);
+    expect([draft.subtotal, draft.vatAmount, draft.total]).toEqual(['151028', '103', '151131']);
+  });
+
   it('give a quote the total of the invoice made from it', () => {
     const draft = computeDraft(CASES.map((c) => ({ description: 'Hàng', unit: null, ...c })));
     const quote = sumLineTotals(CASES.map((c) => computeLineTotals(c)));
