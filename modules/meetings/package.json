@@ -1,0 +1,21 @@
+{
+  "name": "@crove/mod-meetings",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "AI Meeting Notes module: encrypted audio and video, consent records, and reader-gated access (plan docs/plan/meetings.md, ADR-0047)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crove/db": "workspace:*",
+    "@crove/kernel-contract": "workspace:*",
+    "@crove/kernel-runtime": "workspace:*",
+    "kysely": "catalog:"
+  }
+}

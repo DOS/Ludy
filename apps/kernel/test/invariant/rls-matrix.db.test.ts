@@ -76,12 +76,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.extension_auth_code',
   'crove_kernel.extension_token',
   'crove_meetings.action_item',
-  'crove_meetings.audio_segment',
-  'crove_meetings.media_key',
-  'crove_meetings.meeting',
-  'crove_meetings.meeting_reader',
   'crove_meetings.meeting_result',
-  'crove_meetings.meeting_video',
   'crove_meetings.transcript_segment',
   'crove_notes.link',
   'crove_notes.note',
@@ -1163,7 +1158,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #2531: one person's month of a pay run (ADR-0046), in the run's entity (b_legal_entity). Owners and admins alone (AUTHOR_ONLY); a draft run is the only one whose lines change, so the
-  // factory's run is a draft. Tenant roles update the figures and the stamp only, so the update probes assign the stamp to itself.
+  // factory's run is a draft. Tenant roles update the terms, the status, the inputs, the figures, the breakdown and the stamp only (never the run, the person, the kind or the creation), so the update probes assign the stamp to itself.
   'crove_hr.payroll_line': {
     update: { set: 'updated_at = updated_at' },
     make: (o) => {
@@ -1191,7 +1186,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // One month of one entity (the org's default, by its trigger): a draft until a person approves it, then frozen. Tenant roles update the working days and the approval columns only.
+  // One month of one entity (the org's default, by its trigger): a draft until a person approves it, then frozen. Tenant roles update the working days, the status, the approval columns and the stamp only (never the month, the entity or the creation); the probes assign the working days to themselves.
   'crove_hr.payroll_run': {
     update: { set: 'working_days = working_days' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
