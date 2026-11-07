@@ -181,6 +181,28 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     expect(Object.keys(lines)).toEqual(expect.arrayContaining(['6421', '6411', '622', '3383', '3384', '3382', '3335', '334']));
   });
 
+  it('refuses to approve a month whose lines rest on superseded terms (a change of function with the same wage), and posts the function of the terms frozen at approval', async () => {
+    for (const row of PAYROLL_RULES) (row as { status: string }).status = 'confirmed';
+    const o = await org();
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: MONTH });
+    const before = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    // After the month was opened, the first person moves to sales from the first day, on the same wage: the figures do not change, the expense account does.
+    const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]);
+    await o.exec(o.owner, 'hr.payroll.employment.add', { employeeId: first?.id, effectiveFrom: `${MONTH}-01`, contractType: 'indefinite', region: 'I', baseWage: TEAM[0]?.wage, payFunction: 'sales' });
+    await expect(o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: before.fingerprint, acceptFlags: true }, asMfa(o.owner))).rejects.toMatchObject({ code: 'HR_RUN_STALE' });
+    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
+    const after = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+    await o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: after.fingerprint, acceptFlags: true }, asMfa(o.owner));
+    for (const row of PAYROLL_RULES) (row as { status: string }).status = 'commentary';
+    const { proposalId } = await ask(o, run.runId as string);
+    const posted = await approve(o, proposalId);
+    const lines = await entry(o, posted.journalEntryId);
+    // Two people now sit on 6421 (sales); the first one's pay no longer goes to 6422 (administration).
+    expect(lines['6421']).toMatch(/^Dr /);
+    expect(lines['6422']).toBeUndefined();
+  });
+
   it('refuses a run that is not approved, one already asked for, and one that does not exist; a member cannot ask', async () => {
     const o = await org();
     const draft = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-02' });
