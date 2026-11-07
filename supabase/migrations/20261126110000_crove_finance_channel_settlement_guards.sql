@@ -6,7 +6,7 @@
 --      reversal, or that is itself a reversal, is out of the comparison. The old exact-match UNIQUE is replaced by this rule, which also covers it.
 --   2. A sale line (sales > 0, not marked as a later adjustment) may not repeat for the same order and line key in another settlement that still stands.
 --   3. The correction path: a settlement a member confirmed by mistake is undone by a REVERSAL, a second settlement with reversal_of set, for the same platform and period, whose report_net is the
---      negative of the original and whose lines mirror ALL of the original's (same order, line key, sales and net) marked as adjustments; a reversal row and its lines go in one transaction, and a
+--      negative of the original and whose lines mirror ALL of the original's (same order, line key and every amount column) marked as adjustments; a reversal row and its lines go in one transaction, and a
 --      constraint trigger deferred to commit refuses a reversal that leaves an original line unmirrored. Nothing is updated or deleted. A reversal is made once per settlement, and a settlement that
 --      has a reversal takes no more lines. The posting of a settlement (a later file) counts a reversal's lines negatively, so the two cancel, and the corrected report can then be imported again.
 --   4. An adjustment line (adjustment = true) carries no sale (sales = 0, its amounts are refund and other), so marking a line as an adjustment never lets a sale in twice. A sale line is the
@@ -102,12 +102,23 @@ BEGIN
   -- The same lock as the settlement guard, taken before the first look at what stands.
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('channel_settlement:' OPERATOR(pg_catalog.||) NEW.org_id::text OPERATOR(pg_catalog.||) ':' OPERATOR(pg_catalog.||) NEW.legal_entity_id::text
     OPERATOR(pg_catalog.||) ':' OPERATOR(pg_catalog.||) v_settlement.platform, 0));
+  -- A line paid for an order of the platform its settlement is of: a Shopee report cannot carry a Lazada order (the order key is per platform, and one lock covers one platform's orders).
+  IF EXISTS (
+    SELECT 1 FROM crove_finance.channel_order o
+    WHERE o.org_id = NEW.org_id AND o.legal_entity_id = NEW.legal_entity_id AND o.id = NEW.order_id AND o.platform <> v_settlement.platform
+  ) THEN
+    RAISE EXCEPTION 'CHANNEL_SETTLEMENT_PLATFORM_MISMATCH' USING ERRCODE = '23514',
+      HINT = 'A settlement line names an order of the same platform as its settlement.';
+  END IF;
   IF v_settlement.reversal_of IS NOT NULL THEN
-    -- A reversal's lines mirror the original's: the same order, line key, sales and net, marked as adjustments.
+    -- A reversal's lines mirror the original's in every amount: the same order, line key and each amount column, marked as adjustments.
     IF NOT NEW.adjustment OR NOT EXISTS (
       SELECT 1 FROM crove_finance.channel_settlement_line l
       WHERE l.org_id = NEW.org_id AND l.legal_entity_id = NEW.legal_entity_id AND l.settlement_id = v_settlement.reversal_of
-        AND l.order_id = NEW.order_id AND l.line_key = NEW.line_key AND l.sales = NEW.sales AND l.net = NEW.net
+        AND l.order_id = NEW.order_id AND l.line_key = NEW.line_key
+        AND l.sales = NEW.sales AND l.seller_discount = NEW.seller_discount AND l.commission = NEW.commission AND l.service_fee = NEW.service_fee
+        AND l.payment_fee = NEW.payment_fee AND l.shipping = NEW.shipping AND l.tax_withheld = NEW.tax_withheld AND l.refund = NEW.refund
+        AND l.other = NEW.other AND l.net = NEW.net
     ) THEN
       RAISE EXCEPTION 'CHANNEL_SETTLEMENT_REVERSAL_MISMATCH' USING ERRCODE = '23514',
         HINT = 'A line of a reversal repeats a line of the settlement it reverses, marked as an adjustment.';
@@ -154,7 +165,10 @@ BEGIN
       AND NOT EXISTS (
         SELECT 1 FROM crove_finance.channel_settlement_line m
         WHERE m.org_id = o.org_id AND m.legal_entity_id = o.legal_entity_id AND m.settlement_id = NEW.id
-          AND m.order_id = o.order_id AND m.line_key = o.line_key AND m.sales = o.sales AND m.net = o.net
+          AND m.order_id = o.order_id AND m.line_key = o.line_key
+          AND m.sales = o.sales AND m.seller_discount = o.seller_discount AND m.commission = o.commission AND m.service_fee = o.service_fee
+          AND m.payment_fee = o.payment_fee AND m.shipping = o.shipping AND m.tax_withheld = o.tax_withheld AND m.refund = o.refund
+          AND m.other = o.other AND m.net = o.net
       )
   ) THEN
     RAISE EXCEPTION 'CHANNEL_SETTLEMENT_REVERSAL_INCOMPLETE' USING ERRCODE = '23514',

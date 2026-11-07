@@ -121,10 +121,10 @@ suite('marketplace income reports as stored rows (#2516)', () => {
       [orgId, randomUUID(), settlement, orderId, key, ...names.map((n) => values[n])],
     ];
   };
-  const order = (org: string) =>
+  const order = (org: string, platform = 'shopee') =>
     admin(async (c) => {
       const id = randomUUID();
-      await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, 'shopee', `ST${randomUUID().slice(0, 12)}`]);
+      await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, platform, `ST${randomUUID().slice(0, 12)}`]);
       return id;
     });
   const insertSettlement = (user: string, id: string, extra: { platform?: string; start?: string; end?: string; net?: string; ref?: string | null; reversalOf?: string | null } = {}) => {
@@ -423,6 +423,74 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const c = randomUUID();
     expect((await insertSettlement(owner, c, { start: '2027-07-01', end: '2027-07-15' })).code).toBe('');
     expect((await insertLine(owner, c, await order(orgId), {}, 'S1')).code, 'the same key of another order').toBe('');
+  });
+
+  it('mirrors every amount column in a reversal, not only the sales and the net', async () => {
+    const original = randomUUID();
+    const orderId = await order(orgId);
+    const period = { start: '2027-11-01', end: '2027-11-30' };
+    expect((await insertSettlement(owner, original, { ...period, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, original, orderId, {}, 'S1')).code).toBe('');
+    const reversal = randomUUID();
+    const head = settlementSql(reversal, { ...period, net: '-95000', reversalOf: original });
+    // The same sales and net, split otherwise, would post other fees, so it is refused at the line.
+    // Each other amount column in turn takes the commission's 5000 (other as a negative adjustment), so the sales and the net stay the original's and only the split differs.
+    for (const column of ['seller_discount', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other']) {
+      const moved = lineSql(reversal, orderId, { adjustment: 'true', commission: '0', [column]: column === 'other' ? '-5000' : '5000' }, 'S1');
+      expect((await inTxn(owner, orgId, [head, moved])).code, `same net, ${column} instead of the commission`).toBe('23514');
+    }
+    expect((await inTxn(owner, orgId, [head, lineSql(reversal, orderId, { adjustment: 'true', commission: '4000', other: '-1000' }, 'S1')])).code, 'same net, commission less and an adjustment').toBe('23514');
+    expect((await inTxn(owner, orgId, [head, lineSql(reversal, orderId, { adjustment: 'true' }, 'S1')])).code, 'every column the same').toBe('');
+  });
+
+  it('refuses a line whose order is of another platform than its settlement', async () => {
+    const settlement = randomUUID();
+    expect((await insertSettlement(owner, settlement, { start: '2027-12-01', end: '2027-12-31', platform: 'shopee' })).code).toBe('');
+    expect((await insertLine(owner, settlement, await order(orgId, 'lazada'), {}, 'P1')).code, 'a Lazada order in a Shopee settlement').toBe('23514');
+    expect((await insertLine(owner, settlement, await order(orgId, 'shopee'), {}, 'P1')).code, 'a Shopee order').toBe('');
+  });
+
+  it('serializes a reversal against a line added to its original, whichever comes first', async () => {
+    const waitBlocked = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // 1. The reversal holds the lock (not yet committed) while a new line for its original waits: the line is refused once the reversal commits.
+    const original = randomUUID();
+    const o1 = await order(orgId);
+    const period = { start: '2028-01-01', end: '2028-01-31' };
+    expect((await insertSettlement(owner, original, { ...period, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, original, o1, {}, 'S1')).code).toBe('');
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await enterUser(holder, owner, orgId);
+      const reversal = randomUUID();
+      for (const [text, values] of [settlementSql(reversal, { ...period, net: '-95000', reversalOf: original }), lineSql(reversal, o1, { adjustment: 'true' }, 'S1')]) await holder.query(text, values);
+      const late = insertLine(owner, original, await order(orgId), {}, 'S2');
+      await waitBlocked(400);
+      await holder.query('COMMIT');
+      expect((await late).code, 'a line that waited for the reversal').toBe('23514');
+    } finally {
+      holder.release();
+    }
+    // 2. A new line holds the lock while a reversal waits: the reversal, which does not mirror it, is refused at its commit.
+    const second = randomUUID();
+    const o2 = await order(orgId);
+    const period2 = { start: '2028-02-01', end: '2028-02-29' };
+    expect((await insertSettlement(owner, second, { ...period2, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, second, o2, {}, 'S1')).code).toBe('');
+    const writer = await pool.connect();
+    try {
+      await writer.query('BEGIN');
+      await enterUser(writer, owner, orgId);
+      const [text, values] = lineSql(second, await order(orgId), {}, 'S2');
+      await writer.query(text, values);
+      const reversal2 = randomUUID();
+      const racing = inTxn(owner, orgId, [settlementSql(reversal2, { ...period2, net: '-95000', reversalOf: second }), lineSql(reversal2, o2, { adjustment: 'true' }, 'S1')]);
+      await waitBlocked(400);
+      await writer.query('COMMIT');
+      expect((await racing).code, 'a reversal that waited for a new line').toBe('23514');
+    } finally {
+      writer.release();
+    }
   });
 
   it('serializes imports made at once: of four settlements for one period one is stored, and of two sale lines for one order one', async () => {
