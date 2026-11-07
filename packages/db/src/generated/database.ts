@@ -49,6 +49,8 @@ export interface CroveFinanceSchema {
   'crove_finance.categorization_rule': FinanceCategorizationRuleTable;
   'crove_finance.channel_order': FinanceChannelOrderTable;
   'crove_finance.channel_order_line': FinanceChannelOrderLineTable;
+  'crove_finance.channel_settlement': FinanceChannelSettlementTable;
+  'crove_finance.channel_settlement_line': FinanceChannelSettlementLineTable;
   'crove_finance.chart': FinanceChartTable;
   'crove_finance.chart_account': FinanceChartAccountTable;
   'crove_finance.collection_setting': FinanceCollectionSettingTable;
@@ -763,6 +765,42 @@ export interface FinanceChannelOrderTable {
   platform: ColumnType<string, string, NotGranted>;
   order_no: ColumnType<string, string, NotGranted>;
   ordered_at: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.channel_settlement_line */
+export interface FinanceChannelSettlementLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  settlement_id: ColumnType<string, string, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_key: ColumnType<string, string, NotGranted>;
+  sales: ColumnType<string, string | undefined, NotGranted>;
+  seller_discount: ColumnType<string, string | undefined, NotGranted>;
+  commission: ColumnType<string, string | undefined, NotGranted>;
+  service_fee: ColumnType<string, string | undefined, NotGranted>;
+  payment_fee: ColumnType<string, string | undefined, NotGranted>;
+  shipping: ColumnType<string, string | undefined, NotGranted>;
+  tax_withheld: ColumnType<string, string | undefined, NotGranted>;
+  refund: ColumnType<string, string | undefined, NotGranted>;
+  other: ColumnType<string, string | undefined, NotGranted>;
+  net: ColumnType<string, string, NotGranted>;
+  source_row: ColumnType<number | null, number | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.channel_settlement */
+export interface FinanceChannelSettlementTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  period_start: ColumnType<string, string, NotGranted>;
+  period_end: ColumnType<string, string, NotGranted>;
+  payout_ref: ColumnType<string | null, string | null, NotGranted>;
+  report_net: ColumnType<string, string, NotGranted>;
+  source_sha256: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
