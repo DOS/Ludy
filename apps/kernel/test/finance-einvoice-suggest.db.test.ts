@@ -147,6 +147,14 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     expect((await source(o, 'bán xyz linh tinh')).parties).toEqual([]);
   });
 
+  it('does not offer a customer that was merged into another', async () => {
+    const o = await org();
+    const keep = await party(o, 'Nguyễn Văn Nam', { kind: 'person' });
+    const merged = await party(o, 'Nguyễn Văn Nam cũ', { kind: 'person' });
+    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, merged, keep]));
+    expect((await source(o, 'bán cho anh Nam')).parties.map((p) => p.id)).toEqual([keep]);
+  });
+
   it('gives the VAT rates of the earlier drafts to a customer and of the whole org, and offers nothing of another org', async () => {
     const o = await org();
     const [series] = (await sync(o)).series;

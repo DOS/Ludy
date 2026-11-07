@@ -57,11 +57,11 @@ export const einvoiceDraftSuggestSource = defineQuery({
     const orgRates = orgRatesRows.rows.map((r) => ({ vatRate: r.vat_rate, n: r.n }));
     if (words.length === 0) return { parties: [], orgRates };
     // The score of a customer is the number of the text's words its name holds; the best come first, and a customer none of them fits is not offered.
-    const score = sql.join(words.map((word) => sql`(pg_catalog.strpos(pg_catalog.lower(p.name), ${word}) > 0)::int`), sql` + `);
+    const score = sql.join(words.map((word) => sql`(pg_catalog.strpos(pg_catalog.lower(normalize(p.name, NFC)), ${word}) > 0)::int`), sql` + `);
     const partyRows = await sql<{ id: string; kind: 'organization' | 'person'; name: string; tax_code: string | null; address: string | null; email: string | null }>`
       SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email
       FROM crove_kernel.party p
-      WHERE p.org_id = ${ctx.orgId} AND (${score}) > 0
+      WHERE p.org_id = ${ctx.orgId} AND p.duplicate_of IS NULL AND (${score}) > 0
       ORDER BY (${score}) DESC, p.name, p.id
       LIMIT ${SUGGEST_PARTIES_MAX}`.execute(ctx.trx);
     const ids = partyRows.rows.map((p) => p.id);

@@ -51,9 +51,15 @@ describe('the prompt', () => {
 describe('the figures and rates of a text', () => {
   it('reads digits, grouping, magnitude words and decimals', () => {
     const figures = figuresOfText('10 hộp giá 120k; 1tr2; 2 triệu; 1.250.000đ; 1 500 000; 2,5tr; 3 kg; 0,5');
-    for (const n of ['10', '120', '120000', '1200000', '2000000', '1250000', '1500000', '2500000', '3', '0.5']) expect(figures.has(n), n).toBe(true);
+    for (const n of ['10', '120000', '1200000', '2000000', '1250000', '1500000', '2500000', '3', '0.5']) expect(figures.has(n), n).toBe(true);
     // "kg" is not "k".
     expect(figures.has('3000')).toBe(false);
+    // A figure with a magnitude word stands for the scaled number only.
+    expect(figures.has('120')).toBe(false);
+    // "2 500k" is a 2 and a 500k, and "2 500" may be read both ways.
+    const spaced = figuresOfText('mua 2 500k, 3 150');
+    for (const n of ['2', '500000', '3', '150', '3150']) expect(spaced.has(n), n).toBe(true);
+    expect(spaced.has('2500000')).toBe(false);
   });
 
   it('reads the VAT rates a text states, but not a discount', () => {
