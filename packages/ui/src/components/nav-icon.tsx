@@ -65,6 +65,7 @@ const ICONS = {
   portalList: FileCheck2Icon,
   customers: UsersIcon,
   employees: UsersRoundIcon,
+  payroll: BanknoteIcon,
   vendors: TruckIcon,
   social: MegaphoneIcon,
   notifications: BellRingIcon,

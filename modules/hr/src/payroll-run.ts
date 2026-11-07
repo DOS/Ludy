@@ -407,7 +407,7 @@ export const lineInputsSet = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', line.id)
       .execute();
-    ctx.audit({ runId: run.id, lineId: line.id, inputKeys: Object.keys(input.inputs).sort(), refused: f.status === 'refused' });
+    ctx.audit({ runId: run.id, lineId: line.id, inputKeys: auditValue(LINE, 'inputs', Object.keys(input.inputs).length), refused: f.status === 'refused' });
     return { runId: run.id, lineId: line.id };
   },
 });
