@@ -969,6 +969,8 @@ export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+// A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
+export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
 export type HrPayrollEmploymentTable = Refine<
   G.HrPayrollEmploymentTable,
@@ -1022,6 +1024,7 @@ type Refined = Tables<{
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
