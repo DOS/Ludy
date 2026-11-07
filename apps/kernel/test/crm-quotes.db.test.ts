@@ -293,7 +293,8 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await o.exec(o.member, 'crm.quote.save', { quoteId: quote.id, version: 1, terms: null, lines: [item({ unitPrice: '1500000.5', vatRate: '5%' }), item({ description: 'gói kế toán năm', unitPrice: '1' }), item({ description: 'Tư vấn', unit: null, unitPrice: '200000', vatRate: 'KCT' })] });
     const defaults = await o.query<QuoteDefaults>(o.member, 'crm.quote.defaults', { partyId: party });
     expect(defaults.defaultVat).toBe('5%');
-    expect(defaults.hints.map((h) => [h.description, h.unitPrice, h.vatRate]).sort()).toEqual([['Tư vấn', '200000', 'KCT'], ['gói kế toán năm', '1', '10%']].sort());
+    expect(defaults.hints.map((h) => [h.description, h.unitPrice, h.vatRate]).sort()).toEqual([['Tư vấn', '200000', 'KCT'], ['Gói kế toán năm', '1500000.5', '5%']].sort());
+    // Two descriptions that differ only in case are one hint: the earlier line of the latest quote.
     expect(defaults.hints.every((h) => h.quoteId === quote.id)).toBe(true);
     expect(await o.query<QuoteDefaults>(o.member, 'crm.quote.defaults', { partyId: stranger })).toMatchObject({ defaultVat: '8%', hints: [] });
   });
@@ -348,7 +349,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
       ["decline_reason", ['x']],
     ];
     for (const [column, values] of forged) {
-      await expect(as(o.member, (c) => c.query(insert(column, values), base)), column).rejects.toMatchObject({ code: '42501' });
+      await expect(as(o.member, (c) => c.query(insert(column, values), [...base, ...values])), column).rejects.toMatchObject({ code: '42501' });
     }
     // The editable columns of a draft change; the status, the number, the sent and decided facts, the deal and the customer never do.
     expect(await as(o.member, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x', terms = 'y', valid_until = '2031-02-01' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(1);
