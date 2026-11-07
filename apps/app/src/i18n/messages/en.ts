@@ -840,6 +840,14 @@ export const en = {
     region: 'Region',
     regionOption: 'Region {region}',
     baseWage: 'Base wage (VND per month)',
+    payFunction: 'Cost department',
+    payFunctions: {
+      admin: 'Administration',
+      sales: 'Sales',
+      production: 'Direct production',
+      overhead: 'Factory overhead',
+      construction: 'Construction in progress',
+    },
     contracts: {
       indefinite: 'Indefinite term',
       fixed_term: 'Fixed term',

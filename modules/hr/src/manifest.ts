@@ -18,7 +18,7 @@ export const hrManifest = defineModule({
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
       }),
-      payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
+      payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'pay_function', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
       // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the
       // approval record holds the totals, so it is too. The ids, the status and the dates are internal.
       payroll_line: columns(['org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'checks', 'rules_used', 'refusal', 'adjusts_run_id', 'note', 'created_by', 'created_at', 'updated_at'], {
