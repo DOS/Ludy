@@ -9332,6 +9332,7 @@ export const vi = {
     meetings: {
       media: {
         discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',
+        orphan_keys: 'Liệt kê bản lưu của tệp cuộc họp đã bị hủy',
         record: 'Ghi nhận tệp phương tiện mã hóa cuộc họp',
       },
       media_key: {
@@ -9341,6 +9342,7 @@ export const vi = {
         shred: 'Tiêu hủy âm thanh hoặc video, hoặc xóa cuộc họp, khi hết hạn lưu',
       },
       settings: {
+        get: 'Xem thời gian lưu cuộc họp',
         set: 'Đổi thời gian lưu cuộc họp',
       },
       shred: {

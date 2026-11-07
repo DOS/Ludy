@@ -9335,6 +9335,7 @@ export const en = {
     meetings: {
       media: {
         discard: 'Remove the stored copy of deleted meeting media',
+        orphan_keys: 'List the stored copies of deleted meeting media',
         record: 'Record meeting encrypted media',
       },
       media_key: {
@@ -9344,6 +9345,7 @@ export const en = {
         shred: 'Shred meeting audio or video, or delete a meeting, at its retention date',
       },
       settings: {
+        get: 'Read the meeting retention settings',
         set: 'Change the meeting retention settings',
       },
       shred: {
