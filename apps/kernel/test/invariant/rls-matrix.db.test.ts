@@ -73,6 +73,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.payroll_bank_template',
   'crove_kernel.extension_auth_code',
   'crove_kernel.extension_token',
   'crove_meetings.action_item',
@@ -98,6 +99,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.payroll_employment', 'false'],
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
+  // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
+  ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_run', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
@@ -1190,6 +1193,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_hr.payroll_run': {
     update: { set: 'working_days = working_days' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
+  },
+  // #2532: the layout of the org's bank for the bulk-salary file (columns in order, with their headers), in the entity's name (b_legal_entity). Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
+  'crove_hr.payroll_bank_template': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix', layout: JSON.stringify({ columns: [{ key: 'amount', header: 'Amount' }] }) } }),
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
