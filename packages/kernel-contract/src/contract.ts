@@ -254,6 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleteDraft, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteRevise, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -601,6 +602,18 @@ export const contract = {
     dealSetting: {
       get: oc.input(z.strictObject({})).output(zDealSetting),
       set: oc.input(zDealSettingSet).output(zDealSetting),
+    },
+    // Quotes of a deal (#2693, docs/plan/crm-quotes.md): everyone reads; owners, admins and members write a draft, delete it, or revise a quote that has left
+    // `draft`; owners and admins set the org's defaults. Nothing here sends a quote (a later step).
+    quotes: {
+      list: oc.input(zQuoteListQuery).output(zQuotePage),
+      get: oc.input(zQuoteRef).output(zQuote),
+      byDeal: oc.input(zDealQuotesQuery).output(z.array(zQuoteSummary)),
+      defaults: oc.input(zQuoteDefaultsQuery).output(zQuoteDefaults),
+      save: oc.input(zQuoteSave).output(zQuote),
+      deleteDraft: oc.input(zQuoteDeleteDraft).output(zQuoteDeleted),
+      revise: oc.input(zQuoteRevise).output(zQuote),
+      setSetting: oc.input(zQuoteSettingSet).output(zQuoteSetting),
     },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.
