@@ -71,7 +71,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   const periodDay = () => new Date(Date.UTC(2026, 0, 1 + day++)).toISOString().slice(0, 10);
 
   // One statement as a tenant role in the context of a user of the org, in a transaction that is rolled back on a refusal and committed otherwise. Returns the error code (empty when it ran).
-  async function asTenant(user: string, org: string, text: string, values: unknown[] = []): Promise<{ code: string; rowCount: number }> {
+  async function asTenant(user: string, org: string, text: string, values: unknown[] = []): Promise<{ code: string; rowCount: number; constraint?: string }> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -82,7 +82,8 @@ suite('marketplace income reports as stored rows (#2516)', () => {
         return { code: '', rowCount: result.rowCount ?? 0 };
       } catch (error) {
         await client.query('ROLLBACK');
-        return { code: (error as { code?: string }).code ?? 'unknown', rowCount: 0 };
+        const e = error as { code?: string; constraint?: string };
+        return { code: e.code ?? 'unknown', rowCount: 0, constraint: e.constraint };
       }
     } finally {
       client.release();
@@ -291,9 +292,14 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   it('refuses a negative deduction, a net that is not what the columns say, and a period that ends before it starts', async () => {
     const settlement = await seedSettlement();
     const orderId = await order(orgId);
-    for (const column of ['seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'sales']) {
-      expect((await insertLine(owner, settlement, orderId, { sales: '100000', [column]: '-1', net: '99999' }, `N-${column}`)).code, `a negative ${column}`).toBe('23514');
+    // The net says what the columns say, so the refusal is the column's own CHECK and not the net identity.
+    for (const column of ['seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund']) {
+      const result = await insertLine(owner, settlement, orderId, { sales: '100000', commission: '0', [column]: '-1', net: '100001' }, `N-${column}`);
+      expect(result.code, `a negative ${column}`).toBe('23514');
+      expect(result.constraint, `a negative ${column}`).toBe(`channel_settlement_line_${column}_check`);
     }
+    const negSales = await insertLine(owner, settlement, orderId, { sales: '-1', commission: '0', net: '-1' }, 'N-sales');
+    expect([negSales.code, negSales.constraint], 'negative sales').toEqual(['23514', 'channel_settlement_line_sales_check']);
     expect((await insertLine(owner, settlement, orderId, { net: '95001' }, 'NET1')).code, 'a net one dong too many').toBe('23514');
     expect((await insertLine(owner, settlement, orderId, { net: '94999' }, 'NET2')).code, 'a net one dong too few').toBe('23514');
     // An adjustment is the one column that may be negative, and the net still has to say so.
