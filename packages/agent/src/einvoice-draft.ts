@@ -92,13 +92,10 @@ export function einvoiceDraftPrompt(request: EInvoiceDraftRequest): string {
 // ---------------------------------------------------------------------------------------------------------------------
 // The checks. The text is read in NFKC, without invisible format characters, in lower case, as the other finance texts are.
 // ---------------------------------------------------------------------------------------------------------------------
+const readPlain = (text: string): string => text.normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase();
+// "1 500 000": digits grouped by spaces in threes are one number, unless a magnitude word follows the last group ("2 500k" is a 2 and a 500k).
 const read = (text: string): string =>
-  text
-    .normalize('NFKC')
-    .replace(/\p{Cf}/gu, '')
-    .toLowerCase()
-    // "1 500 000": digits grouped by spaces in threes are one number.
-    .replace(/(?<=\d)[    ]+(?=\d{3}(?!\d))/gu, '');
+  readPlain(text).replace(/(?<=\d)[    ]+(?=\d{3}(?!\d)(?!\s*(?:tr|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])))/gu, '');
 
 // "1.250.000" and "1,250,000" are grouping (groups of exactly three digits); "1.5" and "1,5" are decimals.
 const canon = (n: string): string => (/^\d{1,3}(?:[.,]\d{3})+$/u.test(n) ? n.replace(/[.,]/gu, '') : n.replace(',', '.'));
@@ -109,13 +106,15 @@ const FIGURE = /(\d+(?:[.,]\d+)*)(?:\s*(tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|
 /** Every figure the text holds as a plain decimal string: each number as written, and, where a magnitude word follows ("120k", "1tr2", "2 triệu"), the number it stands for. */
 export function figuresOfText(text: string): Set<string> {
   const figures = new Set<string>();
-  for (const match of read(text).matchAll(FIGURE)) {
+  // Both readings are allowed: the grouped one ("1 500 000") and the plain one ("2 500" as a 2 and a 500), so a space never makes a true figure refused.
+  for (const match of [...read(text).matchAll(FIGURE), ...readPlain(text).matchAll(FIGURE)]) {
     const [, digits = '', unit, tail] = match;
     const base = canon(digits);
     try {
-      figures.add(money(base).toFixed());
+      // A figure with a magnitude word stands for the scaled number only: "120k" is 120000, never 120.
       const factor = unit === undefined ? undefined : MULTIPLIER[unit];
       if (factor !== undefined) figures.add(money(tail === undefined ? base : `${base}.${tail}`).times(factor).toFixed());
+      else figures.add(money(base).toFixed());
     } catch {
       // Not a number money() reads: it states nothing.
     }
