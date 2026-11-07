@@ -5,9 +5,7 @@
 --                                               source), one per run: a unique index makes "approving the proposal posts once" a fact of the database, not only of the command. Such a
 --                                               voucher is no year closing, no close of a month of stock and no count, and it names the proposal that approved it.
 -- crove_finance.effect_proposal_check          the trigger lists the new command, so a voucher may name a proposal only when that proposal is executing one of the commands that post vouchers.
--- crove_kernel.approval_command_policy          finance.payroll_posting.record is an R3 ledger proposal command (owners and admins approve, four-eyes with the one-person path P10, a ledger
---                                               effect required): the body of 20261124050000 with the command added. Kept equal to approval.ts (POLICIES, APPROVAL_POLICY_VERSION 8) by
---                                               apps/kernel/test/invariant/proposal-approve-gate.db.test.ts.
+-- The approval policy of the new command is in 20261126040000 (the kernel's own migration: a finance migration touches no crove_kernel object).
 -- crove_finance.ledger_effect_recorded          the body of 20261124040000 with the branch for the new command: its effect is a voucher naming the run, stored in this transaction.
 SET LOCAL lock_timeout = '2s';
 
@@ -25,23 +23,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS journal_voucher_payroll_run_uq ON crove_financ
 DROP TRIGGER IF EXISTS a_effect_proposal ON crove_finance.journal_voucher;
 CREATE TRIGGER a_effect_proposal BEFORE INSERT ON crove_finance.journal_voucher
   FOR EACH ROW EXECUTE FUNCTION crove_finance.effect_proposal_check('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm', 'finance.payroll_posting.record');
-
-CREATE OR REPLACE FUNCTION crove_kernel.approval_command_policy(p_command text, OUT roles text[], OUT permission text, OUT four_eyes boolean, OUT ledger boolean)
-LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
-  WITH kind AS (
-    SELECT p_command IN ('finance.purchase.record', 'finance.journal.reverse', 'finance.voucher.record',
-                         'finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period',
-                         'finance.stock.count_confirm', 'finance.payroll_posting.record') AS is_ledger,
-           p_command IN ('ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch') AS is_ads,
-           p_command IN ('finance.einvoice.issue') AS is_einvoice
-  )
-  SELECT CASE WHEN k.is_ledger OR k.is_ads OR k.is_einvoice THEN ARRAY['owner', 'admin']::text[] ELSE ARRAY[]::text[] END,
-         CASE WHEN k.is_ledger THEN 'finance.proposal.approve' END,
-         true,
-         k.is_ledger
-  FROM kind k
-$$;
-REVOKE ALL ON FUNCTION crove_kernel.approval_command_policy(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
 -- A ledger proposal moves to 'executed' only when its effect was posted in this transaction (20261105020000). Redefined as it was, with the pay run's posting added.
 CREATE OR REPLACE FUNCTION crove_finance.ledger_effect_recorded(p_org uuid, p_proposal uuid, p_command text) RETURNS boolean
