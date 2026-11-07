@@ -66,6 +66,8 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.channel_settlement',
+  'crove_finance.channel_settlement_line',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -154,6 +156,13 @@ const leScopePredicate = (c: string) =>
 // The same policy for a nullable column whose NULL rows are org-level (20261101060000 role_assignment_scope, #1716).
 const leScopeOrOrgPredicate = (c: string) =>
   `((${c} IS NULL) OR ('*'::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])) OR ((${c})::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])))`;
+// Tables no tenant role may update or delete: the rows are the record of what a member confirmed (an import, a posting), and a correction is a new row. The matrix checks, for every table
+// listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
+// listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
+const APPEND_ONLY = new Set<string>([
+  'crove_finance.channel_settlement',
+  'crove_finance.channel_settlement_line',
+]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
 type Values = Record<string, string | number>;
@@ -225,6 +234,9 @@ const payrollMonth = () => {
 // Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
 let channelOrderSeq = 0;
 const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
+// A settlement of a marketplace (#2516) is unique per entity, platform and period: each seeded one takes the next day from 2000-01-01 as a one-day period.
+let channelSettlementSeq = 0;
+const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -798,6 +810,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } }],
         row: { org_id: o.id, id: randomUUID(), order_id: order, line_key: 'RLS-matrix', quantity: '1', stage: 'placed' },
+      };
+    },
+  },
+  // #2516: the income report of a platform for a period (ADR-0045 point 5), read from a file a member confirmed: the period, the platform's payout reference and the net the report states; it
+  // takes the org's default entity by its trigger and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement': {
+    make: (o) => {
+      const day = channelSettlementDay();
+      return { row: { org_id: o.id, id: randomUUID(), platform: 'shopee', period_start: day, period_end: day, report_net: '0' } };
+    },
+  },
+  // #2516: what the platform paid for one order of a settlement. It takes its settlement's entity, and the settlement and the order it names are seeded with it. The net is what the columns say
+  // (sales less the deductions), so the seeded row is a sale of 100000 with a commission of 5000. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement_line': {
+    make: (o) => {
+      const order = randomUUID();
+      const settlement = randomUUID();
+      const day = channelSettlementDay();
+      return {
+        setup: [
+          { table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } },
+          { table: 'crove_finance.channel_settlement', values: { org_id: o.id, id: settlement, platform: 'shopee', period_start: day, period_end: day, report_net: '95000' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), settlement_id: settlement, order_id: order, line_key: 'RLS-matrix', sales: '100000', commission: '5000', net: '95000' },
       };
     },
   },
@@ -2690,6 +2726,9 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(authorOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'AUTHOR_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(authorOnly.filter((t) => !ROW_FACTORIES[t]), 'AUTHOR_ONLY lists tables with no row factory').toEqual([]);
     expect(authorOnly, 'AUTHOR_ONLY is kept sorted, one table per line').toEqual([...authorOnly].sort());
+    const appendOnly = [...APPEND_ONLY];
+    expect(appendOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'APPEND_ONLY lists tables that no longer have org_id').toEqual([]);
+    expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
   });
 
   it('limits the scoped member to its branch', async () => {
@@ -2982,6 +3021,20 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         const { rows } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [orgs.B.id]);
         expect(rows[0]?.n, `${table} still has its org B rows`).toBeGreaterThan(0);
       });
+
+      if (APPEND_ONLY.has(table)) {
+        it('is append-only: no tenant role holds UPDATE or DELETE on it, and an update or delete of its own rows is refused', async () => {
+          factoryFor(table);
+          for (const actor of actors.filter((a) => a.role !== 'crove_definer_tenant')) {
+            const who = `${actor.name} on ${table}`;
+            expect(can(table, actor.role, 'UPDATE'), `${who}: holds UPDATE`).toBe(false);
+            expect(can(table, actor.role, 'DELETE'), `${who}: holds DELETE`).toBe(false);
+            expect(updatable.get(table)?.get(actor.role) ?? [], `${who}: holds UPDATE on columns`).toEqual([]);
+            expectDenied(await probe(actor, (c) => c.query(`UPDATE ${table} SET org_id = org_id WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: updating its own rows`);
+            expectDenied(await probe(actor, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: deleting its own rows`);
+          }
+        });
+      }
 
       if (relation.entityColumn) {
         const column = relation.entityColumn;
