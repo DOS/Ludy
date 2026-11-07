@@ -139,4 +139,18 @@ describe('streamedBody', () => {
     expect(stopped).toMatchObject({ code: 'DOWNLOAD_CANCELLED' });
     expect(released).toBe(1);
   });
+
+  it('errors the body, never ends it cleanly, when the wait bound cancels a connected client', async () => {
+    const body = await streamedBody(
+      async (sink) => {
+        await sink({ lines: ['x'], last: false });
+        await sink({ lines: ['y'], last: false });
+      },
+      () => {},
+      undefined,
+      30,
+    );
+    await new Promise((r) => setTimeout(r, 120));
+    await expect(text(body)).rejects.toMatchObject({ code: 'DOWNLOAD_CANCELLED' });
+  });
 });

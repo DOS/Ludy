@@ -92,7 +92,8 @@ export async function streamedBody(
 
   const next = async (): Promise<Uint8Array | null> => {
     for (;;) {
-      if (cancelled) return null;
+      // A client the wait bound or an abort cancelled gets an error, never a clean end: the file it holds is not whole.
+      if (cancelled) throw cancelledError();
       if (slot) {
         const chunk = slot;
         slot = null;

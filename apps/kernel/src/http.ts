@@ -2684,13 +2684,8 @@ export function createHttpApp(deps: HttpDeps) {
           c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
           throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất dữ liệu; hãy thử lại sau vài giây');
         }
-        let body: ReadableStream<Uint8Array>;
-        try {
-          body = await streamedBody((sink) => runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, sink), release, c.req.raw.signal);
-        } catch (error) {
-          release();
-          throw error;
-        }
+        // streamedBody lets go of the slot on every path (the query settling, a pre-aborted request), so no catch releases it here.
+        const body = await streamedBody((sink) => runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, sink), release, c.req.raw.signal);
         return new Response(body, {
           headers: {
             'content-type': 'application/x-ndjson; charset=utf-8',
