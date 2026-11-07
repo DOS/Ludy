@@ -229,8 +229,8 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     ])
     .where('f.org_id', '=', ctx.orgId)
     // Images of Social posts (#372) and import spreadsheets (#465) are not documents, unless the same bytes were also
-    // uploaded as one and read.
-    .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import']), eb('e.status', 'is not', null)]));
+    // uploaded as one and read. Encrypted meeting media (#2576) is never a document: only the meeting's readers may know it exists.
+    .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import', 'meeting_audio', 'meeting_video']), eb('e.status', 'is not', null)]));
   if ('ids' in filter) query = query.where('f.id', 'in', [...filter.ids]);
   else if ('staged' in filter) query = query.where(sql<boolean>`(e.statement ->> 'state') = 'staged'`).orderBy('f.created_at', 'desc').limit(filter.staged);
   else query = query.orderBy('f.created_at', 'desc').limit(filter.recent);

@@ -12,6 +12,14 @@ import { dirname, join, resolve, sep } from 'node:path';
 // created or found, and every file row keeps the triple (key, generation, sha256). Reads go through readVerified,
 // which asks the store for that exact generation and refuses bytes whose sha256 differs, so an object swapped
 // after approval is never served or read as the original.
+// A byte range [start, end] is two non-negative safe integers in order; anything else is a programming error, refused before
+// the store is touched (a negative start would read from the file position, not the start).
+export function assertRange(start: number, end: number): void {
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+    throw new RangeError('invalid byte range');
+  }
+}
+
 export interface BlobStore {
   // An org key must end in the sha256 of the bytes (a content address); any other key is refused.
   // Writes are create-only: a key that already holds the same bytes is accepted (a re-upload dedupes), and a key
@@ -24,6 +32,8 @@ export interface BlobStore {
   // without reading more than that; a store that ignores it is checked by readVerified after the read. A maxBytes that
   // is not a whole number of bytes (assertReadCap) is refused with a RangeError before anything is read (#1189).
   get(key: string, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
+  // Reads a byte slice [start, end] (inclusive) of the blob.
+  getRange?(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
   // Removes the blob; a missing key is not an error.
   delete(key: string): Promise<void>;
   // Present when browsers transfer bytes to and from the store directly (S3 presigned URLs); absent for local
@@ -484,6 +494,31 @@ export class LocalDiskStore implements BlobStore {
         await handle.close();
       }
     } catch (error) {
+      if (errorCode(error) === 'ENOENT') throw new BlobNotFoundError(key);
+      throw error;
+    }
+  }
+
+  async getRange(key: string, start: number, end: number, _generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
+    assertStorageKey(key);
+    assertReadCap(maxBytes);
+    assertRange(start, end);
+    const length = end - start + 1;
+    if (maxBytes !== undefined && length > maxBytes) {
+      throw new BlobTooLargeError(key, maxBytes);
+    }
+    const target = this.path(key);
+    try {
+      const handle = await open(target, 'r');
+      try {
+        const buf = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buf, 0, length, start);
+        return new Uint8Array(buf.subarray(0, bytesRead));
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      if (error instanceof BlobTooLargeError) throw error;
       if (errorCode(error) === 'ENOENT') throw new BlobNotFoundError(key);
       throw error;
     }

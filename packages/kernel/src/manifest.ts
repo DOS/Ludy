@@ -55,7 +55,7 @@ export const kernelManifest = defineModule({
       external_call: columns(['org_id', 'id', 'key', 'module', 'target', 'step', 'retry_safety', 'request_hash', 'state', 'calls', 'external_ref', 'error_kind', 'error_code', 'started_at', 'finished_at', 'updated_at']),
       extraction: columns(['org_id', 'id', 'file_id', 'method', 'status', 'checks', 'error', 'tainted', 'created_at', 'version', 'requested_by', 'completed_at', 'entry_count', 'legal_entity_id', 'original_of_proposal_id', 'original_differs'], { result: 'pii' }),
       file: columns(['org_id', 'id', 'sha256', 'storage_key', 'filename', 'content_type', 'size_bytes', 'source', 'created_by', 'created_at', 'generation', 'duration_ms', 'image_width', 'image_height', 'held_until', 'hold_attempted_at', 'hold_attempts', 'hold_error', 'upload_entity_id', 'inbound_message_id']),
-      file_upload: columns(['org_id', 'id', 'staging_key', 'created_by', 'max_bytes', 'created_at', 'expires_at', 'used_at']),
+      file_upload: columns(['org_id', 'id', 'staging_key', 'created_by', 'max_bytes', 'created_at', 'expires_at', 'used_at', 'purpose']),
       idempotency_key: columns(['org_id', 'actor_key', 'key', 'command', 'request_sha256', 'created_at'], { response: 'pii' }),
       inbound_drop: columns(['org_id', 'address_id', 'dropped_count', 'first_dropped_at', 'last_dropped_at']),
       inbound_message: columns(['org_id', 'id', 'message_id', 'attachment_count', 'received_at'], { from_address: 'contact', subject: 'pii', body_text: 'pii' }),

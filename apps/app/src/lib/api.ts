@@ -3,7 +3,7 @@ import { RPCLink } from '@orpc/client/fetch';
 import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
@@ -143,12 +143,74 @@ export async function fetchConversationImage(attachmentId: string): Promise<Blob
 type Uploaded = { fileId: string; duplicate: boolean };
 
 // A Social upload may be a video of up to 100 MB (#409); the server checks each type's own limit.
-// An import spreadsheet (#465) is at most 10 MB.
-const maxBytesFor = (purpose: UploadPurpose) => (purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : purpose === 'import' ? MAX_IMPORT_BYTES : MAX_UPLOAD_BYTES);
-const tooLarge = (file: File, purpose: UploadPurpose) =>
+// An import spreadsheet (#465) is at most 10 MB. Meeting audio up to 300 MB, video up to 2 GB (#2576).
+const maxBytesFor = (purpose: UploadPurpose) =>
   purpose === 'social'
+    ? MAX_SOCIAL_VIDEO_BYTES
+    : purpose === 'import'
+      ? MAX_IMPORT_BYTES
+      : purpose === 'meeting_audio'
+        ? MAX_MEETING_AUDIO_BYTES
+        : purpose === 'meeting_video'
+          ? MAX_MEETING_VIDEO_BYTES
+          : MAX_UPLOAD_BYTES;
+const tooLarge = (file: File, purpose: UploadPurpose) =>
+  purpose === 'meeting_audio' || purpose === 'meeting_video'
+    ? new ClientError('FILE_TOO_LARGE', (t) => t('kernelErrors.codes.FILE_TOO_LARGE'))
+    : purpose === 'social'
     ? new ClientError('inbox.socialFileTooLarge', (t) => t('inbox.socialFileTooLarge', { name: file.name }))
     : new ClientError('inbox.fileTooLarge', (t) => t('inbox.fileTooLarge', { name: file.name }));
+
+// Staged upload for meeting audio or video (#2576): grants uploadId and sends bytes to bucket staging.
+export async function stageMediaUpload(file: File, purpose: 'meeting_audio' | 'meeting_video'): Promise<string> {
+  if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
+  const grant = (await (await apiFetch('/api/files/uploads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ purpose }) })).json()) as {
+    uploadId: string;
+    url: string;
+    fields: Record<string, string>;
+  };
+  const form = new FormData();
+  for (const [name, value] of Object.entries(grant.fields)) form.append(name, value);
+  form.append('file', file);
+  const stored = await fetch(grant.url, { method: 'POST', body: form, credentials: 'omit' }).catch(() => null);
+  if (!stored?.ok) throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
+  return grant.uploadId;
+}
+
+// Encrypted media upload for meeting audio or video (#2576). Works on both STORAGE=s3 (staged upload) and STORAGE=local (direct multipart).
+export async function uploadMeetingMedia(
+  meetingId: string,
+  kind: 'audio' | 'video',
+  file: File,
+  lengthSeconds?: number,
+): Promise<{ fileId: string }> {
+  const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+  if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
+
+  if (getConfig().uploads === 'presigned') {
+    const uploadId = await stageMediaUpload(file, purpose);
+    const response = await retryWhileBusy(() =>
+      apiFetch(`/api/meetings/${meetingId}/media`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) }),
+      }),
+    );
+    return (await response.json()) as { fileId: string };
+  }
+
+  const form = new FormData();
+  form.append('kind', kind);
+  form.append('file', file);
+  if (lengthSeconds !== undefined) form.append('lengthSeconds', String(lengthSeconds));
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${meetingId}/media?kind=${kind}`, {
+      method: 'POST',
+      body: form,
+    }),
+  );
+  return (await response.json()) as { fileId: string };
+}
 
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.
