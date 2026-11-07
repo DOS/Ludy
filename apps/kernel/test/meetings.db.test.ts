@@ -21,6 +21,7 @@ import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
+import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -857,5 +858,62 @@ suite('meetings module database integration tests (#2576)', () => {
     // The stream errors before the whole audio is out; it never completes after the delete.
     expect(failed).toBe(true);
     expect(received).toBeLessThan(audio.length);
+  });
+
+  it('13. an audio upload over the audio cap is refused before its body is read', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Audio Cap', visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    let pulled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled = true;
+        controller.close();
+      },
+    });
+    // Declares a 400 MB body for audio (cap 300 MB): the gate answers from the header, so the stream is never consumed.
+    const res = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await token('recorder')}`,
+        'x-crove-org': slug,
+        'content-type': 'multipart/form-data; boundary=x',
+        'content-length': String(400 * 1024 * 1024),
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit);
+    expect(res.status).toBe(413);
+    expect(pulled).toBe(false);
+  });
+
+  it('14. a second concurrent video transfer gets 503 busy, and an audio one is not held back', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Video Slot', visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const videoUploads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    const busyApp = createHttpApp({ ...deps, videoUploads });
+    const held = videoUploads.tryAcquire('another-transfer');
+    expect(held).not.toBeNull();
+
+    const send = async (kind: 'audio' | 'video', bytes: Buffer, type: string) => {
+      const form = new FormData();
+      form.append('kind', kind);
+      form.append('file', new Blob([new Uint8Array(bytes)], { type }), `m.${kind === 'video' ? 'mp4' : 'ogg'}`);
+      return busyApp.request(`/api/meetings/${meetingId}/media?kind=${kind}`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    };
+    const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70]), Buffer.from('isom-video-bytes'.repeat(10))]);
+    const ogg = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('slot-audio-bytes'.repeat(10))]);
+
+    const refused = await send('video', mp4, 'video/mp4');
+    expect(refused.status).toBe(503);
+    expect(refused.headers.get('retry-after')).not.toBeNull();
+    expect(videoUploads.inUse).toBe(1);
+
+    const audioRes = await send('audio', ogg, 'audio/ogg');
+    expect(audioRes.status).toBe(200);
+
+    held!();
+    const accepted = await send('video', mp4, 'video/mp4');
+    expect(accepted.status).toBe(200);
+    expect(videoUploads.inUse).toBe(0);
   });
 });

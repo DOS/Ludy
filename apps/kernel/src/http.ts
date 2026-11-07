@@ -246,6 +246,8 @@ export interface HttpDeps {
   uploadCompletes?: ConcurrencyLimiter;
   // Uploads that may be larger than MAX_UPLOAD_BYTES (Social videos, #409) running at once. Default: 2 per process.
   largeUploads?: ConcurrencyLimiter;
+  // Meeting video uploads (up to 2 GB held in memory): one per process at a time.
+  videoUploads?: ConcurrencyLimiter;
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
@@ -1438,6 +1440,8 @@ export function createHttpApp(deps: HttpDeps) {
   // A body larger than a document may be (a Social video) is held whole in memory while it is hashed and stored, so
   // this process takes at most two of them at once, one per user (#409).
   const large = deps.largeUploads ?? new ConcurrencyLimiter({ total: 2, perKey: 1 });
+  // A meeting video upload is held whole in memory several times over (body, copy, ciphertext), so the process takes one at a time.
+  const videoTransfers = deps.videoUploads ?? new ConcurrencyLimiter({ total: 1, perKey: 1 });
   const busy = (c: Context) => {
     c.header('retry-after', String(UPLOAD_BUSY_RETRY_SECONDS));
     return new DomainError('UPLOAD_BUSY', 503, 'Máy chủ đang xử lý nhiều tệp; hãy thử lại sau vài giây');
@@ -1931,33 +1935,47 @@ export function createHttpApp(deps: HttpDeps) {
   // body (a staged upload's id) is tiny; a file larger than its cap is refused from the declared Content-Length, and the body
   // limit below stops a chunked one at the same cap, with at most two such transfers in the process at once.
   const META_BODY_MAX_BYTES = 16 * 1024;
-  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser } }> = async (c, next) => {
+  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
     let release: (() => void) | null = null;
+    let releaseVideo: (() => void) | null = null;
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      const meeting = await runtime.query<{ isRecorder: boolean }>('meetings.meeting.get', { meetingId: c.req.param('id') ?? '' }, { actor: actorOf(user), orgId });
+      const meeting = await runtime.query<{ isRecorder: boolean; keepVideo: boolean }>('meetings.meeting.get', { meetingId: c.req.param('id') ?? '' }, { actor: actorOf(user), orgId });
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
       const json = (c.req.header('content-type') ?? '').includes('application/json');
+      // The body cap comes from the declared kind (the `kind` query parameter) before one byte is read: audio is capped at 300 MB.
+      // Without the parameter a meeting that keeps video is assumed to send video, and one that does not can only send audio.
+      const hint = c.req.query('kind');
+      if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
+      const videoSize = !json && meeting.keepVideo && hint !== 'audio';
+      const cap = json ? META_BODY_MAX_BYTES : (videoSize ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES) + 1024 * 1024;
       const declared = Number(c.req.header('content-length') ?? '0');
       if (!Number.isFinite(declared) || declared < 0) throw new DomainError('BAD_REQUEST', 400, 'Content-Length is not valid');
-      if (declared > (json ? META_BODY_MAX_BYTES : MAX_MEETING_VIDEO_BYTES + 1024 * 1024)) {
+      if (declared > cap) {
         throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
       }
+      c.set('mediaBodyCap', cap);
       release = large.tryAcquire(user.userId);
       if (!release) throw busy(c);
+      if (videoSize) {
+        releaseVideo = videoTransfers.tryAcquire(user.userId);
+        if (!releaseVideo) throw busy(c);
+      }
     } catch (error) {
+      release?.();
       return problem(c, error);
     }
     try {
       await next();
     } finally {
       release?.();
+      releaseVideo?.();
     }
   };
-  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser } }> = (c, next) =>
-    bodyLimit({ maxSize: (c.req.header('content-type') ?? '').includes('application/json') ? META_BODY_MAX_BYTES : MAX_MEETING_VIDEO_BYTES + 1024 * 1024 })(c, next);
+  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = (c, next) =>
+    bodyLimit({ maxSize: c.get('mediaBodyCap') })(c, next);
   app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
       if (!runtime.installed('meetings')) {
@@ -1972,6 +1990,7 @@ export function createHttpApp(deps: HttpDeps) {
       let dataKey: Buffer | null = null;
       let wrapSubkey: Buffer | null = null;
       let stagingKeyToDelete: string | null = null;
+      let releaseJsonVideo: (() => void) | null = null;
 
       try {
         const contentTypeHeader = c.req.header('content-type') ?? '';
@@ -2003,6 +2022,11 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
           }
           kind = body.kind;
+          if (kind === 'video') {
+            // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
+            releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
+            if (!releaseJsonVideo) throw busy(c);
+          }
           if (body.lengthSeconds !== undefined) {
             if (typeof body.lengthSeconds !== 'number' || !Number.isInteger(body.lengthSeconds) || body.lengthSeconds <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
@@ -2046,6 +2070,8 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
+          const kindHint = c.req.query('kind');
+          if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
 
           const fileVal = formData.get('file');
@@ -2084,13 +2110,7 @@ export function createHttpApp(deps: HttpDeps) {
           meetingId,
           kind,
         };
-        const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
-        plaintext = null;
-        const sha256 = createHash('sha256').update(ciphertext).digest('hex');
-        const storageKey = fileKey(orgId, sha256);
-
-        const generation = await store.put(storageKey, ciphertext, sniffedContentType);
-
+        // The key is checked before the sealed bytes are stored, so a 503 leaves no orphaned blob.
         const broker = deps.broker ?? createCredentialBroker(config);
         const keyId = broker.keyId;
         if (!keyId || (!broker.derive && !broker.deriveKey)) {
@@ -2106,6 +2126,13 @@ export function createHttpApp(deps: HttpDeps) {
         }
         const keyBinding: MediaKeyBinding = { ...binding, keyId };
         const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
+
+        const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
+        plaintext = null;
+        const sha256 = createHash('sha256').update(ciphertext).digest('hex');
+        const storageKey = fileKey(orgId, sha256);
+
+        const generation = await store.put(storageKey, ciphertext, sniffedContentType);
 
         let result: { fileId: string };
         try {
@@ -2136,6 +2163,7 @@ export function createHttpApp(deps: HttpDeps) {
         if (stagingKeyToDelete) {
           await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
         }
+        releaseJsonVideo?.();
         dataKey?.fill(0);
         wrapSubkey?.fill(0);
         release();

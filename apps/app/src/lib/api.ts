@@ -204,7 +204,7 @@ export async function uploadMeetingMedia(
   form.append('file', file);
   if (lengthSeconds !== undefined) form.append('lengthSeconds', String(lengthSeconds));
   const response = await retryWhileBusy(() =>
-    apiFetch(`/api/meetings/${meetingId}/media`, {
+    apiFetch(`/api/meetings/${meetingId}/media?kind=${kind}`, {
       method: 'POST',
       body: form,
     }),
