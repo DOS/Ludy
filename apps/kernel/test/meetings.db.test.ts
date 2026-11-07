@@ -822,4 +822,40 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(play.status).toBe(200);
     expect(Buffer.from(await play.arrayBuffer()).equals(audio)).toBe(true);
   });
+
+  it('12. a long playback stops when the meeting is deleted after its first window', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Delete During Playback', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    // Over two 4 MiB stream windows, so the body is streamed and each window after the first asks again whether the meeting lives.
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(9 * 1024 * 1024, 0x61)]);
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'long.ogg');
+    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    expect(up.status).toBe(200);
+
+    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    expect(play.status).toBe(200);
+    expect(play.headers.get('content-length')).toBe(String(audio.length));
+
+    // The response is open and nothing past the first window has been read: delete the meeting now.
+    const deleted = await rpc('meetings/delete', 'recorder', { meetingId });
+    expect(deleted.status).toBe(200);
+
+    const reader = play.body!.getReader();
+    let received = 0;
+    let failed = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.length;
+      }
+    } catch {
+      failed = true;
+    }
+    // The stream errors before the whole audio is out; it never completes after the delete.
+    expect(failed).toBe(true);
+    expect(received).toBeLessThan(audio.length);
+  });
 });
