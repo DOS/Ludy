@@ -73,15 +73,12 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.payroll_line',
+  'crove_hr.payroll_run',
   'crove_kernel.extension_auth_code',
   'crove_kernel.extension_token',
   'crove_meetings.action_item',
-  'crove_meetings.audio_segment',
-  'crove_meetings.media_key',
-  'crove_meetings.meeting',
-  'crove_meetings.meeting_reader',
   'crove_meetings.meeting_result',
-  'crove_meetings.meeting_video',
   'crove_meetings.transcript_segment',
   'crove_notes.link',
   'crove_notes.note',
@@ -101,6 +98,9 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.payroll_dependent', 'false'],
   ['crove_hr.payroll_employee', 'false'],
   ['crove_hr.payroll_employment', 'false'],
+  // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
+  ['crove_hr.payroll_line', 'false'],
+  ['crove_hr.payroll_run', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -213,6 +213,12 @@ let stockMonthSeq = 0;
 const stockMonth = () => {
   const n = stockMonthSeq++;
   return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-01`;
+};
+// A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
+let payrollMonthSeq = 0;
+const payrollMonth = () => {
+  const n = payrollMonthSeq++;
+  return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
 };
 // Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
 let channelOrderSeq = 0;
@@ -1152,6 +1158,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, effective_from: '2026-11-01', contract_type: 'indefinite', region: 'I', base_wage: '10000000' },
       };
     },
+  },
+  // #2531: one person's month of a pay run (ADR-0046), in the run's entity (b_legal_entity). Owners and admins alone (AUTHOR_ONLY); a draft run is the only one whose lines change, so the
+  // factory's run is a draft. Tenant roles update the terms, the status, the inputs, the figures, the breakdown and the stamp only (never the run, the person, the kind or the creation), so the update probes assign the stamp to itself.
+  'crove_hr.payroll_line': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const run = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } },
+          { table: 'crove_hr.payroll_run', values: { org_id: o.id, id: run, month: payrollMonth(), working_days: '26' } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          run_id: run,
+          employee_id: employee,
+          gross: '10000000',
+          employee_insurance: '1050000',
+          employer_insurance: '2150000',
+          union_fee: '200000',
+          taxable_income: '10000000',
+          pit: '0',
+          net: '8950000',
+          employer_cost: '12350000',
+        },
+      };
+    },
+  },
+  // One month of one entity (the org's default, by its trigger): a draft until a person approves it, then frozen. Tenant roles update the working days, the status, the approval columns and the stamp only (never the month, the entity or the creation); the probes assign the working days to themselves.
+  'crove_hr.payroll_run': {
+    update: { set: 'working_days = working_days' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
