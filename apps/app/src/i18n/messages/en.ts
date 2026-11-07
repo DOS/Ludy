@@ -9287,6 +9287,9 @@ export const en = {
       media: {
         record: 'Record meeting encrypted media',
       },
+      media_key: {
+        reseal: 'Reseal a meeting media key after a key rotation',
+      },
       meeting: {
         audio_read: 'Listen to meeting audio',
         create: 'Create meeting',

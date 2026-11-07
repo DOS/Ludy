@@ -9284,6 +9284,9 @@ export const vi = {
       media: {
         record: 'Ghi nhận tệp phương tiện mã hóa cuộc họp',
       },
+      media_key: {
+        reseal: 'Niêm phong lại khóa phương tiện cuộc họp sau khi đổi khóa',
+      },
       meeting: {
         audio_read: 'Nghe ghi âm cuộc họp',
         create: 'Tạo cuộc họp',
