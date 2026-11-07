@@ -14,8 +14,6 @@ const ALLOWED: ReadonlyArray<readonly [phrase: string, reason: string]> = [
   ['Nhà hàng Sen Vàng', 'an example customer of the Engage page, a restaurant, named in Vietnamese'],
   ['Cửa hàng Bình An', 'an example customer of the Engage page, a shop, named in Vietnamese'],
   ['Đại lý Phương Nam', 'an example customer of the Engage page, a rice dealer, named in Vietnamese'],
-  ['Chị Lan', 'the example chief accountant, named with a Vietnamese honorific'],
-  ['Chị Hoa', 'the example staff member, named with a Vietnamese honorific'],
 ];
 
 // A letter with a Vietnamese mark: a base letter followed by a combining diacritic once decomposed, or đ.

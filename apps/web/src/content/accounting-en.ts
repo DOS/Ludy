@@ -192,7 +192,7 @@ export const accountingEn: AccountingCopy = {
     posting: {
       ruleTitle: 'Learned rule',
       ruleHead: ['Vendor', 'Item', 'Account'],
-      rule: { party: 'Bao Bì Phú Thịnh', item: '5-ply cartons', account: '152', by: 'Approved by Chị Lan at 16:05 on 14/10/2026' },
+      rule: { party: 'Bao Bì Phú Thịnh', item: '5-ply cartons', account: '152', by: 'Approved by Lan at 16:05 on 14/10/2026' },
       unclassifiedTitle: 'Unclassified line',
       unclassified: { item: 'Other service fee', amount: '1,200,000', state: 'Pick an account before posting' },
       replaceTitle: 'Replacement invoice',
