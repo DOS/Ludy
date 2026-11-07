@@ -83,6 +83,8 @@ const NOT_SHOWN: Record<string, string> = {
   MEDIA_KEY_UNAVAILABLE: 'meetings',
   INVALID_PURPOSE: 'meetings',
   STAGED_UPLOAD_REQUIRED: 'meetings',
+  // A playback stream whose file changed under it (#2579): the player's request fails and the page reloads the meeting.
+  MEDIA_REPLACED: 'meetings',
 };
 
 function sources(dir: string): string[] {

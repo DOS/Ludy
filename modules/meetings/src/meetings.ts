@@ -13,6 +13,7 @@ import {
   meetingShredReplay,
   readRetentionSettings,
   retentionDates,
+  vnDay,
 } from './retention.ts';
 import {
   auditValue,
@@ -230,6 +231,11 @@ export const meetingMediaRecord = defineCommand({
     }
     if (input.kind === 'video' && !meeting.keep_video) {
       throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
+    }
+    // Media is not accepted for a meeting whose period for it has ended: the nightly job would shred it at once, and it was told to the participants that
+    // it would not be kept past that day (#2579).
+    if (meeting.audio_retention_day <= vnDay(ctx.now)) {
+      throw new DomainError('MEDIA_RETENTION_PASSED', 409, 'The retention period of this meeting has ended');
     }
     if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) {
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');

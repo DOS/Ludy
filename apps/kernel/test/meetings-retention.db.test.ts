@@ -304,6 +304,16 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(Buffer.from(await (await play('attendee', meetingId, 'video')).arrayBuffer()).equals(video)).toBe(true);
     expect((await rpc('meetings/get', 'recorder', { meetingId })).body).toMatchObject({ hasAudio: false, hasVideo: true });
 
+    // A meeting past its audio period takes no new audio (it would be shredded at once), and the refused upload leaves no object behind.
+    const objectsBefore = store.storage.size;
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('file', new Blob([Buffer.concat([OGG, Buffer.alloc(40, 1)])], { type: 'audio/ogg' }), 'again.ogg');
+    const again = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    expect(again.status).toBe(409);
+    expect(store.storage.size).toBe(objectsBefore);
+    expect(await count('SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = $2', [meetingId, 'audio'])).toBe(0);
+
     // The object and the file row are still there until the sweep: ciphertext no key opens.
     expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [audioFile])).toBe(1);
     const swept = await sweep();

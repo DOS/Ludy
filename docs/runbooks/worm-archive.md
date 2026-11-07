@@ -40,6 +40,15 @@ The same store also keeps the outbox events that the daily retention run deletes
 - **How long:** on `s3`, each object is locked for 400 days (13 months and a margin, plan §7.9) instead of `ARCHIVE_RETENTION_DAYS`. Add a lifecycle rule that expires objects under `outbox/` after 400 days; the worker holds no delete permission. On `local`, the files stay until removed by hand.
 - **Reading an org's old events:** list `outbox/v1/<org_id>/` and read the day's object; the manifest's `sha256` must match it.
 
+## Shred references for deleted meetings (#2579)
+
+The same store keeps, for each meeting a person deleted before its retention date (its recorder, or an owner for a personal-data request), one small object that lets a restore delete it again (ADR-0017 section 8, ADR-0047 point 7):
+
+- **What:** `shred/v1/meeting-<org_id>-<meeting_id>.json`: `{"format":"crove-shred-ref","version":1,"kind":"meetings.meeting","orgId":...,"meetingId":...,"deletedAt":...}`. Ids and a time, never a title, a key or a transcript.
+- **When:** the worker reads the deletions from the audit trail once a minute (the API process holds no archive credential) and writes each reference once, create-only. A deletion is therefore in the store within about a minute; a worker that was down reads 45 days back when it starts. Date-based shreds need no reference: the next nightly run repeats them.
+- **How long:** on `s3`, each object is locked for 90 days, longer than the five weeks a backup chain can live (`backup-and-restore.md`). Add a lifecycle rule that expires objects under `shred/` after 90 days; the worker holds no delete permission. On `local`, the files stay until removed by hand.
+- **After a restore:** the worker deletes every listed meeting again when it starts, and `main.ts shred-replay` does the same on demand (run it in the worker's container). Both then remove the ciphertext objects and file rows that leaves. The replay is idempotent and deletes only the meetings the references list; an unreadable reference is skipped and logged, never run. Check the log line `[shred-replay] references=<n> meetings deleted again=<n> failed=<n>`.
+
 ## Setting up the store
 
 | `ARCHIVE_STORE` | Where | Holds against |
