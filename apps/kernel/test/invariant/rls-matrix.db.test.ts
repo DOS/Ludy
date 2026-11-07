@@ -92,7 +92,7 @@ const PENDING_TABLES = new Set<string>([
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
 const AUTHOR_ONLY = new Map<string, string>([
-  // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it.
+  // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
   ['crove_hr.payroll_dependent', 'false'],
   ['crove_hr.payroll_employee', 'false'],
   ['crove_hr.payroll_employment', 'false'],
@@ -1122,8 +1122,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // position is an SQL keyword, so the catalog prints the name quoted.
-  // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll, the system context none of it
-  // (AUTHOR_ONLY). Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
+  // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
+  // admins only" case below (every crove_hr table) keeps a plain member and a viewer out. Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
   'crove_hr.payroll_dependent': {
     update: { set: 'ended_on = ended_on' },
     make: (o) => {
@@ -2332,6 +2332,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   // must see, write and change none of the rows the factories seed (all in org A's default entity).
   let scoped: Actor;
   let branch = '';
+  // Plain people of org A with no branch scope and no assigned role: an admin, a member and a viewer. The crove_hr tables are owner and admin only, so only the admin
+  // reaches them (the check below, #2715).
+  let adminPerson: Actor;
+  let plainMember: Actor;
+  let viewerPerson: Actor;
   // privileges[table][role] = the table privileges the role holds.
   const privileges = new Map<string, Map<string, Set<Op>>>();
 
@@ -2570,6 +2575,23 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgs.A.id, contextToken(accountant, orgs.A.id)]);
       },
     };
+
+    const person = async (role: 'admin' | 'member' | 'viewer', label: string): Promise<Actor> => {
+      const user = freshUser();
+      await adminTx([{ table: 'crove_kernel.tenant_member', values: { org_id: orgs.A.id, user_id: user, role } }]);
+      return {
+        name: `crove_app as ${label} of org A`,
+        role: 'crove_app',
+        client: app,
+        org: 'A',
+        enter: async (c) => {
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgs.A.id, contextToken(user, orgs.A.id)]);
+        },
+      };
+    };
+    adminPerson = await person('admin', 'an admin');
+    plainMember = await person('member', 'a plain member (no assigned role, no branch scope)');
+    viewerPerson = await person('viewer', 'a viewer');
   });
 
   afterAll(async () => {
@@ -2953,6 +2975,55 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           if (can(table, 'crove_app', 'DELETE') && can(table, 'crove_app', 'SELECT')) {
             const deleted = await probe(scoped, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1 AND ${others}`, [orgs.A.id]));
             expect(expectRows(deleted, `${where} (delete)`).rowCount, `${where}: rows of another entity deleted`).toBe(0);
+          }
+        });
+      }
+
+      // HR data (wages, insurance, tax, the sealed identity and account numbers) is for owners and admins alone (#2538, ADR-0046), and that has to hold in the database, not only in the
+      // commands: a plain member and a viewer, with no assigned role and no branch scope, reach no row, write none and delete none, while the owner and an admin do the same things
+      // with the same outcomes. AUTHOR_ONLY proves the system context is out; this proves the people are. A policy that tests the actor is a user and drops the role test fails here (#2715).
+      if (table.startsWith('crove_hr.')) {
+        it('is for owners and admins only: a plain member and a viewer reach no row, and an admin does what the owner does', async () => {
+          const factory = factoryFor(table);
+          const readOwn = async (actor: Actor) => expectRows(await probe(actor, (c) => c.query(`SELECT org_id::text AS org FROM ${table} WHERE org_id = $1`, [orgs.A.id])), `${actor.name} (read)`);
+          const ownerRead = await readOwn(member);
+          expect(ownerRead.rows.length, `${table}: the owner reads the seeded rows of org A`).toBeGreaterThan(0);
+          expect((await readOwn(adminPerson)).rows.length, `${adminPerson.name} reads what the owner reads on ${table}`).toBe(ownerRead.rows.length);
+          for (const who of [plainMember, viewerPerson]) expect((await readOwn(who)).rows, `${who.name} reads a row of ${table}`).toEqual([]);
+
+          // Inserts: each actor's own row (its parents committed first as the database owner). The owner and an admin get the same answer; the others are refused by row-level security.
+          const outcomes = new Map<string, Awaited<ReturnType<typeof probe>>>();
+          if (can(table, 'crove_app', 'INSERT')) {
+            for (const who of [member, adminPerson, plainMember, viewerPerson]) {
+              const built = factory.make(orgs.A);
+              if (built.setup?.length) await adminTx([...built.setup, ...(built.complete ?? [])]).catch(() => adminTx(built.setup ?? []));
+              const q = insertSql({ table, values: built.row });
+              outcomes.set(who.name, await probe(who, (c) => c.query(q.text, q.values)));
+            }
+            const owner = outcomes.get(member.name);
+            const adminOutcome = outcomes.get(adminPerson.name);
+            expect({ ok: adminOutcome?.ok, code: adminOutcome && !adminOutcome.ok ? adminOutcome.code : undefined }, `${adminPerson.name} inserting into ${table}, as the owner does`).toEqual({
+              ok: owner?.ok,
+              code: owner && !owner.ok ? owner.code : undefined,
+            });
+            for (const who of [plainMember, viewerPerson]) {
+              expect(outcomes.get(who.name), `${who.name} inserting into ${table}: refused by row-level security`).toMatchObject({ ok: false, code: '42501' });
+            }
+          }
+
+          // Updates and deletes: the owner and an admin reach the rows alike (the table's own guards may refuse a change, the same for both); the others change none.
+          const cols = columnsToUpdate(table, 'crove_app');
+          const shape = (o: Awaited<ReturnType<typeof probe>>) => (o.ok ? { ok: true, rowCount: o.rowCount } : { ok: false, code: o.code });
+          if (cols.length > 0 && can(table, 'crove_app', 'SELECT')) {
+            const set = factory.update?.set ?? `"${cols[0]}" = "${cols[0]}"`;
+            const run = (who: Actor) => probe(who, (c) => c.query(`UPDATE ${table} SET ${set} WHERE org_id = $1`, [orgs.A.id]));
+            expect(shape(await run(adminPerson)), `${adminPerson.name} updating ${table}, as the owner does`).toEqual(shape(await run(member)));
+            for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (update)`).rowCount, `${who.name}: rows of ${table} updated`).toBe(0);
+          }
+          if (can(table, 'crove_app', 'DELETE') && can(table, 'crove_app', 'SELECT')) {
+            const run = (who: Actor) => probe(who, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id]));
+            expect(shape(await run(adminPerson)), `${adminPerson.name} deleting from ${table}, as the owner does`).toEqual(shape(await run(member)));
+            for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (delete)`).rowCount, `${who.name}: rows of ${table} deleted`).toBe(0);
           }
         });
       }
