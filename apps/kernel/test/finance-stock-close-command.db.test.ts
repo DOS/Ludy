@@ -160,7 +160,7 @@ suite('the stock month close command (#2513)', () => {
     await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, '2026-07-01', 1, 'manual')", [o.orgId, item])).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
     // The command that corrects a move writes the reversal today, in the open month, never back in the closed one.
     const reversed = await execute<{ id: string }>(o, 'finance.stock_move.reverse', { moveId: outMove }, o.member);
-    const [reversal] = await rows<{ move_date: string; today: string }>('SELECT move_date::text AS move_date, current_date::text AS today FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, reversed.id]);
+    const [reversal] = await rows<{ move_date: string; today: string }>("SELECT move_date::text AS move_date, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2", [o.orgId, reversed.id]);
     expect(reversal?.move_date).toBe(reversal?.today);
 
     // A month never exists without the voucher that posted its cost (checked at commit): the month of another voucher, a cost with none, and what went out with none.
