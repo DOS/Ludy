@@ -9,12 +9,110 @@
 // No finance code reads a payroll table: the run's id is the voucher's source, carried in the payload, and the lines are one per account (the detail stays on the run). A posting is
 // corrected by reversing its entry (finance.journal.reverse) while the period lock allows it.
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, PAYROLL_POSTING_COMMAND, zPayrollPostingProposal } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
-import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
-import { journalVoucherTotal } from './domain/journal-voucher.ts';
+import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_POSTING_COMMAND, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
+import type { MemberRole } from '@crove/db';
+import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { assertUsableAccounts } from './accounts.ts';
+import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
+import { postJournalVoucher } from './journal-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
+
+const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
+
+// The chart an entity keeps its books under on a date: its books row in force (the newest that starts on or before the date), TT133 2026.1 when there is none (the only regime before the
+// books rows existed). The database's own check of every journal line follows the same rule (crove_finance.check_account_ref).
+async function booksOn(ctx: QueryContext, legalEntityId: string, date: string): Promise<{ regime: string; version: string }> {
+  const row = await ctx.trx
+    .selectFrom('crove_finance.legal_entity_books')
+    .select(['regime', 'chart_version'])
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
+    .where('effective_from', '<=', date)
+    .orderBy('effective_from', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row ? { regime: row.regime, version: row.chart_version } : { regime: 'tt133', version: '2026.1' };
+}
+
+interface PostingLines {
+  date: string;
+  legalEntityId: string;
+  regime: string;
+  lines: ReadonlyArray<{ account: string; debit: string; credit: string }>;
+}
+
+// Every check of a pay run's entry, when it is asked for and again when it is posted: its shape (balanced, one side a line), the entity's chart is the regime the HR module built it for, its
+// accounts are in that chart (the org's chart and in use for TT133; the regime's own chart otherwise: the accounts of TT99 are not in the TT133 table), and the month is not closed.
+async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promise<{ legalEntityId: string; total: string }> {
+  const problems = journalVoucherProblems(input.lines.map((l) => ({ ...l, partyId: null })));
+  if (problems.length > 0) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không hợp lệ: các dòng phải cân và mỗi dòng ghi một bên', { problems });
+  const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+  const books = await booksOn(ctx, legalEntityId, input.date);
+  if (books.regime !== input.regime) {
+    throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chế độ kế toán của pháp nhân đã thay đổi từ khi lập bút toán; hãy lập lại đề xuất', { what: 'regime' });
+  }
+  const codes = [...new Set(input.lines.map((l) => l.account))];
+  if (books.regime === 'tt133' && books.version === '2026.1') {
+    await assertUsableAccounts(ctx, codes);
+  } else {
+    const known = await ctx.trx.selectFrom('crove_finance.chart_account').select('code').where('regime', '=', books.regime).where('version', '=', books.version).where('code', 'in', codes).execute();
+    const have = new Set(known.map((k) => k.code));
+    const unknown = codes.filter((c) => !have.has(c));
+    if (unknown.length > 0) throw new DomainError('UNKNOWN_ACCOUNT', 422, `Tài khoản ${unknown.join(', ')} không có trong hệ thống tài khoản của pháp nhân`, { codes: unknown });
+  }
+  const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
+  if (lockedThrough && input.date <= lockedThrough) {
+    throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(input.date)}`, { lockedThrough, entryDate: input.date });
+  }
+  return { legalEntityId, total: journalVoucherTotal(input.lines) };
+}
+
+// The check the HR module calls (ctx.run) when it builds the proposal from a frozen run: it validates the entry it hands over and returns it as a general journal voucher payload. It writes
+// nothing and reads no payroll table; owners and admins only, like the proposal it serves.
+export const checkPayrollPosting = defineCommand({
+  name: 'finance.payroll_posting.check',
+  input: z.strictObject({
+    date: zLocalDate,
+    description: z.string().trim().min(1).max(300),
+    legalEntityId: zId,
+    regime: z.enum(PAYROLL_REGIMES),
+    // The run the entry posts: a run with a posting already is refused here, so the HR module reads no finance table.
+    payrollRunId: zId,
+    lines: z.array(z.strictObject({ account: zAccountCode, debit: zJournalAmount, credit: zJournalAmount })).min(2).max(JOURNAL_VOUCHER_MAX_LINES),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  writes: [],
+  handler: async (ctx, input) => {
+    const posted = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', input.payrollRunId).executeTakeFirst();
+    if (posted) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
+    const checked = await checkPostingLines(ctx, input);
+    const payload: JournalVoucherProposal = {
+      date: input.date,
+      description: input.description,
+      lines: input.lines.map((l) => ({ account: l.account, party: null, debit: l.debit, credit: l.credit })),
+      total: checked.total,
+      legalEntityId: checked.legalEntityId,
+    };
+    return { payload };
+  },
+});
+
+// The chart an entity keeps on a date, for the HR module to pick its account map (ctx.run): finance alone reads its books. Owners and admins, like the proposal it serves.
+export const payrollPostingRegime = defineCommand({
+  name: 'finance.payroll_posting.regime',
+  input: z.strictObject({ legalEntityId: zId, date: zLocalDate }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  writes: [],
+  handler: async (ctx, input) => {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    return { regime: (await booksOn(ctx, legalEntityId, input.date)).regime };
+  },
+});
 
 export const recordPayrollPosting = defineCommand({
   name: PAYROLL_POSTING_COMMAND,
@@ -25,30 +123,17 @@ export const recordPayrollPosting = defineCommand({
   proposalKind: JOURNAL_VOUCHER_KIND,
   handler: async (ctx, { payload }) => {
     if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
-    const lines = payload.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit }));
     // A pay run's posting names no party: the people are on the run, not in the books.
-    if (lines.some((l) => l.partyId !== null)) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không ghi theo đối tượng', { problems: ['PARTY_NOT_ALLOWED'] });
-    await checkJournalVoucherLines(ctx, lines, true);
-    if (journalVoucherTotal(lines) !== payload.total) {
+    if (payload.lines.some((l) => l.party !== null)) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không ghi theo đối tượng', { problems: ['PARTY_NOT_ALLOWED'] });
+    const lines = payload.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit }));
+    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId ?? '', regime: payload.regime, lines });
+    if (checked.total !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
-    const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
-    const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
-    if (lockedThrough && payload.date <= lockedThrough) {
-      throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(payload.date)}`, {
-        lockedThrough,
-        entryDate: payload.date,
-      });
-    }
-    const done = await ctx.trx
-      .selectFrom('crove_finance.journal_voucher')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('payroll_run_id', '=', payload.payrollRunId)
-      .executeTakeFirst();
+    const done = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', payload.payrollRunId).executeTakeFirst();
     if (done) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
-    return postJournalVoucher(ctx, { ...payload, legalEntityId }, null, null, null, payload.payrollRunId);
+    return postJournalVoucher(ctx, { ...payload, legalEntityId: checked.legalEntityId }, null, null, null, payload.payrollRunId);
   },
 });
 
-export const payrollPostingCommands = [recordPayrollPosting];
+export const payrollPostingCommands = [payrollPostingRegime, checkPayrollPosting, recordPayrollPosting];

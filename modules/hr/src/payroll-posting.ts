@@ -2,7 +2,7 @@
 // The posting proposal of an approved pay run (issue #2532; payroll plan docs/plan/payroll.md section 6.4 and row 18, ADR-0046). `hr.payroll.posting.prepare` is the preparer of
 // kernel.proposal.request for `finance.payroll_posting.record` (the finance proposal path): it reads the frozen run in the requester's context (owners and admins only, the people tables
 // are never read as the system actor or the worker), builds the entry from stored figures with the account map of the entity's chart (@crove/l10n-vn, every row of it still `commentary`
-// until the accountant confirms row 18, #2535), checks it as a general journal voucher through finance's own preparer, and returns the draft. It writes nothing. A person approves the
+// until the accountant confirms row 18, #2535), checks it as a general journal voucher through finance's own check (`finance.payroll_posting.check`, regime-aware), and returns the draft. It writes nothing. A person approves the
 // proposal; nothing here posts. The lines are one per account, never per person: the detail stays on the run, and Kế toán approves from the totals by account.
 //
 // No model call is made: everything here is deterministic over stored facts, and the posting works with AI off.
@@ -61,18 +61,17 @@ export const prepareRunPosting = defineCommand({
       .executeTakeFirst();
     if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
     if (run.status !== 'approved') throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới hạch toán được');
-    // One proposal per run: another still open, or one already posted, ends it (a rejected or expired one does not).
+    // One proposal per run: another still open ends it, and one already posted is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
       .selectFrom('crove_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', PAYROLL_POSTING_COMMAND)
       .where('status', '=', 'pending')
-      .where(sql<string>`(request_input ->> 'runId')`, '=', runId)
+      // The stored request is the raw input, and a uuid may be written in either case: compare as text in one case.
+      .where(sql<string>`pg_catalog.lower(request_input ->> 'runId')`, '=', runId.toLowerCase())
       .executeTakeFirst();
     if (open) throw new DomainError('HR_POSTING_OPEN', 409, 'Bảng lương này đã có một đề xuất hạch toán đang chờ duyệt');
-    const done = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', runId).executeTakeFirst();
-    if (done) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
 
     const stored = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
@@ -86,12 +85,11 @@ export const prepareRunPosting = defineCommand({
     if (stored.some((l) => l.status !== 'calculated' || l.gross === null || l.employee_insurance === null || l.employer_insurance === null || l.union_fee === null || l.pit === null || l.net === null)) {
       throw mismatch('dòng chưa tính');
     }
-    const employments = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
-      .select(['id', 'pay_function'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', 'in', stored.map((l) => l.employment_id).filter((id): id is string => id !== null))
-      .execute();
+    const employmentIds = stored.map((l) => l.employment_id).filter((id): id is string => id !== null);
+    const employments =
+      employmentIds.length === 0
+        ? []
+        : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'pay_function']).where('org_id', '=', ctx.orgId).where('id', 'in', employmentIds).execute();
     const functionOf = new Map(employments.map((e) => [e.id, e.pay_function]));
 
     const lines: PostingLine[] = stored.map((l) => {
@@ -115,18 +113,9 @@ export const prepareRunPosting = defineCommand({
       };
     });
 
-    // The chart of the entity on the last day of the month: its books' regime on that date, TT133 when none is on record.
+    // The chart of the entity on the last day of the month: finance alone reads its books (TT133 when none is on record).
     const date = monthEnd(run.month);
-    const books = await ctx.trx
-      .selectFrom('crove_finance.legal_entity_books')
-      .select('regime')
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', run.legal_entity_id)
-      .where('effective_from', '<=', date)
-      .orderBy('effective_from', 'desc')
-      .limit(1)
-      .executeTakeFirst();
-    const regime = (books?.regime ?? 'tt133') as PayrollRegime;
+    const regime = (await ctx.run<{ regime: PayrollRegime }>('finance.payroll_posting.regime', { legalEntityId: run.legal_entity_id, date })).regime;
     if (!(PAYROLL_REGIMES as readonly string[]).includes(regime)) throw mismatch('chế độ kế toán');
 
     let result;
@@ -152,13 +141,15 @@ export const prepareRunPosting = defineCommand({
       throw mismatch('tổng so với lúc duyệt');
     }
 
-    // The entry is checked as a general journal voucher by finance's own preparer (its accounts in the org's chart and in use, the month not closed), which also resolves the entity.
+    // The entry is checked as a general journal voucher by finance's own check (its accounts in the entity's chart of that regime, the month not closed), which also resolves the entity.
     const description = `Hạch toán lương tháng ${monthLabel(run.month)}`;
-    const draft = await ctx.run<{ payload: Record<string, unknown> }>('finance.journal_voucher.prepare', {
+    const draft = await ctx.run<{ payload: Record<string, unknown> }>('finance.payroll_posting.check', {
       date,
       description,
-      lines: result.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit })),
       legalEntityId: run.legal_entity_id,
+      regime,
+      payrollRunId: runId,
+      lines: result.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit })),
     });
     const payload = { ...draft.payload, payrollRunId: runId, month: run.month, regime, mapStatus: result.mapStatus } as PayrollPostingProposal;
     ctx.audit({ runId, month: run.month, regime, accounts: result.lines.length, lines: stored.length });
