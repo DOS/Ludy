@@ -187,6 +187,8 @@ export const KERNEL_ERROR_CODES = [
   'HR_LINE_NOT_PAY',
   'HR_EMPLOYEE_NOT_PAID',
   'HR_NO_PAYSLIP',
+  'HR_RUN_STALE',
+  'HR_ADJUST_NOT_PAID',
   // Members' notes (#1671).
   'NOTE_NOT_FOUND',
   'NOTE_AUTHOR_ONLY',

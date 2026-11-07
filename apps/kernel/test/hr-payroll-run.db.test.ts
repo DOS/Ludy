@@ -291,6 +291,24 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     setRuleStatus('commentary');
   });
 
+  it('refuses to approve lines that no longer match the people, their terms and the rules, until the sheet is recalculated', async () => {
+    setRuleStatus('confirmed');
+    const o = await org();
+    const ids = await o.team();
+    const run = await o.open();
+    // A raise and a new hire after the month was opened: the shown figures are out of date, so the approval is refused even with the sheet's own fingerprint.
+    await o.exec(o.owner, 'hr.payroll.employment.add', { employeeId: ids[0], effectiveFrom: '2026-11-01', contractType: 'indefinite', region: 'I', baseWage: '20000000' });
+    const before = await o.sheet(run.runId);
+    await expect(o.approve(run.runId, before.fingerprint)).rejects.toMatchObject({ code: 'HR_RUN_STALE' });
+    await o.hire({}, '12000000', 'Đỗ Mới Canary');
+    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
+    const after = await o.sheet(run.runId);
+    expect(after.lines).toHaveLength(4);
+    await o.approve(run.runId, after.fingerprint);
+    expect((await o.sheet(run.runId)).run.status).toBe('approved');
+    setRuleStatus('commentary');
+  });
+
   it('never changes an approved run or its lines: the commands refuse, and so does the database for anyone', async () => {
     setRuleStatus('confirmed');
     const o = await org();
@@ -334,6 +352,9 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // A correction in the same month or in an unapproved one is refused; in a later run it is a signed line that changes the totals.
     await expect(o.exec(o.owner, 'hr.payroll.line.adjust', { runId: october.runId, adjustsRunId: october.runId, employeeId: ids[0], note: 'x', gross: '1' })).rejects.toMatchObject({ code: 'HR_RUN_NOT_DRAFT' });
     await expect(o.exec(o.owner, 'hr.payroll.line.adjust', { runId: november.runId, adjustsRunId: november.runId, employeeId: ids[0], note: 'x', gross: '1' })).rejects.toMatchObject({ code: 'HR_ADJUST_NOT_APPROVED' });
+    // A person with no pay line in the corrected month cannot be corrected there.
+    const late = await o.hire({ displayName: 'Hồ Muộn Canary', employment: { effectiveFrom: '2026-11-15', contractType: 'indefinite', region: 'I', baseWage: '9000000' } });
+    await expect(o.exec(o.owner, 'hr.payroll.line.adjust', { runId: november.runId, adjustsRunId: october.runId, employeeId: late.employeeId, note: 'x', gross: '1' })).rejects.toMatchObject({ code: 'HR_ADJUST_NOT_PAID' });
     const adjusted = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.line.adjust', { runId: november.runId, adjustsRunId: october.runId, employeeId: ids[0], note: 'Tính thiếu tiền làm thêm giờ tháng 10', gross: '500000', pit: '25000' });
     const s = await o.sheet(november.runId);
     const adjustment = s.lines.find((l) => l.id === adjusted.lineId) as HrRunSheet['lines'][number];

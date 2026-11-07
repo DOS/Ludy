@@ -387,6 +387,10 @@ export const lineInputsSet = defineCommand({
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
+    // The run is locked before the line, as every other command does, so two requests cannot wait on each other.
+    const found = await ctx.trx.selectFrom('crove_hr.payroll_line').select(['run_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).executeTakeFirst();
+    if (!found) throw lineNotFound();
+    const run = await loadRun(ctx, found.run_id);
     const line = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
       .select(['id', 'run_id', 'employee_id', 'kind'])
@@ -396,7 +400,6 @@ export const lineInputsSet = defineCommand({
       .executeTakeFirst();
     if (!line) throw lineNotFound();
     if (line.kind !== 'pay') throw new DomainError('HR_LINE_NOT_PAY', 422, 'Dòng điều chỉnh không có số liệu nhập');
-    const run = await loadRun(ctx, line.run_id);
     if (run.status !== 'draft') throw notDraft();
     const person = (await peopleOf(ctx, run.legal_entity_id, run.month)).find((p) => p.employeeId === line.employee_id);
     if (!person) throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này không có lương trong tháng này');
@@ -451,6 +454,15 @@ export const lineAdjust = defineCommand({
       .where('id', '=', input.employeeId)
       .executeTakeFirst();
     if (!employee) throw new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên này');
+    const paid = await ctx.trx
+      .selectFrom('crove_hr.payroll_line')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', target.id)
+      .where('employee_id', '=', input.employeeId)
+      .where('kind', '=', 'pay')
+      .executeTakeFirst();
+    if (!paid) throw new DomainError('HR_ADJUST_NOT_PAID', 422, 'Nhân viên này không có dòng lương trong tháng được sửa');
     const gross = money(input.gross);
     const net = gross.minus(money(input.employeeInsurance)).minus(money(input.pit));
     const employerCost = gross.plus(money(input.employerInsurance)).plus(money(input.unionFee));
@@ -580,6 +592,18 @@ export const runApprove = defineCommand({
     if (lines.length === 0) throw new DomainError('HR_RUN_EMPTY', 422, 'Bảng lương chưa có dòng nào để duyệt');
     const refused = lines.filter((l) => l.status === 'refused').length;
     if (refused > 0) throw new DomainError('HR_RUN_HAS_REFUSED', 422, `${refused} dòng chưa tính được; sửa số liệu của các dòng đó rồi mới duyệt`, { refused });
+    // The lines must still be what the calculator gives for the people, terms, dependents and rules as they are now: a raise, a dependent or a hire added since the month was opened,
+    // or a rule that moved, would otherwise be frozen into the month unseen. The person recalculates and looks again.
+    const people = await peopleOf(ctx, run.legal_entity_id, run.month);
+    const payLines = new Map(lines.filter((l) => l.kind === 'pay').map((l) => [l.employee_id, l]));
+    const stale = people.filter((person) => {
+      const l = payLines.get(person.employeeId);
+      if (!l) return true;
+      const f = figuresOf(person, parseInputs(l.inputs), run.month, run.working_days);
+      const same = (a: string | null, b: string | null) => (a === null || b === null ? a === b : money(a).equals(money(b)));
+      return !(same(f.gross, l.gross) && same(f.employee_insurance, l.employee_insurance) && same(f.employer_insurance, l.employer_insurance) && same(f.union_fee, l.union_fee) && same(f.taxable_income, l.taxable_income) && same(f.pit, l.pit) && same(f.net, l.net) && same(f.employer_cost, l.employer_cost));
+    });
+    if (stale.length > 0) throw new DomainError('HR_RUN_STALE', 409, `${stale.length} dòng không còn khớp với hợp đồng, người phụ thuộc hoặc quy tắc hiện tại; hãy bấm tính lại cả bảng rồi xem lại`, { stale: stale.length });
     const { used, blocking } = rulesOfLines(lines);
     // The gate: a rule still `commentary` (not yet read against its primary text by the accountant) blocks the month. The answer lists the rows with where each comes from.
     if (blocking.length > 0) {

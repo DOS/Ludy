@@ -7942,6 +7942,8 @@ export const en = {
       HR_LINE_NOT_PAY: 'An adjustment line has no inputs',
       HR_EMPLOYEE_NOT_PAID: 'This employee is not paid in this month',
       HR_NO_PAYSLIP: 'This line has no payslip (it was not computed, or it is an adjustment)',
+      HR_RUN_STALE: 'Some lines no longer match the contracts, dependents or rules now in force; recalculate the whole sheet and look again',
+      HR_ADJUST_NOT_PAID: 'This employee has no pay line in the month being corrected',
       NOTE_NOT_FOUND: 'This note was not found.',
       NOTE_AUTHOR_ONLY: 'Only the author can do this; owners and admins may also pin, archive or delete a shared note.',
       NOTE_IN_TRASH: 'This note is in the trash; restore it first.',

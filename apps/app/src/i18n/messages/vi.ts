@@ -7939,6 +7939,8 @@ export const vi = {
       HR_LINE_NOT_PAY: 'Dòng điều chỉnh không có số liệu nhập',
       HR_EMPLOYEE_NOT_PAID: 'Nhân viên này không có lương trong tháng này',
       HR_NO_PAYSLIP: 'Dòng này chưa có phiếu lương (chưa tính được hoặc là dòng điều chỉnh)',
+      HR_RUN_STALE: 'Có dòng không còn khớp với hợp đồng, người phụ thuộc hoặc quy tắc hiện tại; hãy tính lại cả bảng rồi xem lại',
+      HR_ADJUST_NOT_PAID: 'Nhân viên này không có dòng lương trong tháng được sửa',
       NOTE_NOT_FOUND: 'Không tìm thấy ghi chú này',
       NOTE_AUTHOR_ONLY: 'Chỉ người viết ghi chú mới làm được việc này; với ghi chú dùng chung, chủ sở hữu và quản trị viên được ghim, lưu trữ hoặc xóa',
       NOTE_IN_TRASH: 'Ghi chú đang ở thùng rác; hãy khôi phục trước',
