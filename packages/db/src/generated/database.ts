@@ -1353,6 +1353,7 @@ export interface HrPayrollEmploymentTable {
   base_wage: ColumnType<string, string, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  pay_function: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_hr.payroll_line */
