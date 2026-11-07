@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -864,12 +864,16 @@ suite('meetings module database integration tests (#2576)', () => {
     const createRes = await rpc('meetings/create', 'recorder', { title: 'Audio Cap', visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' });
     const meetingId = String(createRes.body.meetingId);
     let pulled = false;
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        pulled = true;
-        controller.close();
+    // highWaterMark 0: pull runs only when something reads, so `pulled` shows whether the body was consumed.
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulled = true;
+          controller.close();
+        },
       },
-    });
+      { highWaterMark: 0 },
+    );
     // Declares a 400 MB body for audio (cap 300 MB): the gate answers from the header, so the stream is never consumed.
     const res = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
       method: 'POST',
@@ -914,6 +918,6 @@ suite('meetings module database integration tests (#2576)', () => {
     held!();
     const accepted = await send('video', mp4, 'video/mp4');
     expect(accepted.status).toBe(200);
-    expect(videoUploads.inUse).toBe(0);
+    await vi.waitFor(() => expect(videoUploads.inUse).toBe(0));
   });
 });
