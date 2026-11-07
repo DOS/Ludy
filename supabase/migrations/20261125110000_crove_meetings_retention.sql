@@ -13,6 +13,7 @@
 --    meetings_orphan_media(limit), meeting_media_discard(org, file)
 --                                       the ciphertext file rows no segment or video row points at any more, and the delete of one (ADR-0047 point 7:
 --                                       the objects go as the store allows); the worker deletes the object first, then the row
+--    meetings_org_open(org)             whether the worker can enter the org (not closed by the purge), for the replay to skip a purged org's references
 --    meetings_deleted_since(since)      the meetings a person deleted since a moment, read from the audit trail, for the shred references the worker
 --                                       writes to the archive store (ADR-0017 section 8)
 SET LOCAL lock_timeout = '2s';
@@ -58,6 +59,8 @@ BEGIN
     WHERE v.video_retention_date <= v_today
       AND (m.text_retention_date IS NULL OR m.text_retention_date > v_today)
   ) d
+  -- Only orgs a system context can enter (active, or offboarding before its purge): a closed org's rows would fail every run.
+  JOIN crove_kernel.tenant t ON t.org_id = d.org_id AND t.status IN ('active', 'offboarding')
   ORDER BY d.due, d.org_id, d.meeting_id, d.kind
   LIMIT LEAST(GREATEST(p_limit, 1), 1000);
 END;
@@ -171,6 +174,7 @@ BEGIN
   RETURN QUERY
   SELECT f.org_id, f.id
   FROM crove_kernel.file f
+  JOIN crove_kernel.tenant t ON t.org_id = f.org_id AND t.status IN ('active', 'offboarding')
   WHERE f.source IN ('meeting_audio', 'meeting_video')
     AND NOT EXISTS (SELECT 1 FROM crove_meetings.audio_segment s WHERE s.org_id = f.org_id AND s.file_id = f.id)
     AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_video v WHERE v.org_id = f.org_id AND v.file_id = f.id)
@@ -224,3 +228,17 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.meetings_deleted_since(timestamptz) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.meetings_deleted_since(timestamptz) TO crove_worker;
+
+-- Whether an org can be entered by the worker's system context (it exists and is active or offboarding, not closed by the purge): the replay skips the
+-- shred references of an org that cannot, by its state and not by an error's text. Worker login only, outside any context. Answers one boolean.
+CREATE OR REPLACE FUNCTION crove_meetings.meetings_org_open(p_org_id uuid)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF (NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')) OR crove_kernel.ctx_actor_type() IS NOT NULL THEN
+    RAISE EXCEPTION 'MEETINGS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  RETURN EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = p_org_id AND t.status IN ('active', 'offboarding'));
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.meetings_org_open(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.meetings_org_open(uuid) TO crove_worker;

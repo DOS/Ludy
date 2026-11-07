@@ -163,6 +163,8 @@ export async function syncShredRefs(deps: { workerDb: Db; store: ArchiveStore; s
   for (const row of rows) {
     const key = shredRefKey(row.org_id, row.meeting_id);
     if (deps.written?.has(key)) continue;
+    // The set only saves store calls: bounded, it starts again (a put on an existing key is a no-op).
+    if (deps.written && deps.written.size >= 10_000) deps.written.clear();
     const ref: ShredRef = { format: 'crove-shred-ref', version: 1, kind: 'meetings.meeting', orgId: row.org_id, meetingId: row.meeting_id, deletedAt: row.occurred_at.toISOString() };
     try {
       await deps.store.put(key, new TextEncoder().encode(`${JSON.stringify(ref)}\n`), { retentionDays: SHRED_REF_LOCK_DAYS });
@@ -226,8 +228,10 @@ export interface ShredReplay {
  * Deletes again every meeting a shred reference names, in its own org (a restore brought it back with its keys). A reference that does not parse, or whose
  * name and content disagree, is skipped and reported: it never deletes anything. An org that is closed or gone fails its own references only.
  */
-export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore; log?: Log; alert?: (line: string) => void }): Promise<ShredReplay> {
+export async function replayShreds(deps: { runtime: Runtime; workerDb: Db; store: ArchiveStore; log?: Log; alert?: (line: string) => void }): Promise<ShredReplay> {
   const log = deps.log ?? console;
+  // Whether each org can be entered, read once per org (by its state in the database, never by the text of an error).
+  const open = new Map<string, boolean>();
   const out: ShredReplay = { listed: 0, deleted: 0, failed: 0, skipped: 0 };
   for (const key of await deps.store.list(SHRED_REF_PREFIX)) {
     out.listed += 1;
@@ -239,13 +243,18 @@ export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore
         log.error(`[shred-replay] ${key} is not a shred reference this build reads; skipped`);
         continue;
       }
-      const { deleted } = await deps.runtime.execute<{ deleted: boolean }>('meetings.shred.replay', { meetingId: parsed.data.meetingId }, { actor: ACTOR, orgId: parsed.data.orgId });
-      if (deleted) out.deleted += 1;
-    } catch (error) {
-      if (error instanceof Error && /TENANT_NOT_ACTIVE|TENANT_NOT_FOUND/.test(error.message)) {
+      // An org that is closed by its purge (or gone) has nothing left to delete, and its reference stays under Object Lock: skipped, never a failure.
+      if (!open.has(parsed.data.orgId)) {
+        const { rows } = await sql<{ open: boolean }>`SELECT crove_meetings.meetings_org_open(${parsed.data.orgId}::uuid) AS open`.execute(deps.workerDb);
+        open.set(parsed.data.orgId, rows[0]?.open === true);
+      }
+      if (!open.get(parsed.data.orgId)) {
         out.skipped += 1;
         continue;
       }
+      const { deleted } = await deps.runtime.execute<{ deleted: boolean }>('meetings.shred.replay', { meetingId: parsed.data.meetingId }, { actor: ACTOR, orgId: parsed.data.orgId });
+      if (deleted) out.deleted += 1;
+    } catch (error) {
       out.failed += 1;
       log.error(`[shred-replay] ${key} not replayed`, error instanceof Error ? error.name : typeof error);
     }

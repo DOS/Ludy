@@ -782,7 +782,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     try {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
-      const replay = await replayShreds({ runtime, store: createArchiveStore(config) });
+      const replay = await replayShreds({ runtime, workerDb: db, store: createArchiveStore(config) });
       // What the retention shredded since the restore point came back too: shred it again before anything else opens.
       const due = await runMeetingsRetention({ runtime, workerDb: db });
       const sweep = await sweepMeetingMedia({ runtime, workerDb: db, store: resolved.storage });

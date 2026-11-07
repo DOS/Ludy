@@ -584,7 +584,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect((await rpc('meetings/get', 'attendee', { meetingId })).status).toBe(200);
 
     // The replay deletes it again, and only it: the live meeting keeps its key and its audio.
-    const replay = await replayShreds({ runtime: worker, store: archive, log: quiet });
+    const replay = await replayShreds({ runtime: worker, workerDb, store: archive, log: quiet });
     expect(replay).toMatchObject({ failed: 0, deleted: 1 });
     expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [meetingId])).toBe(0);
     expect(await count('SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).toBe(0);
@@ -596,7 +596,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect((await play('recorder', live, 'audio')).status).toBe(200);
 
     // Idempotent: a second replay changes nothing.
-    expect(await replayShreds({ runtime: worker, store: archive, log: quiet })).toMatchObject({ failed: 0, deleted: 0 });
+    expect(await replayShreds({ runtime: worker, workerDb, store: archive, log: quiet })).toMatchObject({ failed: 0, deleted: 0 });
     expect((await play('recorder', live, 'audio')).status).toBe(200);
   });
 
@@ -611,7 +611,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const stay = await createMeeting('recorder', { title: 'Stays' });
     await upload('recorder', stay, 'audio', 's');
     const alerts: string[] = [];
-    const out = await replayShreds({ runtime: worker, store: other, log: quiet, alert: (line) => alerts.push(line) });
+    const out = await replayShreds({ runtime: worker, workerDb, store: other, log: quiet, alert: (line) => alerts.push(line) });
     // A reference that could not be replayed raises an alert (a deleted meeting may still be readable after a restore).
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toContain('2 shred reference');
@@ -684,6 +684,11 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect((await exported('kernel.file')).filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
     expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId]))[0]!.n).toBe('3');
 
+    // A meeting deleted before the purge leaves a shred reference that outlives the org (it is under Object Lock).
+    expect((await rpc('meetings/delete', 'purgeOwner', { meetingId: hidden }, purgeSlug)).status).toBe(200);
+    await syncShredRefs({ workerDb, store: archive, since: new Date(Date.now() - 3_600_000) });
+    expect(await archive.get(shredRefKey(purgeOrgId, hidden))).not.toBeNull();
+
     // Offboarding with an export of the current format, 31 days old (as the purge's own invariant test sets it up), then the purge.
     await admin(async (c) => {
       await c.query('BEGIN');
@@ -706,6 +711,14 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     }
     expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId])).toBe(0);
     expect([...store.storage.keys()].filter((k) => k.startsWith(`org/${purgeOrgId}/`))).toEqual([]);
+    // The replay over that reference skips the purged org: nothing to do, no failure, no alert; the retention and the sweep do not fail on it either.
+    const alerts: string[] = [];
+    const replayed = await replayShreds({ runtime: worker, workerDb, store: archive, log: quiet, alert: (line) => alerts.push(line) });
+    expect(replayed.skipped).toBeGreaterThanOrEqual(1);
+    expect(replayed.failed).toBe(0);
+    expect(alerts).toEqual([]);
+    expect((await retention()).failed).toBe(0);
+    expect((await sweep()).failed).toBe(0);
     // The other org is untouched.
     expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE org_id = $1', [orgId])).toBeGreaterThan(0);
     void purgeSlug;

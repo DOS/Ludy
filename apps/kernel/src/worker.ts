@@ -1792,7 +1792,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // At start: whatever a restore brought back is deleted again before the first sweep, which then removes what that left.
     void (async () => {
       if (deps.archive) {
-        await replayShreds({ runtime: deps.runtime, store: deps.archive.store }).catch((error: unknown) => {
+        await replayShreds({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.archive.store }).catch((error: unknown) => {
           opsAlert('[shred-replay] ALERT the replay of the shred references failed at worker start; run main.ts shred-replay', error);
         });
       }
