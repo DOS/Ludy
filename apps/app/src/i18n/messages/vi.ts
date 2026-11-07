@@ -1023,6 +1023,7 @@ export const vi = {
       },
       state: {
         filled: '{finance} đã điền gợi ý vào các dòng bên dưới. Đây mới là gợi ý: số lượng và đơn giá đều lấy từ đoạn chữ của bạn, số tiền do hệ thống tính. Bạn xem lại rồi mới lưu.',
+        partial: '{finance} đã điền các dòng vừa với bản nháp, còn một số dòng gợi ý không đủ chỗ nên chưa được điền. Bạn xem lại, lưu bản nháp này rồi soạn tiếp phần còn lại ở bản nháp khác.',
         refused: '{finance} chưa soạn được từ đoạn chữ này vì kết quả có số hoặc thuế suất không có trong đoạn chữ. Bạn nhập tay như thường.',
         off: 'Máy chủ này chưa bật AI. Bạn vẫn soạn bản nháp bằng tay như thường.',
         busy: '{finance} đang xử lý nhiều yêu cầu cùng lúc. Hãy thử lại sau ít phút, hoặc nhập tay.',

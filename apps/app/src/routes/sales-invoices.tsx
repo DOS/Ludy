@@ -80,7 +80,8 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
   const lines = [...kept, ...proposed].slice(0, EINVOICE_DRAFT_MAX_LINES);
   const b = s.buyer;
   const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
-  const buyer = proposal.buyer !== null && buyerEmpty ? proposal.buyer : null;
+  // A person who chose a consumer sale keeps it: the coworker's customer does not replace the choice.
+  const buyer = proposal.buyer !== null && buyerEmpty && b.kind !== 'consumer' ? proposal.buyer : null;
   return {
     ...s,
     lines: lines.length > 0 ? lines : s.lines,
@@ -90,15 +91,15 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
 
 /** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
  * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
-function CoworkerBox({ date, onProposal }: { date: string; onProposal: (proposal: EInvoiceSuggested) => void }) {
+function CoworkerBox({ date, room, onProposal }: { date: string; room: number; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
   const [text, setText] = useState('');
-  const [state, setState] = useState<'filled' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
+  const [state, setState] = useState<'filled' | 'partial' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
   const ask = useMutation({
     mutationFn: () => client.einvoice.drafts.suggest({ text: text.trim(), date: date === '' ? vietnamToday() : date }),
     onSuccess: (proposal) => {
       if (proposal.ai === 'used') onProposal(proposal);
-      setState(proposal.ai === 'used' ? 'filled' : proposal.ai);
+      setState(proposal.ai === 'used' ? (proposal.lines.length > room ? 'partial' : 'filled') : proposal.ai);
     },
   });
   return (
@@ -174,7 +175,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           </NativeSelect>
         </div>
       </div>
-      <CoworkerBox date={form.date} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
+      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
       {form.buyerAi && (
         <p className="mt-3 text-xs text-subtle-foreground" data-testid="invoice-buyer-ai">
           <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t('ai.buyerNote')}</span>
