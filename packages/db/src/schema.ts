@@ -515,6 +515,9 @@ export type StockCountTable = Refine<G.FinanceStockCountTable, { status: ColumnT
 export type StockCountLineTable = Refine<G.FinanceStockCountLineTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderTable = Refine<G.FinanceChannelOrderTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderLineTable = Refine<G.FinanceChannelOrderLineTable, { stage: ChannelStage; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The income reports of the marketplaces (#2516): a settlement per platform and period and what the platform paid for each order of it, both append-only.
+export type ChannelSettlementTable = Refine<G.FinanceChannelSettlementTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type ChannelSettlementLineTable = Refine<G.FinanceChannelSettlementLineTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 // A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
 export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
 export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
@@ -1088,6 +1091,8 @@ type Refined = Tables<{
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;
+  'crove_finance.channel_settlement': ChannelSettlementTable;
+  'crove_finance.channel_settlement_line': ChannelSettlementLineTable;
   'crove_finance.stock_alias': StockAliasTable;
   'crove_finance.stock_move': StockMoveTable;
   'crove_finance.stock_period': StockPeriodTable;
