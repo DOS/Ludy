@@ -66,6 +66,8 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.channel_settlement',
+  'crove_finance.channel_settlement_line',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -221,6 +223,9 @@ const payrollMonth = () => {
 // Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
 let channelOrderSeq = 0;
 const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
+// A settlement of a marketplace (#2516) is unique per entity, platform and period: each seeded one takes the next day from 2000-01-01 as a one-day period.
+let channelSettlementSeq = 0;
+const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -794,6 +799,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } }],
         row: { org_id: o.id, id: randomUUID(), order_id: order, line_key: 'RLS-matrix', quantity: '1', stage: 'placed' },
+      };
+    },
+  },
+  // #2516: the income report of a platform for a period (ADR-0045 point 5), read from a file a member confirmed: the period, the platform's payout reference and the net the report states; it
+  // takes the org's default entity by its trigger and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement': {
+    make: (o) => {
+      const day = channelSettlementDay();
+      return { row: { org_id: o.id, id: randomUUID(), platform: 'shopee', period_start: day, period_end: day, report_net: '0' } };
+    },
+  },
+  // #2516: what the platform paid for one order of a settlement. It takes its settlement's entity, and the settlement and the order it names are seeded with it. The net is what the columns say
+  // (sales less the deductions), so the seeded row is a sale of 100000 with a commission of 5000. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement_line': {
+    make: (o) => {
+      const order = randomUUID();
+      const settlement = randomUUID();
+      const day = channelSettlementDay();
+      return {
+        setup: [
+          { table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } },
+          { table: 'crove_finance.channel_settlement', values: { org_id: o.id, id: settlement, platform: 'shopee', period_start: day, period_end: day, report_net: '95000' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), settlement_id: settlement, order_id: order, line_key: 'RLS-matrix', sales: '100000', commission: '5000', net: '95000' },
       };
     },
   },
