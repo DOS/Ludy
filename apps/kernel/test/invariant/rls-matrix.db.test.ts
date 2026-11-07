@@ -1133,6 +1133,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2532: the layout of the org's bank for the bulk-salary file (columns in order, with their headers), in the entity's name (b_legal_entity). Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
+  'crove_hr.payroll_bank_template': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix', layout: JSON.stringify({ columns: [{ key: 'amount', header: 'Amount' }] }) } }),
+  },
   // position is an SQL keyword, so the catalog prints the name quoted.
   // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
   // admins only" case below (every crove_hr table) keeps a plain member and a viewer out. Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
@@ -1193,11 +1198,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_hr.payroll_run': {
     update: { set: 'working_days = working_days' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
-  },
-  // #2532: the layout of the org's bank for the bulk-salary file (columns in order, with their headers), in the entity's name (b_legal_entity). Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
-  'crove_hr.payroll_bank_template': {
-    update: { set: 'name = name' },
-    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix', layout: JSON.stringify({ columns: [{ key: 'amount', header: 'Amount' }] }) } }),
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
