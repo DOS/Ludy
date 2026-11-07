@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2693): the org purge deletes the org's quotes with the org (crove_crm.quote_line, quote, quote_setting), ahead of the deals they name. Idempotent; applied
--- files stay untouched. This is the body of 20261124110000 (the newest) with the three tables added to the first list; its signature, owner, grants and every other list and step
--- are as they were.
+-- files stay untouched. This is the body of 20261125010000 (the newest, with the meetings tables, the payroll people and the pay runs) with the three tables added to the first list;
+-- its signature, owner, grants and every other list and step are as they were.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -31,6 +31,7 @@ DECLARE
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'crove_hr.payroll_dependent', 'crove_hr.payroll_employee',
+    'crove_meetings.media_key', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
@@ -100,6 +101,13 @@ BEGIN
   DELETE FROM crove_finance.einvoice_draft d WHERE d.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.einvoice_draft', v_n);
+  -- The pay runs (#2531): frozen once approved, deleted under the same mark, lines first, before the employments and employees they name.
+  DELETE FROM crove_hr.payroll_line l WHERE l.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_hr.payroll_line', v_n);
+  DELETE FROM crove_hr.payroll_run r WHERE r.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_hr.payroll_run', v_n);
   -- The payroll employments (#2530): append-only like the task comments, deleted under the same mark, before the employees they name.
   DELETE FROM crove_hr.payroll_employment e WHERE e.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
