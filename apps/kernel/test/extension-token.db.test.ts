@@ -210,9 +210,31 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(days).toBeGreaterThan(89.9);
     expect(days).toBeLessThanOrEqual(90);
     expect(await exchange(first.code, first.verifier)).toEqual({ status: 400, body: wrong.body });
+    // The exchange is audited, ids only: the member, the token that did it, the code it came from.
+    const audit = await admin(async (c) => (await c.query<{ actor_id: string; detail: Record<string, unknown> }>(`SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extension.token.exchanged' AND outcome = 'ok'`, [orgId])).rows);
+    const mine = audit.find((r) => r.detail.extensionToken === done.body.tokenId);
+    expect(mine?.detail.codeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.stringify(mine?.detail)).not.toContain(first.code);
     // The token is stored as its hash only.
     const hashes = await admin(async (c) => (await c.query<{ token_hash: Buffer }>('SELECT token_hash FROM crove_kernel.extension_token WHERE org_id = $1', [orgId])).rows);
     expect(hashes.some((r) => r.token_hash.equals(createHash('sha256').update(String(done.body.token)).digest()))).toBe(true);
+  });
+
+  it('counts a token\'s requests per client even when the header has extra spaces', async () => {
+    const flood = createHttpApp({
+      config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' }),
+      runtime: { installed: () => true, modules: () => [] } as unknown as Runtime,
+      store,
+      authenticate: async () => {
+        throw new DomainError('EXTENSION_TOKEN_INVALID', 401, 'no');
+      },
+      pool,
+      aiEnabled: false,
+      extensionBearerLimit: new RateLimiter({ perMinute: 2 }),
+    });
+    const probe = (header: string) => flood.request('/api/extension/me', { headers: { authorization: header } });
+    const token = `crx_${'A'.repeat(43)}`;
+    expect([(await probe(`Bearer ${token}`)).status, (await probe(`Bearer   ${token}`)).status, (await probe(`Bearer ${token} `)).status]).toEqual([401, 401, 429]);
   });
 
   it('refuses a viewer, an unsigned request and an extension token on the sign-in route', async () => {

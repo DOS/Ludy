@@ -37,6 +37,7 @@ import {
   BlobTooLargeError,
   DomainError,
   archiveKey,
+  EXTENSION_SCOPES,
   fileKey,
   putFile,
   readVerified,
@@ -51,6 +52,7 @@ import {
   type BlobMediaBinding,
   type BlobStore,
   type CredentialBroker,
+  type ExtensionScope,
   type MediaKeyBinding,
   type Runtime,
   type UserActor,
@@ -1340,6 +1342,13 @@ export function createHttpApp(deps: HttpDeps) {
       const verifier = input.codeVerifier;
       const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier));
       if (!done) return refused();
+      // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
+      const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
+      await runtime.execute(
+        'kernel.extension.token.exchanged',
+        { codeId: done.exchange.codeId },
+        { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
+      );
       return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });
     } catch (error) {
       return problem(c, error);
@@ -1354,7 +1363,8 @@ export function createHttpApp(deps: HttpDeps) {
     let user: AuthUser;
     try {
       const authHeader = c.req.header('authorization');
-      if (authHeader?.startsWith('Bearer crx_')) {
+      // Read as authenticate() reads it (a scheme, then the token trimmed), so extra spaces do not skip the count.
+      if (authHeader?.startsWith('Bearer ') && authHeader.slice(7).trim().startsWith('crx_')) {
         const decision = extensionBearerLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
         if (!decision.allowed) {
           warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);

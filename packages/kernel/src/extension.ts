@@ -10,7 +10,7 @@
 // token, list devices or revoke one.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, type ExtensionTokenView } from '@crove/kernel-contract';
+import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionTokenView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 
@@ -73,6 +73,24 @@ export const extensionCodeIssue = defineCommand({
   },
 });
 
+// The audit row of an exchange (ADR-0047 point 10: every token is audited from its creation). The exchange definer runs with no
+// member context, so it cannot write one; the API runs this right after it, as the member with the new token, and the row names
+// the token (in every row of its requests, by the runtime) and the one-time code it came from. Ids only. It writes nothing else.
+export const extensionTokenExchanged = defineCommand({
+  name: 'kernel.extension.token.exchanged',
+  input: z.strictObject({ codeId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: CONNECTORS,
+  extension: { scope: 'meetings' },
+  writes: [],
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user' || !ctx.actor.extension) throw new DomainError('FORBIDDEN', 403, 'Chỉ mã của tiện ích mới ghi nhận được lượt đổi mã');
+    ctx.audit({ codeId: input.codeId });
+    return { recorded: true as const };
+  },
+});
+
 export const extensionTokenRevoke = defineCommand({
   name: 'kernel.extension.token.revoke',
   input: zExtensionTokenRevoke,
@@ -116,5 +134,5 @@ export const extensionTokenList = defineQuery({
   },
 });
 
-export const extensionCommands = [extensionCodeIssue, extensionTokenRevoke];
+export const extensionCommands = [extensionCodeIssue, extensionTokenExchanged, extensionTokenRevoke];
 export const extensionQueries = [extensionTokenList];

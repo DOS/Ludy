@@ -83,6 +83,8 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
 }
 
 export interface ExtensionExchange {
+  // The one-time code the token came from: the audit row of the exchange names it with the token.
+  codeId: string;
   tokenId: string;
   orgId: string;
   userId: string;
@@ -92,14 +94,15 @@ export interface ExtensionExchange {
 
 // Trades a one-time code and its PKCE verifier for a new token, once. Null for every refusal alike (an unknown, used,
 // expired or wrong code; a member who left). The raw code and token never reach SQL: only their hashes do, and the
-// verifier, which is worthless without the code.
+// verifier, which is worthless without the code. The caller audits the exchange (kernel.extension.token.exchanged), which
+// needs the new token's actor: the exchange itself runs with no member context and so cannot write an audit row.
 export async function exchangeExtensionCode(db: Db, code: string, verifier: string): Promise<{ exchange: ExtensionExchange; token: string } | null> {
   if (!CODE_FORMAT.test(code) || !VERIFIER_FORMAT.test(verifier)) return null;
   const token = newExtensionToken();
-  let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>;
+  let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; code_id: string }>;
   try {
-    ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>`
-      SELECT token_id, org_id, user_id, scopes, expires_at
+    ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; code_id: string }>`
+      SELECT token_id, org_id, user_id, scopes, expires_at, code_id
       FROM crove_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
@@ -108,7 +111,7 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
   if (!row) return null;
   return {
     token: token.value,
-    exchange: { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes: row.scopes, expiresAt: new Date(row.expires_at).toISOString() },
+    exchange: { codeId: row.code_id, tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes: row.scopes, expiresAt: new Date(row.expires_at).toISOString() },
   };
 }
 

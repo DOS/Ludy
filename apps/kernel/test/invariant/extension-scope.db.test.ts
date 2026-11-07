@@ -34,6 +34,7 @@ const suite = ADMIN ? describe : describe.skip;
 const REACHABLE = [
   'kernel.file.upload.begin:meetings',
   'kernel.file.upload.claim:meetings',
+  'kernel.extension.token.exchanged:meetings',
   'meetings.media.record:meetings',
   'meetings.meeting.create:meetings',
   'meetings.meeting.extension_status:meetings',

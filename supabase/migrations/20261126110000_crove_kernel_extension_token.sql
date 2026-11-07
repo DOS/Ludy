@@ -137,10 +137,10 @@ END $$;
 -- the code is unknown, consumed or expired, the verifier is not the one the challenge came from (the code survives
 -- until the fifth wrong verifier burns it), or the member is no longer an owner, admin or member of an active org or
 -- is disabled. The code is consumed and the token inserted in one statement sequence under the code's row lock, so
--- two exchanges of one code cannot both win. The token lives 90 days (2160 hours, so a session time zone cannot move the bound); a member keeps at most 20 live tokens in an
+-- two exchanges of one code cannot both win. It also answers the code's id, which the API's audit row of the exchange names with the token's. The token lives 90 days (2160 hours, so a session time zone cannot move the bound); a member keeps at most 20 live tokens in an
 -- org, the oldest revoked past that.
 CREATE OR REPLACE FUNCTION crove_kernel.exchange_extension_auth_code(p_code_hash bytea, p_code_verifier text, p_token_hash bytea)
-RETURNS TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz)
+RETURNS TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz, code_id uuid)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
@@ -186,7 +186,7 @@ BEGIN
   INSERT INTO crove_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
   VALUES (v_code.org_id, v_code.user_id, p_token_hash, v_code.device_name, v_code.scopes, v_now, v_now + interval '2160 hours', v_code.user_id)
   RETURNING id INTO v_id;
-  RETURN QUERY SELECT v_id, v_code.org_id, v_code.user_id, v_code.scopes, v_now + interval '2160 hours';
+  RETURN QUERY SELECT v_id, v_code.org_id, v_code.user_id, v_code.scopes, v_now + interval '2160 hours', v_code.id;
 END $$;
 
 -- ---------------------------------------------------------------------------

@@ -9289,6 +9289,7 @@ export const en = {
           issue: 'Allow a browser extension to connect (one-time code)',
         },
         token: {
+          exchanged: 'Record the exchange of an extension sign-in code',
           list: 'List connected extension devices',
           revoke: 'Disconnect an extension device',
         },

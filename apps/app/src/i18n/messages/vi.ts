@@ -9286,6 +9286,7 @@ export const vi = {
           issue: 'Cho phép tiện ích trình duyệt kết nối (mã dùng một lần)',
         },
         token: {
+          exchanged: 'Ghi nhận lượt đổi mã đăng nhập của tiện ích',
           list: 'Xem các thiết bị tiện ích đã kết nối',
           revoke: 'Ngắt kết nối một thiết bị tiện ích',
         },
