@@ -87,4 +87,38 @@ describe('SubjectVault', () => {
     expect(parseSealed(`crove:s1:not-a-uuid:abc`)).toBeNull();
     expect(parseSealed(`crove:s1:${subject}:`)).toBeNull();
   });
+
+  it('wraps a data key again under the current key (rotation, #2643): it opens with the new key alone, the values stay readable, and a fresh nonce is drawn', () => {
+    const [oldRoot, newRoot] = [root(), root()];
+    const before = vaultOf(oldRoot);
+    const { dataKey, keyId, wrapped } = before.newDataKey(org, subject);
+    const sealed = before.seal(dataKey, org, subject, PLACE, 'v');
+    const rotated = vaultOf(newRoot, oldRoot);
+    const next = rotated.rewrap(org, subject, keyId, wrapped);
+    expect(next.keyId).toBe(rotated.keyId);
+    expect(next.keyId).not.toBe(keyId);
+    expect(next.wrapped.length).toBe(WRAPPED_SUBJECT_KEY_BYTES);
+    expect(next.wrapped.equals(wrapped)).toBe(false);
+    // The previous key is no longer needed: the new vault alone opens the key, and the value sealed before the rotation reads as it did.
+    const alone = vaultOf(newRoot);
+    const opened = alone.unwrap(org, subject, next.keyId, next.wrapped);
+    expect(opened.equals(dataKey)).toBe(true);
+    expect(alone.open(opened, org, subject, PLACE, parseSealed(sealed)?.packed ?? Buffer.alloc(0))).toBe('v');
+    // Again under the same key: a new nonce each time.
+    expect(rotated.rewrap(org, subject, next.keyId, next.wrapped).wrapped.equals(next.wrapped)).toBe(false);
+    expect(rotated.keyIds).toEqual([rotated.keyId, keyId]);
+  });
+
+  it('refuses to wrap again a key under an unknown key id, damaged bytes, or another org or subject', () => {
+    const [oldRoot, newRoot] = [root(), root()];
+    const { keyId, wrapped } = vaultOf(oldRoot).newDataKey(org, subject);
+    const rotated = vaultOf(newRoot, oldRoot);
+    expect(() => vaultOf(newRoot).rewrap(org, subject, keyId, wrapped)).toThrow(/unknown key/);
+    expect(() => rotated.rewrap(org, subject, keyId, wrapped.subarray(0, 40))).toThrow(SubjectKeyError);
+    expect(() => rotated.rewrap(randomUUID(), subject, keyId, wrapped)).toThrow(SubjectKeyError);
+    expect(() => rotated.rewrap(org, randomUUID(), keyId, wrapped)).toThrow(SubjectKeyError);
+    const damaged = Buffer.from(wrapped);
+    damaged[damaged.length - 1] = (damaged[damaged.length - 1] ?? 0) ^ 1;
+    expect(() => rotated.rewrap(org, subject, keyId, damaged)).toThrow(SubjectKeyError);
+  });
 });

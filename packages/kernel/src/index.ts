@@ -13,6 +13,7 @@ export * from './saved-view-filter.ts';
 export * from './extraction.ts';
 export * from './offboarding.ts';
 export * from './personal-data.ts';
+export * from './subject-key-reseal.ts';
 export * from './agents.ts';
 export * from './channels.ts';
 export * from './conversations.ts';
