@@ -49,7 +49,7 @@ export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.bank_account_sealed';
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
 const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'created_by', 'created_at', 'updated_at'] as const;
-const EMPLOYMENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'created_by', 'created_at'] as const;
+const EMPLOYMENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function', 'created_by', 'created_at'] as const;
 const DEPENDENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'display_name', 'relation', 'registered_on', 'created_by', 'created_at'] as const;
 
 const userOf = (actor: QueryContext['actor']): string => {
@@ -149,6 +149,7 @@ export const employeeAdd = defineCommand({
         contract_type: terms.contractType,
         region: terms.region,
         base_wage: terms.baseWage,
+        pay_function: terms.payFunction,
         created_by: userId,
         created_at: ctx.now,
       })
@@ -165,6 +166,7 @@ export const employeeAdd = defineCommand({
       effectiveFrom: terms.effectiveFrom,
       contractType: terms.contractType,
       region: terms.region,
+      payFunction: terms.payFunction,
       baseWage: auditValue(EMPLOYMENT, 'base_wage', terms.baseWage),
     });
     return { employeeId, employmentId: employment.id };
@@ -243,6 +245,7 @@ export const employmentAdd = defineCommand({
         contract_type: input.contractType,
         region: input.region,
         base_wage: input.baseWage,
+        pay_function: input.payFunction,
         created_by: userOf(ctx.actor),
         created_at: ctx.now,
       })
@@ -254,6 +257,7 @@ export const employmentAdd = defineCommand({
       effectiveFrom: input.effectiveFrom,
       contractType: input.contractType,
       region: input.region,
+      payFunction: input.payFunction,
       baseWage: auditValue(EMPLOYMENT, 'base_wage', input.baseWage),
     });
     return { employeeId: input.employeeId, employmentId: row.id };
@@ -431,6 +435,7 @@ interface TermsRow {
   contract_type: HrEmploymentView['contractType'];
   region: HrEmploymentView['region'];
   base_wage: string;
+  pay_function: HrEmploymentView['payFunction'];
 }
 
 const termsView = (r: TermsRow): HrEmploymentView => ({
@@ -439,6 +444,7 @@ const termsView = (r: TermsRow): HrEmploymentView => ({
   contractType: r.contract_type,
   region: r.region,
   baseWage: r.base_wage,
+  payFunction: r.pay_function,
 });
 
 // The terms in force on a day: the newest row that starts on or before it, in a list sorted newest first.
@@ -459,7 +465,7 @@ export const employeeList = defineQuery({
     if (employees.length === 0) return [];
     const terms = await ctx.trx
       .selectFrom('crove_hr.payroll_employment')
-      .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage'])
+      .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function'])
       .where('org_id', '=', ctx.orgId)
       .where(
         'employee_id',
@@ -501,7 +507,7 @@ export const employeeGet = defineQuery({
     const terms = (
       await ctx.trx
         .selectFrom('crove_hr.payroll_employment')
-        .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage'])
+        .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function'])
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', '=', input.employeeId)
         .orderBy('effective_from', 'desc')

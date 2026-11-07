@@ -11,6 +11,9 @@ export type HrContractType = (typeof HR_CONTRACT_TYPES)[number];
 // The wage regions of Decree 74/2024 (the minimum wage by workplace).
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export type HrRegion = (typeof HR_REGIONS)[number];
+// What a person's work is for: it picks the expense account of the pay in the posting (the accounts per regime are data in @crove/l10n-vn, whose PAY_FUNCTIONS this list equals).
+export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+export type HrPayFunction = (typeof HR_PAY_FUNCTIONS)[number];
 export const HR_RELATIONS = ['child', 'spouse', 'parent', 'other'] as const;
 export type HrRelation = (typeof HR_RELATIONS)[number];
 export const HR_STATUSES = ['active', 'ended'] as const;
@@ -36,6 +39,8 @@ export const zHrEmploymentTerms = z.strictObject({
   contractType: z.enum(HR_CONTRACT_TYPES),
   region: z.enum(HR_REGIONS),
   baseWage: zHrWage,
+  // Administration unless said otherwise: the default every small business has.
+  payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
 });
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
 
@@ -85,7 +90,7 @@ export type HrEmployeeList = z.input<typeof zHrEmployeeList>;
 export const zHrWritten = z.object({ employeeId: zId.optional(), employmentId: zId.optional(), dependentId: zId.optional() });
 export type HrWritten = z.infer<typeof zHrWritten>;
 
-const zTerms = z.object({ id: zId, effectiveFrom: z.string(), contractType: z.enum(HR_CONTRACT_TYPES), region: z.enum(HR_REGIONS), baseWage: z.string() });
+const zTerms = z.object({ id: zId, effectiveFrom: z.string(), contractType: z.enum(HR_CONTRACT_TYPES), region: z.enum(HR_REGIONS), baseWage: z.string(), payFunction: z.enum(HR_PAY_FUNCTIONS) });
 export type HrEmploymentView = z.infer<typeof zTerms>;
 
 export const zHrEmployeeSummary = z.object({

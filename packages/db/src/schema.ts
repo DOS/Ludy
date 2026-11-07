@@ -968,12 +968,13 @@ export type AdsAdTokenRevokeTable = Refine<
 export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
+export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
 // A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
 export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
 export type HrPayrollEmploymentTable = Refine<
   G.HrPayrollEmploymentTable,
-  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never> }
+  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>; pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never> }
 >;
 // The pay run (#2531): a run is a draft until a person approves it; the posting and payment builds (#2532) take it on to paid and closed. A line is a pay line or a signed adjustment, and
 // is calculated or refused by the calculator.
