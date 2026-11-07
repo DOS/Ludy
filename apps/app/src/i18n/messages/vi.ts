@@ -838,6 +838,14 @@ export const vi = {
     region: 'Vùng',
     regionOption: 'Vùng {region}',
     baseWage: 'Lương cơ bản (đ/tháng)',
+    payFunction: 'Bộ phận hạch toán',
+    payFunctions: {
+      admin: 'Quản lý doanh nghiệp',
+      sales: 'Bán hàng',
+      production: 'Sản xuất trực tiếp',
+      overhead: 'Chi phí sản xuất chung',
+      construction: 'Xây dựng cơ bản dở dang',
+    },
     contracts: {
       indefinite: 'Không xác định thời hạn',
       fixed_term: 'Xác định thời hạn',

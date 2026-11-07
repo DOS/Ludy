@@ -6,7 +6,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HR_CONTRACT_TYPES, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrRegion, type HrRelation } from '@crove/kernel-contract';
+import { HR_CONTRACT_TYPES, HR_PAY_FUNCTIONS, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrPayFunction, type HrRegion, type HrRelation } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -29,8 +29,9 @@ interface TermsState {
   contractType: HrContractType;
   region: HrRegion;
   baseWage: string;
+  payFunction: HrPayFunction;
 }
-const blankTerms = (): TermsState => ({ effectiveFrom: vietnamToday(), contractType: 'indefinite', region: 'I', baseWage: '' });
+const blankTerms = (): TermsState => ({ effectiveFrom: vietnamToday(), contractType: 'indefinite', region: 'I', baseWage: '', payFunction: 'admin' });
 
 function TermsFields({ id, value, onChange }: { id: string; value: TermsState; onChange: (patch: Partial<TermsState>) => void }) {
   const t = useTranslations('hrEmployees');
@@ -56,6 +57,16 @@ function TermsFields({ id, value, onChange }: { id: string; value: TermsState; o
           {HR_REGIONS.map((k) => (
             <NativeSelectOption key={k} value={k}>
               {t('regionOption', { region: k })}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor={`${id}-function`}>{t('payFunction')}</Label>
+        <NativeSelect id={`${id}-function`} value={value.payFunction} onChange={(e) => onChange({ payFunction: e.target.value as HrPayFunction })}>
+          {HR_PAY_FUNCTIONS.map((k) => (
+            <NativeSelectOption key={k} value={k}>
+              {t(`payFunctions.${k}`)}
             </NativeSelectOption>
           ))}
         </NativeSelect>
