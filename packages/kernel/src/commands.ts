@@ -72,6 +72,7 @@ import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPre
 import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
+import { subjectKeyCommands } from './subject-key-reseal.ts';
 import { taxCalendarCommands } from './tax-calendar.ts';
 import { lockChartChanges, positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';
 
@@ -1196,6 +1197,7 @@ const otherKernelCommands = [
   ...aiBudgetCommands,
   ...userStatusCommands,
   ...personalDataCommands,
+  ...subjectKeyCommands,
 ];
 
 // The kernel's commands; options.orgCreateLimits sets the org creation limits (default DEFAULT_ORG_CREATE_LIMITS),
