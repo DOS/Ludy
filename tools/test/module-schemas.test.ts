@@ -80,7 +80,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     why: "a party's kind changes only while nothing points at it (#2438): the check reads the books and the deals, bookings and rules that name the party, whatever is installed now, because an earlier install of finance or crm left rows that still read its kind (PARTY_KIND_HOLDERS; a database test lists every foreign key to party)",
   },
   'packages/kernel/src/personal-data.ts': {
-    modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'social'],
+    modules: ['crm', 'finance', 'hr', 'notes', 'social'],
     why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },

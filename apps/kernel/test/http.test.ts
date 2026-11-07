@@ -189,7 +189,7 @@ describe('configuration guards', () => {
     expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).CROVE_MODULES).toEqual(['kernel']);
     expect(loadConfig({ ...base, CROVE_MODULES: ' Finance ' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'finance,kernel' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr\)/);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings\)/);
   });
 
   it('never resolves the session check to "no check" by default', () => {
