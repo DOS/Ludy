@@ -704,7 +704,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
   'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
   // A quote of a deal (Q1 of docs/plan/crm-quotes.md, #2693): a draft of the org's, for a deal and its party, with the money columns at their zero defaults.
-  // Tenant roles update the mutable columns only (a column grant), so the update probes assign the notes to themselves. Who may write is the command's access
+  // Tenant roles update the mutable columns only (a column grant), so the update probes assign the remarks to themselves. Who may write is the command's access
   // (owners, admins and members); a viewer never reaches the table.
   'crove_crm.quote': {
     make: (o) => {
@@ -718,7 +718,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner },
       };
     },
-    update: { set: 'notes = notes' },
+    update: { set: 'remarks = remarks' },
   },
   // A line of a quote: it names its quote (a composite key) and carries the amounts the quote's totals are the sum of.
   'crove_crm.quote_line': {
