@@ -301,6 +301,18 @@ import {
   zTodoUpdate,
   zTodoWritten,
 } from './notes.ts';
+import {
+  zMeetingCreate,
+  zMeetingCreated,
+  zMeetingDeleted,
+  zMeetingDetail,
+  zMeetingListInput,
+  zMeetingReaderAdd,
+  zMeetingReaderRemove,
+  zMeetingReaderResult,
+  zMeetingRef,
+  zMeetingSummary,
+} from './meetings.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -665,6 +677,18 @@ export const contract = {
       myWork: oc.input(zMyWorkInput).output(zMyWork),
       // How many to-dos each member has, for an owner or admin before removing one; no text.
       counts: oc.input(z.strictObject({})).output(z.array(zTodoCount)),
+    },
+  },
+  // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2).
+  meetings: {
+    list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
+    get: oc.input(zMeetingRef).output(zMeetingDetail),
+    create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    delete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    readers: {
+      add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
+      remove: oc.input(zMeetingReaderRemove).output(zMeetingReaderResult),
     },
   },
   // Crove Social (Social plan §3.3), when the deployment runs the social module.

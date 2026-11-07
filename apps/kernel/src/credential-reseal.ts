@@ -19,13 +19,14 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@crove/kernel';
 import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
 import type { SubjectKeyResealDeps, SubjectKeyResealOutcome } from './subject-key-reseal.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.reseal' };
 const CHAT_ACTOR: SystemActor = { type: 'system', component: 'social.chat_alert.reseal' };
+const MEDIA_ACTOR: SystemActor = { type: 'system', component: 'meetings.media_key.reseal' };
 export const RESEAL_SWEEP_MS = 10 * 60_000;
 const RESEAL_LIMIT = 200;
 const SUBJECT_ACTOR: SystemActor = { type: 'system', component: 'kernel.subject_key.reseal' };
@@ -107,10 +108,17 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
           console.error('[credential-reseal] chat alert pass', error instanceof Error ? error.name : typeof error);
         });
       }
+      const meetings = deps.runtime.installed('meetings');
+      if (meetings) {
+        await resealMediaKeys(deps, db, current, outcome).catch((error: unknown) => {
+          console.error('[credential-reseal] media key pass', error instanceof Error ? error.name : typeof error);
+        });
+      }
       const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_kernel.credential_key_counts()`.execute(db);
       // Counted whatever is installed: the tables exist with Social left out too (ADR-0031), and a target left under the
       // previous key must keep it from being retired (#1878).
       const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_social.chat_alert_target_key_counts()`.execute(db);
+      const { rows: mediaCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_meetings.media_key_counts()`.execute(db);
       const openable = openableKeysOf(deps.broker);
       const unopenable = new Map<string, UnopenableKey>();
       const lost = (keyId: string, active: number, waiting: number) => {
@@ -132,6 +140,13 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
         else outcome.leftWaiting += Number(c.active);
         outcome.leftInactive += Number(c.inactive);
         lost(c.key_id, social ? Number(c.active) : 0, social ? 0 : Number(c.active));
+      }
+      for (const c of mediaCounts) {
+        if (c.key_id === current) continue;
+        if (meetings) outcome.leftActive += Number(c.active);
+        else outcome.leftWaiting += Number(c.active);
+        outcome.leftInactive += Number(c.inactive);
+        lost(c.key_id, meetings ? Number(c.active) : 0, meetings ? 0 : Number(c.active));
       }
       outcome.unopenable = [...unopenable.values()].sort((a, b) => a.keyId.localeCompare(b.keyId));
       return outcome;
@@ -235,6 +250,78 @@ async function resealChatAlert(deps: ResealDeps, row: { org_id: string; alert_id
     options,
   );
   return stored.resealed;
+}
+
+// Media keys of recorded meetings (#2576).
+async function resealMediaKeys(deps: ResealDeps, db: Db, current: string, outcome: ResealOutcome): Promise<void> {
+  let after = null as { created: Date; id: string } | null;
+  for (let page = 0; page < RESEAL_PAGES; page += 1) {
+    const { rows } = await sql<{
+      org_id: string;
+      meeting_id: string;
+      id: string;
+      key_id: string;
+      kind: 'audio' | 'video';
+      wrapped_key: Buffer;
+      created_at: Date;
+    }>`
+      SELECT org_id, meeting_id, id, key_id, kind, wrapped_key, created_at
+        FROM crove_meetings.media_key_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.created ?? null}::timestamptz, ${after?.id ?? null}::uuid)
+    `.execute(db);
+
+    for (const row of rows) {
+      const done = await resealOneMediaKey(deps, db, current, row).catch((error: unknown) => {
+        console.error(`[credential-reseal] media_key ${row.id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+        return false;
+      });
+      if (done) outcome.resealed += 1;
+      else outcome.failed += 1;
+    }
+    const last = rows.at(-1);
+    if (!last || rows.length < RESEAL_LIMIT) break;
+    after = { created: last.created_at, id: last.id };
+  }
+}
+
+async function resealOneMediaKey(
+  deps: ResealDeps,
+  db: Db,
+  current: string,
+  row: { org_id: string; meeting_id: string; id: string; key_id: string; kind: 'audio' | 'video'; wrapped_key: Buffer },
+): Promise<boolean> {
+  const binding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: row.key_id };
+  const oldSubkey = deps.broker.deriveKey
+    ? deps.broker.deriveKey(row.key_id, 'crove.meetings.v1|wrap')
+    : deps.broker.derive && deps.broker.keyId === row.key_id
+      ? deps.broker.derive('crove.meetings.v1|wrap')
+      : null;
+  if (!oldSubkey) return false;
+
+  let dataKey: Buffer | null = null;
+  let newSubkey: Buffer | null = null;
+  try {
+    dataKey = unwrapMediaKeyWithSubkey(row.wrapped_key, binding, oldSubkey);
+
+    const newBinding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: current };
+    newSubkey = deps.broker.deriveKey
+      ? deps.broker.deriveKey(current, 'crove.meetings.v1|wrap')
+      : deps.broker.derive && deps.broker.keyId === current
+        ? deps.broker.derive('crove.meetings.v1|wrap')
+        : null;
+    if (!newSubkey) return false;
+    const newWrapped = wrapMediaKeyWithSubkey(dataKey, newBinding, newSubkey);
+
+    const stored = await deps.runtime.execute<{ resealed: boolean }>(
+      'meetings.media_key.reseal',
+      { id: row.id, fromKeyId: row.key_id, toKeyId: current, fromWrappedKeyHex: row.wrapped_key.toString('hex'), wrappedKeyHex: newWrapped.toString('hex') },
+      { actor: MEDIA_ACTOR, orgId: row.org_id },
+    );
+    return stored.resealed;
+  } finally {
+    dataKey?.fill(0);
+    oldSubkey?.fill(0);
+    newSubkey?.fill(0);
+  }
 }
 
 // The subject keys of people (#2643, ADR-0017 section 7): see subject-key-reseal.ts for what the pass does. It lives here because the worker's one database handle for the reseal passes does.
