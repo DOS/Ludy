@@ -78,7 +78,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       const doc = (
         await c.query<{ id: string }>(
           `INSERT INTO crove_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
-           VALUES ($1, $2, $3, 'AA', $4, current_date - $5::int, 100, 0, 100, $6) RETURNING id`,
+           VALUES ($1, $2, $3, 'AA', $4, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - $5::int, 100, 0, 100, $6) RETURNING id`,
           [o.orgId, o.entity, partyId, String(serial).padStart(6, '0'), daysAgo, direction],
         )
       ).rows[0];
@@ -92,7 +92,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       const move = (
         await c.query<{ id: string }>(
           `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt)
-           VALUES ($1, $2, $3, current_date - $4::int, $5, 'document_line', $6, 1, 1) RETURNING id`,
+           VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - $4::int, $5, 'document_line', $6, 1, 1) RETURNING id`,
           [o.orgId, o.entity, item, daysAgo, quantity, documentId],
         )
       ).rows[0];
@@ -105,7 +105,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       await c.query('SET session_replication_role = replica');
       await c.query(
         `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt)
-         VALUES ($1, $2, $3, current_date - $4::int, $5, 'order_line', $6, $7, 1)`,
+         VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - $4::int, $5, 'order_line', $6, $7, 1)`,
         [o.orgId, o.entity, item, daysAgo, quantity, lineId, move],
       );
     });
@@ -149,15 +149,15 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     await line(o, a as string, supplier, 'purchase', 60, '66');
     sales.first = (await line(o, a as string, customer, 'sale', 20, '-30')).moveId;
     await line(o, a as string, customer, 'sale', 10, '-26');
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date - 58, 58, 'manual')", [o.orgId, e]);
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 58, 58, 'manual')", [o.orgId, e]);
     await line(o, e as string, customer, 'sale', 15, '-56');
     await line(o, b as string, supplier, 'purchase', 60, '200');
     await line(o, b as string, customer, 'sale', 10, '-56');
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date - 5, 5, 'manual')", [o.orgId, c]);
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date - 30, 80, 'manual')", [o.orgId, d]);
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 5, 5, 'manual')", [o.orgId, c]);
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 30, 80, 'manual')", [o.orgId, d]);
     await line(o, d as string, customer, 'sale', 10, '-56');
     await execute(o, 'finance.stock_item.set_active', { itemId: d, active: false });
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date - 100, 90, 'manual')", [o.orgId, f]);
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 100, 90, 'manual')", [o.orgId, f]);
     await line(o, f as string, customer, 'sale', 80, '-60');
     return { o, supplier, customer, items: { a: a as string, e: e as string, b: b as string, c: c as string, d: d as string, f: f as string }, firstSale: sales.first as string };
   }
@@ -189,7 +189,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     const o = await org();
     const customer = await party(o, 'Khách lẻ');
     const item = await makeItem(o, 'M1');
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date - 60, 100, 'manual')", [o.orgId, item]);
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 60, 100, 'manual')", [o.orgId, item]);
     // The window is today and the 55 days before it: a sale 55 days ago counts and one 56 days ago does not.
     await line(o, item, customer, 'sale', 55, '-30');
     await line(o, item, customer, 'sale', 56, '-50');
