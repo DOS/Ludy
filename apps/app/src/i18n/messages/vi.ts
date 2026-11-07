@@ -4824,6 +4824,7 @@ export const vi = {
       slug: 'Mã rút gọn nhập vào không khớp. Hãy nhập đúng mã của tổ chức.',
       pending: 'Dữ liệu đang được xuất. Hãy đợi bản xuất hiện tại xong rồi thử lại.',
       forbidden: 'Chỉ chủ sở hữu mới đóng được tổ chức.',
+      incomplete: 'Tệp tải xuống bị cắt giữa chừng nên chưa được lưu. Hãy tải lại tệp.',
     },
   },
   twoFactor: {

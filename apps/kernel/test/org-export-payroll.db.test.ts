@@ -233,13 +233,16 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
       expect(ok.headers.get('x-content-type-options')).toBe('nosniff');
       expect(ok.headers.get('content-disposition')).toContain('attachment');
       const text = await ok.text();
-      const rows = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string });
+      const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
+      // The last line says how many rows came before it, so a cut download cannot look whole.
+      expect(all.at(-1), table).toEqual({ _end: true, rows: 1 });
+      const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(1);
       expect(rows[0]?.org_id).toBe(closing.orgId);
       for (const needle of [IDENTITY_DIGITS, ACCOUNT_DIGITS, 'crove:s1:']) expect(text).not.toContain(needle);
     }
     // Another org's owner reads their own people, never this org's.
-    const own = JSON.parse((await (await get('hr.payroll_dependent', other.owner, other.slug)).text()).trim()) as { org_id: string };
+    const own = JSON.parse((await (await get('hr.payroll_dependent', other.owner, other.slug)).text()).trim().split('\n')[0] as string) as { org_id: string };
     expect(own.org_id).toBe(other.orgId);
     expect((await get('hr.payroll_employee', other.owner, closing.slug)).status).toBe(403);
     // A key of Object.prototype is not an owner-run table: it takes the stored-export path and finds no export.

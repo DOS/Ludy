@@ -3,13 +3,19 @@
 // until the client has taken the previous batch, so nothing piles up in memory whatever the size of the table (no whole-table buffer, no size
 // refusal). The first batch is read before the response starts, so a refusal (the org is not closing, a role the query refuses) answers with its
 // own status; once the headers are sent a failure cuts the download.
-import type { QuerySink } from '@crove/kernel-runtime';
+// The body ends with one line, {"_end":true,"rows":N}, so a download cut short can never look complete: the app checks it (OWNER_RUN_END).
+// A client that goes away (the request's signal aborts, or the body is cancelled) settles the waiting sink, which stops the query and its
+// transaction, and lets go of the slot, whether or not the response had started.
+import { DomainError, type QuerySink } from '@crove/kernel-runtime';
 
 const encoder = new TextEncoder();
 
+// The refusal a sink raises when the client is gone: a known code, not an internal error.
+export const DOWNLOAD_CANCELLED = 'DOWNLOAD_CANCELLED';
+
 // `run` runs the streamed query with the sink it is given; `done` is called once when the body has ended, failed or been cancelled, to let go of
-// what the caller holds (a concurrency slot).
-export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, done: () => void): Promise<ReadableStream<Uint8Array>> {
+// what the caller holds (a concurrency slot); `signal` is the request's, which aborts when the client disconnects.
+export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, done: () => void, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
   let slot: Uint8Array | null = null;
   let taken: (() => void) | null = null;
   let wake: (() => void) | null = null;
@@ -17,23 +23,42 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
   let failure: unknown = null;
   let cancelled = false;
   let released = false;
+  let rows = 0;
+  let endSent = false;
   const release = () => {
     if (released) return;
     released = true;
+    signal?.removeEventListener('abort', gone);
     done();
   };
+  // The client is gone: stop the producer at its next batch, wake whoever waits, let go of the slot.
+  function gone(): void {
+    cancelled = true;
+    taken?.();
+    wake?.();
+    release();
+  }
+  const cancelledError = () => new DomainError(DOWNLOAD_CANCELLED, 409, 'Người dùng đã hủy tải xuống');
+
+  if (signal?.aborted) {
+    cancelled = true;
+    release();
+    throw cancelledError();
+  }
+  signal?.addEventListener('abort', gone, { once: true });
 
   const sink: QuerySink = async (raw) => {
     const lines = (raw as { lines: string[] }).lines;
-    if (cancelled) throw new Error('the download was cancelled');
+    if (cancelled) throw cancelledError();
     if (lines.length === 0) return;
+    rows += lines.length;
     slot = encoder.encode(`${lines.join('\n')}\n`);
     const consumed = new Promise<void>((resolve) => {
       taken = resolve;
     });
     wake?.();
     await consumed;
-    if (cancelled) throw new Error('the download was cancelled');
+    if (cancelled) throw cancelledError();
   };
   void run(sink).then(
     () => {
@@ -49,6 +74,7 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
 
   const next = async (): Promise<Uint8Array | null> => {
     for (;;) {
+      if (cancelled) return null;
       if (slot) {
         const chunk = slot;
         slot = null;
@@ -57,7 +83,9 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
       }
       if (finished) {
         if (failure !== null) throw failure;
-        return null;
+        if (endSent) return null;
+        endSent = true;
+        return encoder.encode(`${JSON.stringify({ _end: true, rows })}\n`);
       }
       await new Promise<void>((resolve) => {
         wake = resolve;
@@ -71,6 +99,10 @@ export async function streamedBody(run: (sink: QuerySink) => Promise<unknown>, d
   } catch (error) {
     release();
     throw error;
+  }
+  if (cancelled) {
+    release();
+    throw cancelledError();
   }
   return new ReadableStream<Uint8Array>(
     {

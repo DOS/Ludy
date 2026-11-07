@@ -17,7 +17,7 @@ describe('streamedBody', () => {
       },
       () => released++,
     );
-    expect(await text(body)).toBe('a\nb\nc\n');
+    expect(await text(body)).toBe('a\nb\nc\n{"_end":true,"rows":3}\n');
     expect(released).toBe(1);
   });
 
@@ -32,7 +32,7 @@ describe('streamedBody', () => {
     await new Promise((r) => setTimeout(r, 20));
     // The first batch was taken to start the response; the second waits in the slot, so the producer is at most two batches ahead.
     expect(produced).toBeLessThanOrEqual(2);
-    expect(await text(body)).toBe('0\n1\n2\n3\n4\n');
+    expect(await text(body)).toBe('0\n1\n2\n3\n4\n{"_end":true,"rows":5}\n');
   });
 
   it('refuses before the response starts when the query fails first, and lets go of the slot', async () => {
@@ -65,6 +65,54 @@ describe('streamedBody', () => {
     await body.cancel();
     await new Promise((r) => setTimeout(r, 20));
     expect(released).toBe(1);
-    expect(String(failure)).toContain('cancelled');
+    expect(failure).toMatchObject({ code: 'DOWNLOAD_CANCELLED' });
+  });
+
+  it('writes only the end line for an empty table', async () => {
+    const body = await streamedBody(async (sink) => sink({ lines: [], last: true }), () => {});
+    expect(await text(body)).toBe('{"_end":true,"rows":0}\n');
+  });
+
+  it('settles the producer and lets go of the slot when the client aborts before the response starts', async () => {
+    let released = 0;
+    let stopped: unknown = null;
+    const controller = new AbortController();
+    const pending = streamedBody(
+      async (sink) => {
+        try {
+          await sink({ lines: ['x'], last: false });
+          await sink({ lines: ['y'], last: false });
+        } catch (error) {
+          stopped = error;
+          throw error;
+        }
+      },
+      () => released++,
+      controller.signal,
+    );
+    controller.abort();
+    // Whether the abort lands before or after the first batch, nothing is leaked: the slot is released once and the producer stops.
+    await pending.then((body) => body.cancel()).catch(() => {});
+    await new Promise((r) => setTimeout(r, 20));
+    expect(released).toBe(1);
+    expect(stopped).toMatchObject({ code: 'DOWNLOAD_CANCELLED' });
+  });
+
+  it('refuses at once with a known code when the signal is already aborted', async () => {
+    let released = 0;
+    let ran = false;
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      streamedBody(
+        async () => {
+          ran = true;
+        },
+        () => released++,
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ code: 'DOWNLOAD_CANCELLED' });
+    expect(released).toBe(1);
+    expect(ran).toBe(false);
   });
 });

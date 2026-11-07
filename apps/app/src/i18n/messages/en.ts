@@ -4829,6 +4829,7 @@ export const en = {
       slug: 'The short name does not match. Type the organization short name exactly.',
       pending: 'The data is being exported. Wait for the current export to finish, then retry.',
       forbidden: 'Only owners can close the organization.',
+      incomplete: 'The download was cut short and was not saved. Download the file again.',
     },
   },
   twoFactor: {

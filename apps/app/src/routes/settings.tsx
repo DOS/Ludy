@@ -29,7 +29,7 @@ import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
 import { asRoleKey, inviteRoleChoices } from '../lib/member-roles.ts';
-import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, slugConfirmed } from '../lib/offboarding.ts';
+import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, ownerRunFileComplete, slugConfirmed } from '../lib/offboarding.ts';
 
 interface MemberRow {
   userId: string;
@@ -261,7 +261,10 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
   const download = useMutation({
     mutationFn: async (part: string) => {
       const response = await apiFetch(`/api/org-export/${encodeURIComponent(part)}`);
-      const url = URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      // A staff or pay file is the owner's only copy: one that was cut short is refused, never saved as if it were whole.
+      if (state.data?.ownerRunTables.includes(part) && !ownerRunFileComplete(await blob.text())) throw new Error(t('errors.incomplete'));
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = exportFileName(slug, part);

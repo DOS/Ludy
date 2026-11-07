@@ -2682,7 +2682,7 @@ export function createHttpApp(deps: HttpDeps) {
         }
         let body: ReadableStream<Uint8Array>;
         try {
-          body = await streamedBody((sink) => runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, sink), release);
+          body = await streamedBody((sink) => runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, sink), release, c.req.raw.signal);
         } catch (error) {
           release();
           throw error;
