@@ -1008,6 +1008,28 @@ export const vi = {
     issueStepUp: 'Phát hành hóa đơn {total}',
     issueAwaiting: 'Đã gửi đề xuất phát hành. Chủ sở hữu hoặc quản trị viên khác sẽ duyệt trong Hộp thư; sau khi duyệt hóa đơn mới được gửi đi.',
     issueSent: 'Đã duyệt. Hóa đơn đang được gửi tới nhà cung cấp.',
+    // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
+    ai: {
+      label: 'Nhờ {finance} soạn từ lời nhắn bán hàng',
+      placeholder: 'Ví dụ: bán 10 hộp bánh A giá 120k cho anh Nam, thuế 8%',
+      button: 'Nhờ {finance} soạn',
+      hint: '{finance} chỉ đọc đoạn chữ này và tên khách hàng trong sổ. Bạn xem và sửa cả bản nháp rồi mới lưu và phát hành.',
+      badge: 'Gợi ý của {finance}',
+      buyerNote: 'Người mua lấy từ hồ sơ khách hàng trong sổ. Bạn kiểm tra lại trước khi lưu.',
+      vatFrom: {
+        text: 'Thuế suất theo đúng đoạn chữ bạn nhập.',
+        earlier: 'Thuế suất lấy từ các bản nháp trước, đoạn chữ không nêu thuế suất.',
+        default: 'Đoạn chữ không nêu thuế suất và chưa có bản nháp trước: bạn chọn thuế suất.',
+      },
+      state: {
+        filled: '{finance} đã điền gợi ý vào các dòng bên dưới. Đây mới là gợi ý: số lượng và đơn giá đều lấy từ đoạn chữ của bạn, số tiền do hệ thống tính. Bạn xem lại rồi mới lưu.',
+        refused: '{finance} chưa soạn được từ đoạn chữ này vì kết quả có số hoặc thuế suất không có trong đoạn chữ. Bạn nhập tay như thường.',
+        off: 'Máy chủ này chưa bật AI. Bạn vẫn soạn bản nháp bằng tay như thường.',
+        busy: '{finance} đang xử lý nhiều yêu cầu cùng lúc. Hãy thử lại sau ít phút, hoặc nhập tay.',
+        budget: '{finance} đã hết ngân sách AI của tháng này. Bạn vẫn soạn bản nháp bằng tay như thường.',
+        failed: '{finance} chưa soạn được lúc này. Bạn vẫn soạn bản nháp bằng tay như thường.',
+      },
+    },
     issuedNumber: 'Số {number}',
     evidencePending: 'Đang lưu bản gốc',
     draftErrors: {
@@ -4737,6 +4759,7 @@ export const vi = {
       finance_payment_reminder: 'Soạn lời mở đầu và kết thư nhắc thu nợ',
       finance_stock_match: 'Gợi ý mặt hàng cho các dòng hóa đơn chưa gán',
       finance_stock_reorder: 'Soạn tin đặt thêm hàng gửi nhà cung cấp',
+      finance_einvoice_draft: 'Soạn dòng hàng, thuế suất và người mua cho bản nháp hóa đơn bán ra',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },

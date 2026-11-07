@@ -43,6 +43,9 @@ export const AI_FEATURES = {
   // message to a supplier from the item names and quantities it was given (a figure, link or address it was not given refuses the text).
   'finance.stock_match': 'finance',
   'finance.stock_reorder': 'finance',
+  // The finance coworker on a sales e-invoice draft (#2505): the lines, the VAT rate the text states and the customer it is for, proposed from a text a person typed or pasted. A figure the text
+  // does not hold, or a rate the invoice date does not allow, refuses the proposal; a person reads the whole draft and issues it.
+  'finance.einvoice_draft': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
 } as const satisfies Record<string, string>;
