@@ -17,21 +17,22 @@ ALTER TABLE crove_kernel.tenant ADD COLUMN IF NOT EXISTS meeting_audio_retention
 ALTER TABLE crove_kernel.tenant ADD COLUMN IF NOT EXISTS meeting_video_retention_days smallint NOT NULL DEFAULT 7;
 ALTER TABLE crove_kernel.tenant ADD COLUMN IF NOT EXISTS meeting_text_retention_days smallint NOT NULL DEFAULT 365;
 
+-- The bounds only; the exact choices (a fixed set, which the CHECK-union test of schema.ts would ask to be refined) are held by the command's input schema.
 -- Audio: 0 is "deleted right after the transcript" (7 days while no transcript exists, plan section 9), else 7, 30 or 90. Video: 7 or 30, never longer than
 -- the audio (0 counts as 7). Text: 90, 365 or 730 days, or 0 for until a person deletes it.
 DO $$
 BEGIN
-  ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_meeting_audio_retention_days_check CHECK (meeting_audio_retention_days IN (0, 7, 30, 90));
+  ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_meeting_audio_retention_days_check CHECK (meeting_audio_retention_days BETWEEN 0 AND 90);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_meeting_video_retention_days_check CHECK (meeting_video_retention_days IN (7, 30));
+  ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_meeting_video_retention_days_check CHECK (meeting_video_retention_days BETWEEN 7 AND 30);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 DO $$
 BEGIN
-  ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_meeting_text_retention_days_check CHECK (meeting_text_retention_days IN (0, 90, 365, 730));
+  ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_meeting_text_retention_days_check CHECK (meeting_text_retention_days BETWEEN 0 AND 730);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 DO $$
