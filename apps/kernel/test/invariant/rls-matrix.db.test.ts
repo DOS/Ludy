@@ -215,6 +215,8 @@ const stockMonth = () => {
   const n = stockMonthSeq++;
   return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-01`;
 };
+// A bank template (#2532) is unique per entity and name: each seeded one takes the next number.
+let bankTemplateSeq = 0;
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -1133,10 +1135,27 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #2532: the layout of the org's bank for the bulk-salary file (columns in order, with their headers), in the entity's name (b_legal_entity). Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
+  // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {
     update: { set: 'name = name' },
-    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix', layout: JSON.stringify({ columns: [{ key: 'amount', header: 'Amount' }] }) } }),
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        name: `RLS matrix ${bankTemplateSeq++}`,
+        layout: JSON.stringify({
+          columns: [
+            { key: 'sequence', header: 'STT' },
+            { key: 'name', header: 'Ten' },
+            { key: 'account', header: 'So tai khoan' },
+            { key: 'bank', header: 'Ngan hang' },
+            { key: 'amount', header: 'So tien' },
+            { key: 'content', header: 'Noi dung' },
+          ],
+          content: 'Luong thang {month}',
+        }),
+      },
+    }),
   },
   // position is an SQL keyword, so the catalog prints the name quoted.
   // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
