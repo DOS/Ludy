@@ -98,10 +98,11 @@ function CoworkerBox({ date, room, onProposal }: { date: string; room: number; o
   current.current = date;
   const [state, setState] = useState<'filled' | 'partial' | 'stale' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
   const ask = useMutation({
-    mutationFn: () => client.einvoice.drafts.suggest({ text: text.trim(), date: date === '' ? vietnamToday() : date }),
-    onSuccess: (proposal) => {
+    // The date the request was made for travels in the mutation's variables: the options of a request still pending are replaced on every render, so a date taken from the closure could already be the new one.
+    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked }),
+    onSuccess: (proposal, asked) => {
       // The VAT rates were checked for the date asked with: if the invoice date was changed meanwhile, nothing is filled.
-      if (proposal.ai === 'used' && current.current !== date) {
+      if (proposal.ai === 'used' && current.current !== asked) {
         setState('stale');
         return;
       }
@@ -114,7 +115,7 @@ function CoworkerBox({ date, room, onProposal }: { date: string; room: number; o
       <Label htmlFor="sales-invoice-ai-text">{t('label')}</Label>
       <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} onChange={(e) => setText(e.target.value)} data-testid="invoice-ai-text" />
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate()} data-testid="invoice-ai-ask">
+        <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate(date)} data-testid="invoice-ai-ask">
           {t('button')}
         </Button>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
