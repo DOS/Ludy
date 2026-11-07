@@ -167,7 +167,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
       withAdmin((c) =>
         c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`, [posted.voucherId]),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
   });
 
   it('posts a TT99 run to 3386, never 3385, and sends each function to its own account', async () => {
