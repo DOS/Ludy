@@ -37,7 +37,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
-import { SHRED_REF_FIRST_LOOKBACK_DAYS, replayShreds, runMeetingsRetention, sweepMeetingMedia, syncShredRefs } from './meetings-retention.ts';
+import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
@@ -1773,23 +1773,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // deleted or expired meeting are removed, every minute; after a restore, the references delete again what the restore brought back (ADR-0017 section 8).
   // Each pass catches its own errors: a store that is down is tried again on the next one.
   let meetingsMaintaining = false;
-  let shredRefsSince = new Date(Date.now() - SHRED_REF_FIRST_LOOKBACK_DAYS * 86_400_000);
-  const shredRefsWritten = new Set<string>();
+  const shredRefSync = deps.archive ? createShredRefSync({ workerDb: deps.workerDb, store: deps.archive.store }) : null;
   const meetingsMaintenance = async () => {
     if (meetingsMaintaining) return;
     meetingsMaintaining = true;
     try {
-      if (deps.archive) {
-        const passStart = new Date();
-        try {
-          const synced = await syncShredRefs({ workerDb: deps.workerDb, store: deps.archive.store, since: shredRefsSince, written: shredRefsWritten });
-          if (synced.written > 0) console.log(`[meetings-retention] shred references written=${synced.written}`);
-          // The next pass reads from just before this one started: a deletion committed while it ran is still seen.
-          shredRefsSince = synced.truncatedAt ?? new Date(passStart.getTime() - 10 * 60_000);
-        } catch (error) {
-          console.error('[meetings-retention] shred references', error instanceof Error ? error.name : typeof error);
-        }
-      }
+      await shredRefSync?.pass();
       await sweepMeetingMedia({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store });
     } catch (error) {
       console.error('[meetings-retention] sweep', error instanceof Error ? error.name : typeof error);
@@ -1802,7 +1791,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     meetingsTimer.unref();
     // At start: whatever a restore brought back is deleted again before the first sweep, which then removes what that left.
     void (async () => {
-      if (deps.archive) await replayShreds({ runtime: deps.runtime, store: deps.archive.store }).catch((error: unknown) => console.error('[shred-replay]', error instanceof Error ? error.name : typeof error));
+      if (deps.archive) {
+        await replayShreds({ runtime: deps.runtime, store: deps.archive.store }).catch((error: unknown) => {
+          opsAlert('[shred-replay] ALERT the replay of the shred references failed at worker start; run main.ts shred-replay', error);
+        });
+      }
       // A restore also brings back what the retention shredded since its point: shred it again now, not at the next nightly run.
       await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => console.error('[meetings-retention]', error instanceof Error ? error.name : typeof error));
       await meetingsMaintenance();

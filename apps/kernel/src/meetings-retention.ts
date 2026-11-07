@@ -174,6 +174,42 @@ export async function syncShredRefs(deps: { workerDb: Db; store: ArchiveStore; s
   return { seen: rows.length, written, truncatedAt: rows.length >= SHRED_REF_PAGE && last ? last.occurred_at : null };
 }
 
+// The writer of the shred references as the worker runs it: a pass every minute, reading from just before the previous one started (the first from
+// SHRED_REF_FIRST_LOOKBACK_DAYS back), paging when the definer's page was full. A writer that keeps failing raises an alert (a reference not written is a
+// deletion a restore can undo), once at SHRED_REF_ALERT_AFTER consecutive failures and again every hour it goes on.
+export const SHRED_REF_ALERT_AFTER = 5;
+export function createShredRefSync(deps: { workerDb: Db; store: ArchiveStore; alert?: (line: string, error?: unknown) => void; log?: Pick<Console, 'log' | 'error'>; now?: () => Date }) {
+  const alert = deps.alert ?? opsAlert;
+  const log = deps.log ?? console;
+  const now = deps.now ?? (() => new Date());
+  const written = new Set<string>();
+  let since = new Date(now().getTime() - SHRED_REF_FIRST_LOOKBACK_DAYS * 86_400_000);
+  let failures = 0;
+  return {
+    get failures() {
+      return failures;
+    },
+    async pass(): Promise<{ written: number } | null> {
+      const passStart = now();
+      try {
+        const synced = await syncShredRefs({ workerDb: deps.workerDb, store: deps.store, since, written });
+        if (synced.written > 0) log.log(`[meetings-retention] shred references written=${synced.written}`);
+        // The next pass reads from just before this one started, so a deletion committed while it ran is still seen.
+        since = synced.truncatedAt ?? new Date(passStart.getTime() - 10 * 60_000);
+        failures = 0;
+        return { written: synced.written };
+      } catch (error) {
+        failures += 1;
+        log.error('[meetings-retention] shred references', error instanceof Error ? error.name : typeof error);
+        if (failures === SHRED_REF_ALERT_AFTER || (failures > SHRED_REF_ALERT_AFTER && failures % 60 === 0)) {
+          alert(`[meetings-retention] ALERT the shred references of deleted meetings could not be written for ${failures} passes; a restore now could bring those meetings back`, error);
+        }
+        return null;
+      }
+    },
+  };
+}
+
 export interface ShredReplay {
   listed: number;
   deleted: number;
@@ -186,7 +222,7 @@ export interface ShredReplay {
  * Deletes again every meeting a shred reference names, in its own org (a restore brought it back with its keys). A reference that does not parse, or whose
  * name and content disagree, is skipped and reported: it never deletes anything. An org that is closed or gone fails its own references only.
  */
-export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore; log?: Log }): Promise<ShredReplay> {
+export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore; log?: Log; alert?: (line: string) => void }): Promise<ShredReplay> {
   const log = deps.log ?? console;
   const out: ShredReplay = { listed: 0, deleted: 0, failed: 0, skipped: 0 };
   for (const key of await deps.store.list(SHRED_REF_PREFIX)) {
@@ -210,6 +246,8 @@ export async function replayShreds(deps: { runtime: Runtime; store: ArchiveStore
       log.error(`[shred-replay] ${key} not replayed`, error instanceof Error ? error.name : typeof error);
     }
   }
+  // A reference that could not be replayed is a deleted meeting that may still be readable after a restore: say so loudly.
+  if (out.failed > 0) (deps.alert ?? opsAlert)(`[shred-replay] ALERT ${out.failed} shred reference(s) could not be replayed; check the worker log and run main.ts shred-replay again`);
   log.log(`[shred-replay] references=${out.listed} meetings deleted again=${out.deleted} closed orgs skipped=${out.skipped} failed=${out.failed}`);
   return out;
 }

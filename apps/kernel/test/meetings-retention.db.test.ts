@@ -19,7 +19,7 @@ import { dayAfter, meetingsCommands, meetingsQueries, retentionDates } from '@cr
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
-import { replayShreds, runMeetingsRetention, shredRefKey, sweepMeetingMedia, syncShredRefs } from '../src/meetings-retention.ts';
+import { SHRED_REF_ALERT_AFTER, createShredRefSync, replayShreds, runMeetingsRetention, shredRefKey, sweepMeetingMedia, syncShredRefs } from '../src/meetings-retention.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { LocalArchiveStore } from '../src/worm.ts';
@@ -610,12 +610,48 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await other.put('shred/v1/garbage.json', new TextEncoder().encode('{"hello":1}'));
     const stay = await createMeeting('recorder', { title: 'Stays' });
     await upload('recorder', stay, 'audio', 's');
-    const out = await replayShreds({ runtime: worker, store: other, log: quiet });
+    const alerts: string[] = [];
+    const out = await replayShreds({ runtime: worker, store: other, log: quiet, alert: (line) => alerts.push(line) });
+    // A reference that could not be replayed raises an alert (a deleted meeting may still be readable after a restore).
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain('2 shred reference');
     // The first names a different id than its key does: skipped, never run.
     expect(out.deleted).toBe(0);
     expect(out.failed).toBe(2);
     expect(await count('SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1', [stay])).toBe(1);
     expect((await syncShredRefs({ workerDb, store: archive, since: new Date(Date.now() - 3_600_000) })).written).toBeGreaterThanOrEqual(1);
+    expect(await archive.get(shredRefKey(orgId, meetingId))).not.toBeNull();
+  });
+
+  it('alerts when the shred references cannot be written for several passes, once, and recovers when the store does', async () => {
+    const meetingId = await createMeeting('recorder', { title: 'Reference writer down' });
+    expect((await rpc('meetings/delete', 'recorder', { meetingId })).status).toBe(200);
+    let down = true;
+    const flaky = {
+      put: async (key: string, body: Uint8Array, options?: { retentionDays?: number }) => {
+        if (down) throw new Error('archive store unavailable');
+        return archive.put(key, body, options);
+      },
+      get: (key: string) => archive.get(key),
+      list: (prefix: string) => archive.list(prefix),
+      describe: () => 'flaky',
+    };
+    const alerts: string[] = [];
+    const writer = createShredRefSync({ workerDb, store: flaky, alert: (line) => alerts.push(line), log: quiet });
+    for (let i = 1; i < SHRED_REF_ALERT_AFTER; i++) {
+      expect(await writer.pass()).toBeNull();
+      expect(alerts).toEqual([]);
+    }
+    expect(await writer.pass()).toBeNull();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain('ALERT');
+    // Still failing: no second alert for the next passes (the next comes an hour of passes later).
+    await writer.pass();
+    expect(alerts).toHaveLength(1);
+    down = false;
+    const ok = await writer.pass();
+    expect(ok).not.toBeNull();
+    expect(writer.failures).toBe(0);
     expect(await archive.get(shredRefKey(orgId, meetingId))).not.toBeNull();
   });
 
