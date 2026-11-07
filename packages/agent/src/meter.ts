@@ -39,6 +39,10 @@ export const AI_FEATURES = {
   'finance.payment_reminder': 'finance',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
+  // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder
+  // message to a supplier from the item names and quantities it was given (a figure, link or address it was not given refuses the text).
+  'finance.stock_match': 'finance',
+  'finance.stock_reorder': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
 } as const satisfies Record<string, string>;

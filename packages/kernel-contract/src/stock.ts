@@ -178,6 +178,80 @@ export type StockCloseProposal = z.infer<typeof zStockCloseProposal>;
 export const zStockCloseEmptyResult = z.object({ periodId: zId, items: z.number().int().min(0) });
 export type StockCloseEmptyResult = z.infer<typeof zStockCloseEmptyResult>;
 
+// The finance coworker on stock (#2514). Read-only: a suggestion is never a match (a person assigns the line, which teaches the name), and the low-stock list and the reorder text
+// move nothing and send nothing.
+// How many days a supplier takes to deliver when the org has not said (a week count of the average sales is read against it), and the bounds a person may set.
+export const STOCK_LEAD_DAYS_DEFAULT = 14;
+export const STOCK_LEAD_DAYS_MAX = 90;
+// Lines asked about in one call and items a reorder message names; the agent reads the same bounds (packages/agent stock.ts).
+export const STOCK_SUGGEST_LINES_MAX = 10;
+export const STOCK_REORDER_ITEMS_MAX = 20;
+export const STOCK_REORDER_HINT_MAX = 200;
+
+// ai: used (the model answered), off (the deployment has no model), busy (too many asks at once), budget (the org's AI budget of the month is spent), failed (the call failed or its
+// answer was refused), quiet (nothing to ask about). Without an answer the screen works as it does with AI off.
+export const zStockAiState = z.enum(['used', 'off', 'busy', 'budget', 'failed', 'quiet']);
+export type StockAiState = z.infer<typeof zStockAiState>;
+
+// The goods lines of one legal entity the person is looking at (at most STOCK_SUGGEST_LINES_MAX); the server reads their descriptions from the books, never from the request.
+export const zStockSuggestInput = z.strictObject({
+  legalEntityId: zId,
+  lines: z.array(z.strictObject({ documentId: zId, lineNo: z.number().int().positive() })).min(1).max(STOCK_SUGGEST_LINES_MAX),
+  lang: z.enum(['vi', 'en']).optional(),
+});
+export type StockSuggestInput = z.infer<typeof zStockSuggestInput>;
+// A suggestion: the item the coworker thinks the line is about and the one-line reason it gave. The reason is the model's text, shown as such and never stored.
+export const zStockSuggestion = z.object({ documentId: zId, lineNo: z.number().int(), itemId: zId, reason: z.string() });
+export const zStockSuggested = z.object({ ai: zStockAiState, suggestions: z.array(zStockSuggestion) });
+export type StockSuggested = z.infer<typeof zStockSuggested>;
+
+// Items running low: the average sales out of the last eight weeks (or of the days since the item's first move, at least seven) against what is on hand. An item is low when its cover
+// (days of sales on hand) is shorter than the lead days. suggestedQuantity covers two lead times of sales, to whole units, less what is on hand.
+// The most items one read returns (the shortest cover first); the screen asks for all of them and says when the list is cut.
+export const STOCK_LOW_MAX = 200;
+export const zStockLowInput = z.strictObject({
+  legalEntityId: zId.optional(),
+  leadDays: z.number().int().min(1).max(STOCK_LEAD_DAYS_MAX).optional(),
+  limit: z.number().int().min(1).max(STOCK_LOW_MAX).optional(),
+});
+export const zStockLowItem = z.object({
+  itemId: zId,
+  legalEntityId: zId,
+  code: z.string(),
+  name: z.string(),
+  unit: z.string(),
+  onHand: z.string(),
+  // Average units out per day, a decimal string.
+  dailyOut: z.string(),
+  // Whole days the stock on hand lasts at that pace; 0 when nothing is on hand.
+  coverDays: z.number().int().min(0),
+  suggestedQuantity: z.string(),
+  // Whom the item was last bought from (the kept party of a duplicate group), when it was bought through a posted purchase.
+  supplier: z.object({ partyId: zId, name: z.string(), email: z.string().nullable() }).nullable(),
+});
+export type StockLowItem = z.infer<typeof zStockLowItem>;
+
+// A reorder message for one supplier (#2514): the items and the quantities a person chose, from the same legal entity. The server reads the names and the units from the books. A message
+// is a draft to read, edit and send from the person's own mail; nothing is sent from here.
+export const zStockReorderAsk = z.strictObject({
+  legalEntityId: zId,
+  supplierPartyId: zId.optional(),
+  items: z
+    .array(z.strictObject({ itemId: zId, quantity: z.string().regex(/^[0-9]{1,14}(\.[0-9]{1,6})?$/) }))
+    .min(1)
+    .max(STOCK_REORDER_ITEMS_MAX),
+  hint: z.string().trim().max(STOCK_REORDER_HINT_MAX).optional(),
+  lang: z.enum(['vi', 'en']).optional(),
+});
+export type StockReorderAsk = z.infer<typeof zStockReorderAsk>;
+// text: the coworker's message when ai is used, else the fixed template with the same lines; always a text the person can edit. The supplier is null when none was named.
+export const zStockReorderDraft = z.object({
+  ai: zStockAiState,
+  supplier: z.object({ partyId: zId, name: z.string(), email: z.string().nullable() }).nullable(),
+  text: z.string(),
+});
+export type StockReorderDraft = z.infer<typeof zStockReorderDraft>;
+
 // The count of stock (kiểm kê, #2513 part b): a person names the day the stock was counted and what was counted of each item; the server works out the difference from the books and, when
 // confirmed, posts it as adjustment moves and one entry that an owner or an admin approves like any posting (R3, four-eyes, fresh MFA).
 export const STOCK_COUNT_STATUSES = ['draft', 'confirmed', 'cancelled'] as const;

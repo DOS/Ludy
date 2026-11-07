@@ -435,6 +435,10 @@ export const KERNEL_ERROR_CODES = [
   'STOCK_LINE_NOT_GOODS',
   'STOCK_LINE_NO_QUANTITY',
   'STOCK_ITEM_ENTITY_MISMATCH',
+  // The reorder message of the finance coworker on stock (#2514).
+  'STOCK_REORDER_DUPLICATE',
+  'STOCK_REORDER_QUANTITY',
+  'STOCK_REORDER_TOO_MANY',
   // The close of a month of stock (#2513).
   'STOCK_CLOSE_NOT_ENDED',
   'STOCK_CLOSE_NEGATIVE',
