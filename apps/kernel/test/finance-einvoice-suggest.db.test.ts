@@ -12,7 +12,6 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -38,24 +37,11 @@ interface Draft {
   issues: Array<{ field: string; code: string }>;
 }
 
-// A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.
+// A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit.
 const PREFIX = '010010910';
 const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
-const BAD_TAX_CODE = `${PREFIX}${((enterpriseCheckDigit(PREFIX) ?? 0) + 1) % 10}`;
 
 const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
-const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => ({
-  draftId: null,
-  legalEntityId: null,
-  date: today(),
-  seriesId,
-  buyer: { kind: 'business', partyId: null, taxCode: VALID_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
-  lines: [
-    { description: 'Hàng A', unit: 'cái', quantity: '2', unitPrice: '100000', vatRate: '10%' },
-    { description: 'Hàng B', unit: null, quantity: '1.5', unitPrice: '33333', vatRate: '8%' },
-  ],
-  ...extra,
-});
 
 suite('the coworker on a sales e-invoice draft (#2505)', () => {
   const dbName = `crove_test_einvoice_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
