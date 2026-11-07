@@ -54,10 +54,11 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
     for (const queue of [...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES]) {
       expect(AVAILABLE_MODULES as readonly string[], queue).toContain(queue.split('-')[0]);
     }
-    // health() lists the optional modules, whose queues alone can drop out of its job age: every module but kernel.
-    const sql = readFileSync(join(MIGRATIONS, '20261124080000_crove_kernel_health_meetings.sql'), 'utf8');
+    // health() lists the optional modules, whose queues alone can drop out of its job age: every module but kernel that works a queue (the hr module (#2530) has none).
+    const sql = readFileSync(join(MIGRATIONS, '20261115140000_crove_kernel_health_ads.sql'), 'utf8');
     const listed = /<> ALL \(ARRAY\[([^\]]*)\]\)/.exec(sql)?.[1]?.split(',').map((m) => m.trim().replaceAll("'", ''));
-    expect(listed?.sort()).toEqual(AVAILABLE_MODULES.filter((m) => m !== 'kernel').sort());
+    const working = new Set([...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].map((queue) => queue.split('-')[0]));
+    expect(listed?.sort()).toEqual(AVAILABLE_MODULES.filter((m) => m !== 'kernel' && working.has(m)).sort());
   });
 
   it('renders an upgrade that refuses any starting version but its own', () => {

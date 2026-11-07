@@ -70,6 +70,7 @@ import {
 import { financeAgentPrograms, financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
 import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewContributions, socialQueries } from '@crove/mod-social';
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
+import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsCommands, meetingsManifest, meetingsQueries } from '@crove/mod-meetings';
@@ -149,7 +150,7 @@ export interface KernelAdapters {
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -226,6 +227,7 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
     meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
+    hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
   return { commands: enabled.flatMap((m) => m.commands), queries: enabled.flatMap((m) => m.queries) };
@@ -250,6 +252,7 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   crm: crmManifest,
   notes: notesManifest,
   meetings: meetingsManifest,
+  hr: hrManifest,
 };
 
 export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {

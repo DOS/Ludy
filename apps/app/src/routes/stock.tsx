@@ -18,6 +18,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
+import { LowStock, SuggestBar, SuggestionChip, lineKey, useLineSuggestions, type Suggestion } from '../components/stock-ai.tsx';
 import { StockCounts } from '../components/stock-counts.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -430,7 +431,7 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
 // The query's default page: the newest lines first.
 const UNASSIGNED_SHOWN = 200;
 
-function UnassignedRow({ line, items, canWrite }: { line: StockUnassignedLine; items: StockItem[]; canWrite: boolean }) {
+function UnassignedRow({ line, items, canWrite, suggestion, asked }: { line: StockUnassignedLine; items: StockItem[]; canWrite: boolean; suggestion: Suggestion | undefined; asked: boolean }) {
   const t = useTranslations('stock');
   const f = useFormat();
   const [itemId, setItemId] = useState('');
@@ -450,6 +451,8 @@ function UnassignedRow({ line, items, canWrite }: { line: StockUnassignedLine; i
         {line.quantity} {line.unit ?? ''}
       </TableCell>
       <TableCell className="px-4 py-3">
+        {/* The coworker's suggestion only fills in the item below: the line is assigned, and the name taught, by the person's own click on Gán. */}
+        {canWrite && <SuggestionChip suggestion={suggestion && choices.some((i) => i.id === suggestion.itemId) ? suggestion : undefined} asked={asked} items={choices} onUse={() => setItemId(suggestion?.itemId ?? '')} />}
         {canWrite ? (
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1">
@@ -500,6 +503,7 @@ export function StockPage() {
   const list = items.data ?? [];
   const negative = list.filter((i) => i.onHand.startsWith('-'));
   const lines = unassigned.data ?? [];
+  const suggestions = useLineSuggestions(lines, list);
 
   return (
     <>
@@ -533,6 +537,8 @@ export function StockPage() {
       {/* The panel is of the item's own entity: after the entity on screen changes it is not shown (its Reverse action must not sit on another entity's screen). */}
       {viewing && (entity.legalEntityId === undefined || viewing.legalEntityId === entity.legalEntityId) && <MovesPanel key={viewing.id} item={viewing} canWrite={canWrite} onClose={() => setViewing(null)} />}
 
+      <LowStock legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
+
       {lines.length > 0 && (
         <section className="mb-8" aria-label={t('unassignedTitle')} data-testid="stock-unassigned">
           <h2 className="text-base font-medium text-foreground">{t('unassignedTitle')}</h2>
@@ -544,9 +550,10 @@ export function StockPage() {
               {t('unassignedCapped', { count: UNASSIGNED_SHOWN })}
             </p>
           )}
+          {canWrite && list.some((i) => i.active) && <SuggestBar suggestions={suggestions} />}
           <DataTable head={[t('invoice'), t('description'), t('quantity'), '']} numeric={[2]}>
             {lines.map((line) => (
-              <UnassignedRow key={`${line.documentId}-${line.lineNo}`} line={line} items={list} canWrite={canWrite} />
+              <UnassignedRow key={`${line.documentId}-${line.lineNo}`} line={line} items={list} canWrite={canWrite} suggestion={suggestions.suggestionOf(lineKey(line))} asked={suggestions.isAsked(lineKey(line))} />
             ))}
           </DataTable>
         </section>

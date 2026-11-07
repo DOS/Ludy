@@ -84,6 +84,7 @@ import { CustomersPage } from './routes/customers.tsx';
 import { PaymentRemindersPage } from './routes/payment-reminders.tsx';
 import { AccountingOverviewPage } from './routes/accounting-overview.tsx';
 import { SalesInvoicesPage } from './routes/sales-invoices.tsx';
+import { HrEmployeesPage } from './routes/hr-employees.tsx';
 import { StockPage } from './routes/stock.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
 import { PublishHoldBanner } from './components/social-publish-hold.tsx';
@@ -371,6 +372,8 @@ const paymentRemindersRoute = createRoute({ getParentRoute: () => orgRoute, path
 // The drafts of the sales e-invoices (#2500).
 const salesInvoicesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sales-invoices', component: SalesInvoicesPage });
 const stockRoute = createRoute({ getParentRoute: () => orgRoute, path: 'stock', component: StockPage });
+// The HR app's staff list (#2530), with the hr module: owners and admins only.
+const hrEmployeesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/employees', component: HrEmployeesPage });
 const journalRoute = createRoute({ getParentRoute: () => orgRoute, path: 'journal', validateSearch: parseJournalSearch, component: JournalPage });
 // Cash and bank vouchers (issue #327); ?type=&from=&to= keep the list's filters (#1513).
 const vouchersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'vouchers', validateSearch: parseVouchersSearch, component: VouchersPage });
@@ -540,7 +543,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, meetingsRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, meetingsRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

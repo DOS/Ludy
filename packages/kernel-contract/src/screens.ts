@@ -181,6 +181,13 @@ const ADS_SCREENS = {
   ],
 } as const satisfies ModuleScreens;
 
+// HR (#2530, payroll plan 6.1): the people payroll is run for, in an app of its own (Ludy Nhân sự, owner decision 2026-11-04). Owners and admins only, which the database's policies and
+// every query enforce; the item is hidden from everyone else by the app's role check.
+const HR_SCREENS = {
+  routes: [{ path: 'hr/employees' }],
+  nav: [{ app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' }],
+} as const satisfies ModuleScreens;
+
 // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): accessed through Cuoc hop tab inside Ludy Notes;
 // individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
 export const MEETINGS_SCREENS = {
@@ -191,6 +198,7 @@ export const MEETINGS_SCREENS = {
 export const MODULE_SCREENS = {
   kernel: KERNEL_SCREENS,
   finance: FINANCE_SCREENS,
+  hr: HR_SCREENS,
   social: SOCIAL_SCREENS,
   ads: ADS_SCREENS,
   crm: CRM_SCREENS,

@@ -17,7 +17,8 @@ import type { DraftBudget } from './ai-draft-limit.ts';
 
 // The part of the reader the API uses; tests give a fake.
 // reminderWords (the finance coworker's wording of a payment reminder, #2488) rides on the same reader and is optional, so a reader that has none leaves that screen on its template words.
-export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence'>>;
+// stockMatch and reorderText (the finance coworker on stock, #2514) are optional the same way.
+export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText'>>;
 
 // An answered thread is kept for the hour; "no suggestion" (the model said other, left the thread out or gave nothing) only briefly, so a thread the model
 // skipped is asked again soon.

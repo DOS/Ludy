@@ -22,7 +22,7 @@ const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotificatio
   social: 'socialPosts',
 };
 
-const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial' };
+const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', hr: 'appHr' };
 
 // A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Ads has none of its own yet, so it takes
 // the banknote of the vouchers, money spent, the accounting overview takes the dashboard of the Home overview, and the reports take the spreadsheet of the VAT return; the type fails to

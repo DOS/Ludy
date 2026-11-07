@@ -190,7 +190,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
@@ -256,6 +256,20 @@ import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
+import {
+  zHrDependentAdd,
+  zHrDependentEnd,
+  zHrEmployee,
+  zHrEmployeeAdd,
+  zHrEmployeeEdit,
+  zHrEmployeeEnd,
+  zHrEmployeeErased,
+  zHrEmployeeList,
+  zHrEmployeeRef,
+  zHrEmployeeSummary,
+  zHrEmploymentAdd,
+  zHrWritten,
+} from './hr.ts';
 import {
   zNote,
   zNoteCreate,
@@ -606,6 +620,23 @@ export const contract = {
       get: oc.input(z.object({})).output(z.object({ createdAt: z.string() }).nullable()),
       create: oc.input(z.strictObject({})).output(z.object({ token: z.string() })),
       revoke: oc.input(z.strictObject({})).output(z.object({ revoked: z.boolean() })),
+    },
+  },
+  // HR (#2530, payroll plan 6.1), when the deployment runs the hr module: owners and admins only. Every read is a sensitive query (its audit row is written before it reads), and the
+  // identity number and the bank account number come back only from `get`, opened from their sealed form for the one employee asked for.
+  hr: {
+    payroll: {
+      employees: {
+        list: oc.input(zHrEmployeeList).output(z.array(zHrEmployeeSummary)),
+        get: oc.input(zHrEmployeeRef).output(zHrEmployee),
+        add: oc.input(zHrEmployeeAdd).output(zHrWritten),
+        edit: oc.input(zHrEmployeeEdit).output(zHrWritten),
+        end: oc.input(zHrEmployeeEnd).output(zHrWritten),
+        // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
+        erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+      },
+      employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
+      dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
@@ -1731,6 +1762,13 @@ export const contract = {
     // Closes a month that has no cost to post, with no entry and so with no approval (owners and admins; R3, a closed month is not reopened). A month with cost goes through inbox.request
     // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
     closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
+    // The finance coworker on stock (#2514), all read-only. suggest: the item each unassigned line is most likely about (the model sees the line's description and unit and the
+    // entity's item codes, names and units, nothing else; a person still assigns, which teaches the name); ai says why there is none. low: the items whose stock will not last the lead
+    // days at the pace of the last eight weeks, with the supplier they were last bought from. reorderDraft: the message to that supplier (the model's, or the fixed template when there is
+    // none), to copy or send from the person's own mail. STOCK_ITEM_NOT_FOUND and PARTY_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH and STOCK_ITEM_INACTIVE (422/409).
+    suggest: oc.input(zStockSuggestInput).output(zStockSuggested),
+    low: oc.input(zStockLowInput.optional()).output(z.array(zStockLowItem)),
+    reorderDraft: oc.input(zStockReorderAsk).output(zStockReorderDraft),
     // Counts of stock (#2513 part b), newest first (every role reads). create makes a draft with what was counted (owners, admins, members; STOCK_COUNT_FUTURE (422), STOCK_COUNT_CLOSED,
     // STOCK_COUNT_DUPLICATE_ITEM, STOCK_COUNT_ITEM_INACTIVE (409), STOCK_ITEM_NOT_FOUND (404), STOCK_COUNT_ITEM_ENTITY (422)); cancel drops a draft; confirmEmpty confirms a count that differs from the
     // books nowhere, with nothing to post. A count with differences is confirmed through inbox.request (finance.stock.count_confirm).

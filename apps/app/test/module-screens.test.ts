@@ -194,6 +194,8 @@ describe('module screens against the router (#1652)', () => {
           ],
         ],
       ],
+      // The HR app (#2530): the staff list, for owners and admins.
+      ['hr', [['people', ['/o/$slug/hr/employees']]]],
       // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),
       // Khách hàng & Bán hàng (the crm module's screens), Marketing (the posts and, from the ads module, Ads, ads plan section 2) and one Báo cáo item.
       // The rail has no CRM app of its own.
@@ -212,7 +214,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'employees', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
     ]);
   });
 });
@@ -299,9 +301,9 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     ['/o/acme/crm/contacts/import', '/o/acme/contacts/import'],
   ]);
 
-  it('sends every screen of crm, social, notes, ads and meetings to the inbox through the router, and opens the others', async () => {
+  it('sends every screen of crm, social, notes, ads, hr and meetings to the inbox through the router, and opens the others', async () => {
     session.modules = ['kernel', 'finance'];
-    for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes'), ...addresses('ads'), ...addresses('meetings')]) {
+    for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes'), ...addresses('ads'), ...addresses('hr'), ...addresses('meetings')]) {
       expect(screenInstalled(session.modules, path), path).toBe(false);
       expect(await landing(path), path).toBe('/o/acme/inbox');
     }
@@ -310,7 +312,7 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     for (const path of ['/o/acme/Bookings', '/o/acme/SOCIAL/new', '/o/acme/Print/Social-Plan']) expect(await landing(path), path).toBe('/o/acme/inbox');
     session.modules = ['kernel'];
     for (const path of [...addresses('finance'), '/o/acme/JOURNAL']) expect(await landing(path), path).toBe('/o/acme/inbox');
-    session.modules = ['kernel', 'finance', 'social', 'crm', 'notes', 'ads', 'meetings'];
+    session.modules = ['kernel', 'finance', 'social', 'crm', 'notes', 'ads', 'hr', 'meetings'];
     for (const [module] of MODULES) {
       for (const path of addresses(module as keyof typeof MODULE_SCREENS)) {
         expect(screenInstalled(session.modules, path), path).toBe(true);

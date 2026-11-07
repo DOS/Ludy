@@ -47,6 +47,8 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
+import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -319,6 +321,17 @@ export function createRpcHandler(
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
+  // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
+  // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
+  const stockCoworker = stockAi(
+    conversationReader && (conversationReader.stockMatch || conversationReader.reorderText)
+      ? {
+          ...(conversationReader.stockMatch ? { stockMatch: conversationReader.stockMatch.bind(conversationReader) } : {}),
+          ...(conversationReader.reorderText ? { reorderText: conversationReader.reorderText.bind(conversationReader) } : {}),
+        }
+      : null,
+    suggestionBudget(),
+  );
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -434,6 +447,21 @@ export function createRpcHandler(
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inMeetings(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+  // The HR module (#2530): its procedures answer 404 when the deployment leaves it out, as the notes module's do. Owners and admins only (the database's policy and
+  // every command's and query's access); every read is a sensitive query.
+  const hr = runtime.installed('hr');
+  const inHr = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!hr) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Nhân sự chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const hrCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inHr(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const hrQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inHr(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
@@ -733,6 +761,23 @@ export function createRpcHandler(
         }),
       ),
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
+    },
+    hr: {
+      payroll: {
+        employees: {
+          list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
+          get: os.hr.payroll.employees.get.handler(hrQuery('hr.payroll.employee.get')),
+          add: os.hr.payroll.employees.add.handler(hrCommand('hr.payroll.employee.add')),
+          edit: os.hr.payroll.employees.edit.handler(hrCommand('hr.payroll.employee.edit')),
+          end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
+          erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+        },
+        employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
+        dependents: {
+          add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
+          end: os.hr.payroll.dependents.end.handler(hrCommand('hr.payroll.dependent.end')),
+        },
+      },
     },
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
@@ -2372,6 +2417,20 @@ export function createRpcHandler(
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
       periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
       closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
+      // The coworker's reads (#2514): the model is asked outside any transaction, from what the member's own read said it may see.
+      suggest: os.stock.suggest.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<SuggestSource>('finance.stock.suggest_source', input, { actor, orgId });
+          return suggestItems(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
+        }),
+      ),
+      low: os.stock.low.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.low', input ?? {}, { actor, orgId }))),
+      reorderDraft: os.stock.reorderDraft.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<ReorderSource>('finance.stock.reorder_source', input, { actor, orgId });
+          return draftReorder(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi', input.hint);
+        }),
+      ),
       counts: {
         list: os.stock.counts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.list', input ?? {}, { actor, orgId }))),
         preview: os.stock.counts.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.preview', input, { actor, orgId }))),

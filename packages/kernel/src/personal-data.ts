@@ -256,6 +256,11 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
+  // The people payroll is run for (#2530, payroll plan 6.6). Their names and addresses are cleared by the owner's erasure of an ended employee after the retention
+  // (hr.payroll.employee.erase), which also deletes the person's key; the finder does not match them by an email, a phone or a number (their numbers are sealed, below).
+  'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -270,15 +275,24 @@ export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 // deletes the subject's key (crove_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling
 // `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
 // here is in no other registry above (apps/kernel/test/personal-data.test.ts).
-export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {};
+export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {
+  'crove_hr.payroll_employee.national_id_sealed': {
+    handling: 'shred',
+    reason: "An employee's identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.bank_account_sealed': {
+    handling: 'shred',
+    reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+};
 
 // The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,
-// crove_crm or crove_notes whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
+// crove_crm, crove_notes or crove_hr whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
 // sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column

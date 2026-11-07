@@ -5,6 +5,7 @@ import {
   BellRingIcon,
   BookOpenCheckIcon,
   BookUserIcon,
+  BriefcaseBusinessIcon,
   BoxesIcon,
   Building2Icon,
   CalculatorIcon,
@@ -31,6 +32,7 @@ import {
   SettingsIcon,
   TruckIcon,
   UsersIcon,
+  UsersRoundIcon,
   XIcon,
 } from "lucide-react"
 
@@ -41,6 +43,7 @@ const ICONS = {
   appHome: HouseIcon,
   appAccounting: CalculatorIcon,
   appSocial: MegaphoneIcon,
+  appHr: BriefcaseBusinessIcon,
   appCrm: ContactRoundIcon,
   overview: LayoutDashboardIcon,
   inbox: InboxIcon,
@@ -61,6 +64,7 @@ const ICONS = {
   vat: FileSpreadsheetIcon,
   portalList: FileCheck2Icon,
   customers: UsersIcon,
+  employees: UsersRoundIcon,
   vendors: TruckIcon,
   social: MegaphoneIcon,
   notifications: BellRingIcon,

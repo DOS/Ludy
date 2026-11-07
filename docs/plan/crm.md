@@ -231,7 +231,7 @@ Open questions, each with the default the build takes if nobody answers:
 |---|---|---|---|
 | CRM-Q1 | Do pilot customers sell in other currencies? | PO, from the pilot | VND only |
 | CRM-Q2 | Does an import need an undo? | PO | No in slice 1; the audit row lists the counts, and wrong rows are edited or marked duplicate. A 24-hour undo needs a rule for parties that gained notes or deals since |
-| CRM-Q3 | Should a won deal offer "create an invoice"? | Accounting line | Not in slice 1; a link between a deal and a sales invoice is its own plan |
+| CRM-Q3 | Should a won deal offer "create an invoice"? | Accounting line | Not in slice 1; a link between a deal and a sales invoice is its own plan: [crm-quotes.md](crm-quotes.md) (slice 2, quotes and sales orders from a deal) |
 | CRM-Q4 | Is a pipeline of four open stages the right default for Vietnamese SMEs, and do we want a fixed list of lost reasons? | PO | The four stages of 4.1 and a free-text reason |
 | CRM-Q5 | Should a person be linked to the company they work for? | PO | Answered yes by the design owner's layout of the one app (#2435, #2438): a person works at one company, section 4.6. Not in slice 1 |
 | CRM-Q6 | Should the contact list hide vendors that only exist from purchase invoices? | PO | No: it shows every party; the `has_open_deal` filter and views cover the rest |

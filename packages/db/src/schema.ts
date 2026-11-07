@@ -964,6 +964,16 @@ export type AdsAdTokenRevokeTable = Refine<
   }
 >;
 
+// The HR module (#2530, payroll plan 6.1): an employee is active or ended; the terms of an employment name a contract type and a wage region (Decree 74/2024).
+export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
+export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
+export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
+export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
+export type HrPayrollEmploymentTable = Refine<
+  G.HrPayrollEmploymentTable,
+  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never> }
+>;
+
 // The meetings module (#2576, ADR-0047): recorded meetings with consent records, retention dates and reader permissions.
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
@@ -1001,6 +1011,8 @@ type Refined = Tables<{
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_hr.payroll_employee': HrPayrollEmployeeTable;
+  'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
