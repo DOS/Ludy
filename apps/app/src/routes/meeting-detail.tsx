@@ -217,6 +217,20 @@ export function MeetingDetailPage() {
         ) : null}
       </div>
 
+      {/* Next to the header, so the owner sees it right after the confirm dialog closes; its code field takes the focus. */}
+      {ownerDeleteMutation.error && isStepUpRequired(ownerDeleteMutation.error) && pendingOwnerDeleteId === id && (
+        <div className="mb-4">
+          <StepUpPrompt
+            action={t('detail.ownerDeleteVerify')}
+            onVerified={() => ownerDeleteMutation.mutate(pendingOwnerDeleteId)}
+            onCancel={() => {
+              ownerDeleteMutation.reset();
+              setPendingOwnerDeleteId(null);
+            }}
+          />
+        </div>
+      )}
+
       <PageHeader
         title={meeting.title}
         subtitle={t('detail.recordedBy', { user: meeting.recorderUserId, date: f.date(meeting.createdAt) })}
@@ -358,19 +372,6 @@ export function MeetingDetailPage() {
           </Card>
         )}
       </div>
-
-      {ownerDeleteMutation.error && isStepUpRequired(ownerDeleteMutation.error) && pendingOwnerDeleteId === id && (
-        <div className="mt-3">
-          <StepUpPrompt
-            action={t('detail.ownerDeleteVerify')}
-            onVerified={() => ownerDeleteMutation.mutate(pendingOwnerDeleteId)}
-            onCancel={() => {
-              ownerDeleteMutation.reset();
-              setPendingOwnerDeleteId(null);
-            }}
-          />
-        </div>
-      )}
 
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog

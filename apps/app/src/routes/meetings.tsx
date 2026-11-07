@@ -48,6 +48,9 @@ export function MeetingsPage() {
   // A failed upload leaves the meeting created: a retry keeps it and sends only the media that has not gone yet.
   const createdIdRef = useRef<string | null>(null);
   const uploadedRef = useRef<Set<'audio' | 'video'>>(new Set());
+  // The same facts as state, so the form can lock the meeting-level fields and the media already sent.
+  const [meetingCreated, setMeetingCreated] = useState(false);
+  const [uploadedKinds, setUploadedKinds] = useState<ReadonlyArray<'audio' | 'video'>>([]);
 
   const meetingsQuery = useQuery(orpc.meetings.list.queryOptions({ input: {} }));
 
@@ -69,6 +72,8 @@ export function MeetingsPage() {
     setSubmitting(false);
     createdIdRef.current = null;
     uploadedRef.current = new Set();
+    setMeetingCreated(false);
+    setUploadedKinds([]);
   };
 
   const handleCreate = async (e: FormEvent) => {
@@ -99,17 +104,20 @@ export function MeetingsPage() {
           consentMethod,
         });
         createdIdRef.current = made.meetingId;
+        setMeetingCreated(true);
       }
       const created = { meetingId: createdIdRef.current };
 
       if (audioFile && !uploadedRef.current.has('audio')) {
         await uploadMeetingMedia(created.meetingId, 'audio', audioFile);
         uploadedRef.current.add('audio');
+        setUploadedKinds([...uploadedRef.current]);
       }
 
       if (keepVideo && videoFile && !uploadedRef.current.has('video')) {
         await uploadMeetingMedia(created.meetingId, 'video', videoFile);
         uploadedRef.current.add('video');
+        setUploadedKinds([...uploadedRef.current]);
       }
 
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
@@ -208,6 +216,7 @@ export function MeetingsPage() {
 
           <form onSubmit={handleCreate} className="space-y-4">
             {formError && <ErrorText>{formError}</ErrorText>}
+            {meetingCreated && <p className="text-xs text-muted-foreground">{t('form.lockedHint')}</p>}
 
             <div className="space-y-1">
               <Label htmlFor="meeting-title">{t('form.title')}</Label>
@@ -217,6 +226,7 @@ export function MeetingsPage() {
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t('form.titlePlaceholder')}
                 required
+                disabled={meetingCreated}
                 maxLength={200}
               />
             </div>
@@ -228,6 +238,7 @@ export function MeetingsPage() {
                   id="meeting-lang"
                   value={language}
                   onChange={(e) => setLanguage(e.target.value as MeetingLanguage)}
+                  disabled={meetingCreated}
                 >
                   <NativeSelectOption value="vi">{t('form.langVi')}</NativeSelectOption>
                   <NativeSelectOption value="en">{t('form.langEn')}</NativeSelectOption>
@@ -240,6 +251,7 @@ export function MeetingsPage() {
                   id="meeting-vis"
                   value={visibility}
                   onChange={(e) => setVisibility(e.target.value as MeetingVisibility)}
+                  disabled={meetingCreated}
                 >
                   <NativeSelectOption value="attendees">{t('form.visibilityAttendees')}</NativeSelectOption>
                   <NativeSelectOption value="org">{t('form.visibilityOrg')}</NativeSelectOption>
@@ -254,6 +266,7 @@ export function MeetingsPage() {
                 type="file"
                 accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.webm,.opus"
                 onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
+                disabled={uploadedKinds.includes('audio')}
               />
             </div>
 
@@ -263,6 +276,7 @@ export function MeetingsPage() {
                   id="keep-video"
                   checked={keepVideo}
                   onCheckedChange={(checked) => setKeepVideo(Boolean(checked))}
+                  disabled={meetingCreated}
                 />
                 <Label htmlFor="keep-video" className="cursor-pointer">
                   {t('form.keepVideo')}
@@ -277,6 +291,7 @@ export function MeetingsPage() {
                     type="file"
                     accept="video/*,.mp4,.mov,.webm,.m4v"
                     onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+                    disabled={uploadedKinds.includes('video')}
                   />
                 </div>
               )}
@@ -303,6 +318,7 @@ export function MeetingsPage() {
                   value={consentMethod}
                   onChange={(e) => setConsentMethod(e.target.value as ConsentMethod)}
                   required
+                  disabled={meetingCreated}
                 >
                   <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
                   <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>
@@ -316,6 +332,7 @@ export function MeetingsPage() {
                   id="consent-agreed"
                   checked={consentAgreed}
                   onCheckedChange={(c) => setConsentAgreed(Boolean(c))}
+                  disabled={meetingCreated}
                 />
                 <Label htmlFor="consent-agreed" className="text-xs leading-snug cursor-pointer font-medium text-foreground">
                   {t('form.consentConfirmCheckbox')}

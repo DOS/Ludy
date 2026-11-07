@@ -1371,6 +1371,7 @@ export const vi = {
       titleRequired: 'Vui lòng nhập tên cuộc họp.',
       consentMethodRequired: 'Vui lòng chọn cách đã báo cho người tham gia.',
       consentRequired: 'Bạn phải xác nhận người tham gia đã đồng ý.',
+      lockedHint: 'Cuộc họp đã được tạo nên các thông tin của nó bị khóa. Hãy thử lại để gửi các tệp chưa tải lên.',
       submit: 'Tạo cuộc họp và mã hóa tệp',
       submitting: 'Đang tải lên và mã hóa…',
     },

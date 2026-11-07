@@ -1372,6 +1372,7 @@ export const en = {
       titleRequired: 'Enter the meeting title.',
       consentMethodRequired: 'Choose how the participants were told.',
       consentRequired: 'You must confirm the participants consented.',
+      lockedHint: 'The meeting is already created, so its details are locked. Retry to send the files that have not gone yet.',
       cancel: 'Cancel',
       submit: 'Create meeting and encrypt files',
       submitting: 'Uploading and encrypting…',

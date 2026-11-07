@@ -1865,11 +1865,11 @@ export function createHttpApp(deps: HttpDeps) {
         async pull(controller) {
           try {
             armIdleTimer();
-            // Each window first asks again whether the meeting and its key still exist (and are the same key): a deleted meeting
-            // stops the stream and the key copy is cleared, so nothing decrypts after the delete.
+            // Each window first asks again whether the meeting and its key still exist: the query fails once the meeting or its
+            // key is deleted, so the stream stops and the key copy is cleared. A reseal changes only the wrapping key id, not
+            // the media key this stream holds, so the id is not compared.
             if (streamOffset > 0) {
-              const still = await runtime.query<{ keyId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
-              if (still.keyId !== media.keyId) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media key has been shredded');
+              await runtime.query('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
             }
             if (streamOffset >= totalPlaintextLength) {
               controller.close();
