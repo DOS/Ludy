@@ -94,13 +94,13 @@ const PENDING_TABLES = new Set<string>([
 // here. Sorted, one table per line.
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
+  // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
+  ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
   ['crove_hr.payroll_employee', 'false'],
   ['crove_hr.payroll_employment', 'false'],
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
-  // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
-  ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_run', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
