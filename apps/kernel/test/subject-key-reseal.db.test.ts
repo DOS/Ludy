@@ -139,7 +139,7 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     await pass(vaultOf(rootNew, rootOld));
     const rows = await withAdmin(async (c) => (await c.query<{ row: string; detail: Record<string, unknown> }>("SELECT audit_event::text AS row, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.subject_key.reseal'", [o.orgId])).rows);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.detail).toMatchObject({ resealed: 1, skipped: 0, from_key_ids: [vaultOf(rootOld).keyId], key_ids: [vaultOf(rootNew).keyId] });
+    expect(rows[0]?.detail).toMatchObject({ resealed: 1, unchanged: 0, from_key_ids: [vaultOf(rootOld).keyId], key_ids: [vaultOf(rootNew).keyId] });
     expect(rows[0]?.row).not.toContain(Buffer.from(row?.wrapped_key ?? Buffer.alloc(0)).toString('base64'));
     expect(rows[0]?.row).not.toContain(VALUE);
   });
