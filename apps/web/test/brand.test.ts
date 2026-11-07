@@ -78,9 +78,11 @@ describe('brand on the landing page (#1683)', () => {
   it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
     // The owner's final hero (2026-11-02, #2409): the names in the lead come from the roster, never from the copy.
     const NB = String.fromCharCode(0xa0);
-    expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI.');
+    expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Hệ điều hành doanh nghiệp trọn gói');
+    expect(vi.hero.tagline.replaceAll(NB, ' ')).toBe('mỗi phòng ban một đội AI.');
     expect(vi.hero.lead.replaceAll(NB, ' ')).toBe(`${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.sales} lo hộp thư, khách hàng và bán hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt.`);
-    expect(en.hero.title).toBe('The all-in-one Business OS, with an AI team for every department.');
+    expect(en.hero.title).toBe('All-in-one Business OS');
+    expect(en.hero.tagline).toBe('with an AI team for every department.');
     expect(en.hero.lead).toBe(`${N.gm} runs the team: ${N.finance} keeps your books, ${N.sales} works your inbox, customers and sales, ${N.marketing} runs marketing. You approve.`);
     expect(vi.meta.title).toBe('Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI');
     expect(en.meta.title).toBe('Ludy: the all-in-one Business OS, with an AI team for every department');
