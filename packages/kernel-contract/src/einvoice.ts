@@ -254,3 +254,28 @@ export const zEInvoiceIssueView = z.object({
   current: z.boolean(),
 });
 export type EInvoiceIssueView = z.infer<typeof zEInvoiceIssueView>;
+
+// The finance coworker on a draft (#2505, plan einvoice-issue.md section 9). A person types or pastes a text about a sale and asks; the server reads which customers and which earlier VAT rates
+// the model may see, asks the model outside any transaction through the AI budget meter, checks the answer in code, and gives back PROPOSALS that fill the form marked as the coworker's. Nothing is
+// stored and nothing is issued: a person reads the whole draft, saves it, and the issue keeps its own approval.
+export const EINVOICE_SUGGEST_TEXT_MAX = 2000;
+export const zEInvoiceSuggestInput = z.strictObject({
+  text: z.string().trim().min(1).max(EINVOICE_SUGGEST_TEXT_MAX),
+  // The date of the invoice on the form: it decides which VAT rates are allowed.
+  date: zLocalDate,
+});
+export type EInvoiceSuggestInput = z.infer<typeof zEInvoiceSuggestInput>;
+
+// ai: used (a proposal came), off (the deployment has no model), busy (too many asks at once), budget (the org's AI budget of the month is spent), failed (the call failed), refused (the answer
+// held a figure or a VAT rate that the text or the date does not allow, or nothing usable). Without a proposal the form works as it does with AI off.
+export const EINVOICE_SUGGEST_STATES = ['used', 'off', 'busy', 'budget', 'failed', 'refused'] as const;
+export type EInvoiceSuggestState = (typeof EINVOICE_SUGGEST_STATES)[number];
+// Where a line's VAT rate came from: the text states it, or it is the rate of earlier drafts (the customer's, else the org's), or none was found and the form's own default stands.
+export const EINVOICE_VAT_FROM = ['text', 'earlier', 'default'] as const;
+export const zEInvoiceSuggested = z.object({
+  ai: z.enum(EINVOICE_SUGGEST_STATES),
+  lines: z.array(zEInvoiceLineInput.extend({ vatFrom: z.enum(EINVOICE_VAT_FROM) })),
+  // From the customer's own record (the name, the address and the tax code are never the model's); a tax code that fails its checksum is left out.
+  buyer: zEInvoiceBuyerInput.nullable(),
+});
+export type EInvoiceSuggested = z.infer<typeof zEInvoiceSuggested>;

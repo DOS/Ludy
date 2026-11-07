@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary } from '@crove/kernel-contract';
+import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -13,6 +13,7 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { Textarea } from '@crove/ui/components/textarea';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
@@ -31,23 +32,28 @@ interface LineState {
   quantity: string;
   unitPrice: string;
   vatRate: string;
+  // Set while the line is the coworker's proposal and nobody has edited it (#2505): where its VAT rate came from. Any edit makes the line the person's own.
+  ai: EInvoiceSuggested['lines'][number]['vatFrom'] | null;
 }
 interface FormState {
   draftId: string | null;
+  // The buyer is the coworker's proposal, from a customer's record, until a person edits it.
+  buyerAi: boolean;
   date: string;
   seriesId: string;
   buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string };
   lines: LineState[];
 }
 
-const blankLine = (): LineState => ({ description: '', unit: '', quantity: '1', unitPrice: '', vatRate: '10%' });
-const blankForm = (seriesId: string): FormState => ({ draftId: null, date: vietnamToday(), seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '' }, lines: [blankLine()] });
+const blankLine = (): LineState => ({ description: '', unit: '', quantity: '1', unitPrice: '', vatRate: '10%', ai: null });
+const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '' }, lines: [blankLine()] });
 const fromDraft = (d: EInvoiceDraft): FormState => ({
   draftId: d.id,
+  buyerAi: false,
   date: d.date,
   seriesId: d.seriesId ?? '',
   buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '' },
-  lines: d.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
+  lines: d.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate, ai: null })),
 });
 const orNull = (value: string): string | null => (value.trim() === '' ? null : value.trim());
 // The form as the server takes it. A quantity or price that is not yet a number goes as typed, and the server's check says so on the field.
@@ -63,6 +69,57 @@ const toInput = (s: FormState): EInvoiceDraftForm => ({
 });
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.einvoice.key() });
+
+const isBlankLine = (l: LineState) => l.description.trim() === '' && l.unit.trim() === '' && l.unitPrice.trim() === '';
+
+// What the coworker proposed, put into the form (#2505). The proposed lines take the place of the blank ones, or follow the lines a person already wrote (at most what a draft holds); the buyer is
+// filled only while the form has none of its own. Everything is marked as the coworker's until it is edited, and nothing is saved.
+function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
+  const proposed: LineState[] = proposal.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate, ai: l.vatFrom }));
+  const kept = s.lines.filter((l) => !isBlankLine(l));
+  const lines = [...kept, ...proposed].slice(0, EINVOICE_DRAFT_MAX_LINES);
+  const b = s.buyer;
+  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
+  const buyer = proposal.buyer !== null && buyerEmpty ? proposal.buyer : null;
+  return {
+    ...s,
+    lines: lines.length > 0 ? lines : s.lines,
+    ...(buyer ? { buyerAi: true, buyer: { kind: buyer.kind, partyId: buyer.partyId, taxCode: buyer.taxCode ?? '', name: buyer.name ?? '', address: buyer.address ?? '', email: buyer.email ?? '' } } : {}),
+  };
+}
+
+/** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
+ * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
+function CoworkerBox({ date, onProposal }: { date: string; onProposal: (proposal: EInvoiceSuggested) => void }) {
+  const t = useTranslations('salesInvoices.ai');
+  const [text, setText] = useState('');
+  const [state, setState] = useState<'filled' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
+  const ask = useMutation({
+    mutationFn: () => client.einvoice.drafts.suggest({ text: text.trim(), date: date === '' ? vietnamToday() : date }),
+    onSuccess: (proposal) => {
+      if (proposal.ai === 'used') onProposal(proposal);
+      setState(proposal.ai === 'used' ? 'filled' : proposal.ai);
+    },
+  });
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-dashed border-proposal/60 p-3" data-testid="invoice-ai">
+      <Label htmlFor="sales-invoice-ai-text">{t('label')}</Label>
+      <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} onChange={(e) => setText(e.target.value)} data-testid="invoice-ai-text" />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate()} data-testid="invoice-ai-ask">
+          {t('button')}
+        </Button>
+        <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+      </div>
+      {state !== null && (
+        <p className="text-xs text-foreground" role="status" data-testid="invoice-ai-state" data-state={state}>
+          {t(`state.${state}`)}
+        </p>
+      )}
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+    </div>
+  );
+}
 
 function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormState; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('salesInvoices');
@@ -82,8 +139,9 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   // What cannot be stored yet (a date, a quantity or a price that is not a value): the rest is saved with its issues shown.
   const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
   const bad = (field: string) => issues.some((i) => i.field === field);
-  const setBuyer = (patch: Partial<FormState['buyer']>) => setForm((s) => ({ ...s, buyer: { ...s.buyer, ...patch } }));
-  const setLine = (index: number, patch: Partial<LineState>) => setForm((s) => ({ ...s, lines: s.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
+  const setBuyer = (patch: Partial<FormState['buyer']>) => setForm((s) => ({ ...s, buyerAi: false, buyer: { ...s.buyer, ...patch } }));
+  // An edit makes the line the person's own: it loses the coworker's mark.
+  const setLine = (index: number, patch: Partial<LineState>) => setForm((s) => ({ ...s, lines: s.lines.map((l, i) => (i === index ? { ...l, ai: null, ...patch } : l)) }));
   const id = 'sales-invoice';
   const buyer = form.buyer;
   return (
@@ -116,6 +174,12 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           </NativeSelect>
         </div>
       </div>
+      <CoworkerBox date={form.date} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
+      {form.buyerAi && (
+        <p className="mt-3 text-xs text-subtle-foreground" data-testid="invoice-buyer-ai">
+          <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t('ai.buyerNote')}</span>
+        </p>
+      )}
       {buyer.kind !== 'consumer' && (
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
@@ -144,7 +208,8 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           const at = (key: string) => `lines.${index + 1}.${key}`;
           const computed = check.data?.lines[index];
           return (
-            <div key={index} className="grid items-end gap-2 sm:grid-cols-[2fr_0.6fr_0.8fr_1fr_0.8fr_1fr_auto]" data-testid="invoice-line">
+            <div key={index}>
+            <div className="grid items-end gap-2 sm:grid-cols-[2fr_0.6fr_0.8fr_1fr_0.8fr_1fr_auto]" data-testid="invoice-line">
               <div className="space-y-1">
                 <Label htmlFor={`${id}-d${index}`} className={index === 0 ? undefined : 'sr-only'}>
                   {t('description')}
@@ -187,6 +252,12 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
               <Button variant="ghost" size="sm" disabled={form.lines.length === 1} onClick={() => setForm((s) => ({ ...s, lines: s.lines.filter((_, i) => i !== index) }))} aria-label={t('removeLine', { n: String(index + 1) })}>
                 {t('remove')}
               </Button>
+            </div>
+            {line.ai !== null && (
+              <p className="mt-1 text-xs text-subtle-foreground" data-testid="invoice-line-ai">
+                <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t(`ai.vatFrom.${line.ai}`)}</span>
+              </p>
+            )}
             </div>
           );
         })}

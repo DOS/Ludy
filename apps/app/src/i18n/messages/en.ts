@@ -1010,6 +1010,28 @@ export const en = {
     issueStepUp: 'Issue the invoice of {total}',
     issueAwaiting: 'The request to issue it was sent. Another owner or admin will approve it in the Inbox; the invoice is sent once it is approved.',
     issueSent: 'Approved. The invoice is being sent to the provider.',
+    // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
+    ai: {
+      label: 'Ask {finance} to draft from a sales message',
+      placeholder: 'For example: sold 10 boxes of cake A at 120k to Nam, VAT 8%',
+      button: 'Ask {finance} to draft',
+      hint: '{finance} reads only this text and the customer names in the books. You read and edit the whole draft before you save and issue it.',
+      badge: 'Suggested by {finance}',
+      buyerNote: 'The buyer comes from the customer record in the books. Check it before you save.',
+      vatFrom: {
+        text: 'The VAT rate is the one in your text.',
+        earlier: 'The VAT rate comes from earlier drafts: your text states none.',
+        default: 'Your text states no VAT rate and there is no earlier draft: you choose the rate.',
+      },
+      state: {
+        filled: '{finance} filled in the lines below. These are suggestions: every quantity and unit price comes from your text, and the amounts are computed by the system. Review them before you save.',
+        refused: '{finance} could not draft from this text because the result held a figure or a VAT rate that is not in your text. Type the lines as usual.',
+        off: 'AI is not switched on on this server. You still write the draft by hand as usual.',
+        busy: '{finance} is handling many requests at once. Try again in a few minutes, or type the lines.',
+        budget: '{finance} has used this month\'s AI budget. You still write the draft by hand as usual.',
+        failed: '{finance} could not draft right now. You still write the draft by hand as usual.',
+      },
+    },
     issuedNumber: 'No. {number}',
     evidencePending: 'Saving the original',
     draftErrors: {
@@ -4740,6 +4762,7 @@ export const en = {
       finance_payment_reminder: 'Wording the opening and closing of a payment reminder',
       finance_stock_match: 'Suggesting items for unassigned invoice lines',
       finance_stock_reorder: 'Wording a reorder message to a supplier',
+      finance_einvoice_draft: 'Drafting the lines, VAT rate and buyer of a sales invoice draft',
       kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
