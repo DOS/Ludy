@@ -12,6 +12,7 @@ import {
   QUOTE_DEFAULT_VAT,
   QUOTE_HINTS_MAX,
   QUOTE_PAGE_SIZE,
+  QUOTE_VAT_RATE_MAX,
   QUOTE_VALID_DAYS_DEFAULT,
   vietnamToday,
   zDealQuotesQuery,
@@ -88,7 +89,7 @@ export const quoteSettingSet = defineCommand({
   handler: async (ctx, input): Promise<QuoteSetting> => {
     const userId = userOf(ctx.actor);
     const vat = normalizeVatRate(input.defaultVat);
-    if (vat === null) throw new DomainError('QUOTE_VAT_RATE_INVALID', 422, 'Thuế suất không hợp lệ');
+    if (vat === null || vat.length > QUOTE_VAT_RATE_MAX) throw new DomainError('QUOTE_VAT_RATE_INVALID', 422, 'Thuế suất không hợp lệ');
     const terms = input.defaultTerms === null || input.defaultTerms === '' ? null : input.defaultTerms;
     await ctx.trx
       .insertInto('crove_crm.quote_setting')
@@ -314,7 +315,7 @@ function computeRows(lines: readonly QuoteLineInput[]): { rows: LineRow[]; subto
     const discount = line.discountPercent ?? '0';
     if (money(discount).greaterThan(100)) throw new DomainError('QUOTE_LINE_INVALID', 422, `Dòng ${lineNo}: giảm giá không được quá 100%`);
     const rate = normalizeVatRate(line.vatRate);
-    if (rate === null) throw new DomainError('QUOTE_VAT_RATE_INVALID', 422, `Dòng ${lineNo}: thuế suất không hợp lệ`);
+    if (rate === null || rate.length > QUOTE_VAT_RATE_MAX) throw new DomainError('QUOTE_VAT_RATE_INVALID', 422, `Dòng ${lineNo}: thuế suất không hợp lệ`);
     const totals = computeLineTotals({ quantity: line.quantity, unitPrice: line.unitPrice, discountPercent: discount, vatRate: rate });
     if (money(totals.amount).toFixed(0).length > MAX_AMOUNT_DIGITS) throw tooLarge();
     return {
@@ -441,9 +442,11 @@ export const quoteDeleteDraft = defineCommand({
       .executeTakeFirst();
     if (!quote) throw notFound();
     if (quote.status !== 'draft') throw new DomainError('QUOTE_NOT_DRAFT', 409, 'Chỉ xóa được báo giá nháp');
-    await lockDraft(ctx, quote.id);
+    // A draft that was sent or removed between the read and the lock is refused, and nothing is audited for it.
+    if (!(await lockDraft(ctx, quote.id))) throw new DomainError('QUOTE_NOT_DRAFT', 409, 'Chỉ xóa được báo giá nháp');
     // The lines go with the quote (the foreign key cascades).
-    await ctx.trx.deleteFrom('crove_crm.quote').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).execute();
+    const removed = await ctx.trx.deleteFrom('crove_crm.quote').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).executeTakeFirst();
+    if (removed.numDeletedRows !== 1n) throw new DomainError('QUOTE_NOT_DRAFT', 409, 'Chỉ xóa được báo giá nháp');
     ctx.audit({ quoteId: quote.id, dealId: quote.deal_id, partyId: quote.party_id });
     await ctx.activity('kernel.party', quote.party_id, 'quote.deleted', 'Xóa một báo giá nháp');
     return { quoteId: quote.id, deleted: true };

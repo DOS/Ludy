@@ -15,6 +15,9 @@ export type QuoteLineKind = (typeof QUOTE_LINE_KINDS)[number];
 export const QUOTE_LINES_MAX = 100;
 export const QUOTE_DESCRIPTION_MAX = 500;
 export const QUOTE_UNIT_MAX = 30;
+// The column holds 20 characters of a VAT rate as an invoice writes it; a rate typed without the percent sign gains one, so the input stops one short.
+export const QUOTE_VAT_RATE_MAX = 20;
+const QUOTE_VAT_RATE_INPUT_MAX = QUOTE_VAT_RATE_MAX - 1;
 export const QUOTE_TEXT_MAX = 2000;
 export const QUOTE_PAGE_SIZE = 50;
 // How long a new quote stays valid: the org's setting, between the two, 14 until set.
@@ -42,7 +45,7 @@ export const zQuoteLineInput = z.discriminatedUnion('kind', [
     unitPrice: zUnitPrice,
     discountPercent: zDiscount.optional(),
     // As an invoice writes it ('10%', 'KCT'); the command checks it against the allowed set of @crove/l10n-vn.
-    vatRate: z.string().trim().min(1).max(20),
+    vatRate: z.string().trim().min(1).max(QUOTE_VAT_RATE_INPUT_MAX),
     // A stock item of Kế toán, by id only (no cross-module key): optional, empty on a free-text line.
     stockItemId: zId.nullable().optional(),
   }),
@@ -80,7 +83,7 @@ export const zQuoteListQuery = z.strictObject({
 });
 export const zQuoteSettingSet = z.strictObject({
   validDays: z.number().int().min(QUOTE_VALID_DAYS_MIN).max(QUOTE_VALID_DAYS_MAX),
-  defaultVat: z.string().trim().min(1).max(20),
+  defaultVat: z.string().trim().min(1).max(QUOTE_VAT_RATE_INPUT_MAX),
   defaultTerms: zText.nullable(),
 });
 

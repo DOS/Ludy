@@ -181,6 +181,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await expect(save([item({ unitPrice: '0.00' })])).rejects.toMatchObject({ code: 'QUOTE_LINE_INVALID' });
     await expect(save([item({ discountPercent: '100.01' })])).rejects.toMatchObject({ code: 'QUOTE_LINE_INVALID' });
     await expect(save([item({ vatRate: '7%' })])).rejects.toMatchObject({ code: 'QUOTE_VAT_RATE_INVALID' });
+    // A rate of 20 characters (21 once normalized) is a refusal, never a column error.
+    await expect(save([item({ vatRate: 'KHAC:12.3456789012345' })])).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 30, defaultVat: '1'.repeat(20), defaultTerms: null })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(save([item({ quantity: '1e3' })])).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(save([item({ quantity: 2 })])).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(save([item({ description: '   ' })])).rejects.toMatchObject({ code: 'VALIDATION' });
