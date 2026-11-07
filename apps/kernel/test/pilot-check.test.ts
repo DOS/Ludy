@@ -100,14 +100,14 @@ describe('pilot-check settings', () => {
     const bytes = (start: number) => Buffer.from(Array.from({ length: 32 }, (_, i) => (start + i * 7) % 256));
     const [current, previous] = [bytes(1), bytes(2)];
     const line = (env: Env) => checkEnv(env).find((r) => r.item === 'Credential key');
-    expect(line(READY)).toMatchObject({ status: 'manual', message: expect.stringMatching(/^the worker opens tokens sealed under the key in CREDENTIAL_KEY_FILE .*"\[credential-reseal\] ERROR sealed under a key this worker cannot open"/) });
-    expect(line({ ...READY, CREDENTIAL_KEY: current.toString('base64') })?.message).toContain(`the worker opens tokens sealed under CREDENTIAL_KEY (${vaultKeyId(current)}); `);
+    expect(line(READY)).toMatchObject({ status: 'manual', message: expect.stringMatching(/^the worker opens tokens and subject keys sealed under the key in CREDENTIAL_KEY_FILE .*"\[credential-reseal\] ERROR sealed under a key this worker cannot open"/) });
+    expect(line({ ...READY, CREDENTIAL_KEY: current.toString('base64') })?.message).toContain(`the worker opens tokens and subject keys sealed under CREDENTIAL_KEY (${vaultKeyId(current)}); `);
     expect(line({ ...READY, CREDENTIAL_KEY: current.toString('base64'), CREDENTIAL_KEY_PREVIOUS: previous.toString('hex') })?.message).toContain(
-      `the worker opens tokens sealed under CREDENTIAL_KEY (${vaultKeyId(current)}) and CREDENTIAL_KEY_PREVIOUS (${vaultKeyId(previous)}); `,
+      `the worker opens tokens and subject keys sealed under CREDENTIAL_KEY (${vaultKeyId(current)}) and CREDENTIAL_KEY_PREVIOUS (${vaultKeyId(previous)}); `,
     );
     // With the key in its file, the previous key from the environment is opened too, and named.
     expect(line({ ...READY, CREDENTIAL_KEY_PREVIOUS: previous.toString('hex') })?.message).toContain(
-      `the worker opens tokens sealed under the key in CREDENTIAL_KEY_FILE (docker compose: /data/keys/credential.key on the keys volume) and CREDENTIAL_KEY_PREVIOUS (${vaultKeyId(previous)}); `,
+      `the worker opens tokens and subject keys sealed under the key in CREDENTIAL_KEY_FILE (docker compose: /data/keys/credential.key on the keys volume) and CREDENTIAL_KEY_PREVIOUS (${vaultKeyId(previous)}); `,
     );
     expect(line(READY)?.message).toContain('docker compose logs worker | grep "cannot open"');
     // A sample value fails as for every optional secret (Codex review): the worker would refuse it at start.

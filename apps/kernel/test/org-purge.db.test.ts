@@ -252,6 +252,13 @@ suite('org purge on PostgreSQL (#1024)', () => {
       const employee = (await c.query<{ id: string }>(`INSERT INTO crove_hr.payroll_employee (org_id, display_name) VALUES ($1, 'Nhân viên') RETURNING id`, [org.orgId])).rows[0]?.id;
       await c.query(`INSERT INTO crove_hr.payroll_employment (org_id, employee_id, effective_from, contract_type, region, base_wage) VALUES ($1, $2, '2026-01-01', 'indefinite', 'I', 1000000)`, [org.orgId, employee]);
       await c.query(`INSERT INTO crove_hr.payroll_dependent (org_id, employee_id, display_name, relation, registered_on) VALUES ($1, $2, 'Người phụ thuộc', 'child', '2026-01-01')`, [org.orgId, employee]);
+      // An approved pay run with a line (#2531): frozen against everyone, deleted only by the closing org's purge.
+      const run = (await c.query<{ id: string }>(`INSERT INTO crove_hr.payroll_run (org_id, month, working_days) VALUES ($1, '2026-01', 26) RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query(
+        `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost) VALUES ($1, $2, $3, 1000000, 105000, 215000, 20000, 1000000, 0, 895000, 1235000)`,
+        [org.orgId, run, employee],
+      );
+      await c.query(`UPDATE crove_hr.payroll_run SET status = 'approved', approved_at = now(), approved_by = $2, approval = '{}'::jsonb WHERE id = $1`, [run, owner]);
       return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft };
     });
     // The first step, draft to submitting, is a person's approved issue (finance-einvoice-issue.db.test.ts); here it is set up as the database owner with the triggers off.
@@ -504,7 +511,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['crove_notes.note']).toBe(2);
     expect(before['crove_notes.link']).toBe(1);
     expect(before['crove_notes.todo']).toBe(1);
-    expect([before['crove_hr.payroll_employee'], before['crove_hr.payroll_employment'], before['crove_hr.payroll_dependent']]).toEqual([1, 1, 1]);
+    expect([before['crove_hr.payroll_employee'], before['crove_hr.payroll_employment'], before['crove_hr.payroll_dependent'], before['crove_hr.payroll_run'], before['crove_hr.payroll_line']]).toEqual([1, 1, 1, 1, 1]);
 
     // One audit row: by the system, with counts and the reason, and no personal data.
     const audits = await purgeAudits(s.org.orgId);
@@ -545,6 +552,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_hr.payroll_employee': 1,
             'crove_hr.payroll_employment': 1,
             'crove_hr.payroll_dependent': 1,
+            'crove_hr.payroll_run': 1,
+            'crove_hr.payroll_line': 1,
           }),
           pinned: expect.objectContaining({ 'crove_kernel.task_comment': 0, 'crove_kernel.task': 0, 'crove_kernel.position': 0, 'crove_social.post_approval': 0, 'crove_social.post_variant': 0, 'crove_finance.stock_item': 1 }),
           anonymized: { 'crove_kernel.party': 2 },

@@ -973,6 +973,16 @@ export type HrPayrollEmploymentTable = Refine<
   G.HrPayrollEmploymentTable,
   { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never> }
 >;
+// The pay run (#2531): a run is a draft until a person approves it; the posting and payment builds (#2532) take it on to paid and closed. A line is a pay line or a signed adjustment, and
+// is calculated or refused by the calculator.
+export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
+export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
+export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
+export type HrPayrollLineTable = Refine<
+  G.HrPayrollLineTable,
+  { kind: ColumnType<(typeof HR_LINE_KINDS)[number], (typeof HR_LINE_KINDS)[number] | undefined, never>; status: Generated<(typeof HR_LINE_STATUSES)[number]> }
+>;
 
 // The meetings module (#2576, ADR-0047): recorded meetings with consent records, retention dates and reader permissions.
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
@@ -1013,6 +1023,8 @@ type Refined = Tables<{
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_line': HrPayrollLineTable;
+  'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
