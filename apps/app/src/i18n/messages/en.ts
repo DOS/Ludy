@@ -1380,6 +1380,7 @@ export const en = {
       deleteConfirmTitle: 'Delete meeting and shred decryption key?',
       deleteConfirmBody: 'This will permanently delete the meeting and shred the decryption key. All audio and video recordings will become permanently unrecoverable.',
       deleteButton: 'Shred and delete permanently',
+      ownerDeleteVerify: 'Confirm the compliance deletion of this meeting',
     },
   },
   contactImport: {

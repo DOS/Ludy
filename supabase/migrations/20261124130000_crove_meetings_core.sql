@@ -387,8 +387,6 @@ BEGIN
 
   INSERT INTO crove_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key)
   VALUES (v_org, crove_kernel.uuid_v7(), p_meeting_id, p_key_id, p_kind, p_wrapped_key)
-  ON CONFLICT (org_id, meeting_id, kind)
-  DO UPDATE SET key_id = EXCLUDED.key_id, wrapped_key = EXCLUDED.wrapped_key
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -519,8 +517,11 @@ CREATE OR REPLACE FUNCTION crove_meetings.media_key_reseal(
 )
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  -- Runs inside the system command meetings.media_key.reseal (one write path), in the system context of the key's own org.
   IF (NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER'))
-     OR crove_kernel.ctx_actor_type() IS NOT NULL THEN
+     OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'system'
+     OR crove_kernel.ctx_org_id() IS DISTINCT FROM p_org_id
+     OR p_from_key_id = p_to_key_id THEN
     RAISE EXCEPTION 'MEETINGS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
 

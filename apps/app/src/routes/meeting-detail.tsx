@@ -8,9 +8,10 @@ import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { apiFetch, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 
 const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
@@ -129,7 +130,8 @@ export function MeetingDetailPage() {
       void navigate({ to: '/o/$slug/meetings', params: { slug } });
     },
     onError: (err) => {
-      toast(errorMessage(err), 'error');
+      // A fresh second factor is asked for below, and the same request is repeated once it is verified.
+      if (!isStepUpRequired(err)) toast(errorMessage(err), 'error');
     },
   });
 
@@ -328,6 +330,12 @@ export function MeetingDetailPage() {
           </Card>
         )}
       </div>
+
+      {ownerDeleteMutation.error && isStepUpRequired(ownerDeleteMutation.error) && (
+        <div className="mt-3">
+          <StepUpPrompt action={t('detail.ownerDeleteVerify')} onVerified={() => ownerDeleteMutation.mutate()} onCancel={() => ownerDeleteMutation.reset()} />
+        </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog

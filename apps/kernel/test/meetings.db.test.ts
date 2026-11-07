@@ -19,6 +19,7 @@ import {
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
+import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
@@ -784,5 +785,41 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(store.storage.size).toBeGreaterThan(0);
     const shredded = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
     expect(shredded.status).toBe(404);
+  });
+
+  it('11. a key rotation reseals the media keys through the system command, and the audio still plays', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Rotation', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('rotation-audio-bytes'.repeat(10))]);
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
+    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    expect(up.status).toBe(200);
+
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'crove_worker';
+    workerUrl.password = 'test-worker-pw';
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 4 });
+    try {
+      const workerDb = createDb(workerPool);
+      const worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register({
+        commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
+        queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries],
+      });
+      const rotated = { ...broker, keyId: 'k2-meetings-test', keyIds: ['k2-meetings-test', 'k1-meetings-test'] } as unknown as CredentialBroker;
+      const outcome = await resealCredentials({ runtime: worker, broker: rotated, workerDb });
+      expect(outcome.failed).toBe(0);
+      expect(outcome.resealed).toBeGreaterThanOrEqual(1);
+      const row = await admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows[0]);
+      expect(row?.key_id).toBe('k2-meetings-test');
+      const audits = await admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.media_key.reseal'", [orgId])).rows[0]!.n));
+      expect(audits).toBeGreaterThanOrEqual(1);
+    } finally {
+      await workerPool.end();
+    }
+    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    expect(play.status).toBe(200);
+    expect(Buffer.from(await play.arrayBuffer()).equals(audio)).toBe(true);
   });
 });

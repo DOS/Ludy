@@ -25,6 +25,7 @@ import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.reseal' };
 const CHAT_ACTOR: SystemActor = { type: 'system', component: 'social.chat_alert.reseal' };
+const MEDIA_ACTOR: SystemActor = { type: 'system', component: 'meetings.media_key.reseal' };
 export const RESEAL_SWEEP_MS = 10 * 60_000;
 const RESEAL_LIMIT = 200;
 // At most this many pages a pass; the rest waits for the next pass.
@@ -306,18 +307,12 @@ async function resealOneMediaKey(
     if (!newSubkey) return false;
     const newWrapped = wrapMediaKeyWithSubkey(dataKey, newBinding, newSubkey);
 
-    const { rows } = await sql<{ resealed: boolean }>`
-      SELECT crove_meetings.media_key_reseal(
-        ${row.org_id}::uuid,
-        ${row.id}::uuid,
-        ${row.key_id},
-        ${current},
-        ${row.wrapped_key},
-        ${newWrapped}
-      ) AS resealed
-    `.execute(db);
-
-    return rows[0]?.resealed === true;
+    const stored = await deps.runtime.execute<{ resealed: boolean }>(
+      'meetings.media_key.reseal',
+      { id: row.id, fromKeyId: row.key_id, toKeyId: current, fromWrappedKeyHex: row.wrapped_key.toString('hex'), wrappedKeyHex: newWrapped.toString('hex') },
+      { actor: MEDIA_ACTOR, orgId: row.org_id },
+    );
+    return stored.resealed;
   } finally {
     dataKey?.fill(0);
     oldSubkey?.fill(0);

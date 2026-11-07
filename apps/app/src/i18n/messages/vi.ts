@@ -1378,6 +1378,7 @@ export const vi = {
       deleteConfirmTitle: 'Xóa cuộc họp và tiêu hủy khóa giải mã?',
       deleteConfirmBody: 'Hành động này sẽ xóa vĩnh viễn cuộc họp và tiêu hủy khóa giải mã. Toàn bộ bản ghi âm và video sẽ không thể khôi phục lại được.',
       deleteButton: 'Tiêu hủy và xóa vĩnh viễn',
+      ownerDeleteVerify: 'Xác nhận xóa tuân thủ cuộc họp này',
     },
   },
   contactImport: {

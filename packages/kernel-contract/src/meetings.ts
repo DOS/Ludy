@@ -118,3 +118,12 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   lengthSeconds: z.number().int().positive().optional(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
+
+// The worker's reseal of one media key after a credential key rotation (system actor only).
+export const zMeetingMediaKeyReseal = z.strictObject({
+  id: z.string().uuid(),
+  fromKeyId: z.string().min(1).max(64),
+  toKeyId: z.string().min(1).max(64),
+  fromWrappedKeyHex: z.string().regex(/^[0-9a-f]{120}$/),
+  wrappedKeyHex: z.string().regex(/^[0-9a-f]{120}$/),
+});

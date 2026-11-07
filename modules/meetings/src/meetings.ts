@@ -7,6 +7,7 @@ import {
   auditValue,
   zMeetingCreate,
   zMeetingListInput,
+  zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
   zMeetingMediaRecord,
   zMeetingReaderAdd,
@@ -422,6 +423,33 @@ export const meetingReaderRemove = defineCommand({
   },
 });
 
+// After a credential key rotation: the worker stores one media key wrapped under the current key, only if the stored key is still
+// the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
+export const meetingMediaKeyReseal = defineCommand({
+  name: 'meetings.media_key.reseal',
+  input: zMeetingMediaKeyReseal,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Only a system actor may do this');
+    const { rows } = await sql<{ resealed: boolean }>`
+      SELECT crove_meetings.media_key_reseal(
+        ${ctx.orgId}::uuid,
+        ${input.id}::uuid,
+        ${input.fromKeyId}::text,
+        ${input.toKeyId}::text,
+        ${Buffer.from(input.fromWrappedKeyHex, 'hex')}::bytea,
+        ${Buffer.from(input.wrappedKeyHex, 'hex')}::bytea
+      ) AS resealed
+    `.execute(ctx.trx);
+    const resealed = rows[0]?.resealed === true;
+    // Key ids only: they name a key without revealing it.
+    if (resealed) ctx.audit({ keyRowId: input.id, fromKeyId: input.fromKeyId, toKeyId: input.toKeyId });
+    return { resealed };
+  },
+});
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
@@ -742,6 +770,7 @@ export const meetingsCommands = [
   meetingOwnerDelete,
   meetingReaderAdd,
   meetingReaderRemove,
+  meetingMediaKeyReseal,
 ];
 
 export const meetingsQueries = [

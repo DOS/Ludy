@@ -1695,11 +1695,6 @@ export function createHttpApp(deps: HttpDeps) {
       const now = Date.now();
       const auditedUntil = playbackAudited.get(auditKey);
       const continuation = auditedUntil !== undefined && auditedUntil > now;
-      if (!continuation) {
-        if (playbackAudited.size >= 10_000) for (const [k, until] of playbackAudited) if (until <= now) playbackAudited.delete(k);
-        if (playbackAudited.size >= 10_000) playbackAudited.clear();
-        playbackAudited.set(auditKey, now + PLAYBACK_AUDIT_WINDOW_MS);
-      }
       const queryName = continuation
         ? 'meetings.meeting.media_meta'
         : kind === 'audio'
@@ -1717,6 +1712,12 @@ export function createHttpApp(deps: HttpDeps) {
         keyId: string;
         wrappedKey: Buffer;
       }>(queryName, queryInput, { actor: actorOf(user), orgId });
+      // Marked only after the audited read succeeded, so a failed audit write cannot let the retry skip it.
+      if (!continuation) {
+        if (playbackAudited.size >= 10_000) for (const [k, until] of playbackAudited) if (until <= now) playbackAudited.delete(k);
+        if (playbackAudited.size >= 10_000) playbackAudited.clear();
+        playbackAudited.set(auditKey, now + PLAYBACK_AUDIT_WINDOW_MS);
+      }
 
       const broker = deps.broker ?? createCredentialBroker(config);
       wrapSubkey = broker.deriveKey
@@ -1919,7 +1920,39 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/meetings/:id/audio', (c) => streamMeetingMedia(c, 'audio'));
   app.get('/api/meetings/:id/video', (c) => streamMeetingMedia(c, 'video'));
 
-  app.post('/api/meetings/:id/media', bodyLimit({ maxSize: MAX_MEETING_VIDEO_BYTES + 1024 * 1024 }), async (c) => {
+  // Everything that must hold before one byte of the body is read into memory: the module is on, the caller is the meeting's
+  // recorder, a large-transfer slot is held (kept until the response is done) and the declared size is within the cap. A JSON
+  // body (a staged upload's id) is tiny; a file larger than its cap is refused from the declared Content-Length, and the body
+  // limit below stops a chunked one at the same cap, with at most two such transfers in the process at once.
+  const META_BODY_MAX_BYTES = 16 * 1024;
+  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser } }> = async (c, next) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meeting = await runtime.query<{ isRecorder: boolean }>('meetings.meeting.get', { meetingId: c.req.param('id') ?? '' }, { actor: actorOf(user), orgId });
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
+      const json = (c.req.header('content-type') ?? '').includes('application/json');
+      const declared = Number(c.req.header('content-length') ?? '0');
+      if (!Number.isFinite(declared) || declared < 0) throw new DomainError('BAD_REQUEST', 400, 'Content-Length is not valid');
+      if (declared > (json ? META_BODY_MAX_BYTES : MAX_MEETING_VIDEO_BYTES + 1024 * 1024)) {
+        throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
+      }
+      release = large.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+    } catch (error) {
+      return problem(c, error);
+    }
+    try {
+      await next();
+    } finally {
+      release?.();
+    }
+  };
+  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser } }> = (c, next) =>
+    bodyLimit({ maxSize: (c.req.header('content-type') ?? '').includes('application/json') ? META_BODY_MAX_BYTES : MAX_MEETING_VIDEO_BYTES + 1024 * 1024 })(c, next);
+  app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
       if (!runtime.installed('meetings')) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
@@ -1930,7 +1963,6 @@ export function createHttpApp(deps: HttpDeps) {
       const release = completes.tryAcquire(user.userId);
       if (!release) throw busy(c);
 
-      let releaseLarge: (() => void) | null = null;
       let dataKey: Buffer | null = null;
       let wrapSubkey: Buffer | null = null;
       let stagingKeyToDelete: string | null = null;
@@ -1972,9 +2004,6 @@ export function createHttpApp(deps: HttpDeps) {
             lengthSeconds = body.lengthSeconds;
           }
 
-          releaseLarge = large.tryAcquire(user.userId);
-          if (!releaseLarge) throw busy(c);
-
           await verifyRecorderAndKind(kind);
 
           const claim = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
@@ -2011,9 +2040,6 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
-          releaseLarge = large.tryAcquire(user.userId);
-          if (!releaseLarge) throw busy(c);
-
           await verifyRecorderAndKind(kind);
 
           const fileVal = formData.get('file');
@@ -2075,22 +2101,29 @@ export function createHttpApp(deps: HttpDeps) {
         const keyBinding: MediaKeyBinding = { ...binding, keyId };
         const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
 
-        const result = await runtime.execute<{ fileId: string }>(
-          'meetings.media.record',
-          {
-            meetingId,
-            kind,
-            keyId,
-            wrappedKeyHex: wrappedKey.toString('hex'),
-            storageKey,
-            generation,
-            sizeBytes: ciphertext.length,
-            sha256,
-            contentType: sniffedContentType,
-            lengthSeconds: lengthSeconds ?? 1800,
-          },
-          { actor: actorOf(user), orgId },
-        );
+        let result: { fileId: string };
+        try {
+          result = await runtime.execute<{ fileId: string }>(
+            'meetings.media.record',
+            {
+              meetingId,
+              kind,
+              keyId,
+              wrappedKeyHex: wrappedKey.toString('hex'),
+              storageKey,
+              generation,
+              sizeBytes: ciphertext.length,
+              sha256,
+              contentType: sniffedContentType,
+              lengthSeconds: lengthSeconds ?? 1800,
+            },
+            { actor: actorOf(user), orgId },
+          );
+        } catch (error) {
+          // The record was refused (a second upload of the kind, a lost race): the sealed bytes have no row, so drop them.
+          await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
+          throw error;
+        }
 
         return c.json(result);
       } finally {
@@ -2099,7 +2132,6 @@ export function createHttpApp(deps: HttpDeps) {
         }
         dataKey?.fill(0);
         wrapSubkey?.fill(0);
-        releaseLarge?.();
         release();
       }
     } catch (error) {

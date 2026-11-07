@@ -69,6 +69,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.owner_delete',
       'meetings.reader.add',
       'meetings.reader.remove',
+      'meetings.media_key.reseal',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
