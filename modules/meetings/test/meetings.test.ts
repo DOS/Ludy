@@ -70,6 +70,10 @@ describe('meetings commands and queries construction', () => {
       'meetings.reader.add',
       'meetings.reader.remove',
       'meetings.media_key.reseal',
+      'meetings.settings.set',
+      'meetings.retention.shred',
+      'meetings.shred.replay',
+      'meetings.media.discard',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -86,6 +90,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
       'meetings.meeting.media_meta',
+      'meetings.settings.get',
+      'meetings.media.orphan_keys',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

@@ -42,19 +42,8 @@ export function normalizeVatRate(raw: string | null | undefined): VatRate {
   return 'other';
 }
 
-// Periods when the 8% reduced rate applied (both dates included), with their sources.
-export const REDUCED_RATE_PERIODS: ReadonlyArray<{ from: string; to: string; source: string }> = [
-  { from: '2022-02-01', to: '2022-12-31', source: 'Resolution 43/2022/QH15, Decree 15/2022/ND-CP' },
-  { from: '2023-07-01', to: '2023-12-31', source: 'Resolution 101/2023/QH15, Decree 44/2023/ND-CP' },
-  { from: '2024-01-01', to: '2024-06-30', source: 'Resolution 110/2023/QH15, Decree 94/2023/ND-CP' },
-  { from: '2024-07-01', to: '2024-12-31', source: 'Resolution 142/2024/QH15, Decree 72/2024/ND-CP' },
-  { from: '2025-01-01', to: '2025-06-30', source: 'Resolution 174/2024/QH15, Decree 180/2024/ND-CP' },
-  { from: '2025-07-01', to: '2026-12-31', source: 'Resolution 204/2025/QH15, Decree 174/2025/ND-CP' },
-];
-
-export function reducedRateApplies(date: string): boolean {
-  return REDUCED_RATE_PERIODS.some((p) => date >= p.from && date <= p.to);
-}
+// The periods when the 8% reduced rate applied are data of @crove/l10n-vn (the draft of a sales e-invoice reads the same set); re-exported here for the VAT working.
+export { REDUCED_RATE_PERIODS, reducedRateApplies } from '@crove/l10n-vn';
 
 // A tax period: a month ("2026-09") or a quarter ("2026-Q3"). Monthly filers are those above 50 billion VND of
 // revenue in the previous year; the rest file quarterly (Decree 126/2020/ND-CP, Article 9). Crove does not decide

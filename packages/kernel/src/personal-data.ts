@@ -256,6 +256,20 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
+  // Meetings (ADR-0047 point 7, issue #2579): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), a title may name a person, and the text a meeting gains later (transcript, summary, items) joins this
+  // list in the step that adds it. None of it has an email, a phone number or a tax code a finder could match, so none is searched (kind other); a person's
+  // request is answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an owner may do without reading it (meetings.meeting.owner_delete,
+  // R3). The nightly job deletes every meeting at its own text date and shreds audio and video at theirs.
+  'crove_meetings.meeting.title': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "A meeting's title, which may name a person: deleted with the meeting (its recorder, or an owner for a personal-data request, or the retention job at the text date)",
+  },
+  'crove_meetings.media_key.wrapped_key': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "The wrapped data key of a meeting's audio or video: deleting it is the shredding, and no copy of the ciphertext opens without it",
+  },
   // The people payroll is run for (#2530, payroll plan 6.6). Their names and addresses are cleared by the owner's erasure of an ended employee after the retention
   // (hr.payroll.employee.erase), which also deletes the person's key; the finder does not match them by an email, a phone or a number (their numbers are sealed, below).
   'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
@@ -287,12 +301,12 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
 };
 
 // The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,
-// crove_crm, crove_notes or crove_hr whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
+// crove_crm, crove_notes, crove_hr or crove_meetings whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
 // sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column

@@ -40,6 +40,15 @@ The same store also keeps the outbox events that the daily retention run deletes
 - **How long:** on `s3`, each object is locked for 400 days (13 months and a margin, plan §7.9) instead of `ARCHIVE_RETENTION_DAYS`. Add a lifecycle rule that expires objects under `outbox/` after 400 days; the worker holds no delete permission. On `local`, the files stay until removed by hand.
 - **Reading an org's old events:** list `outbox/v1/<org_id>/` and read the day's object; the manifest's `sha256` must match it.
 
+## Shred references for deleted meetings (#2579)
+
+The same store keeps, for each meeting a person deleted before its retention date (its recorder, or an owner for a personal-data request), one small object that lets a restore delete it again (ADR-0017 section 8, ADR-0047 point 7):
+
+- **What:** `shred/v1/meeting-<org_id>-<meeting_id>.json`: `{"format":"crove-shred-ref","version":1,"kind":"meetings.meeting","orgId":...,"meetingId":...,"deletedAt":...}`. Ids and a time, never a title, a key or a transcript.
+- **When:** the worker reads the deletions from the audit trail once a minute (the API process holds no archive credential) and writes each reference once, create-only. A deletion is therefore in the store within about a minute; a worker that was down reads 45 days back when it starts. Date-based shreds need no reference: the next nightly run repeats them.
+- **How long:** on `s3`, each object is locked for 90 days, longer than the five weeks a backup chain can live (`backup-and-restore.md`). Add a lifecycle rule that expires objects under `shred/` after 90 days; the worker holds no delete permission. On `local`, the files stay until removed by hand.
+- **After a restore:** `tools/backup/restore.sh` runs `main.ts shred-replay` after the archive check and before it starts the stack, and stops the restore (stack not started) when it exits non-zero, so run it again once the cause is fixed. The worker also replays at every start, and an alert is raised when a reference could not be replayed or when the references could not be written for five passes in a row. Both then remove the ciphertext objects and file rows that leaves. References of an org that is closed or gone (purged) are counted as skipped by the org's state, never as failures (they stay under their lock until it ends). **Known windows:** with `RESTORE_ARCHIVE=skip` the restore does not replay, so the API can serve deleted meetings (with their keys) until the worker's start-up replay finishes: avoid it, or keep users out until the log shows `[shred-replay]`. A deletion in the last minute before a failure has no reference yet. The replay is idempotent and deletes only the meetings the references list; an unreadable reference is skipped and logged, never run. Check the log line `[shred-replay] references=<n> meetings deleted again=<n> failed=<n>`.
+
 ## Setting up the store
 
 | `ARCHIVE_STORE` | Where | Holds against |

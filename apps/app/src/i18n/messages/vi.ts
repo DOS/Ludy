@@ -838,6 +838,14 @@ export const vi = {
     region: 'Vùng',
     regionOption: 'Vùng {region}',
     baseWage: 'Lương cơ bản (đ/tháng)',
+    payFunction: 'Bộ phận hạch toán',
+    payFunctions: {
+      admin: 'Quản lý doanh nghiệp',
+      sales: 'Bán hàng',
+      production: 'Sản xuất trực tiếp',
+      overhead: 'Chi phí sản xuất chung',
+      construction: 'Xây dựng cơ bản dở dang',
+    },
     contracts: {
       indefinite: 'Không xác định thời hạn',
       fixed_term: 'Xác định thời hạn',
@@ -1126,6 +1134,30 @@ export const vi = {
     issueStepUp: 'Phát hành hóa đơn {total}',
     issueAwaiting: 'Đã gửi đề xuất phát hành. Chủ sở hữu hoặc quản trị viên khác sẽ duyệt trong Hộp thư; sau khi duyệt hóa đơn mới được gửi đi.',
     issueSent: 'Đã duyệt. Hóa đơn đang được gửi tới nhà cung cấp.',
+    // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
+    ai: {
+      label: 'Nhờ {finance} soạn từ lời nhắn bán hàng',
+      placeholder: 'Ví dụ: bán 10 hộp bánh A giá 120k cho anh Nam, thuế 8%',
+      button: 'Nhờ {finance} soạn',
+      hint: '{finance} chỉ đọc đoạn chữ này và tên khách hàng trong sổ. Bạn xem và sửa cả bản nháp rồi mới lưu và phát hành.',
+      badge: 'Gợi ý của {finance}',
+      buyerNote: 'Người mua lấy từ hồ sơ khách hàng trong sổ. Bạn kiểm tra lại trước khi lưu.',
+      vatFrom: {
+        text: 'Thuế suất theo đúng đoạn chữ bạn nhập.',
+        earlier: 'Thuế suất lấy từ các bản nháp trước, đoạn chữ không nêu thuế suất.',
+        default: 'Đoạn chữ không nêu thuế suất và chưa có bản nháp trước: bạn chọn thuế suất.',
+      },
+      state: {
+        filled: '{finance} đã điền gợi ý vào các dòng bên dưới. Đây mới là gợi ý: số lượng và đơn giá đều lấy từ đoạn chữ của bạn, số tiền do hệ thống tính. Bạn xem lại rồi mới lưu.',
+        partial: '{finance} đã điền các dòng vừa với bản nháp, còn một số dòng gợi ý không đủ chỗ nên chưa được điền. Bạn xem lại, lưu bản nháp này rồi soạn tiếp phần còn lại ở bản nháp khác.',
+        stale: 'Bạn đã đổi ngày hóa đơn trong lúc {finance} đang soạn nên chưa điền gì, vì thuế suất phụ thuộc ngày. Bấm soạn lại.',
+        refused: '{finance} chưa soạn được từ đoạn chữ này vì kết quả có số hoặc thuế suất không có trong đoạn chữ. Bạn nhập tay như thường.',
+        off: 'Máy chủ này chưa bật AI. Bạn vẫn soạn bản nháp bằng tay như thường.',
+        busy: '{finance} đang xử lý nhiều yêu cầu cùng lúc. Hãy thử lại sau ít phút, hoặc nhập tay.',
+        budget: '{finance} đã hết ngân sách AI của tháng này. Bạn vẫn soạn bản nháp bằng tay như thường.',
+        failed: '{finance} chưa soạn được lúc này. Bạn vẫn soạn bản nháp bằng tay như thường.',
+      },
+    },
     issuedNumber: 'Số {number}',
     evidencePending: 'Đang lưu bản gốc',
     draftErrors: {
@@ -1491,6 +1523,19 @@ export const vi = {
       submit: 'Tạo cuộc họp và mã hóa tệp',
       submitting: 'Đang tải lên và mã hóa…',
     },
+    settings: {
+      title: 'Thời gian lưu cuộc họp',
+      hint: 'Thay đổi chỉ áp dụng cho các cuộc họp ghi sau đó, nên thời hạn đã báo cho người tham dự vẫn đúng. Hết hạn, âm thanh hoặc video không thể mở được nữa và phần văn bản bị xóa.',
+      audio: 'Âm thanh',
+      video: 'Video (không bao giờ lâu hơn âm thanh)',
+      text: 'Văn bản và hồ sơ đồng ý ghi âm',
+      audioChoice: { '0': 'Ngay sau khi có bản chép lời (7 ngày nếu chưa có)', '7': '7 ngày', '30': '30 ngày', '90': '90 ngày' },
+      videoChoice: { '7': '7 ngày', '30': '30 ngày' },
+      textChoice: { '0': 'Đến khi cuộc họp bị xóa', '90': '3 tháng', '365': '12 tháng', '730': '24 tháng' },
+      save: 'Lưu',
+      saved: 'Đã lưu thời gian lưu cuộc họp.',
+      adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được các thời hạn này.',
+    },
     detail: {
       back: 'Quay lại danh sách',
       delete: 'Xóa cuộc họp',
@@ -1515,6 +1560,7 @@ export const vi = {
       consentConfirmedAt: 'Xác nhận lúc',
       audioRetention: 'Hạn lưu âm thanh',
       textRetention: 'Hạn lưu văn bản',
+      untilDeleted: 'Đến khi cuộc họp bị xóa',
       readerUserId: 'ID người dùng của người xem',
       readerUserIdPlaceholder: 'ID người dùng của người xem',
       ownerDelete: 'Xóa tuân thủ (chủ sở hữu)',
@@ -4940,6 +4986,7 @@ export const vi = {
       finance_payment_reminder: 'Soạn lời mở đầu và kết thư nhắc thu nợ',
       finance_stock_match: 'Gợi ý mặt hàng cho các dòng hóa đơn chưa gán',
       finance_stock_reorder: 'Soạn tin đặt thêm hàng gửi nhà cung cấp',
+      finance_einvoice_draft: 'Soạn dòng hàng, thuế suất và người mua cho bản nháp hóa đơn bán ra',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },
@@ -8037,6 +8084,8 @@ export const vi = {
       NOTE_LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
       NOTE_LINK_TARGET_NOT_FOUND: 'Không tìm thấy bản ghi để gắn ghi chú',
       MEETING_NOT_FOUND: 'Không tìm thấy cuộc họp này',
+      MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
       INVALID_MEDIA_CONTAINER: 'Tệp này không phải định dạng âm thanh hoặc video được hỗ trợ.',
       VIDEO_NOT_ENABLED: 'Cuộc họp này không được đặt để giữ video.',
@@ -8889,6 +8938,7 @@ export const vi = {
         get: 'Xem bản nháp hóa đơn bán ra',
         list: 'Xem các bản nháp hóa đơn bán ra',
         save: 'Lưu bản nháp hóa đơn bán ra',
+        suggest_source: 'Tìm khách hàng và thuế suất gần đây cho bản nháp hóa đơn bán ra',
       },
       marketplace: {
         assign: 'Gán dòng đơn hàng của sàn cho mặt hàng',
@@ -9468,10 +9518,22 @@ export const vi = {
     },
     meetings: {
       media: {
+        discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',
+        orphan_keys: 'Liệt kê bản lưu của tệp cuộc họp đã bị hủy',
         record: 'Ghi nhận tệp phương tiện mã hóa cuộc họp',
       },
       media_key: {
         reseal: 'Niêm phong lại khóa phương tiện cuộc họp sau khi đổi khóa',
+      },
+      retention: {
+        shred: 'Tiêu hủy âm thanh hoặc video, hoặc xóa cuộc họp, khi hết hạn lưu',
+      },
+      settings: {
+        get: 'Xem thời gian lưu cuộc họp',
+        set: 'Đổi thời gian lưu cuộc họp',
+      },
+      shred: {
+        replay: 'Xóa lại cuộc họp sau khi khôi phục dữ liệu',
       },
       meeting: {
         audio_read: 'Nghe ghi âm cuộc họp',

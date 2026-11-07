@@ -3,3 +3,4 @@ export * from './rule-types.ts';
 export * from './rules/index.ts';
 export * from './calculator.ts';
 export * from './rules-used.ts';
+export * from './posting.ts';

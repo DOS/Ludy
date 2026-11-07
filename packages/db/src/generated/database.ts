@@ -49,6 +49,8 @@ export interface CroveFinanceSchema {
   'crove_finance.categorization_rule': FinanceCategorizationRuleTable;
   'crove_finance.channel_order': FinanceChannelOrderTable;
   'crove_finance.channel_order_line': FinanceChannelOrderLineTable;
+  'crove_finance.channel_settlement': FinanceChannelSettlementTable;
+  'crove_finance.channel_settlement_line': FinanceChannelSettlementLineTable;
   'crove_finance.chart': FinanceChartTable;
   'crove_finance.chart_account': FinanceChartAccountTable;
   'crove_finance.collection_setting': FinanceCollectionSettingTable;
@@ -86,6 +88,7 @@ export interface CroveFinanceSchema {
 }
 
 export interface CroveHrSchema {
+  'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
@@ -765,6 +768,42 @@ export interface FinanceChannelOrderTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_finance.channel_settlement_line */
+export interface FinanceChannelSettlementLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  settlement_id: ColumnType<string, string, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_key: ColumnType<string, string, NotGranted>;
+  sales: ColumnType<string, string | undefined, NotGranted>;
+  seller_discount: ColumnType<string, string | undefined, NotGranted>;
+  commission: ColumnType<string, string | undefined, NotGranted>;
+  service_fee: ColumnType<string, string | undefined, NotGranted>;
+  payment_fee: ColumnType<string, string | undefined, NotGranted>;
+  shipping: ColumnType<string, string | undefined, NotGranted>;
+  tax_withheld: ColumnType<string, string | undefined, NotGranted>;
+  refund: ColumnType<string, string | undefined, NotGranted>;
+  other: ColumnType<string, string | undefined, NotGranted>;
+  net: ColumnType<string, string, NotGranted>;
+  source_row: ColumnType<number | null, number | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.channel_settlement */
+export interface FinanceChannelSettlementTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  period_start: ColumnType<string, string, NotGranted>;
+  period_end: ColumnType<string, string, NotGranted>;
+  payout_ref: ColumnType<string | null, string | null, NotGranted>;
+  report_net: ColumnType<string, string, NotGranted>;
+  source_sha256: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.chart_account */
 export interface FinanceChartAccountTable {
   regime: ColumnType<string, NotGranted, NotGranted>;
@@ -1297,6 +1336,18 @@ export interface FinanceVendorAccountRuleTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_hr.payroll_bank_template */
+export interface HrPayrollBankTemplateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  layout: ColumnType<unknown, string, string>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_hr.payroll_dependent */
 export interface HrPayrollDependentTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1340,6 +1391,7 @@ export interface HrPayrollEmploymentTable {
   base_wage: ColumnType<string, string, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  pay_function: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_hr.payroll_line */
@@ -2324,6 +2376,9 @@ export interface KernelTenantTable {
   approval_preset: Generated<string>;
   approval_policy_version: Generated<number>;
   conversation_token: string | null;
+  meeting_audio_retention_days: Generated<number>;
+  meeting_video_retention_days: Generated<number>;
+  meeting_text_retention_days: Generated<number>;
 }
 
 /** crove_kernel.today_mail */
@@ -2386,8 +2441,8 @@ export interface MeetingsMeetingTable {
   consent_confirmed_by: ColumnType<string, string, NotGranted>;
   consent_confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   consent_notice_version: ColumnType<string, string | undefined, NotGranted>;
-  audio_retention_date: string;
-  text_retention_date: string;
+  audio_retention_date: ColumnType<string, string, NotGranted>;
+  text_retention_date: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }

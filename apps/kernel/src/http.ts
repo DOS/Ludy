@@ -1872,9 +1872,11 @@ export function createHttpApp(deps: HttpDeps) {
             armIdleTimer();
             // Each window first asks again whether the meeting and its key still exist: the query fails once the meeting or its
             // key is deleted, so the stream stops and the key copy is cleared. A reseal changes only the wrapping key id, not
-            // the media key this stream holds, so the id is not compared.
+            // the media key this stream holds, so the id is not compared. The file is compared: retention deletes the media
+            // rows (#2579), so the segment or video the meeting names now may not be the object this stream reads.
             if (streamOffset > 0) {
-              await runtime.query('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              if (current.fileId !== media.fileId) throw new DomainError('MEDIA_REPLACED', 409, 'The meeting media changed while it was playing');
             }
             if (streamOffset >= totalPlaintextLength) {
               controller.close();

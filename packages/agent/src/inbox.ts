@@ -32,6 +32,15 @@ import {
   type StockMatchLine,
   type StockMatchOutput,
 } from './stock.ts';
+import {
+  EINVOICE_DRAFT_PARTIES_MAX,
+  checkEInvoiceDraft,
+  einvoiceDraftInstructions,
+  einvoiceDraftPrompt,
+  type EInvoiceDraftModelOutput,
+  type EInvoiceDraftRequest,
+  type EInvoiceDraftResult,
+} from './einvoice-draft.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -98,6 +107,20 @@ const zStockMatchOut = z.object({
   ),
 });
 const zReorderOut = z.object({ text: z.string().describe('The whole message: a greeting, a line per item with its quantity and unit as given, a request to confirm, thanks and the business name') });
+// The finance coworker on a sales e-invoice draft (#2505): lines, VAT rate and the customer, from a text a person typed or pasted.
+const zEInvoiceDraftOut = z.object({
+  lines: z.array(
+    z.object({
+      description: z.string().describe('A short description of the thing sold, in the words of the text'),
+      unit: z.string().nullable().describe('The unit the text gives (hộp, cái, kg...), or null'),
+      quantity: z.string().describe('The quantity as plain digits, 1 when the text gives none'),
+      unitPrice: z.string().describe('The unit price in dong as plain digits with no separator or currency, exactly a figure of the text'),
+      vatRate: z.string().nullable().describe('The VAT rate only when the text states one (10%, 8%, 5%, 0%, KCT, KKKNT), else null'),
+    }),
+  ),
+  buyer: z.number().int().nullable().describe('The number of the customer of the list that the text is about, or null'),
+});
+export type EInvoiceDraftGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceDraftOut> | null; usage?: AiUsage }>;
 export type StockMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zStockMatchOut> | null; usage?: AiUsage }>;
 export type ReorderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReorderOut> | null; usage?: AiUsage }>;
 
@@ -157,9 +180,10 @@ export class InboxReader {
   private readonly generateOverview: OverviewGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
+  private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator } = {}) {
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -214,6 +238,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.stock_reorder', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zReorderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateEInvoiceDraft =
+      generators.einvoiceDraft ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.einvoice_draft', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zEInvoiceDraftOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -315,5 +347,16 @@ export class InboxReader {
     const { output, usage } = await this.generateReorder({ system: reorderInstructions(request), prompt: reorderPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkReorderText(request, output as ReorderOutput | null);
+  }
+
+  /** The lines, the VAT rates the text states and the customer of a sales e-invoice draft (#2505), from a text a person typed or pasted, or why there is none. The model is told the text, the
+   * names of at most EINVOICE_DRAFT_PARTIES_MAX customers and the VAT rates the date allows: no address, tax code, credential or other figure of the books. Its answer is refused when a figure
+   * or a VAT rate is not the text's, a rate is not allowed on the date, or a line is empty or carries a link (einvoice-draft.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async einvoiceDraft(request: EInvoiceDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<EInvoiceDraftResult> {
+    if (request.text.trim() === '') return { kind: 'none', code: 'NO_TEXT' };
+    const shown: EInvoiceDraftRequest = { ...request, parties: request.parties.slice(0, EINVOICE_DRAFT_PARTIES_MAX) };
+    const { output, usage } = await this.generateEInvoiceDraft({ system: einvoiceDraftInstructions(), prompt: einvoiceDraftPrompt(shown) });
+    if (usage) onUsage?.(usage);
+    return checkEInvoiceDraft(shown, output as EInvoiceDraftModelOutput | null);
   }
 }
