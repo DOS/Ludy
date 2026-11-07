@@ -132,6 +132,8 @@ The DOS organization ids are the same in every DOS repository.
   fresh-context Opus reviewer that did not write the change, and a PR that
   changes the shared core also gets the Platform PO's review of those files
   ("Shared-core review").
+- shared_core_review: `line:platform`: the paths in "Shared-core review"
+  below.
 - agent_effort: high. PO sessions run on Opus at effort high. Every sub-session
   runs on Sonnet 5.5 (`claude-sonnet-5-5`) at effort high, and at xhigh only
   for hard work (a protected-path security change, a migration, a root-cause
