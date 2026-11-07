@@ -116,7 +116,7 @@ describe('checkEInvoiceDraft', () => {
 
   it('refuses a description or a unit with a link or an address', () => {
     expect(checkEInvoiceDraft(REQUEST, answer([line({ description: 'Bánh A xem shop.example.cn' })]))).toEqual({ kind: 'none', code: 'LINK' });
-    expect(checkEInvoiceDraft(REQUEST, answer([line({ unit: 'a@b.vn' })]))).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkEInvoiceDraft(REQUEST, answer([line({ unit: 'a@example.com' })]))).toEqual({ kind: 'none', code: 'LINK' });
   });
 
   it('refuses an empty line, a price of nothing, a number that is not a number and too many lines', () => {
