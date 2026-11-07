@@ -455,7 +455,8 @@ suite('meetings module database integration tests (#2576)', () => {
     );
     expect(auditCountAfterFull).toBe(1);
 
-    // HTTP 206 Partial Content (bytes 10-25, start > 0 uses media_meta without adding an audio_read audit row)
+    // HTTP 206 Partial Content (bytes 10-25). The attendee's first request is the audited read whatever its Range, so a
+    // reader cannot skip the audit by starting at an offset; the next ranges of the same playback add no row.
     const rangeRes = await app.request(`/api/meetings/${meetingId}/audio`, {
       method: 'GET',
       headers: {
@@ -476,7 +477,7 @@ suite('meetings module database integration tests (#2576)', () => {
         [orgId, meetingId],
       )).rows[0]!.count),
     );
-    expect(auditCountAfterMidRange).toBe(1);
+    expect(auditCountAfterMidRange).toBe(2);
 
     // HTTP 206 Suffix Range (bytes -20)
     const suffixRes = await app.request(`/api/meetings/${meetingId}/audio`, {
@@ -735,5 +736,53 @@ suite('meetings module database integration tests (#2576)', () => {
       (await c.query('SELECT * FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows,
     );
     expect(keysLeft.length).toBe(0);
+  });
+
+  it('10. acceptance: no consent, no upload; ciphertext at rest; a non-reader gets nothing; a shredded key cannot decrypt', async () => {
+    // No consent record: the create is refused, so there is no meeting to attach media to.
+    const noConsent = await rpc('meetings/create', 'recorder', { title: 'No consent', visibility: 'attendees' });
+    expect(noConsent.status).toBe(400);
+    const badConsent = await rpc('meetings/create', 'recorder', { title: 'Bad consent', visibility: 'attendees', consentMethod: 'whatever' });
+    expect(badConsent.status).toBe(400);
+
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Private', visibility: 'attendees', consentMethod: 'in_invite' });
+    expect(createRes.status).toBe(200);
+    const meetingId = String(createRes.body.meetingId);
+    const marker = Buffer.from('PLAINTEXT-MARKER-0123456789'.repeat(20));
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), marker]);
+    const upload = async (name: string) => {
+      const form = new FormData();
+      form.append('kind', 'audio');
+      form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
+      return app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug }, body: form });
+    };
+    // Only the recorder may upload.
+    expect((await upload('otherMember')).status).toBeGreaterThanOrEqual(400);
+    expect((await upload('recorder')).status).toBe(200);
+
+    // The stored bytes are ciphertext: none of the stored objects holds the plaintext marker or starts as an Ogg stream.
+    const stored = [...store.storage.values()].map((o) => Buffer.from(o.bytes));
+    expect(stored.length).toBeGreaterThan(0);
+    for (const bytes of stored) {
+      expect(bytes.includes(marker.subarray(0, 24))).toBe(false);
+    }
+
+    // A member who is not a reader gets nothing over HTTP, and neither does a viewer.
+    for (const name of ['otherMember', 'viewer']) {
+      const res = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug } });
+      expect(res.status, name).toBeGreaterThanOrEqual(400);
+      expect(Buffer.from(await res.arrayBuffer()).includes(marker.subarray(0, 24)), name).toBe(false);
+    }
+    const ok = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    expect(ok.status).toBe(200);
+    expect(Buffer.from(await ok.arrayBuffer()).equals(audio)).toBe(true);
+
+    // Shred only the key (the meeting and the blob stay): the audio no longer decrypts, so the route answers 404.
+    await admin(async (c) => {
+      await c.query('DELETE FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId]);
+    });
+    expect(store.storage.size).toBeGreaterThan(0);
+    const shredded = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    expect(shredded.status).toBe(404);
   });
 });

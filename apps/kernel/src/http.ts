@@ -1670,12 +1670,14 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
+  const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
+  const playbackAudited = new Map<string, number>();
   async function streamMeetingMedia(c: Context, kind: 'audio' | 'video') {
     if (!runtime.installed('meetings')) return c.notFound();
 
     const user = c.get('user');
     const releaseLarge = large ? large.tryAcquire(user.userId) : () => undefined;
-    if (!releaseLarge) throw busy(c);
+    if (!releaseLarge) return problem(c, busy(c));
 
     let dataKey: Buffer | null = null;
     let wrapSubkey: Buffer | null = null;
@@ -1686,24 +1688,24 @@ export function createHttpApp(deps: HttpDeps) {
       const meetingId = c.req.param('id');
 
       const rangeHeader = c.req.header('range');
-      let requestedStart = 0;
-      if (rangeHeader && rangeHeader.startsWith('bytes=')) {
-        const spec = rangeHeader.slice(6).trim();
-        if (!spec.startsWith('-')) {
-          const parts = spec.split('-');
-          const parsed = parseInt(parts[0] ?? '', 10);
-          if (!isNaN(parsed) && parsed > 0) {
-            requestedStart = parsed;
-          }
-        }
-      }
 
-      const queryName = requestedStart > 0
+      // The first request of a (member, meeting, kind) in a window is the audited sensitive read, whatever its Range; the
+      // continuation ranges of the same playback then use the unaudited metadata read, so scrubbing writes one audit row.
+      const auditKey = `${orgId}:${user.userId}:${meetingId}:${kind}`;
+      const now = Date.now();
+      const auditedUntil = playbackAudited.get(auditKey);
+      const continuation = auditedUntil !== undefined && auditedUntil > now;
+      if (!continuation) {
+        if (playbackAudited.size >= 10_000) for (const [k, until] of playbackAudited) if (until <= now) playbackAudited.delete(k);
+        if (playbackAudited.size >= 10_000) playbackAudited.clear();
+        playbackAudited.set(auditKey, now + PLAYBACK_AUDIT_WINDOW_MS);
+      }
+      const queryName = continuation
         ? 'meetings.meeting.media_meta'
         : kind === 'audio'
           ? 'meetings.meeting.audio_read'
           : 'meetings.meeting.video_read';
-      const queryInput = requestedStart > 0 ? { meetingId, kind } : { meetingId };
+      const queryInput = continuation ? { meetingId, kind } : { meetingId };
       const media = await runtime.query<{
         meetingId: string;
         fileId: string;
@@ -1841,17 +1843,27 @@ export function createHttpApp(deps: HttpDeps) {
       const streamDataKey = Buffer.from(dataKey);
       let streamOffset = 0;
       let streamReleased = false;
+      // An idle stream (a client that stopped reading) is closed after 5 minutes; every pull restarts the clock, so a slow
+      // link on a 2 GiB video is not cut off while it is still being read.
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
       const cleanupStream = () => {
         if (streamReleased) return;
         streamReleased = true;
+        if (idleTimer) clearTimeout(idleTimer);
         streamDataKey.fill(0);
         releaseLarge();
       };
-      setTimeout(cleanupStream, 5 * 60_000).unref();
+      const armIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(cleanupStream, 5 * 60_000);
+        idleTimer.unref();
+      };
+      armIdleTimer();
 
       const streamBody = new ReadableStream<Uint8Array>({
         async pull(controller) {
           try {
+            armIdleTimer();
             if (streamOffset >= totalPlaintextLength) {
               controller.close();
               cleanupStream();

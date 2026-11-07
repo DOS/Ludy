@@ -53,29 +53,9 @@ export function MeetingDetailPage() {
     let createdAudioUrl: string | null = null;
     let createdVideoUrl: string | null = null;
 
-    if (meeting?.hasAudio) {
-      setAudioLoading(true);
-      setAudioError(null);
-      apiFetch(`/api/meetings/${meeting.id}/audio`)
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.blob();
-        })
-        .then((blob) => {
-          if (active) {
-            createdAudioUrl = URL.createObjectURL(blob);
-            setAudioUrl(createdAudioUrl);
-          }
-        })
-        .catch((err: unknown) => {
-          if (active) setAudioError(errorMessage(err));
-        })
-        .finally(() => {
-          if (active) setAudioLoading(false);
-        });
-    }
-
-    if (meeting?.hasVideo) {
+    // Video is fetched after the audio finishes: the server allows one large transfer per member at a time.
+    const loadVideo = () => {
+      if (!active || !meeting?.hasVideo) return;
       setVideoLoading(true);
       setVideoError(null);
       apiFetch(`/api/meetings/${meeting.id}/video`)
@@ -95,7 +75,32 @@ export function MeetingDetailPage() {
         .finally(() => {
           if (active) setVideoLoading(false);
         });
+    };
+
+    if (meeting?.hasAudio) {
+      setAudioLoading(true);
+      setAudioError(null);
+      apiFetch(`/api/meetings/${meeting.id}/audio`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.blob();
+        })
+        .then((blob) => {
+          if (active) {
+            createdAudioUrl = URL.createObjectURL(blob);
+            setAudioUrl(createdAudioUrl);
+          }
+        })
+        .catch((err: unknown) => {
+          if (active) setAudioError(errorMessage(err));
+        })
+        .finally(() => {
+          if (active) setAudioLoading(false);
+          loadVideo();
+        });
     }
+
+    if (!meeting?.hasAudio) loadVideo();
 
     return () => {
       active = false;
