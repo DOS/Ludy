@@ -35,7 +35,7 @@ export const subjectKeyReseal = defineCommand({
       if (rows[0]?.done === true) resealed += 1;
     }
     // Key ids and counts only: they name a key without revealing it.
-    ctx.audit({ resealed, skipped: input.items.length - resealed, from_key_ids: [...new Set(input.items.map((i) => i.fromKeyId))].sort(), key_ids: [...new Set(input.items.map((i) => i.keyId))].sort() });
+    ctx.audit({ resealed, unchanged: input.items.length - resealed, from_key_ids: [...new Set(input.items.map((i) => i.fromKeyId))].sort(), key_ids: [...new Set(input.items.map((i) => i.keyId))].sort() });
     return { resealed, skipped: input.items.length - resealed };
   },
 });

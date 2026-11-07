@@ -70,6 +70,9 @@ const openableKeysOf = (broker: CredentialBroker): ReadonlySet<string> | null =>
   return Array.isArray(ids) && ids.every((id) => typeof id === 'string') ? new Set(ids as string[]) : null;
 };
 
+// One session of the worker's own login, for the other reseal passes (the subject keys, #2643): this file is the one listed to hold such a handle (apps/kernel/test/invariant/write-path.test.ts).
+export const workerConnection = (db: Db) => db.connection();
+
 export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome> {
   const outcome: ResealOutcome = { resealed: 0, failed: 0, leftActive: 0, leftInactive: 0, leftWaiting: 0, unopenable: [], skipped: false };
   const current = currentKeyOf(deps.broker);

@@ -9122,6 +9122,9 @@ export const vi = {
       sessions: {
         list: 'Xem các phiên đăng nhập',
       },
+      subject_key: {
+        reseal: 'Mã hóa lại khóa dữ liệu của người đã niêm phong sau khi đổi khóa',
+      },
       stream: {
         check: 'Kiểm tra lại kết nối cập nhật trực tiếp',
       },

@@ -11,6 +11,7 @@ import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { SUBJECT_WRAP_INFO, SubjectVault, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { SUBJECT_KEY_RESEAL_BATCH } from '@crove/kernel';
+import { workerConnection } from './credential-reseal.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.subject_key.reseal' };
 const LOCK_KEY = 'crove.subject-key-reseal';
@@ -47,7 +48,7 @@ export function subjectVaultOfBroker(broker: CredentialBroker | undefined): Subj
 export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<SubjectKeyResealOutcome> {
   const outcome: SubjectKeyResealOutcome = { resealed: 0, failed: 0, left: 0, unopenable: [], skipped: false };
   const current = deps.vault.keyId;
-  return deps.workerDb.connection().execute(async (db) => {
+  return workerConnection(deps.workerDb).execute(async (db) => {
     const { rows: lock } = await sql<{ locked: boolean }>`SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended(${LOCK_KEY}, 0)) AS locked`.execute(db);
     if (!lock[0]?.locked) return { ...outcome, skipped: true };
     try {
