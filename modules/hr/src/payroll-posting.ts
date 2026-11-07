@@ -7,7 +7,7 @@
 //
 // No model call is made: everything here is deterministic over stored facts, and the posting works with AI off.
 import { PAYROLL_REGIMES, PAYROLL_POSTING_COMMAND, zHrPostingRequest, JOURNAL_VOUCHER_KIND, type PayrollPostingProposal } from '@crove/kernel-contract';
-import { PAY_FUNCTIONS, PostingRefusedError, buildPosting, money, toMoney, type PayFunction, type PayrollRegime, type PostingLine } from '@crove/l10n-vn';
+import { PAY_FUNCTIONS, PAYROLL_POSTING_MAPS, PostingRefusedError, buildPosting, money, toMoney, type PayFunction, type PayrollRegime, type PostingLine } from '@crove/l10n-vn';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand } from '@crove/kernel-runtime';
@@ -58,6 +58,8 @@ export const prepareRunPosting = defineCommand({
       .select(['id', 'legal_entity_id', 'month', 'status', 'approval'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', runId)
+      // The run's row is held to the end of the request, so two requests for the same run take turns: the second sees the proposal the first made and is refused below.
+      .forUpdate()
       .executeTakeFirst();
     if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
     if (run.status !== 'approved') throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới hạch toán được');
@@ -98,8 +100,9 @@ export const prepareRunPosting = defineCommand({
       const employer = funds.reduce((acc, f) => acc.plus(f.employer), money(0));
       // The split of the funds must add to the line's own insurance: the entry rests on one fact, not two.
       if (!employee.equals(money(l.employee_insurance)) || !employer.equals(money(l.employer_insurance))) throw mismatch('bảo hiểm');
-      const payFunction = (l.employment_id ? functionOf.get(l.employment_id) : undefined) ?? 'admin';
-      if (!(PAY_FUNCTIONS as readonly string[]).includes(payFunction)) throw mismatch('bộ phận hạch toán');
+      // A line without its employment, or one whose employment is gone, has no cost department on record: the entry never falls back to one.
+      const payFunction = l.employment_id ? functionOf.get(l.employment_id) : undefined;
+      if (payFunction === undefined || !(PAY_FUNCTIONS as readonly string[]).includes(payFunction)) throw mismatch('bộ phận hạch toán');
       const d = deductionsOf(l.breakdown);
       return {
         payFunction: payFunction as PayFunction,
@@ -117,6 +120,10 @@ export const prepareRunPosting = defineCommand({
     const date = monthEnd(run.month);
     const regime = (await ctx.run<{ regime: PayrollRegime }>('finance.payroll_posting.regime', { legalEntityId: run.legal_entity_id, date })).regime;
     if (!(PAYROLL_REGIMES as readonly string[]).includes(regime)) throw mismatch('chế độ kế toán');
+    // The gate of the pay run's approval, for the account map: while the accountant has not confirmed the map of this chart (#2535), nothing is posted (finance's record command holds the same gate).
+    if (PAYROLL_POSTING_MAPS[regime].status !== 'confirmed') {
+      throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime });
+    }
 
     let result;
     try {

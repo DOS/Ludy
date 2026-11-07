@@ -8,6 +8,7 @@
 //   has such a voucher (crove_finance.ledger_effect_recorded) before it moves to 'executed'.
 // No finance code reads a payroll table: the run's id is the voucher's source, carried in the payload, and the lines are one per account (the detail stays on the run). A posting is
 // corrected by reversing its entry (finance.journal.reverse) while the period lock allows it.
+import { PAYROLL_POSTING_MAPS } from '@crove/l10n-vn';
 import { z } from 'zod';
 import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_POSTING_COMMAND, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -45,6 +46,10 @@ interface PostingLines {
 // Every check of a pay run's entry, when it is asked for and again when it is posted: its shape (balanced, one side a line), the entity's chart is the regime the HR module built it for, its
 // accounts are in that chart (the org's chart and in use for TT133; the regime's own chart otherwise: the accounts of TT99 are not in the TT133 table), and the month is not closed.
 async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promise<{ legalEntityId: string; total: string }> {
+  // The accountant has not confirmed this chart's map of pay accounts (#2535): nothing is requested or posted from it. The HR module holds the same gate when it builds the proposal.
+  if (PAYROLL_POSTING_MAPS[input.regime as keyof typeof PAYROLL_POSTING_MAPS]?.status !== 'confirmed') {
+    throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime: input.regime });
+  }
   const problems = journalVoucherProblems(input.lines.map((l) => ({ ...l, partyId: null })));
   if (problems.length > 0) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không hợp lệ: các dòng phải cân và mỗi dòng ghi một bên', { problems });
   const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
@@ -126,7 +131,9 @@ export const recordPayrollPosting = defineCommand({
     // A pay run's posting names no party: the people are on the run, not in the books.
     if (payload.lines.some((l) => l.party !== null)) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Bút toán lương không ghi theo đối tượng', { problems: ['PARTY_NOT_ALLOWED'] });
     const lines = payload.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit }));
-    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId ?? '', regime: payload.regime, lines });
+    // The payload names its entity: it is built so, and one without is refused, never read as the default.
+    if (!payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán lương không nêu pháp nhân', { what: 'legalEntityId' });
+    const checked = await checkPostingLines(ctx, { date: payload.date, legalEntityId: payload.legalEntityId, regime: payload.regime, lines });
     if (checked.total !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }

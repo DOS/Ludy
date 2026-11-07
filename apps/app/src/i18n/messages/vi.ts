@@ -8063,6 +8063,7 @@ export const vi = {
       HR_POSTING_DONE: 'Bảng lương này đã được hạch toán',
       HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
       HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
+      HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
       HR_RUN_NOT_DRAFT: 'Bảng lương đã được duyệt, không sửa được nữa; sửa sai bằng dòng điều chỉnh ở tháng sau',
       HR_RUN_EXISTS: 'Tháng này đã có bảng lương',
       HR_RUN_EMPTY: 'Bảng lương chưa có dòng nào để duyệt',
