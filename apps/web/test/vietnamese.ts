@@ -9,7 +9,6 @@ const ALLOWED: ReadonlyArray<readonly [phrase: string, reason: string]> = [
   ['Tân Hồng', 'the example rice cooperative, short name (also "HTX Tân Hồng")'],
   ['Gạo Sạch Miền Tây', 'the example company, its legal name in the footer of the sample document'],
   ['Gạo Sạch Mekong', 'the example company'],
-  ['Gạo ST25 vụ mới đã về', 'the example company’s social post, written for its Vietnamese customers'],
   ['Công ty Thực phẩm An Phát', 'an example customer of the Engage page, a food company, named in Vietnamese'],
   ['Cửa hàng Hoa Mai', 'an example customer of the Engage page, a shop, named in Vietnamese'],
   ['Nhà hàng Sen Vàng', 'an example customer of the Engage page, a restaurant, named in Vietnamese'],
@@ -17,7 +16,6 @@ const ALLOWED: ReadonlyArray<readonly [phrase: string, reason: string]> = [
   ['Đại lý Phương Nam', 'an example customer of the Engage page, a rice dealer, named in Vietnamese'],
   ['Chị Lan', 'the example chief accountant, named with a Vietnamese honorific'],
   ['Chị Hoa', 'the example staff member, named with a Vietnamese honorific'],
-  ['Anh Tuấn', 'the example director, named with a Vietnamese honorific'],
 ];
 
 // A letter with a Vietnamese mark: a base letter followed by a combining diacritic once decomposed, or đ.

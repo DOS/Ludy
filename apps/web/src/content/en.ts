@@ -27,7 +27,8 @@ export const en: Dictionary = {
     closeMenu: 'Close menu',
   },
   hero: {
-    title: 'The all-in-one Business OS, with an AI team for every department.',
+    title: 'All-in-one Business OS',
+    tagline: 'with an AI team for every department.',
     lead: `${N.gm} runs the team: ${N.finance} keeps your books, ${N.sales} works your inbox, customers and sales, ${N.marketing} runs marketing. You approve.`,
     primary: 'Self-host for free',
     secondary: 'View the source on GitHub',
@@ -198,7 +199,7 @@ export const en: Dictionary = {
   },
   agents: {
     chartTitle: 'Org chart',
-    chartSub: 'Gạo Sạch Mekong, example data',
+    chartSub: 'Mekong Clean Rice, example data',
     legendPerson: 'Person',
     legendAgent: 'AI coworker',
     hint: 'Pick a position to see what is waiting.',
@@ -207,17 +208,17 @@ export const en: Dictionary = {
     reportsTo: 'Reports to',
     waitingFor: 'Waiting',
     nodes: [
-      { id: 'tuan', kind: 'person', name: 'Anh Tuấn', role: 'Director', initials: 'AT', chip: null, budget: null },
-      { id: 'lan', kind: 'person', name: 'Chị Lan', role: 'Chief accountant', initials: 'L', chip: { tone: 'ok', label: 'Approved inv. 1284' }, budget: null },
-      { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
-      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Chị Lan', initials: '', chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
+      { id: 'tuan', kind: 'person', name: 'Tuan', role: 'Director', initials: 'T', chip: null, budget: null },
+      { id: 'lan', kind: 'person', name: 'Lan', role: 'Chief accountant', initials: 'L', chip: { tone: 'ok', label: 'Approved inv. 1284' }, budget: null },
+      { id: 'minh', kind: 'person', name: 'Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
+      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Lan', initials: '', chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
       { id: 'tasks', kind: 'tasks', name: 'Tasks', role: '3 open, 1 taken by an agent', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Reports to Anh Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
+      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Reports to Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
         kicker: 'Person',
-        title: 'Anh Tuấn',
+        title: 'Tuan',
         sub: 'Director. Sets each agent’s budget and risk limit.',
         items: [
           { title: 'Agent budget, October', amount: '₫3,000,000', sub: '₫1,550,000 used', tone: 'neutral', chip: 'Within limit', note: '' },
@@ -226,28 +227,28 @@ export const en: Dictionary = {
       },
       lan: {
         kicker: 'Person',
-        title: 'Chị Lan',
+        title: 'Lan',
         sub: `Chief accountant. Approves ${N.finance}’s entries.`,
         items: [
-          { title: 'Invoice 00001284', amount: '₫32,832,000', sub: 'Công ty CP Bao Bì Phú Thịnh', tone: 'ok', chip: 'Approved with two-factor code', note: '16:05 14/10/2026' },
-          { title: 'Rice purchase slip', amount: '₫148,500,000', sub: 'Hợp tác xã Tân Hồng', tone: 'warn', chip: 'No authority code', note: `Escalated by ${N.finance}, waiting for her` },
+          { title: 'Invoice 00001284', amount: '₫32,832,000', sub: 'Phu Thinh Packaging JSC', tone: 'ok', chip: 'Approved with two-factor code', note: '16:05 14/10/2026' },
+          { title: 'Rice purchase slip', amount: '₫148,500,000', sub: 'Tan Hong Cooperative', tone: 'warn', chip: 'No authority code', note: `Escalated by ${N.finance}, waiting for her` },
         ],
       },
       minh: {
         kicker: 'Person',
-        title: 'Anh Minh',
+        title: 'Minh',
         sub: `Marketing. Approves ${N.marketing}’s posts before they go out.`,
         items: [
-          { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for him', note: '' },
+          { title: 'New-crop ST25 rice has arrived', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for him', note: '' },
         ],
       },
       acc: {
         kicker: 'AI coworker',
         title: `${N.finance}`,
-        sub: 'Reports to Chị Lan (chief accountant). May propose, may not post.',
+        sub: 'Reports to Lan (chief accountant). May propose, may not post.',
         items: [
-          { title: 'Invoice 00001284', amount: '₫32,832,000', sub: 'Công ty CP Bao Bì Phú Thịnh', tone: 'ok', chip: '5/5 checks passed', note: 'Dr 152, 1331 / Cr 331' },
-          { title: 'Rice purchase slip', amount: '₫148,500,000', sub: 'Hợp tác xã Tân Hồng', tone: 'warn', chip: 'No authority code', note: 'Escalated to Chị Lan' },
+          { title: 'Invoice 00001284', amount: '₫32,832,000', sub: 'Phu Thinh Packaging JSC', tone: 'ok', chip: '5/5 checks passed', note: 'Dr 152, 1331 / Cr 331' },
+          { title: 'Rice purchase slip', amount: '₫148,500,000', sub: 'Tan Hong Cooperative', tone: 'warn', chip: 'No authority code', note: 'Escalated to Lan' },
           { title: 'EVN electricity, September', amount: '₫1,946,780', sub: 'Acc 6422', tone: 'ok', chip: 'Ready to approve', note: '' },
         ],
       },
@@ -256,17 +257,17 @@ export const en: Dictionary = {
         title: 'Tasks',
         sub: 'Work for people and agents, with a due date and an owner.',
         items: [
-          { title: 'Reconcile payables with Bao Bì Phú Thịnh', amount: '', sub: `Assigned to ${N.finance}, due 20/10/2026`, tone: 'accent', chip: 'Ly working', note: '' },
-          { title: 'Add the authority code to the HTX Tân Hồng voucher', amount: '', sub: 'Assigned to Chị Lan, due 21/10/2026', tone: 'neutral', chip: 'Open', note: '' },
-          { title: 'Photograph the ST25 rice for the post', amount: '', sub: 'Assigned to Anh Minh, due 18/10/2026', tone: 'neutral', chip: 'Open', note: '' },
+          { title: 'Reconcile payables with Phu Thinh Packaging', amount: '', sub: `Assigned to ${N.finance}, due 20/10/2026`, tone: 'accent', chip: `${N.finance} working`, note: '' },
+          { title: 'Add the authority code to the Tan Hong Co-op voucher', amount: '', sub: 'Assigned to Lan, due 21/10/2026', tone: 'neutral', chip: 'Open', note: '' },
+          { title: 'Photograph the ST25 rice for the post', amount: '', sub: 'Assigned to Minh, due 18/10/2026', tone: 'neutral', chip: 'Open', note: '' },
         ],
       },
       social: {
         kicker: 'AI coworker',
         title: `${N.marketing}`,
-        sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, and every post waits for a person. Publishing to channels: built, not yet tried with a real account.',
+        sub: 'Reports to Minh (marketing). Drafts and schedules posts, and every post waits for a person. Publishing to channels: built, not yet tried with a real account.',
         items: [
-          { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for Anh Minh', note: '' },
+          { title: 'New-crop ST25 rice has arrived', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for Minh', note: '' },
         ],
       },
     },
@@ -291,11 +292,11 @@ export const en: Dictionary = {
       rows: [
         { task: 'Read invoices, books and the chart of accounts', level: 0, label: 'On its own' },
         { task: 'Propose an entry when all 5 checks pass', level: 1, label: 'Proposes' },
-        { task: 'Propose an entry with a warning, such as no authority code', level: 2, label: 'Chị Lan approves' },
-        { task: 'Schedule a post', level: 2, label: 'Anh Minh approves' },
+        { task: 'Propose an entry with a warning, such as no authority code', level: 2, label: 'Lan approves' },
+        { task: 'Schedule a post', level: 2, label: 'Minh approves' },
         { task: 'Post an entry to the ledger', level: 3, label: 'Approval and code' },
       ],
-      note: 'Example configuration. Limits are set per agent, by Anh Tuấn.',
+      note: 'Example configuration. Limits are set per agent, by Tuan.',
       neverTitle: 'Agents never touch',
       never: [
         { title: 'Posted ledger entries', body: 'No edits, no deletes. Mistakes are fixed by a person with an adjusting entry.' },
