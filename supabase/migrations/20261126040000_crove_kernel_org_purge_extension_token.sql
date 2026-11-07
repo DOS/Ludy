@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2582): the org purge deletes the org's Ludy extension tokens and one-time codes with the org (crove_kernel.extension_token, extension_auth_code). Idempotent; applied files stay untouched.
--- This is the body of 20261125010000 (the newest) with one change: the two tables join the list of tables deleted whole. Its signature, owner, grants and every other list and step are as they were.
+-- This is the body of 20261126010000 (the newest) with one change: the two tables join the list of tables deleted whole. Its signature, owner, grants and every other list and step are as they were.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -29,7 +29,7 @@ DECLARE
   v_conversation_keys text[];
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
-    'crove_hr.payroll_dependent', 'crove_hr.payroll_employee',
+    'crove_hr.payroll_bank_template', 'crove_hr.payroll_dependent', 'crove_hr.payroll_employee',
     'crove_meetings.media_key', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
