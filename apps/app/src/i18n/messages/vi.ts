@@ -8688,6 +8688,7 @@ export const vi = {
         get: 'Xem bản nháp hóa đơn bán ra',
         list: 'Xem các bản nháp hóa đơn bán ra',
         save: 'Lưu bản nháp hóa đơn bán ra',
+        suggest_source: 'Tìm khách hàng và thuế suất gần đây cho bản nháp hóa đơn bán ra',
       },
       marketplace: {
         assign: 'Gán dòng đơn hàng của sàn cho mặt hàng',

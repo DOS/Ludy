@@ -8691,6 +8691,7 @@ export const en = {
         get: 'View a sales invoice draft',
         list: 'View the sales invoice drafts',
         save: 'Save a sales invoice draft',
+        suggest_source: 'Look up customers and recent VAT rates for a sales invoice draft',
       },
       marketplace: {
         assign: 'Assign a marketplace order line to an item',
