@@ -38,6 +38,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
+import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
@@ -227,6 +228,8 @@ interface YearArchiveJob {
   requestCommandId: string | null;
 }
 const YEAR_ARCHIVE_RETRY_LIMIT = 3;
+// How often the meetings maintenance runs (#2579): shred references, and the objects and file rows of deleted meetings.
+const MEETINGS_SWEEP_MS = 60_000;
 
 interface PortalListJob {
   orgId: string;
@@ -937,6 +940,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       console.log(`[retention] conversation_threads=${conversations}`);
     } finally {
       // Each catches its own errors; they run even when a database purge failed.
+      // Meeting audio, video and text past the periods stamped on them (#2579), each in its meeting's own org. It runs even when a database purge above
+      // failed (a shred is not to wait for an unrelated failure), and its own failure is alerted and never stops the rest.
+      if (deps.runtime.installed('meetings')) {
+        await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
+          opsAlert('[meetings-retention] ALERT the nightly shred failed; the error is in the worker log', error);
+        });
+      }
       await sweepStaging(deps.store);
       await sweepInboundBlobs(deps.store, deps.workerDb);
       await expireExports(deps.store, deps.runtime, exportRetentionDays);
@@ -1770,6 +1780,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (resealTimer) {
     resealTimer.unref();
     void resealSweep();
+  }
+
+  // Meetings (#2579): the shred references of meetings a person deleted are written to the archive store, and the ciphertext objects and file rows of every
+  // deleted or expired meeting are removed, every minute; after a restore, the references delete again what the restore brought back (ADR-0017 section 8).
+  // Each pass catches its own errors: a store that is down is tried again on the next one.
+  let meetingsMaintaining = false;
+  const shredRefSync = deps.archive ? createShredRefSync({ workerDb: deps.workerDb, store: deps.archive.store }) : null;
+  const meetingsMaintenance = async () => {
+    if (meetingsMaintaining) return;
+    meetingsMaintaining = true;
+    try {
+      await shredRefSync?.pass();
+      await sweepMeetingMedia({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store });
+    } catch (error) {
+      console.error('[meetings-retention] sweep', error instanceof Error ? error.name : typeof error);
+    } finally {
+      meetingsMaintaining = false;
+    }
+  };
+  const meetingsTimer = deps.runtime.installed('meetings') ? setInterval(() => void meetingsMaintenance(), MEETINGS_SWEEP_MS) : null;
+  if (meetingsTimer) {
+    meetingsTimer.unref();
+    // At start: whatever a restore brought back is deleted again before the first sweep, which then removes what that left.
+    void (async () => {
+      if (deps.archive) {
+        await replayShreds({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.archive.store }).catch((error: unknown) => {
+          opsAlert('[shred-replay] ALERT the replay of the shred references failed at worker start; run main.ts shred-replay', error);
+        });
+      }
+      // A restore also brings back what the retention shredded since its point: shred it again now, not at the next nightly run.
+      await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => console.error('[meetings-retention]', error instanceof Error ? error.name : typeof error));
+      await meetingsMaintenance();
+    })();
   }
 
   // Channel tokens are renewed before they expire (S6.4), whatever module uses the channel.
@@ -2614,6 +2657,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (refreshTimer) clearInterval(refreshTimer);
     if (calendarTimer) clearInterval(calendarTimer);
     if (resealTimer) clearInterval(resealTimer);
+    if (meetingsTimer) clearInterval(meetingsTimer);
     if (metricsTimer) clearInterval(metricsTimer);
     if (sizeTimer) clearInterval(sizeTimer);
     if (holdTimer) clearInterval(holdTimer);

@@ -35,7 +35,8 @@ export const zMeetingSummary = z.strictObject({
   lengthSeconds: z.number().nullable(),
   keepVideo: z.boolean(),
   audioRetentionDate: z.string(),
-  textRetentionDate: z.string(),
+  // null: the org keeps text until a person deletes the meeting.
+  textRetentionDate: z.string().nullable(),
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
   readersCount: z.number(),
@@ -127,3 +128,47 @@ export const zMeetingMediaKeyReseal = z.strictObject({
   fromWrappedKeyHex: z.string().regex(/^[0-9a-f]{120}$/),
   wrappedKeyHex: z.string().regex(/^[0-9a-f]{120}$/),
 });
+
+// The org's three retention settings (ADR-0047 point 7, plan section 9), stamped on a meeting when it is recorded: audio kept N days (0: deleted right after
+// the transcript, which is 7 days while no transcript exists), a kept video 7 or 30 days and never longer than the audio, text 90, 365 or 730 days or
+// until deleted (0).
+export const MEETING_AUDIO_RETENTION_CHOICES = [0, 7, 30, 90] as const;
+export const MEETING_VIDEO_RETENTION_CHOICES = [7, 30] as const;
+export const MEETING_TEXT_RETENTION_CHOICES = [0, 90, 365, 730] as const;
+export const MEETING_RETENTION_DEFAULTS = { audioRetentionDays: 30, videoRetentionDays: 7, textRetentionDays: 365 } as const;
+
+const zChoice = <T extends readonly [number, number, ...number[]]>(choices: T) =>
+  z.union(choices.map((n) => z.literal(n)) as unknown as [z.ZodLiteral<number>, z.ZodLiteral<number>, ...z.ZodLiteral<number>[]]);
+
+export const zMeetingSettings = z.strictObject({
+  audioRetentionDays: zChoice(MEETING_AUDIO_RETENTION_CHOICES),
+  videoRetentionDays: zChoice(MEETING_VIDEO_RETENTION_CHOICES),
+  textRetentionDays: zChoice(MEETING_TEXT_RETENTION_CHOICES),
+});
+export type MeetingSettings = z.infer<typeof zMeetingSettings>;
+
+// The video period is never longer than the audio's (0 counts as 7 days).
+export function meetingSettingsProblem(s: MeetingSettings): string | null {
+  return s.videoRetentionDays > Math.max(s.audioRetentionDays, 7) ? 'video_longer_than_audio' : null;
+}
+
+export const zMeetingSettingsSet = zMeetingSettings.refine((s) => meetingSettingsProblem(s) === null, { message: 'video_longer_than_audio', path: ['videoRetentionDays'] });
+export type MeetingSettingsSet = z.infer<typeof zMeetingSettingsSet>;
+
+export const zMeetingSettingsGet = z.strictObject({});
+
+// System commands of the nightly retention and the shred replay (worker only).
+export const zMeetingRetentionShred = z.strictObject({
+  meetingId: zId,
+  kind: z.enum(['audio', 'video', 'text']),
+});
+export type MeetingRetentionShred = z.infer<typeof zMeetingRetentionShred>;
+
+export const zMeetingShredReplay = z.strictObject({ meetingId: zId });
+export type MeetingShredReplay = z.infer<typeof zMeetingShredReplay>;
+
+export const zMeetingMediaDiscard = z.strictObject({ fileId: zId });
+export type MeetingMediaDiscard = z.infer<typeof zMeetingMediaDiscard>;
+
+export const zMeetingOrphanKeys = z.strictObject({ fileIds: z.array(zId).min(1).max(200) });
+export type MeetingOrphanKeys = z.infer<typeof zMeetingOrphanKeys>;

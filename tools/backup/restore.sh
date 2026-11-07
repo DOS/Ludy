@@ -493,6 +493,13 @@ if [ "$STORAGE" = s3 ] && [ "$RESTORE_FILES" = copy ]; then
     log "exports: no org has an export to re-record"
   fi
 fi
+# Meetings a person deleted since the backup point came back with their keys: the shred references of the archive store delete them again, and the
+# retention shreds again what its dates passed, before the API opens (ADR-0047 point 7, docs/runbooks/worm-archive.md). A role that exits non-zero (a
+# reference that could not be replayed, or the archive not reachable) stops the restore with the stack not started; run it again once it is fixed.
+if [ "$RESTORE_ARCHIVE" = check ]; then
+  STEP="deleting again the meetings the shred references name (main.ts shred-replay; docs/runbooks/worm-archive.md)"
+  dc run --rm --no-deps -T "$worker" shred-replay </dev/null
+fi
 STEP="starting the stack"
 dc up -d
 STEP="waiting for /readyz on $api"
