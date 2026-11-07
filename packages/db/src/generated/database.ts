@@ -86,6 +86,7 @@ export interface CroveFinanceSchema {
 }
 
 export interface CroveHrSchema {
+  'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
@@ -1294,6 +1295,18 @@ export interface FinanceVendorAccountRuleTable {
   party_id: string;
   debit_account: string;
   confirmed_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.payroll_bank_template */
+export interface HrPayrollBankTemplateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  layout: ColumnType<unknown, string, string>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
