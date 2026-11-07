@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import type { ConsentMethod, MeetingLanguage, MeetingSummary, MeetingVisibility } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -45,6 +45,10 @@ export function MeetingsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // A failed upload leaves the meeting created: a retry keeps it and sends only the media that has not gone yet.
+  const createdIdRef = useRef<string | null>(null);
+  const uploadedRef = useRef<Set<'audio' | 'video'>>(new Set());
+
   const meetingsQuery = useQuery(orpc.meetings.list.queryOptions({ input: {} }));
 
   const meetings = (meetingsQuery.data ?? []).filter((m: MeetingSummary) => {
@@ -63,6 +67,8 @@ export function MeetingsPage() {
     setVideoFile(null);
     setFormError(null);
     setSubmitting(false);
+    createdIdRef.current = null;
+    uploadedRef.current = new Set();
   };
 
   const handleCreate = async (e: FormEvent) => {
@@ -70,38 +76,44 @@ export function MeetingsPage() {
     setFormError(null);
 
     if (!title.trim()) {
-      setFormError('Vui lòng nhập tên cuộc họp');
+      setFormError(t('form.titleRequired'));
       return;
     }
     if (!consentMethod) {
-      setFormError('Vui lòng chọn phương thức ghi nhận đồng thuận');
+      setFormError(t('form.consentMethodRequired'));
       return;
     }
     if (!consentAgreed) {
-      setFormError('Bạn bắt buộc phải xác nhận sự đồng thuận của người tham gia');
+      setFormError(t('form.consentRequired'));
       return;
     }
 
     try {
       setSubmitting(true);
-      const created = await orpc.meetings.create.call({
-        title: title.trim(),
-        language,
-        visibility,
-        keepVideo,
-        consentMethod,
-      });
+      if (!createdIdRef.current) {
+        const made = await orpc.meetings.create.call({
+          title: title.trim(),
+          language,
+          visibility,
+          keepVideo,
+          consentMethod,
+        });
+        createdIdRef.current = made.meetingId;
+      }
+      const created = { meetingId: createdIdRef.current };
 
-      if (audioFile) {
+      if (audioFile && !uploadedRef.current.has('audio')) {
         await uploadMeetingMedia(created.meetingId, 'audio', audioFile);
+        uploadedRef.current.add('audio');
       }
 
-      if (keepVideo && videoFile) {
+      if (keepVideo && videoFile && !uploadedRef.current.has('video')) {
         await uploadMeetingMedia(created.meetingId, 'video', videoFile);
+        uploadedRef.current.add('video');
       }
 
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-      toast('Đã tạo cuộc họp và lưu trữ bản ghi mã hóa thành công', 'success');
+      toast(t('created'), 'success');
       setModalOpen(false);
       resetForm();
       void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: created.meetingId } });
@@ -126,8 +138,10 @@ export function MeetingsPage() {
       <NotesSubnav slug={slug} active="meetings" />
 
       <div className="flex items-center gap-4">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-sm space-y-1">
+          <Label htmlFor="meeting-search">{t('searchLabel')}</Label>
           <Input
+            id="meeting-search"
             type="search"
             placeholder={t('searchPlaceholder')}
             value={search}
@@ -143,7 +157,7 @@ export function MeetingsPage() {
       ) : meetings.length === 0 ? (
         <Empty
           title={t('empty')}
-          hint="Ghi lại cuộc họp đầu tiên để lưu giữ bản ghi âm và video được mã hóa an toàn."
+          hint={t('emptyHint')}
           action={
             <Button onClick={() => setModalOpen(true)}>
               {t('new')}
@@ -159,19 +173,19 @@ export function MeetingsPage() {
               params={{ slug, id: m.id }}
               className="flex items-center justify-between p-4 transition-colors hover:bg-muted/50 focus-visible:bg-muted/50"
             >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-foreground">{m.title}</span>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 break-words font-semibold text-foreground">{m.title}</span>
                   <Badge variant={STATUS_VARIANTS[m.status] ?? 'outline'}>{m.status}</Badge>
                   <Badge variant="outline">
-                    {m.visibility === 'org' ? 'Toàn tổ chức' : 'Người tham gia'}
+                    {m.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}
                   </Badge>
-                  {m.hasAudio && <Badge variant="secondary">Audio</Badge>}
-                  {m.hasVideo && <Badge variant="secondary">Video</Badge>}
+                  {m.hasAudio && <Badge variant="secondary">{t('badgeAudio')}</Badge>}
+                  {m.hasVideo && <Badge variant="secondary">{t('badgeVideo')}</Badge>}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span>{f.date(m.createdAt)}</span>
-                  <span>Lưu âm thanh đến: {m.audioRetentionDate}</span>
+                  <span>{t('audioKeptUntil', { date: m.audioRetentionDate })}</span>
                 </div>
               </div>
             </Link>
@@ -180,7 +194,12 @@ export function MeetingsPage() {
       )}
 
       {/* New Meeting Modal with Mandatory Consent Gate */}
-      <Dialog open={modalOpen} onOpenChange={(open) => { setModalOpen(open); if (!open) resetForm(); }}>
+      <Dialog open={modalOpen} onOpenChange={(open) => {
+          // A running create-and-upload is not dismissed: its result would land on a later draft.
+          if (!open && submitting) return;
+          setModalOpen(open);
+          if (!open) resetForm();
+        }}>
         <DialogContent className="max-w-lg" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>{t('newModalTitle')}</DialogTitle>
@@ -309,7 +328,7 @@ export function MeetingsPage() {
                 {t('form.cancel')}
               </DialogClose>
               <Button type="submit" disabled={!consentAgreed || !consentMethod || submitting} loading={submitting}>
-                {submitting ? t('form.submitting') : t('form.submit')}
+                {t('form.submit')}
               </Button>
             </DialogFooter>
           </form>

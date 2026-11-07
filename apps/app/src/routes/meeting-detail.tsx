@@ -7,12 +7,15 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
+import { Label } from '@crove/ui/components/label';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
+
+const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting' } as const;
 
 const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
   ready: 'default',
@@ -30,6 +33,8 @@ export function MeetingDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [newReaderUserId, setNewReaderUserId] = useState('');
   const [readerError, setReaderError] = useState<string | null>(null);
+  // The meeting the owner confirmed deleting: a step-up retry deletes that one and no other.
+  const [pendingOwnerDeleteId, setPendingOwnerDeleteId] = useState<string | null>(null);
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -51,6 +56,13 @@ export function MeetingDetailPage() {
 
   useEffect(() => {
     let active = true;
+    // A new meeting starts clean: no player on a revoked URL, no error of the last one.
+    setAudioUrl(null);
+    setVideoUrl(null);
+    setAudioError(null);
+    setVideoError(null);
+    setAudioLoading(false);
+    setVideoLoading(false);
     let createdAudioUrl: string | null = null;
     let createdVideoUrl: string | null = null;
 
@@ -110,11 +122,17 @@ export function MeetingDetailPage() {
     };
   }, [meeting?.id, meeting?.hasAudio, meeting?.hasVideo]);
 
+  // Leaving a meeting drops a pending owner deletion and its step-up prompt.
+  useEffect(() => {
+    setPendingOwnerDeleteId(null);
+    setDeleteOpen(false);
+  }, [id]);
+
   const deleteMutation = useMutation({
     mutationFn: () => orpc.meetings.delete.call({ meetingId: id }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-      toast('Đã xóa cuộc họp và tiêu hủy khóa giải mã vĩnh viễn', 'success');
+      toast(t('detail.deleted'), 'success');
       void navigate({ to: '/o/$slug/meetings', params: { slug } });
     },
     onError: (err) => {
@@ -123,10 +141,10 @@ export function MeetingDetailPage() {
   });
 
   const ownerDeleteMutation = useMutation({
-    mutationFn: () => orpc.meetings.ownerDelete.call({ meetingId: id }),
+    mutationFn: (meetingId: string) => orpc.meetings.ownerDelete.call({ meetingId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-      toast('Đã thực hiện xóa tuân thủ và tiêu hủy khóa giải mã vĩnh viễn', 'success');
+      toast(t('detail.ownerDeleted'), 'success');
       void navigate({ to: '/o/$slug/meetings', params: { slug } });
     },
     onError: (err) => {
@@ -142,7 +160,7 @@ export function MeetingDetailPage() {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
       setNewReaderUserId('');
       setReaderError(null);
-      toast('Đã thêm người xem cuộc họp', 'success');
+      toast(t('detail.readerAdded'), 'success');
     },
     onError: (err) => {
       setReaderError(errorMessage(err));
@@ -154,7 +172,7 @@ export function MeetingDetailPage() {
       orpc.meetings.readers.remove.call({ meetingId: id, userId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-      toast('Đã xóa quyền xem cuộc họp', 'success');
+      toast(t('detail.readerRemoved'), 'success');
     },
     onError: (err) => {
       toast(errorMessage(err), 'error');
@@ -171,7 +189,7 @@ export function MeetingDetailPage() {
         <Link to="/o/$slug/meetings" params={{ slug }} className="text-sm text-link underline">
           {t('detail.back')}
         </Link>
-        <ErrorText>{errorMessage(meetingQuery.error ?? new Error('Không tìm thấy cuộc họp'))}</ErrorText>
+        <ErrorText>{errorMessage(meetingQuery.error ?? new Error(t('detail.notFound')))}</ErrorText>
       </div>
     );
   }
@@ -194,19 +212,19 @@ export function MeetingDetailPage() {
           </Button>
         ) : isOwner ? (
           <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
-            Xóa tuân thủ (Owner)
+            {t('detail.ownerDelete')}
           </Button>
         ) : null}
       </div>
 
       <PageHeader
         title={meeting.title}
-        subtitle={`Người ghi: ${meeting.recorderUserId} • Tạo lúc: ${f.date(meeting.createdAt)}`}
+        subtitle={t('detail.recordedBy', { user: meeting.recorderUserId, date: f.date(meeting.createdAt) })}
         actions={
           <div className="flex items-center gap-2">
             <Badge variant={STATUS_VARIANTS[meeting.status] ?? 'outline'}>{meeting.status}</Badge>
             <Badge variant="outline">
-              {meeting.visibility === 'org' ? 'Toàn tổ chức' : 'Người tham gia'}
+              {meeting.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}
             </Badge>
           </div>
         }
@@ -255,7 +273,7 @@ export function MeetingDetailPage() {
         )}
 
         {!meeting.hasAudio && !meeting.hasVideo && (
-          <Empty title="Chưa có bản ghi âm hoặc video cho cuộc họp này" />
+          <Empty title={t('detail.noMedia')} />
         )}
       </div>
 
@@ -267,23 +285,23 @@ export function MeetingDetailPage() {
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <div>
-              <span className="font-semibold text-muted-foreground">Hình thức: </span>
-              <span>{meeting.consentMethod}</span>
+              <span className="font-semibold text-muted-foreground">{t('detail.consentMethodLabel')}: </span>
+              <span>{t(`form.${CONSENT_KEYS[meeting.consentMethod]}`)}</span>
             </div>
             <div>
-              <span className="font-semibold text-muted-foreground">Phiên bản thông báo: </span>
+              <span className="font-semibold text-muted-foreground">{t('detail.consentNoticeVersion')}: </span>
               <span>{meeting.consentNoticeVersion}</span>
             </div>
             <div>
-              <span className="font-semibold text-muted-foreground">Xác nhận lúc: </span>
+              <span className="font-semibold text-muted-foreground">{t('detail.consentConfirmedAt')}: </span>
               <span>{f.date(meeting.consentConfirmedAt)}</span>
             </div>
             <div>
-              <span className="font-semibold text-muted-foreground">Hạn lưu trữ âm thanh: </span>
+              <span className="font-semibold text-muted-foreground">{t('detail.audioRetention')}: </span>
               <span>{meeting.audioRetentionDate}</span>
             </div>
             <div>
-              <span className="font-semibold text-muted-foreground">Hạn lưu trữ văn bản: </span>
+              <span className="font-semibold text-muted-foreground">{t('detail.textRetention')}: </span>
               <span>{meeting.textRetentionDate}</span>
             </div>
           </CardContent>
@@ -298,31 +316,41 @@ export function MeetingDetailPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <form onSubmit={handleAddReader} className="flex gap-2">
-                <Input
-                  placeholder="User ID của người xem"
-                  value={newReaderUserId}
-                  onChange={(e) => setNewReaderUserId(e.target.value)}
-                  className="text-xs"
-                />
-                <Button type="submit" size="sm" disabled={!newReaderUserId.trim() || addReaderMutation.isPending}>
-                  {t('detail.addReader')}
-                </Button>
-              </form>
+              {meeting.isRecorder && (
+                <form onSubmit={handleAddReader} className="space-y-1">
+                  <Label htmlFor="reader-user-id">{t('detail.readerUserId')}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="reader-user-id"
+                      placeholder={t('detail.readerUserIdPlaceholder')}
+                      value={newReaderUserId}
+                      onChange={(e) => setNewReaderUserId(e.target.value)}
+                      className="text-xs"
+                    />
+                    <Button type="submit" size="sm" disabled={!newReaderUserId.trim()} loading={addReaderMutation.isPending}>
+                      {t('detail.addReader')}
+                    </Button>
+                  </div>
+                </form>
+              )}
               {readerError && <ErrorText>{readerError}</ErrorText>}
 
               <ul className="divide-y text-xs">
                 {meeting.readers.map((readerUserId) => (
                   <li key={readerUserId} className="flex items-center justify-between py-2">
                     <span className="font-mono">{readerUserId}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:bg-destructive/10"
-                      onClick={() => removeReaderMutation.mutate(readerUserId)}
-                    >
-                      {t('detail.removeReader')}
-                    </Button>
+                    {meeting.isRecorder && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:bg-destructive/10"
+                        loading={removeReaderMutation.isPending && removeReaderMutation.variables === readerUserId}
+                        disabled={removeReaderMutation.isPending}
+                        onClick={() => removeReaderMutation.mutate(readerUserId)}
+                      >
+                        {t('detail.removeReader')}
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -331,9 +359,16 @@ export function MeetingDetailPage() {
         )}
       </div>
 
-      {ownerDeleteMutation.error && isStepUpRequired(ownerDeleteMutation.error) && (
+      {ownerDeleteMutation.error && isStepUpRequired(ownerDeleteMutation.error) && pendingOwnerDeleteId === id && (
         <div className="mt-3">
-          <StepUpPrompt action={t('detail.ownerDeleteVerify')} onVerified={() => ownerDeleteMutation.mutate()} onCancel={() => ownerDeleteMutation.reset()} />
+          <StepUpPrompt
+            action={t('detail.ownerDeleteVerify')}
+            onVerified={() => ownerDeleteMutation.mutate(pendingOwnerDeleteId)}
+            onCancel={() => {
+              ownerDeleteMutation.reset();
+              setPendingOwnerDeleteId(null);
+            }}
+          />
         </div>
       )}
 
@@ -341,19 +376,20 @@ export function MeetingDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
-        title={meeting.isRecorder ? t('detail.deleteConfirmTitle') : 'Xóa tuân thủ cuộc họp (Chủ sở hữu)?'}
+        title={meeting.isRecorder ? t('detail.deleteConfirmTitle') : t('detail.ownerDeleteTitle')}
         description={
           meeting.isRecorder
             ? t('detail.deleteConfirmBody')
-            : 'Với tư cách là chủ sở hữu tổ chức, bạn sẽ xóa hoàn toàn cuộc họp này và tiêu hủy vĩnh viễn khóa giải mã. Toàn bộ bản ghi âm và video sẽ không thể khôi phục lại được.'
+            : t('detail.ownerDeleteBody')
         }
-        confirm={meeting.isRecorder ? t('detail.deleteButton') : 'Tiêu hủy và xóa tuân thủ'}
+        confirm={meeting.isRecorder ? t('detail.deleteButton') : t('detail.ownerDeleteConfirm')}
         destructive
         onConfirm={() => {
           if (meeting.isRecorder) {
             deleteMutation.mutate();
           } else if (isOwner) {
-            ownerDeleteMutation.mutate();
+            setPendingOwnerDeleteId(meeting.id);
+            ownerDeleteMutation.mutate(meeting.id);
           }
         }}
       />

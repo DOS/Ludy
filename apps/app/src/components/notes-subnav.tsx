@@ -6,10 +6,14 @@ import { getConfig } from '../lib/auth.ts';
 export function NotesSubnav({ slug, active }: { slug: string; active: 'notes' | 'my-work' | 'meetings' }) {
   const t = useTranslations('nav');
   const tm = useTranslations('meetings');
-  const meetingsOn = getConfig().modules.includes('meetings');
+  const modules = getConfig().modules;
+  const meetingsOn = modules.includes('meetings');
+  // Notes and My work belong to the notes module: with it left out their links would only send the user to the inbox.
+  const notesOn = modules.includes('notes');
 
   return (
     <div className="mb-6 flex border-b border-border">
+      {notesOn && (
       <Link
         to="/o/$slug/notes"
         params={{ slug }}
@@ -21,6 +25,8 @@ export function NotesSubnav({ slug, active }: { slug: string; active: 'notes' | 
       >
         {t('notes')}
       </Link>
+      )}
+      {notesOn && (
       <Link
         to="/o/$slug/my-work"
         params={{ slug }}
@@ -32,6 +38,7 @@ export function NotesSubnav({ slug, active }: { slug: string; active: 'notes' | 
       >
         {t('myWork')}
       </Link>
+      )}
       {meetingsOn && (
         <Link
           to="/o/$slug/meetings"

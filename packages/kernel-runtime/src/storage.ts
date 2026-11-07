@@ -12,6 +12,14 @@ import { dirname, join, resolve, sep } from 'node:path';
 // created or found, and every file row keeps the triple (key, generation, sha256). Reads go through readVerified,
 // which asks the store for that exact generation and refuses bytes whose sha256 differs, so an object swapped
 // after approval is never served or read as the original.
+// A byte range [start, end] is two non-negative safe integers in order; anything else is a programming error, refused before
+// the store is touched (a negative start would read from the file position, not the start).
+export function assertRange(start: number, end: number): void {
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+    throw new RangeError('invalid byte range');
+  }
+}
+
 export interface BlobStore {
   // An org key must end in the sha256 of the bytes (a content address); any other key is refused.
   // Writes are create-only: a key that already holds the same bytes is accepted (a re-upload dedupes), and a key
@@ -494,6 +502,7 @@ export class LocalDiskStore implements BlobStore {
   async getRange(key: string, start: number, end: number, _generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
     assertStorageKey(key);
     assertReadCap(maxBytes);
+    assertRange(start, end);
     const length = end - start + 1;
     if (maxBytes !== undefined && length > maxBytes) {
       throw new BlobTooLargeError(key, maxBytes);

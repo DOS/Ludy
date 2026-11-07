@@ -22,6 +22,7 @@ import {
   UPLOAD_TTL_SECONDS,
   assertContentAddress,
   assertListArgs,
+  assertRange,
   assertReadCap,
   assertStorageKey,
   contentGeneration,
@@ -449,6 +450,7 @@ export class S3BlobStore implements BlobStore {
   async getRange(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
     assertStorageKey(key);
     assertReadCap(maxBytes);
+    assertRange(start, end);
     const versionId = this.pinned(generation);
     const length = end - start + 1;
     if (maxBytes !== undefined && length > maxBytes) {

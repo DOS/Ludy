@@ -494,6 +494,14 @@ describe('generations (ADR-0013)', () => {
     });
   });
 
+  it('refuses an invalid byte range before sending anything', async () => {
+    const { store, sent } = fakeStore(() => ({ Body: body(bytes) }));
+    for (const [start, end] of [[-1, 0], [5, 4], [0, Number.NaN], [0.5, 2], [0, Number.MAX_SAFE_INTEGER + 2]] as const) {
+      await expect(store.getRange(key, start, end)).rejects.toBeInstanceOf(RangeError);
+    }
+    expect(sent).toHaveLength(0);
+  });
+
   it('treats a missing version as a missing blob, never as the current object', async () => {
     const { store, sent } = fakeStore(() => {
       throw s3Error('NoSuchVersion', 404);

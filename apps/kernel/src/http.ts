@@ -1865,6 +1865,12 @@ export function createHttpApp(deps: HttpDeps) {
         async pull(controller) {
           try {
             armIdleTimer();
+            // Each window first asks again whether the meeting and its key still exist (and are the same key): a deleted meeting
+            // stops the stream and the key copy is cleared, so nothing decrypts after the delete.
+            if (streamOffset > 0) {
+              const still = await runtime.query<{ keyId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              if (still.keyId !== media.keyId) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media key has been shredded');
+            }
             if (streamOffset >= totalPlaintextLength) {
               controller.close();
               cleanupStream();

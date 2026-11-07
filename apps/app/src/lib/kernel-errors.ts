@@ -184,6 +184,9 @@ export const KERNEL_ERROR_CODES = [
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
   'FILE_TOO_LARGE',
+  'INVALID_READER',
+  'INVALID_MEDIA_CONTAINER',
+  'VIDEO_NOT_ENABLED',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
