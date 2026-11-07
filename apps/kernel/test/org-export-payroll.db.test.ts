@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The owner's org export carries the payroll people (#2676, follow-up of #2530) on a real PostgreSQL 17:
-// - the owner-run path (kernel.org.export.people, GET /api/org-export/hr.payroll_*) lists the three tables, with no plain identity or account number and no sealed text;
+// - the owner-run path (kernel.org.export.people, GET /api/org-export/hr.payroll_*) lists the payroll tables, with no plain identity or account number and no sealed text;
 // - every read is audited before it reads, with no value in the row;
 // - a member, an admin of the org (owners only), an admin of another org, an agent-less system actor and the worker read none of it, and the export job's snapshot still cannot be asked for these tables.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
@@ -88,6 +88,8 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
       { actor: asUser(owner), orgId },
     );
     await rt.execute('hr.payroll.dependent.add', { employeeId: added.employeeId, displayName: DEPENDENT, relation: 'child', registeredOn: '2026-02-01' }, { actor: asUser(owner), orgId });
+    // One pay month: a run with one line, from the stored terms.
+    await rt.execute('hr.payroll.run.open', { month: '2026-06' }, { actor: asUser(owner), orgId });
     return { orgId, slug, owner, admin, member };
   }
 
@@ -138,24 +140,28 @@ suite('org export carries the payroll people through the owner-run path (#2676)'
     await rootDb.end();
   });
 
-  it('streams the three tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
+  it('streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await org();
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent']);
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line']);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
     const employments = await read(rt, 'hr.payroll_employment', asUser(o.owner), o.orgId);
     const dependents = await read(rt, 'hr.payroll_dependent', asUser(o.owner), o.orgId);
-    expect([employees.length, employments.length, dependents.length]).toEqual([1, 1, 1]);
+    const runs = await read(rt, 'hr.payroll_run', asUser(o.owner), o.orgId);
+    const lines = await read(rt, 'hr.payroll_line', asUser(o.owner), o.orgId);
+    expect([employees.length, employments.length, dependents.length, runs.length, lines.length]).toEqual([1, 1, 1, 1, 1]);
+    expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
+    expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: NAME });
     expect(employees[0]).not.toHaveProperty('national_id_sealed');
     expect(employees[0]).not.toHaveProperty('bank_account_sealed');
     expect(employments[0]).toMatchObject({ contract_type: 'indefinite' });
     expect(dependents[0]).toMatchObject({ display_name: DEPENDENT });
-    const text = JSON.stringify([employees, employments, dependents]);
+    const text = JSON.stringify([employees, employments, dependents, runs, lines]);
     for (const needle of [IDENTITY, IDENTITY_DIGITS, ACCOUNT, ACCOUNT_DIGITS, 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; row: string }>(`SELECT outcome, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
-    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok']);
+    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok']);
     for (const a of audits) for (const needle of [IDENTITY_DIGITS, ACCOUNT_DIGITS, NAME, DEPENDENT]) expect(a.row, needle).not.toContain(needle);
   });
 

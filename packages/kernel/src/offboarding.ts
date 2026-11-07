@@ -296,11 +296,13 @@ export const exportSnapshot = defineQuery({
 // the worker runs as, so they are not in EXPORT_TABLES and the snapshot cannot be asked for them: the owner's own session
 // reads them live, through a sensitive stream (kernel.org.export.people) that is audited before it reads and that no system
 // or agent actor can run. The sealed identity and bank account numbers are left out (they open only with the org's subject
-// keys, ADR-0017, and an owner reads them in the app); the pay run tables (#2531) join with one more entry here.
+// keys, ADR-0017, and an owner reads them in the app). The pay runs and their lines (#2531) carry no identity or account number: figures, input labels and free text.
 export const OWNER_RUN_EXPORT_TABLES = {
   'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed'] },
   'hr.payroll_employment': { from: 'crove_hr.payroll_employment', omit: [] },
   'hr.payroll_dependent': { from: 'crove_hr.payroll_dependent', omit: [] },
+  'hr.payroll_run': { from: 'crove_hr.payroll_run', omit: [] },
+  'hr.payroll_line': { from: 'crove_hr.payroll_line', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
