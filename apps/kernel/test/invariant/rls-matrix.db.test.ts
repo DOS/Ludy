@@ -732,7 +732,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
           { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
         ],
-        row: { org_id: o.id, id: randomUUID(), quote_id: quote, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10', amount: '100', vat_amount: '10' },
+        row: { org_id: o.id, id: randomUUID(), quote_id: quote, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
       };
     },
     update: { set: 'description = description' },
