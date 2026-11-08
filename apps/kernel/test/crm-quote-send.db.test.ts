@@ -460,9 +460,18 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const after = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
     expect(after.buyer).toEqual(before.buyer);
     expect(Buffer.from(renderQuotePdf(after)).equals(Buffer.from(renderQuotePdf(before)))).toBe(true);
-    // A new draft for the same customer reads the new record.
+    // The letterhead changes later too: the sent quote's file keeps the seller frozen at sending (#2826), and still shows what the customer's page shows.
+    await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 14, defaultVat: '10%', defaultTerms: null, phone: '028 3829 0007', email: 'moi@congty.test', bankNote: 'Tài khoản khác' });
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET address = 'Địa chỉ mới' WHERE org_id = $1", [o.orgId]));
+    const afterLetterhead = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(afterLetterhead.seller).toEqual(before.seller);
+    expect(Buffer.from(renderQuotePdf(afterLetterhead)).equals(Buffer.from(renderQuotePdf(before)))).toBe(true);
+    expect(((await quoteView(rt, { token: made.token })) as QuoteDocument).seller).toMatchObject({ phone: before.seller.phone, bankNote: before.seller.bankNote, address: before.seller.address });
+    // A new draft for the same customer reads the new record and the live letterhead.
     const next = await o.readyDraft((await o.newDeal(party)).id);
-    expect((await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: next.id })).buyer).toMatchObject({ name: 'Tên mới', address: 'Nơi khác' });
+    const nextDocument = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: next.id });
+    expect(nextDocument.buyer).toMatchObject({ name: 'Tên mới', address: 'Nơi khác' });
+    expect(nextDocument.seller).toMatchObject({ phone: '028 3829 0007', bankNote: 'Tài khoản khác', address: 'Địa chỉ mới' });
   });
 
   it('writes audit rows with ids only, never the buyer, the token or a price', async () => {
