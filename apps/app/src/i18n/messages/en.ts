@@ -9059,6 +9059,7 @@ export const en = {
       LINK_CARD_THUMB_TOO_LARGE: 'The link card image is too large; Bluesky takes up to 1 MB',
       FILE_IS_DOCUMENT: 'This file is already an accounting document of the org; use another file for the post',
       FILE_IS_IMPORT: 'This file was uploaded as a tax portal invoice list, so it is not read as a document; if it is a ZIP of documents, zip them again into a new file and upload that',
+      FILE_ORIGINAL_DELETED: 'The original of this report was deleted 90 days after you decided it, so it can no longer be downloaded or read again; download it from the marketplace again if you need it. Only the summary is kept.',
       FILE_IS_NOT_IMPORT: "This file is already one of the org's documents, so it cannot be imported as a list; export the list from the tax portal again and upload that",
       VIDEO_TOO_LONG: 'The video is longer than 3 hours',
       OAUTH_TOO_MANY: 'You have too many unfinished connect attempts; try again in a few minutes',
@@ -9424,6 +9425,10 @@ export const en = {
         preview: 'Preview a marketplace income report',
         reject: 'Skip a marketplace income report',
         staged: 'See the income reports waiting to be imported',
+      },
+      marketplace_retention: {
+        apply: 'Delete the original file and per-order amounts of a marketplace report decided over 90 days ago',
+        key: 'Read the storage key of a marketplace report original due for deletion',
       },
       einvoice: {
         issue: 'Issue a sales invoice',

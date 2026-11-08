@@ -38,6 +38,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
+import { runMarketplaceRetention } from './marketplace-retention.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
@@ -951,6 +952,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (deps.runtime.installed('meetings')) {
         await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
           opsAlert('[meetings-retention] ALERT the nightly shred failed; the error is in the worker log', error);
+        });
+      }
+      // The original file and the per-order amounts of marketplace reports decided 90 days ago (#2516, ADR-0045 point 8). The database lists only decided reports of the two
+      // marketplace kinds; its own failure is alerted and never stops the rest.
+      if (deps.runtime.installed('finance')) {
+        await runMarketplaceRetention({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store }).catch((error: unknown) => {
+          opsAlert('[marketplace-retention] ALERT the nightly deletion failed; the error is in the worker log', error);
         });
       }
       await sweepStaging(deps.store);
