@@ -263,6 +263,73 @@ export function encryptBlobBuffer(plaintext: Buffer, dataKey: Buffer, binding: B
   return out;
 }
 
+// Encrypts a blob as it arrives, in the same format encryptBlobBuffer writes (the 5-byte header, then per chunk: 12-byte IV,
+// 16-byte tag, ciphertext), so decryptBlobBuffer, decryptBlobChunks and the Range mapping read it unchanged. A chunk's AAD says
+// whether it is the last, so a full chunk is sealed only once more plaintext has arrived (or finish() says there is none): the
+// encryptor holds at most one chunk of plaintext plus the piece being pushed, whatever the blob's size.
+export interface BlobEncryptor {
+  // Plaintext in; ciphertext pieces out, in order (the header comes with the first call).
+  push(plaintext: Uint8Array): Buffer[];
+  // Seals what is left as the last chunk. Call once, after the last push; the encryptor is finished afterwards.
+  finish(): Buffer[];
+}
+
+export function createBlobEncryptor(dataKey: Buffer, binding: BlobMediaBinding): BlobEncryptor {
+  if (dataKey.length !== KEY_LENGTH) {
+    throw new Error('Data key must be 32 bytes');
+  }
+  // The one chunk held back, filled in place: its own copy, so the caller may reuse the buffer it pushed.
+  const held = Buffer.allocUnsafe(BLOB_CHUNK_SIZE);
+  let heldLength = 0;
+  let chunkIndex = 0;
+  let started = false;
+  let finished = false;
+  const seal = (plaintext: Buffer, isLast: boolean): Buffer => {
+    const iv = randomBytes(IV_LENGTH);
+    const cipher = createCipheriv('aes-256-gcm', dataKey, iv);
+    cipher.setAAD(blobChunkAad(binding, chunkIndex, isLast));
+    const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    chunkIndex += 1;
+    return Buffer.concat([iv, cipher.getAuthTag(), ct]);
+  };
+  const header = (): Buffer[] => {
+    if (started) return [];
+    started = true;
+    const head = Buffer.alloc(HEADER_LENGTH);
+    head.writeUInt8(VERSION, 0);
+    head.writeUInt32BE(BLOB_CHUNK_SIZE, 1);
+    return [head];
+  };
+  return {
+    push(plaintext) {
+      if (finished) throw new Error('Blob encryptor already finished');
+      const out = header();
+      let offset = 0;
+      while (offset < plaintext.length) {
+        // The held chunk is full and more plaintext has come: it is not the last.
+        if (heldLength === BLOB_CHUNK_SIZE) {
+          out.push(seal(held, false));
+          heldLength = 0;
+        }
+        const take = Math.min(BLOB_CHUNK_SIZE - heldLength, plaintext.length - offset);
+        held.set(plaintext.subarray(offset, offset + take), heldLength);
+        heldLength += take;
+        offset += take;
+      }
+      return out;
+    },
+    finish() {
+      if (finished) throw new Error('Blob encryptor already finished');
+      finished = true;
+      const out = header();
+      // An empty blob is one empty last chunk, as encryptBlobBuffer writes it.
+      out.push(seal(held.subarray(0, heldLength), true));
+      heldLength = 0;
+      return out;
+    },
+  };
+}
+
 export function decryptBlobBuffer(ciphertext: Buffer, dataKey: Buffer, binding: BlobMediaBinding): Buffer {
   if (dataKey.length !== KEY_LENGTH) {
     throw new Error('Data key must be 32 bytes');

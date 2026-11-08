@@ -2,7 +2,7 @@
 // The Inbox screen's search params (CV3, #2306): which tab, which kind of thread, which channel and assignee, the search text and the thread open in the
 // middle pane. A param that fails its check is left out, so the screen falls back to its default (plan §9, #1513). No React imports, so it is unit tested.
 import { z } from 'zod';
-import { CONVERSATION_INTENTS, CONVERSATION_KINDS, type ConversationKind } from '@crove/kernel-contract';
+import { CONVERSATION_INTENTS, CONVERSATION_KINDS, type ConversationKind, type ConversationListed, type ConversationSummary } from '@crove/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 
 const zInboxSearch = z.object({
@@ -41,11 +41,43 @@ export function inboxListInput(search: InboxSearch): {
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.intent ? { intent: search.intent } : {}),
     ...(search.q ? { q: search.q } : {}),
-    limit: 50,
+    limit: INBOX_PAGE_SIZE,
   };
 }
 
 // The counts of the tabs follow the kind and channel filters (the same threads as the list, whatever its tab).
 export function inboxCountsInput(search: InboxSearch): { kind?: ConversationKind; connectionId?: string } {
   return { ...(search.kind ? { kind: search.kind } : {}), ...(search.channel ? { connectionId: search.channel } : {}) };
+}
+
+// The page size of the list; "load older" asks for the next page of the same size.
+export const INBOX_PAGE_SIZE = 50;
+
+// The key of the page after this one (#2339): the last thread of the page, by last message time and id, as the list query takes it. A page that
+// says there is no more has no next one.
+export function nextConversationCursor(page: ConversationListed): { at: string | null; id: string } | undefined {
+  if (!page.more) return undefined;
+  const last = page.conversations.at(-1);
+  return last ? { at: last.lastMessageAt, id: last.id } : undefined;
+}
+
+// The pages as one list. The pages are read again together, and a thread that took a new message between two reads moves up, so it can sit
+// at the end of one page and the start of the next: it is shown once, at its first place.
+export function mergeConversationPages(pages: readonly ConversationListed[]): ConversationSummary[] {
+  const seen = new Set<string>();
+  const merged: ConversationSummary[] = [];
+  for (const page of pages) {
+    for (const c of page.conversations) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      merged.push(c);
+    }
+  }
+  return merged;
+}
+
+// The channels a comment inbox can be narrowed to: the ones its posts are on, in the order the posts name them, each once. A filter is only
+// worth showing when there are two or more.
+export function channelsOfPosts(posts: readonly { connectionId: string }[]): string[] {
+  return [...new Set(posts.map((p) => p.connectionId))];
 }

@@ -18,7 +18,7 @@ import { inboxCountsInput, inboxListInput, type InboxSearch } from '../lib/conve
 import { sortByIntent } from '../lib/conversation-intent.ts';
 import { withSearch } from '../lib/search.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
-import { ConversationListItem, ConversationThread, POLL_MS, STATUSES, useMe } from './conversation-inbox.tsx';
+import { ConversationListItem, ConversationThread, LoadOlderConversations, POLL_MS, STATUSES, useConversationPages, useMe } from './conversation-inbox.tsx';
 import { useIntentSuggestions } from './conversation-intent.tsx';
 import { ContactPanel } from './conversation-contact-panel.tsx';
 import { EmailAddressCard } from './conversation-email-address.tsx';
@@ -65,11 +65,11 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const tn = useTranslations('conversations.intent');
   const status = search.status ?? 'new';
   const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
-  const list = useQuery({ ...orpc.conversations.list.queryOptions({ input: inboxListInput(search) }), refetchInterval: POLL_MS });
+  const list = useConversationPages(inboxListInput(search));
   const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: inboxCountsInput(search) }), refetchInterval: POLL_MS });
   const { canWrite } = useMe();
   // The AI coworker's suggested intents for the top of the New list (a read, never stored); the list may be ordered by them, a sort of the page only.
-  const loaded = list.data?.conversations ?? [];
+  const loaded = list.items;
   const { suggested, ai } = useIntentSuggestions(loaded, canWrite && status === 'new');
   const items = search.order === 'intent' && status === 'new' ? sortByIntent(loaded, suggested) : loaded;
   // The thread shown: the one the address names (kept even when it has moved to another tab), else the first of the list.
@@ -166,13 +166,13 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
           )}
           {list.isPending && <Spinner />}
           {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
-          {list.data && items.length === 0 && <Empty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} />}
+          {list.loaded && items.length === 0 && <Empty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} />}
           <ul className="divide-y divide-border rounded-md border border-border">
             {items.map((c) => (
               <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => onSearch({ ...search, c: c.id })} suggested={suggested.get(c.id) ?? null} />
             ))}
           </ul>
-          {list.data?.more && <p className="text-xs text-muted-foreground">{t('more')}</p>}
+          <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} failed={list.loadFailed} onLoad={list.loadMore} />
         </section>
         <section aria-label={t('threadLabel')} className="min-w-0">
           {openId ? (
