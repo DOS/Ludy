@@ -25,6 +25,10 @@ export function useNextStepCount(): number {
   return count.data?.counts.mine ?? 0;
 }
 
+// The words of each reason: the badge and the line under the deal (#2381, and the follow-up of a sent quote, #2699).
+const BADGE = { no_activity: 'noActivityBadge', past_close: 'pastCloseBadge', quote_unanswered: 'quoteUnansweredBadge', quote_expiring: 'quoteExpiringBadge' } as const;
+const REASON = { no_activity: 'noActivity', past_close: 'pastClose', quote_unanswered: 'quoteUnanswered', quote_expiring: 'quoteExpiring' } as const;
+
 function Row({ step, canEdit, picked, busy, onPick, onDone, onSnooze }: { step: NextStep; canEdit: boolean; picked: boolean; busy: boolean; onPick: (on: boolean) => void; onDone: () => void; onSnooze: (days: NextStepSnoozeDays) => void }) {
   const t = useTranslations('deals.nextSteps');
   const { locale } = useLocaleSetting();
@@ -34,13 +38,13 @@ function Row({ step, canEdit, picked, busy, onPick, onDone, onSnooze }: { step: 
       <div className="min-w-0 flex-1">
         <p className="font-medium text-foreground">
           {step.dealTitle}{' '}
-          <Badge variant={step.reason === 'past_close' ? 'destructive' : 'warning'}>{t(step.reason === 'past_close' ? 'pastCloseBadge' : 'noActivityBadge')}</Badge>
+          <Badge variant={step.reason === 'past_close' || step.reason === 'quote_expiring' ? 'destructive' : 'warning'}>{t(BADGE[step.reason])}</Badge>
         </p>
         <p className="text-xs text-muted-foreground">
           {step.partyName} · {step.stageName} · <span className="tabular-nums">{formatMoney(step.amount, locale, step.currency)}</span>
           {step.assigneeUserId === null && <> · {t('unowned')}</>}
         </p>
-        <p className="text-xs text-foreground">{t(step.reason === 'past_close' ? 'pastClose' : 'noActivity', { date: step.sinceOn })}</p>
+        <p className="text-xs text-foreground">{t(REASON[step.reason], { date: step.sinceOn })}</p>
       </div>
       {canEdit && (
         <div className="flex flex-wrap items-center gap-1">
