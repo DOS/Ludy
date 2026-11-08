@@ -257,7 +257,8 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
       expect(answered, `${row.sig} for an owner`).toMatchObject({ ok: true });
       if (answered.ok) {
         // Numbers, ids and flags: no column that could hold text.
-        for (const field of answered.value.fields) expect(field.dataTypeID, `${row.sig} column ${field.name}`).not.toBe(25);
+        // text (25), varchar (1043) and jsonb (3802) are the types a line of meeting text would travel in.
+        for (const field of answered.value.fields) expect([25, 1043, 3802], `${row.sig} column ${field.name}`).not.toContain(field.dataTypeID);
         expect(JSON.stringify(answered.value.rows), row.sig).not.toContain(TITLE);
       }
     }
