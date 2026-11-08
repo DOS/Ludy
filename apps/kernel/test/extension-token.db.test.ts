@@ -281,6 +281,11 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     // An id taken off the allow-list after the code was issued no longer exchanges, even from its own origin.
     const c = await issue(OTHER_EXT_ID);
     expect((await exchange(c.code, c.verifier, originOf(OTHER_EXT_ID))).status).toBe(400);
+    // The old 3-argument exchange, still callable by the API login, refuses a bound code and leaves it unspent.
+    const d = await issue(EXT_ID);
+    const viaOld = await pool.query('SELECT * FROM crove_kernel.exchange_extension_auth_code($1::bytea, $2::text, $3::bytea)', [createHash('sha256').update(d.code).digest(), d.verifier, randomBytes(32)]);
+    expect(viaOld.rows).toEqual([]);
+    expect((await exchange(d.code, d.verifier, originOf(EXT_ID), twoIds)).status).toBe(200);
     // A code made without an id (the old 5-argument issue, still callable by the API login) is unbound: the route refuses it.
     const verifier = randomBytes(32).toString('base64url');
     const unboundCode = `crc_${randomBytes(32).toString('base64url')}`;
