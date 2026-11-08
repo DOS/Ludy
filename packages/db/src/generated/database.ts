@@ -40,6 +40,8 @@ export interface CroveCrmSchema {
   'crove_crm.quote_line': CrmQuoteLineTable;
   'crove_crm.quote_link': CrmQuoteLinkTable;
   'crove_crm.quote_setting': CrmQuoteSettingTable;
+  'crove_crm.sales_order': CrmSalesOrderTable;
+  'crove_crm.sales_order_line': CrmSalesOrderLineTable;
 }
 
 export interface CroveFinanceSchema {
@@ -699,8 +701,8 @@ export interface CrmQuoteTable {
   sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   sent_via: string | null;
   first_viewed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
-  decided_at: ColumnType<Date | null, Date | string | null, NotGranted>;
-  decline_reason: ColumnType<string | null, string | null, NotGranted>;
+  decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decline_reason: string | null;
   version: Generated<number>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
@@ -711,6 +713,53 @@ export interface CrmQuoteTable {
   buyer_tax_code: string | null;
   buyer_address: string | null;
   buyer_email: string | null;
+}
+
+/** crove_crm.sales_order */
+export interface CrmSalesOrderTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  quote_id: ColumnType<string, string, NotGranted>;
+  deal_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  issuer_entity_id: ColumnType<string, string, NotGranted>;
+  number: ColumnType<string, string, NotGranted>;
+  order_date: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  buyer_name: ColumnType<string, string, NotGranted>;
+  buyer_tax_code: ColumnType<string | null, string | null, NotGranted>;
+  buyer_address: ColumnType<string | null, string | null, NotGranted>;
+  buyer_email: ColumnType<string | null, string | null, NotGranted>;
+  subtotal: ColumnType<string, string | undefined, NotGranted>;
+  vat_amount: ColumnType<string, string | undefined, NotGranted>;
+  total: ColumnType<string, string | undefined, NotGranted>;
+  accepted_via: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  cancel_reason: string | null;
+  version: Generated<number>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_crm.sales_order_line */
+export interface CrmSalesOrderLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_no: ColumnType<number, number, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  description: ColumnType<string, string, NotGranted>;
+  unit: ColumnType<string | null, string | null, NotGranted>;
+  quantity: ColumnType<string | null, string | null, NotGranted>;
+  unit_price: ColumnType<string | null, string | null, NotGranted>;
+  discount_percent: ColumnType<string, string | undefined, NotGranted>;
+  vat_rate: ColumnType<string | null, string | null, NotGranted>;
+  amount: ColumnType<string, string | undefined, NotGranted>;
+  vat_amount: ColumnType<string, string | undefined, NotGranted>;
+  stock_item_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.account */
