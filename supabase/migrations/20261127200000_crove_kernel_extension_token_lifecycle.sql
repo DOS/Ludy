@@ -86,7 +86,11 @@ CREATE TRIGGER user_account_voids_extension_tokens AFTER UPDATE OF disabled_at O
 CREATE OR REPLACE FUNCTION crove_kernel.ext_device_member_removed()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  PERFORM crove_kernel.ext_device_system_revoke(OLD.org_id, OLD.user_id, 'member_removed');
+  -- Nothing to do for an org that is gone (the delete cascades from the tenant) or no longer active (offboarding, closed:
+  -- its tokens are refused already and the purge deletes them): an audit row of such an org has no place to stand.
+  IF EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = OLD.org_id AND t.status = 'active') THEN
+    PERFORM crove_kernel.ext_device_system_revoke(OLD.org_id, OLD.user_id, 'member_removed');
+  END IF;
   RETURN NULL;
 END $$;
 DROP TRIGGER IF EXISTS tenant_member_voids_extension_tokens_on_delete ON crove_kernel.tenant_member;
