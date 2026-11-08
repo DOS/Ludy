@@ -158,6 +158,7 @@ export const kernelManifest = defineModule({
     { type: 'kernel.inbox_item', table: 'inbox_item', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.kill_switch', table: 'kill_switch', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.member_invite', table: 'member_invite', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.member_vy_memory', table: 'member_vy_memory', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.number_allocation', table: 'number_allocation', legalEntityScoped: true, audit: 'append_only' },
     { type: 'kernel.party', table: 'party', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.position', table: 'position', legalEntityScoped: false, audit: 'command' },

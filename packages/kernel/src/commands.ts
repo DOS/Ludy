@@ -68,6 +68,7 @@ import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
+import { cancelMemberVyRuns, cancelMemberVyRunsUnlessAllowed, memberVyCommands } from './member-vy.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
@@ -216,6 +217,8 @@ export const changeMemberRole = defineCommand({
     await keepingChiefAccountant(() =>
       ctx.trx.updateTable('crove_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute(),
     );
+    // A demotion can take vy.use away (a viewer holds it only through a grant or a role): their live runs of Vy end unless they still hold it.
+    await cancelMemberVyRunsUnlessAllowed(ctx, input.userId, 'ROLE_CHANGED');
     // Pending invites the member could no longer issue are revoked in the same transaction, after the membership locks
     // (the order every invite path uses): an admin or owner who becomes a member or viewer loses every invite, an
     // owner who becomes an admin loses their admin invites (only owners grant admin), their scoped invites (only
@@ -282,6 +285,8 @@ export const removeMember = defineCommand({
     // The seats they hold become vacant (position_holder_user_fk): their open tasks the vacant seat's scope does not
     // read go up the chart once they are gone (#1799).
     const seats = await positionsHeldBy(ctx, input.userId);
+    // Their live runs of Vy end with their membership (ADR-0049 decision 1): the run policy hides them from every other context.
+    const cancelledVyRuns = await cancelMemberVyRuns(ctx, { userId: input.userId }, 'MEMBER_REMOVED');
     // Removing the last chief accountant under the accountant preset is refused (#1402).
     await keepingChiefAccountant(() => ctx.trx.deleteFrom('crove_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute());
     // The removed member's pending invites go with them (they already stop working at acceptance while the inviter is
@@ -300,6 +305,7 @@ export const removeMember = defineCommand({
       previous_role: target.role,
       revoked_invites: revokedInvites.map((r) => r.id),
       revoked_invites_to_member: addressedInvites.map((r) => r.id),
+      cancelled_vy_runs: cancelledVyRuns,
     });
     await rerouteStrandedTasks(ctx, seats);
     await ctx.activity('kernel.member', input.userId, 'member.removed', `Xóa thành viên (${target.role})`);
@@ -1210,6 +1216,7 @@ const otherKernelCommands = [
   ...legalEntityCommands,
   ...numberingCommands,
   ...roleCommands,
+  ...memberVyCommands,
   ...calendarCommands,
   setAddress,
   setContactEmail,

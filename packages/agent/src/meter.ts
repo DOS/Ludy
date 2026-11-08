@@ -64,6 +64,9 @@ export type AiUsageSink = (usage: AiUsage) => void;
 export interface AiScope {
   orgId: string;
   agentId?: string | undefined;
+  // Vy working for one member (ADR-0049 decision 6): the run this call belongs to. The member is the meter's own user and the agent is
+  // the kernel's (the member's own Vy), never a value of the call.
+  memberRunId?: string | undefined;
   meter: AiMeter;
 }
 
@@ -72,6 +75,8 @@ export interface AiCall {
   module: string;
   orgId: string;
   agentId: string | null;
+  // Set for a call made by Vy in member mode: the run it belongs to, ids only.
+  memberRunId?: string | null | undefined;
 }
 
 export interface AiMeter {
@@ -131,7 +136,7 @@ export async function metered<R extends { usage: { inputTokens: number | undefin
   const scope = scopes.getStore();
   if (!scope) throw new AiMeterMissingError(feature);
   const { meter } = scope;
-  const info: AiCall = { feature, module: AI_FEATURES[feature], orgId: scope.orgId, agentId: scope.agentId ?? null };
+  const info: AiCall = { feature, module: AI_FEATURES[feature], orgId: scope.orgId, agentId: scope.agentId ?? null, memberRunId: scope.memberRunId ?? null };
   await meter.admit(info);
   const settle = async (used: AiUsage) => {
     onUsage?.(used);
