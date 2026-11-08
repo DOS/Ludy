@@ -322,9 +322,6 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     const fresh = { ...stale, mfaAt: Math.floor(Date.now() / 1000) };
     const issued = await runtime.execute<{ codeId: string }>('kernel.extension.code.issue', issue, { actor: fresh, orgId: orgA });
     expect(issued.codeId).toBeTruthy();
-    // No code is made without the id of the extension it is for (#2850, step 2 #2855): the input without it is refused before anything runs.
-    const withoutId = Object.fromEntries(Object.entries(issue).filter(([key]) => key !== 'extensionId'));
-    expect((await refusal(runtime.execute('kernel.extension.code.issue', withoutId, { actor: fresh, orgId: orgA }))).code).toBe('VALIDATION');
     // The audit row names the code's id and scopes and carries neither the hash, the challenge nor the device name.
     const row = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.code.issue' AND org_id = $1 AND outcome = 'ok'`, [orgA])).rows[0]);
     const text = JSON.stringify(row?.detail);

@@ -27,9 +27,10 @@ export const zExtensionCodeIssue = z.strictObject({
   codeChallenge: zExtensionAuthorize.shape.codeChallenge,
   scopes: zExtensionAuthorize.shape.scopes,
   deviceName: zExtensionAuthorize.shape.deviceName,
-  // The extension the member approved (#2850): the code is bound to it and only that extension can exchange it. Required: no code is made
-  // without it (the unbound 5-argument definer is gone, step 2 #2855).
-  extensionId: zExtensionAuthorize.shape.extensionId,
+  // The extension the member approved (#2850): the code is bound to it and only that extension can exchange it. The sign-in route
+  // always sends it. Optional only while the invariant suite still calls the command without it (step 1 of 2, #2850); without it
+  // the code is unbound and the API's exchange, which asks for the id, refuses it.
+  extensionId: zExtensionAuthorize.shape.extensionId.optional(),
 });
 
 // The errors the extension definers raise, as domain errors; anything else goes through the runtime's mapping.
@@ -65,9 +66,14 @@ export const extensionCodeIssue = defineCommand({
     if (actor.type === 'user' && actor.aal === 'aal2' && !hasFreshMfa(actor)) {
       throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để kết nối tiện ích Ludy');
     }
-    const { rows } = await sql<{ id: string }>`
-      SELECT crove_kernel.issue_extension_auth_code(
-        decode(${input.codeHash}, 'hex'), ${input.codeChallenge}, 'S256', ${input.scopes}::text[], ${input.deviceName}, ${input.extensionId}::text) AS id`
+    const { rows } = await (input.extensionId === undefined
+      ? sql<{ id: string }>`
+          SELECT crove_kernel.issue_extension_auth_code(
+            decode(${input.codeHash}, 'hex'), ${input.codeChallenge}, 'S256', ${input.scopes}::text[], ${input.deviceName}) AS id`
+      : sql<{ id: string }>`
+          SELECT crove_kernel.issue_extension_auth_code(
+            decode(${input.codeHash}, 'hex'), ${input.codeChallenge}, 'S256', ${input.scopes}::text[], ${input.deviceName}, ${input.extensionId}::text) AS id`
+    )
       .execute(ctx.trx)
       .catch(extensionError);
     const codeId = rows[0]?.id;

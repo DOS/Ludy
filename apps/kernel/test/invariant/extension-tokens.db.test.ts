@@ -11,7 +11,7 @@
 //   fails immediately when revoked, expired, member removed, demoted to viewer, user disabled, or scope mismatch;
 // - exchange_extension_auth_code(bytea, text, bytea, text) (the last argument is the id of the extension asking, from the Origin header, #2850) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz, code_id uuid);
 //   a code is exchanged only by the extension id it was issued for; an unbound code, another id or a malformed id gets no row and the code is not spent;
-//   issue_extension_auth_code(bytea, text, text, text[], text, text) requires that id; the older 5- and 3-argument forms no longer exist (step 2 of #2850, #2855);
+//   issue_extension_auth_code(bytea, text, text, text[], text, text) requires that id (the older 5- and 3-argument forms are dropped by a later PR, #2855);
 //   neither raw auth code nor raw extension token is passed to SQL statements or query logs;
 // - all 5 definers grant EXECUTE to crove_app only (crove_worker and all other roles refused);
 // - agent_write_guard trigger is installed on both tables.
@@ -1172,18 +1172,14 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         expect(pubAcl.rows[0]?.has_exec, `${d.proname} PUBLIC EXECUTE must be false`).toBe(false);
       }
 
-      // Step 2 of #2850 (#2855): only the id-bound definers exist; the 5-argument issue and the 3-argument exchange are dropped.
-      const pinned = await c.query<{ issue6: string | null; exchange4: string | null; issue5: string | null; exchange3: string | null }>(
+      // The id-bound definers exist (#2850). The older 5-argument issue and 3-argument exchange are dropped by a later PR (#2855), once the
+      // invariant suite on main no longer calls them, so this copy does not assert their absence yet.
+      const pinned = await c.query<{ issue6: string | null; exchange4: string | null }>(
         `SELECT to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text,text)')::text AS issue6,
-                to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea,text)')::text AS exchange4,
-                to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text)')::text AS issue5,
-                to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea)')::text AS exchange3`,
+                to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea,text)')::text AS exchange4`,
       );
       expect(pinned.rows[0]?.issue6).not.toBeNull();
       expect(pinned.rows[0]?.exchange4).not.toBeNull();
-      expect(pinned.rows[0]?.issue5, 'the unbound issue must be gone').toBeNull();
-      expect(pinned.rows[0]?.exchange3, 'the unbound exchange must be gone').toBeNull();
-      expect(definers.rows.filter((d) => d.proname === 'issue_extension_auth_code' || d.proname === 'exchange_extension_auth_code')).toHaveLength(2);
 
       // Enforce EXECUTE matrix on ALL 5 definers: crove_app = true, all other runtime roles = false (Round 2 item 2)
       for (const d of definers.rows) {
