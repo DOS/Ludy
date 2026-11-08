@@ -147,6 +147,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, so only the shared ones).
   [
     'crove_notes.link',
