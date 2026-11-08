@@ -87,6 +87,7 @@ describe('meetings commands and queries construction', () => {
     expect(names).toEqual([
       'meetings.meeting.list',
       'meetings.meeting.get',
+      'meetings.meeting.extension_status',
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
       'meetings.meeting.media_meta',

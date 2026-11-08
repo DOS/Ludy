@@ -314,10 +314,12 @@ import {
   zMeetingReaderResult,
   zMeetingRef,
   zMeetingSettings,
+  zMeetingExtensionStatus,
   zMeetingSettingsGet,
   zMeetingSettingsSet,
   zMeetingSummary,
 } from './meetings.ts';
+import { zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -493,6 +495,14 @@ export const contract = {
   sessions: {
     list: oc.input(z.object({ userId: zId })).output(z.array(zSession)),
     revoke: oc.input(zSessionRevoke).output(z.object({ revoked: z.array(zId) })),
+  },
+  // The member's connected extension devices in the org of the request (issue #2582, ADR-0047 point 10): their tokens'
+  // standing, never a hash, and a revoke of one. Only the member's own; the extension itself cannot reach either.
+  extension: {
+    tokens: {
+      list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
+      revoke: oc.input(zExtensionTokenRevoke).output(zExtensionTokenRevoked),
+    },
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
   channels: {
@@ -704,6 +714,8 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
+    extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
