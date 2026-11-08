@@ -95,6 +95,21 @@ describe('Resend attachments', () => {
   });
 });
 
+describe('Resend attachments as bytes (#2695)', () => {
+  it('sends bytes as they are, base64-encoded, including bytes that are not valid text', async () => {
+    const { calls, fetchImpl } = fakeFetch(() => Response.json({ id: 'em_8' }));
+    // A PDF's head: ASCII, then the four bytes above 127 that mark it binary, then a NUL and a lone 0xff.
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x00, 0xff]);
+    await createResendProvider({ apiKey: 'k', from: 'a@b.test', fetch: fetchImpl }).send({
+      ...MAIL,
+      attachments: [{ filename: 'bao-gia.pdf', contentType: 'application/pdf', content: pdf }],
+    });
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.attachments).toEqual([{ filename: 'bao-gia.pdf', content_type: 'application/pdf', content: Buffer.from(pdf).toString('base64') }]);
+    expect(Buffer.from(body.attachments[0].content, 'base64')).toEqual(Buffer.from(pdf));
+  });
+});
+
 describe('Resend webhooks', () => {
   it('turns delivered, delayed, complained and bounced into events keyed by the Svix id', () => {
     expect(parseResendWebhook(SECRET, signed(event('email.delivered')), NOW)).toEqual([

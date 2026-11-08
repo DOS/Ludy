@@ -87,7 +87,7 @@ export function createSmtpProvider(options: SmtpOptions): MailProvider {
           ...(mail.replyTo ? { replyTo: mail.replyTo } : {}),
           ...(mail.inReplyTo ? { inReplyTo: mail.inReplyTo } : {}),
           ...(mail.references?.length ? { references: [...mail.references] } : {}),
-          ...(mail.attachments?.length ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content })) } : {}),
+          ...(mail.attachments?.length ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: typeof a.content === 'string' ? a.content : Buffer.from(a.content) })) } : {}),
           // The From header stays; only the envelope sender, where bounce reports go, changes.
           ...(mail.returnPath ? { envelope: { from: mail.returnPath, to: mail.to } } : {}),
         });

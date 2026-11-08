@@ -55,7 +55,7 @@ const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const PLAIN_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
+export type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 
 function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -306,7 +306,7 @@ async function loadLinks(ctx: Reader, quoteId: string, now: Date): Promise<Quote
   }));
 }
 
-async function loadQuote(ctx: Reader, quoteId: string, now: Date = new Date()): Promise<Quote> {
+export async function loadQuote(ctx: Reader, quoteId: string, now: Date = new Date()): Promise<Quote> {
   const row = await base(ctx).where('q.id', '=', quoteId).executeTakeFirst();
   if (!row) throw notFound();
   const buyer = row.buyer_name === null ? null : { name: row.buyer_name, taxCode: row.buyer_tax_code, address: row.buyer_address, email: row.buyer_email };

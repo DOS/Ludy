@@ -18,7 +18,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 
 const refreshQuotes = refreshQuoteQueries;
@@ -363,6 +363,18 @@ function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: bo
   const remove = useMutation(orpc.crm.quotes.deleteDraft.mutationOptions({ onSuccess: refreshQuotes }));
   const revise = useMutation(orpc.crm.quotes.revise.mutationOptions({ onSuccess: refreshQuotes }));
   const label = quote.number ? quoteLabel(quote) : t('draftLabel');
+  // The quote as a PDF (#2695), for anyone who may read it: the same quote the screen shows, made by the server.
+  const pdf = useMutation({
+    mutationFn: async () => {
+      const response = await apiFetch(`/api/crm/quotes/${quote.id}/pdf`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bao-gia-${(quote.number ?? 'nhap').replace(/[^A-Za-z0-9_.-]+/g, '-')}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    },
+  });
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" data-testid="quote-row">
       <div className="min-w-0 space-y-0.5">
@@ -375,11 +387,14 @@ function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: bo
           </p>
         )}
         <p className="text-xs text-muted-foreground">{t('row.meta', { date: formatDate(quote.validUntil, locale), count: String(quote.lineCount), total: formatMoney(quote.total, locale, 'VND') })}</p>
-        {(remove.error || revise.error) && <ErrorText>{errorMessage(remove.error ?? revise.error)}</ErrorText>}
+        {(remove.error || revise.error || pdf.error) && <ErrorText>{errorMessage(remove.error ?? revise.error ?? pdf.error)}</ErrorText>}
       </div>
       <div className="flex flex-wrap gap-1">
         <Button size="sm" variant="outline" onClick={onOpen}>
           {quote.status === 'draft' && canEdit ? t('row.edit') : t('row.view')}
+        </Button>
+        <Button size="sm" variant="outline" loading={pdf.isPending} onClick={() => pdf.mutate()}>
+          {t('row.pdf')}
         </Button>
         {canEdit && quote.status === 'draft' && (
           <ConfirmDialog
