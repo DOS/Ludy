@@ -674,6 +674,9 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const foreignEntity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [elsewhere.o.orgId])).rows[0]?.id as string);
     expect((await get('kk.xlsx', `period=2026-Q3&legalEntityId=${foreignEntity}`, o.owner)).status).toBe(422);
     expect(exports.inUse).toBe(0);
+    // HEAD is refused before any read, so it leaves no row for a download that never happened.
+    expect((await app.request('/api/payroll-export/kk.xlsx?period=2026-Q3', { method: 'HEAD', headers: { authorization: `Bearer ${o.owner}`, 'x-crove-org': o.slug } })).status).toBe(405);
+    expect(exports.inUse).toBe(0);
     // The screen's view and print come from the same audited read, recorded by the same row.
     const view = await get('kk.json', 'period=2026-Q3', o.owner);
     expect(view.status).toBe(200);

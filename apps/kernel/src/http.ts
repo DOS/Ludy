@@ -2670,6 +2670,8 @@ export function createHttpApp(deps: HttpDeps) {
   // written before the bytes are sent: no row, no download. The slot is held until the bytes are taken. Opening the sealed numbers needs a second factor used in the last 5 minutes (STEP_UP_REQUIRED). `private, no-store`: the file holds identity numbers and tax codes. Nothing is sent to any agency.
   if (runtime.installed('hr')) {
     app.get('/api/payroll-export/:file', async (c) => {
+      // A HEAD request would run the whole audited read and build the file only to throw the body away, leaving a download row for bytes nobody got.
+      if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
       try {
         const file = c.req.param('file');
         // .xlsx is the file; .json is the same document for the screen's view and print, recorded by the same audit row (so no print leaves the server unrecorded).
