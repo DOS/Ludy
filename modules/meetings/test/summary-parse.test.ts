@@ -37,6 +37,13 @@ describe('parseWhen', () => {
     expect(parseWhen('09/11', DAY)).toBeNull();
     expect(parseWhen('ngày mai hoặc thứ sáu', DAY)).toBeNull();
     expect(parseWhen('hôm nay và ngày mai', DAY)).toBeNull();
+    // A week named makes it another day than the nearest: a person decides.
+    expect(parseWhen('thứ ba tuần sau', DAY)).toBeNull();
+    expect(parseWhen('thứ sáu tuần trước', DAY)).toBeNull();
+    expect(parseWhen('next friday', DAY)).toBeNull();
+    expect(parseWhen('last friday', DAY)).toBeNull();
+    // A two-digit year is not read as this year.
+    expect(parseWhen('13/11/25', DAY)).toBeNull();
   });
 
   it('stays fast on long text', () => {

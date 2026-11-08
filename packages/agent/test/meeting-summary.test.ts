@@ -112,6 +112,18 @@ describe('checkSummary', () => {
     expect(out.items).toHaveLength(1);
   });
 
+  it('blanks a "who" or a "when" that carries a link, an email address or a phone number (readers see them beside the item)', () => {
+    const out = checkSummary(
+      body({ summary: 'Họp.', decisions: [], items: [{ title: 'Gửi báo giá', who: 'xem https://evil.example/x', when: 'gọi 0912 345 678', seconds: null }, { title: 'Đặt lịch', who: 'a@evil.example', when: 'www.evil.example', seconds: null }] }),
+      SEGMENTS,
+    );
+    expect(out.items).toEqual([
+      { title: 'Gửi báo giá', who: '', when: '', seconds: null },
+      { title: 'Đặt lịch', who: '', when: '', seconds: null },
+    ]);
+    expect(out.dropped).toBe(4);
+  });
+
   it('caps every field and the number of lines', () => {
     const items = Array.from({ length: 150 }, (_, i) => ({ title: `Việc ${i % 2 === 0 ? 'a' : 'b'}`, who: '', when: '', seconds: null }));
     const decisions = Array.from({ length: 80 }, (_, i) => `Quyết định ${i % 2 === 0 ? 'a' : 'b'}`);

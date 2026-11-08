@@ -284,6 +284,8 @@ export const KERNEL_ERROR_CODES = [
   'NOTHING_TO_PUBLISH',
   'NO_CLEAN_ITEMS',
   // The recorder's Vy summarizing a meeting (#2580, M6 part B).
+  'DRAFT_NOT_REVIEWED',
+  'DRAFT_SUMMARY_EXISTS',
   'SUMMARY_OFF',
   'SUMMARY_RESULT_INVALID',
   'SUMMARY_RESULT_NOT_FOUND',

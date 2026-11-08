@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The taint of a meeting's model-written text and the discard of a summary run on PostgreSQL 17 (issue #2580, ADR-0047 point 8, meetings plan M6 part B1):
-// - `tainted` is set only by an insert; an update never sets it, and clears it only together with a change of the text it marks (the summary or decisions of a
-//   result, the title of an item), whoever runs the update, a superuser included;
-// - publishing (the change of stage) keeps the mark;
+// - `tainted` is set only by an insert; no update sets it, a superuser included; the tenant context (every user request) cannot change it at all, and only
+//   crove_meetings.draft_review clears it, for the meeting's recorder alone, in a user context;
+// - a draft that is still tainted is never published, whoever asks;
 // - a meeting's removal cancels the live meetings.summary runs for it and deletes their result rows, a finished result that was never copied included.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/.
 import { randomUUID } from 'node:crypto';
@@ -55,6 +55,42 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
         return { code: null, message: '', rows: res.rowCount ?? 0 };
       } catch (error) {
         return { code: (error as { code?: string }).code ?? 'ERR', message: (error as Error).message, rows: 0 };
+      }
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  }
+
+  // Runs fn as the recorder in a transaction that is COMMITTED (a review is meant to stay).
+  async function withRecorder<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+    const c = new pg.Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await asRecorder(c);
+      const out = await fn(c);
+      await c.query('COMMIT');
+      return out;
+    } catch (error) {
+      await c.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      await c.end();
+    }
+  }
+  // As another member (the owner) or with no context at all, rolled back.
+  async function attemptAs(who: 'owner' | 'none', text: string, params: unknown[]): Promise<{ code: string | null }> {
+    const c = new pg.Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      if (who === 'owner') await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users.owner, orgId)]);
+      try {
+        await c.query(text, params);
+        return { code: null };
+      } catch (error) {
+        return { code: (error as { code?: string }).code ?? 'ERR' };
       }
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -124,35 +160,47 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
     await admin((c) => c.query(`DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND id = $2`, [orgId, clearResult]));
   });
 
-  it('clears the mark only together with a change of the text it marks', async () => {
-    // An item: the title.
-    const noText = await attempt('recorder', `UPDATE crove_meetings.action_item SET tainted = false WHERE org_id = $1 AND id = $2`, [orgId, ids.item]);
-    expect(noText.code).toBe('42501');
-    expect(noText.message).toContain('MEETINGS_TAINT_FORBIDDEN');
-    expect((await attempt('recorder', `UPDATE crove_meetings.action_item SET tainted = false, when_drafted = 'mai' WHERE org_id = $1 AND id = $2`, [orgId, ids.item])).code).toBe('42501');
-    expect((await attempt('recorder', `UPDATE crove_meetings.action_item SET tainted = false, title = 'Việc đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, ids.item])).rows).toBe(1);
-    // A result: the summary or the decisions.
-    expect((await attempt('recorder', `UPDATE crove_meetings.meeting_result SET tainted = false WHERE org_id = $1 AND id = $2`, [orgId, ids.result])).code).toBe('42501');
-    expect((await attempt('recorder', `UPDATE crove_meetings.meeting_result SET tainted = false, summary = 'Đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, ids.result])).rows).toBe(1);
-    expect((await attempt('recorder', `UPDATE crove_meetings.meeting_result SET tainted = false, decisions = '["b"]' WHERE org_id = $1 AND id = $2`, [orgId, ids.result])).rows).toBe(1);
+  it('does not let the tenant context change the mark, and clears it only through draft_review for the recorder', async () => {
+    // Directly, as the recorder: clearing is refused, with or without a change of the text.
+    for (const text of [
+      `UPDATE crove_meetings.action_item SET tainted = false WHERE org_id = $1 AND id = $2`,
+      `UPDATE crove_meetings.action_item SET tainted = false, title = 'Việc đã sửa' WHERE org_id = $1 AND id = $2`,
+    ]) {
+      const res = await attempt('recorder', text, [orgId, ids.item]);
+      expect(res.code).toBe('42501');
+      expect(res.message).toContain('MEETINGS_TAINT_FORBIDDEN');
+    }
+    expect((await attempt('recorder', `UPDATE crove_meetings.meeting_result SET tainted = false, summary = 'Đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, ids.result])).code).toBe('42501');
+    // Through the recorder's review: one item, or the whole draft (the count is the rows that lost the mark).
+    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid)`, [orgId, meetingId, ids.item])).rows).toBe(1);
+    const all = await withRecorder(async (c) => (await c.query<{ n: number }>(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid) AS n`, [orgId, meetingId])).rows[0]?.n);
+    expect(all).toBe(2);
+    // Nobody else reviews: not another member, and not a session with no context.
+    for (const who of ['owner', 'none'] as const) {
+      const res = await attemptAs(who, `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid)`, [orgId, meetingId]);
+      expect(res.code, `${who} reviewing`).toBe('42501');
+    }
+    // Another org's id never matches.
+    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid)`, [randomUUID(), meetingId])).code).toBe('42501');
   });
 
-  it('keeps the mark when the recorder publishes, and when any other column changes', async () => {
-    const res = await attempt('recorder', `UPDATE crove_meetings.action_item SET stage = 'published' WHERE org_id = $1 AND id = $2 RETURNING tainted`, [orgId, ids.item]);
-    expect(res.rows).toBe(1);
-    const c = new pg.Client({ connectionString: appUrl });
-    await c.connect();
-    try {
-      await c.query('BEGIN');
-      await asRecorder(c);
-      const out = await c.query<{ tainted: boolean }>(`UPDATE crove_meetings.action_item SET stage = 'published', transcript_seconds = 5 WHERE org_id = $1 AND id = $2 RETURNING tainted`, [orgId, ids.item]);
-      expect(out.rows[0]?.tainted).toBe(true);
-      const res2 = await c.query<{ tainted: boolean }>(`UPDATE crove_meetings.meeting_result SET stage = 'published' WHERE org_id = $1 AND id = $2 RETURNING tainted`, [orgId, ids.result]);
-      expect(res2.rows[0]?.tainted).toBe(true);
-    } finally {
-      await c.query('ROLLBACK').catch(() => {});
-      await c.end();
+  it('never publishes a draft that is still tainted, and publishes it once the recorder has reviewed it', async () => {
+    const draftItem = randomUUID();
+    const draftResult = randomUUID();
+    await admin(async (c) => {
+      await c.query(`DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, meetingId]);
+      await c.query(`INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, tainted) VALUES ($1, $2, $3, 'Chưa đọc', true)`, [orgId, draftItem, meetingId]);
+      await c.query(`INSERT INTO crove_meetings.meeting_result (org_id, id, meeting_id, summary, feature, tainted) VALUES ($1, $2, $3, 'Chưa đọc', 'meetings.summary', true)`, [orgId, draftResult, meetingId]);
+    });
+    for (const who of ['recorder', 'superuser'] as const) {
+      for (const [table, id] of [['action_item', draftItem], ['meeting_result', draftResult]] as const) {
+        const res = await attempt(who, `UPDATE crove_meetings.${table} SET stage = 'published' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+        expect(res.code, `${who} publishing a tainted ${table}`).toBe('42501');
+        expect(res.message).toContain('MEETINGS_DRAFT_NOT_REVIEWED');
+      }
     }
+    await withRecorder((c) => c.query(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid)`, [orgId, meetingId]));
+    expect((await attempt('recorder', `UPDATE crove_meetings.action_item SET stage = 'published' WHERE org_id = $1 AND id = $2`, [orgId, draftItem])).rows).toBe(1);
   });
 
   it('cancels the live summary run of a meeting that is removed, and deletes its result (a finished one too)', async () => {

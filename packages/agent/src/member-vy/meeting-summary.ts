@@ -169,7 +169,8 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[]): 
       }
       const field = (value: unknown): string => {
         const text = typeof value === 'string' ? oneLine(value, SUMMARY_LIMITS.textChars) : '';
-        if (text !== '' && foreign(text)) {
+        // A name or a time that carries a figure the transcript lacks, or a way to reach someone, is blanked: readers see these words beside the item.
+        if (text !== '' && bad(text)) {
           dropped += 1;
           return '';
         }

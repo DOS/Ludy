@@ -2673,6 +2673,7 @@ export interface MeetingsActionItemTable {
   accepted_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_meetings.audio_segment */
@@ -2708,6 +2709,7 @@ export interface MeetingsMeetingResultTable {
   tainted: Generated<boolean>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_meetings.meeting */

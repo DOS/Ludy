@@ -390,3 +390,7 @@ export const zSummaryResult = z.strictObject({
   dropped: z.number().int().min(0),
 });
 export type SummaryResult = z.infer<typeof zSummaryResult>;
+
+// The recorder's explicit review of the draft Vy wrote: `confirmed: true` is their own click, never defaulted. Only then can the draft be shared.
+export const zDraftReview = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
+export const zDraftReviewed = z.strictObject({ meetingId: zId, cleared: z.number().int().min(0) });

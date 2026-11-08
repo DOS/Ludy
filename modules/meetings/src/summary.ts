@@ -5,7 +5,7 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX } from '@crove/kernel-contract';
+import { zDraftReview, zDraftReviewed, zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX } from '@crove/kernel-contract';
 import { DomainError, defineCommand } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { dayAfter, vnDay } from './retention.ts';
@@ -83,7 +83,7 @@ export function parseWhen(text: string, meetingDay: string): string | null {
   const has = (phrase: string): boolean => words.includes(` ${phrase} `);
   const iso = /(?:^|\D)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/.exec(said);
   if (iso) found.add(validDay(Number(iso[1]), Number(iso[2]), Number(iso[3])) ?? 'x');
-  const dm = /(?:^|\D)(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?!\d)/.exec(said);
+  const dm = /(?:^|\D)(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\d/])/.exec(said);
   if (dm) found.add(validDay(dm[3] ? Number(dm[3]) : Number(meetingDay.slice(0, 4)), Number(dm[2]), Number(dm[1])) ?? 'x');
   if (has('hom nay') || has('today')) found.add(meetingDay);
   if (has('ngay mai') || has('tomorrow')) found.add(dayAfter(new Date(`${meetingDay}T12:00:00Z`), 1));
@@ -93,6 +93,8 @@ export function parseWhen(text: string, meetingDay: string): string | null {
     const from = new Date(`${meetingDay}T12:00:00Z`).getUTCDay();
     found.add(dayAfter(new Date(`${meetingDay}T12:00:00Z`), ((weekday - from + 6) % 7) + 1));
   }
+  // "next week", "last Friday": a weekday or date with a week named is a different day than the nearest one, so a person decides.
+  if (has('tuan') || has('next') || has('last') || has('previous')) return null;
   if (found.size !== 1) return null;
   const day = [...found][0] as string;
   if (day === 'x' || dayNumber(day) < dayNumber(meetingDay)) return null;
@@ -140,8 +142,11 @@ export const summaryCopyResult = defineCommand({
     const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
     const people = profiles.map((p) => ({ userId: p.user_id, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
 
-    // The earlier model-written drafts go (the recorder asked for a new run); what the recorder typed or edited stays.
-    await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
+    // The earlier model-written drafts go (the recorder asked for a new run); what the recorder typed, or read and kept, stays, and a summary of theirs that is
+    // still there is not replaced: they share it or save over it first.
+    await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
+    const mine = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    if (mine && (body.summary !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
     await ctx.trx
       .deleteFrom('crove_meetings.action_item')
       .where('org_id', '=', ctx.orgId)
@@ -151,6 +156,7 @@ export const summaryCopyResult = defineCommand({
       .where('tainted', '=', true)
       .execute();
     if (body.summary !== '' || body.decisions.length > 0) {
+      // A second click at the same moment waits on the first's row and then meets the one draft a meeting may hold: the same answer as a draft that is there.
       await ctx.trx
         .insertInto('crove_meetings.meeting_result')
         .values({
@@ -161,8 +167,13 @@ export const summaryCopyResult = defineCommand({
           feature: FEATURE,
           stage: 'draft',
           tainted: true,
+          source_run_id: input.runId,
         })
-        .execute();
+        .execute()
+        .catch((error: unknown) => {
+          if ((error as { code?: string }).code === '23505') throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
+          throw error;
+        });
     }
     const kept = await ctx.trx
       .selectFrom('crove_meetings.action_item')
@@ -187,6 +198,7 @@ export const summaryCopyResult = defineCommand({
           stage: 'draft',
           flags: sql`${JSON.stringify(itemFlags(item.title))}::jsonb`,
           tainted: true,
+          source_run_id: input.runId,
         })
         .execute();
     }
@@ -195,4 +207,24 @@ export const summaryCopyResult = defineCommand({
   },
 });
 
-export const summaryCommands = [summaryCopyResult];
+// The recorder's explicit "I read this": the draft rows of their meeting lose the mark that says the model wrote them, so they can be shared. The database
+// function checks again that the caller is the recorder, in a user context.
+export const draftReview = defineCommand({
+  name: 'meetings.draft.review',
+  input: zDraftReview,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userOf(ctx.actor)) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can review its draft');
+    const { rows } = await sql<{ n: number }>`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, NULL::uuid) AS n`.execute(ctx.trx);
+    const cleared = rows[0]?.n ?? 0;
+    ctx.audit({ meetingId: input.meetingId, count: cleared });
+    return zDraftReviewed.parse({ meetingId: input.meetingId, cleared });
+  },
+});
+
+export const summaryCommands = [summaryCopyResult, draftReview];

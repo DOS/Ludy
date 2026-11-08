@@ -176,13 +176,16 @@ export const actionItemEdit = defineCommand({
         ...(input.whenDate === undefined ? {} : { when_parsed: input.whenDate }),
         ...(input.transcriptSeconds === undefined ? {} : { transcript_seconds: input.transcriptSeconds }),
         flags: sql`${JSON.stringify(itemFlags(title))}::jsonb`,
-        // Only a changed title is the recorder's own text; fixing a date or an attendee leaves the model's title tainted.
-        ...(input.title !== undefined && input.title !== item.title ? { tainted: false } : {}),
         updated_at: sql<Date>`pg_catalog.now()`,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.itemId)
       .execute();
+    // Only a changed title is the recorder's own text; fixing a date or an attendee leaves the model's title tainted. The mark is cleared by the recorder's
+    // review (a definer: the tenant context cannot change it), here for this one item.
+    if (input.title !== undefined && input.title !== item.title) {
+      await sql`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ${input.itemId}::uuid)`.execute(ctx.trx);
+    }
     ctx.audit({ itemId: input.itemId, meetingId: item.meeting_id });
     return { itemId: input.itemId };
   },
@@ -215,6 +218,17 @@ export const resultPublish = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'share its summary');
+    // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
+    const unread = await ctx.trx
+      .selectFrom('crove_meetings.meeting_result')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .where('stage', '=', 'draft')
+      .where('tainted', '=', true)
+      .unionAll(ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
+      .executeTakeFirst();
+    if (unread) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
     const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;

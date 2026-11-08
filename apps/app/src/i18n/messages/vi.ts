@@ -8659,6 +8659,8 @@ export const vi = {
       TOO_MANY_ITEMS: 'Một cuộc họp có tối đa 100 việc cần làm.',
       NOTHING_TO_PUBLISH: 'Chưa có gì để chia sẻ: hãy viết tóm tắt hoặc thêm một việc cần làm trước.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
+      DRAFT_NOT_REVIEWED: 'Hãy đọc bản nháp Vy viết và xác nhận trước khi chia sẻ.',
+      DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
       SUMMARY_OFF: 'Hệ thống này chưa bật tính năng Vy tóm tắt. Hãy tự viết bản tóm tắt.',
       SUMMARY_RESULT_INVALID: 'Không đọc được kết quả tóm tắt. Hãy nhờ Vy tóm tắt lại.',
       SUMMARY_RESULT_NOT_FOUND: 'Cuộc họp này chưa có kết quả tóm tắt.',
@@ -10266,6 +10268,9 @@ export const vi = {
         delete: 'Xóa một việc cần làm nháp',
         edit: 'Sửa một việc cần làm nháp',
         source: 'Xem việc này đến từ cuộc họp nào',
+      },
+      draft: {
+        review: 'Đánh dấu bản nháp Vy viết là đã đọc, để có thể chia sẻ',
       },
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',

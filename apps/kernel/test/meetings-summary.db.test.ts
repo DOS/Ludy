@@ -164,6 +164,41 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     }
   });
 
+  it('keeps a summary the recorder typed, and refuses to copy over it', async () => {
+    const meetingId = await seedMeeting('recorder', []);
+    await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tôi tự viết.', decisions: [] });
+    const runId = await finishedRun('recorder', meetingId, BODY);
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId }))).toBe('DRAFT_SUMMARY_EXISTS');
+    expect((await results('recorder', meetingId)).draft).toMatchObject({ summary: 'Tôi tự viết.', feature: 'manual', tainted: false });
+    // A run with only items (no summary, no decisions) does not touch the typed summary and still copies its items.
+    const itemsOnly = await finishedRun('recorder', meetingId, { summary: '', decisions: [], items: [{ title: 'Chỉ việc', who: '', when: '', seconds: null }], dropped: 0 });
+    expect(await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: itemsOnly })).toMatchObject({ items: 1 });
+    expect((await results('recorder', meetingId)).draft?.summary).toBe('Tôi tự viết.');
+  });
+
+  it('records the run a draft came from, shares nothing until the recorder has read it, and then shares it', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    const runId = await finishedRun('recorder', meetingId, BODY);
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId });
+    const sources = await sqlAdmin<{ n: string }>(
+      `SELECT (SELECT count(*) FROM crove_meetings.meeting_result WHERE meeting_id = $1 AND source_run_id = $2)::text || '/' || (SELECT count(*) FROM crove_meetings.action_item WHERE meeting_id = $1 AND source_run_id = $2)::text AS n`,
+      [meetingId, runId],
+    );
+    expect(sources.rows[0]?.n).toBe('1/3');
+    // Not yet read: the publish command, and the database, refuse.
+    expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
+    expect(await refuses(sqlAdmin(`UPDATE crove_meetings.action_item SET stage = 'published' WHERE meeting_id = $1`, [meetingId]))).toBe('42501');
+    // Only the recorder reviews, and only with their own explicit confirmation.
+    expect(await refuses(exec('attendee', 'meetings.draft.review', { meetingId, confirmed: true }))).toBe('FORBIDDEN');
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId }))).not.toBeNull();
+    expect(await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true })).toEqual({ meetingId, cleared: 4 });
+    const view = await results('recorder', meetingId);
+    expect(view.draft?.tainted).toBe(false);
+    expect(view.items.every((i) => !i.tainted)).toBe(true);
+    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toMatchObject({ results: 1, items: 3 });
+    expect((await results('attendee', meetingId)).published).toMatchObject({ summary: 'Cuộc họp bàn báo giá cho khách A.' });
+  });
+
   it('replaces the model\'s drafts on a new run and leaves what the recorder typed, and an edit of a title makes the item theirs', async () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     await exec('recorder', 'meetings.action_item.create', { meetingId, title: 'Tự viết', who: '', whoUserId: null, when: '', whenDate: null, transcriptSeconds: null });
