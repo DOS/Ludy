@@ -257,7 +257,7 @@ export const setMemberPermission = defineCommand({
   access: ['owner', 'admin'],
   target: (input) => ({ type: 'kernel.user', id: input.userId }),
   handler: async (ctx, input): Promise<{ userId: string; changed: boolean }> => {
-    await lockForRoleChange(ctx, input.userId);
+    // The definer takes the member's row FOR SHARE itself, as an approval reading their roles does.
     ctx.audit({ target_user: input.userId, permission: input.permission, allowed: input.allowed });
     let changed = false;
     try {

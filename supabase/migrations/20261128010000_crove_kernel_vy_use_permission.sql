@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS crove_kernel.permission_catalog (
 );
 REVOKE ALL ON crove_kernel.permission_catalog FROM PUBLIC;
 GRANT SELECT ON crove_kernel.permission_catalog TO crove_tenant;
+SELECT crove_kernel.agent_write_guard_install('crove_kernel.permission_catalog');
 INSERT INTO crove_kernel.permission_catalog (permission, grantable_to_viewer) VALUES ('vy.use', true) ON CONFLICT (permission) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS crove_kernel.permission_default (
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS crove_kernel.permission_default (
 );
 REVOKE ALL ON crove_kernel.permission_default FROM PUBLIC;
 GRANT SELECT ON crove_kernel.permission_default TO crove_tenant;
+SELECT crove_kernel.agent_write_guard_install('crove_kernel.permission_default');
 INSERT INTO crove_kernel.permission_default (base_role, permission) VALUES ('owner', 'vy.use'), ('admin', 'vy.use'), ('member', 'vy.use') ON CONFLICT DO NOTHING;
 
 INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES
@@ -91,14 +93,16 @@ CREATE TABLE IF NOT EXISTS crove_kernel.member_permission_override (
 SELECT crove_kernel.apply_tenant_rls('crove_kernel.member_permission_override');
 -- Tenant roles only read the table; member_permission_set writes it.
 REVOKE INSERT, UPDATE, DELETE ON crove_kernel.member_permission_override FROM crove_tenant;
--- Read by the person it names and by owners and admins; no agent or system context reads a row.
+-- Read by the person it names, by owners and admins, and by the system context (the export, a sweep): flags, not text.
+-- An org-chart agent context reads none.
 DROP POLICY IF EXISTS own_or_manager ON crove_kernel.member_permission_override;
 CREATE POLICY own_or_manager ON crove_kernel.member_permission_override AS RESTRICTIVE FOR SELECT TO crove_tenant
   USING (
-    (SELECT crove_kernel.ctx_actor_type()) = 'user'
-    AND (user_id = (SELECT crove_kernel.ctx_user_id())
-         OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m
-                    WHERE m.org_id = member_permission_override.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin'))));
+    (SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR ((SELECT crove_kernel.ctx_actor_type()) = 'user'
+        AND (user_id = (SELECT crove_kernel.ctx_user_id())
+             OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m
+                        WHERE m.org_id = member_permission_override.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')))));
 
 -- The one resolution (ADR-0049 decision 10): a deny wins; a grant, a base-role default or a role the person holds says yes. A
 -- viewer honours a grant or a role only for a permission marked grantable_to_viewer. A role assignment counts, org-wide or for
@@ -149,6 +153,14 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
 $$;
 REVOKE ALL ON FUNCTION crove_kernel.ctx_has_permission(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.ctx_has_permission(text) TO crove_tenant;
+
+-- Whether the user of the context may work with Vy: the gate the run commands and the buttons ask (ADR-0049 decision 10).
+CREATE OR REPLACE FUNCTION crove_kernel.ctx_vy_use() RETURNS boolean
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT crove_kernel.ctx_has_permission('vy.use')
+$$;
+REVOKE ALL ON FUNCTION crove_kernel.ctx_vy_use() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.ctx_vy_use() TO crove_tenant;
 
 -- Sets (p_allowed true or false) or clears (NULL) the exception of p_user in the org in context. Who may: an owner for anyone;
 -- an admin for admins, members and viewers, never for an owner; nobody else, and nobody who is not a member of the org.

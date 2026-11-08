@@ -8126,6 +8126,7 @@ export const vi = {
       ROLE_SCOPE_NOT_FOR_ADMINS: 'Chủ sở hữu và quản trị viên luôn xem được mọi pháp nhân, nên không giới hạn theo pháp nhân được',
       ROLE_ASSIGNMENT_NOT_FOUND: 'Không tìm thấy vai trò này của thành viên',
       ROLE_PRIVILEGED_FOR_VIEWER: 'Người có vai trò Chỉ xem không được giao vai trò có quyền duyệt hay mở khóa sổ; hãy đổi họ thành Thành viên trước',
+      PERMISSION_MANAGE_FORBIDDEN: 'Bạn không đổi được quyền làm việc với Vy của người này',
       ROLE_GRANT_WIDENS_SCOPE: 'Thành viên này đang chỉ được xem một số pháp nhân. Giao vai trò cho cả tổ chức sẽ cho họ xem mọi pháp nhân, nên không giao được. Nếu muốn họ làm việc với cả tổ chức, hãy thu hồi các vai trò theo pháp nhân trước; pháp nhân cuối cùng chỉ gỡ được khi đổi họ thành Quản trị hoặc xóa họ khỏi tổ chức rồi mời lại',
       ROLE_DEMOTION_MIXES_SCOPE: 'Thành viên này đang có cả vai trò cho cả tổ chức lẫn vai trò theo pháp nhân, nên chưa đổi được thành Thành viên hoặc Chỉ xem. Hãy thu hồi các vai trò cho cả tổ chức để họ chỉ xem các pháp nhân đó, hoặc thu hồi các vai trò theo pháp nhân để họ xem mọi pháp nhân, rồi đổi lại',
       ROLE_REVOKE_WIDENS_SCOPE: 'Đây là pháp nhân cuối cùng mà thành viên này được xem. Thu hồi thì họ sẽ xem được mọi pháp nhân; nếu họ không còn làm việc cho tổ chức, hãy xóa họ khỏi tổ chức',
@@ -9548,6 +9549,9 @@ export const vi = {
         },
         invites: {
           list: 'Xem danh sách lời mời',
+        },
+        permission: {
+          set: 'Cho phép hoặc không cho phép một thành viên làm việc với Vy',
         },
         remove: 'Xóa thành viên khỏi tổ chức',
         role: {

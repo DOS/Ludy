@@ -136,7 +136,11 @@ export const kernelManifest = defineModule({
   // The approval commands name finance.proposal.approve, which the finance manifest declares. Its own: reading private messages
   // (#2303, plan docs/plan/conversations.md section 8), which conversation_access asks of the database. The Service inbox (CV3, #2306) seeds it
   // for desk.agent: owners, admins and the holders of that role read private messages, other members and viewers never.
-  permissions: [{ key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: ['desk.agent'] }],
+  permissions: [
+    { key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: ['desk.agent'] },
+    // "Làm việc với Vy" (ADR-0049 decision 10): the base roles owner, admin and member hold it by default; these are the preset roles that grant it.
+    { key: 'vy.use', risk: 'R1', defaultRoles: ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager'] },
+  ],
   // Its entities (#1656), each with its table: every type its commands name as their audit target, the records the
   // kernel numbers, and the records other code names by type; apps/kernel/test/manifest.db.test.ts checks them.
   entities: [

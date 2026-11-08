@@ -164,7 +164,15 @@ export function routePermissionUses(manifests: Manifests): PermissionUse[] {
 }
 
 // The functions whose job is to check a permission their caller passes (#1641): their own comparison names no key.
-const PERMISSION_CHECKERS: ReadonlySet<string> = new Set(['function crove_kernel.ctx_has_permission', 'function crove_kernel.ctx_permission_entities']);
+// member_has_permission is the one resolution ctx_has_permission calls (ADR-0049 decision 10), member_permission_set writes the one
+// exception it reads (only vy.use), and role_assignment_check asks whether a role grants anything a viewer may not hold.
+const PERMISSION_CHECKERS: ReadonlySet<string> = new Set([
+  'function crove_kernel.ctx_has_permission',
+  'function crove_kernel.ctx_permission_entities',
+  'function crove_kernel.member_has_permission',
+  'function crove_kernel.member_permission_set',
+  'function crove_kernel.role_assignment_check',
+]);
 // The quoted literals of a SQL fragment ('...'::text included), with doubled quotes undone.
 const sqlLiterals = (fragment: string): string[] => [...fragment.matchAll(/'((?:[^']|'')*)'/g)].map((m) => (m[1] as string).replaceAll("''", "'"));
 const SQL_IDENT = /^[a-z_][a-z0-9_$]*$/i;
@@ -330,6 +338,10 @@ export function appPermissionUses(files: ReadonlyArray<{ file: string; source: s
 // - a declared risk other than the highest risk of the commands that name the permission;
 // - with `grants` (the seeded role_permission rows): a row of an undeclared permission, a row the declaration does not
 //   list, or a default role with no row; and a declared permission nothing checks.
+// Permissions whose key starts with a name that is no module but that the kernel owns (vy.use, ADR-0049 decision 10: Vy is the
+// coworker across the apps, not an app of its own).
+const KERNEL_OWNED_PREFIXES: readonly string[] = ['vy'];
+
 export function permissionProblems(manifests: Manifests, input: { uses: readonly PermissionUse[]; grants?: readonly Grant[] }): string[] {
   const problems: string[] = [];
   const declared = new Map<string, { decl: PermissionDeclaration; module: string; file: string }>();
@@ -338,7 +350,7 @@ export function permissionProblems(manifests: Manifests, input: { uses: readonly
     if (keys.join('\n') !== [...keys].sort().join('\n')) problems.push(`${file}: sort permissions by key`);
     for (const decl of manifest.permissions) {
       if (!KEY.test(decl.key)) problems.push(`${file}: ${decl.key} is not <module>.<name>`);
-      else if (decl.key.split('.')[0] !== manifest.id) problems.push(`${file}: ${decl.key} belongs to the manifest of module ${decl.key.split('.')[0]}, not ${manifest.id}`);
+      else if (decl.key.split('.')[0] !== manifest.id && !(manifest.id === 'kernel' && KERNEL_OWNED_PREFIXES.includes(decl.key.split('.')[0] as string))) problems.push(`${file}: ${decl.key} belongs to the manifest of module ${decl.key.split('.')[0]}, not ${manifest.id}`);
       const roles = [...decl.defaultRoles];
       if (roles.join('\n') !== [...new Set(roles)].sort().join('\n')) problems.push(`${file}: ${decl.key}: list each default role once, sorted`);
       const earlier = declared.get(decl.key);
@@ -346,7 +358,8 @@ export function permissionProblems(manifests: Manifests, input: { uses: readonly
       else declared.set(decl.key, { decl, module, file });
     }
   }
-  const owner = (permission: string) => manifests[permission.split('.')[0] as string]?.file ?? `the manifest of module ${permission.split('.')[0]}`;
+  const owner = (permission: string) =>
+    manifests[KERNEL_OWNED_PREFIXES.includes(permission.split('.')[0] as string) ? 'kernel' : (permission.split('.')[0] as string)]?.file ?? `the manifest of module ${permission.split('.')[0]}`;
 
   for (const use of input.uses) {
     if (!declared.has(use.permission)) problems.push(`${use.by} names ${use.permission}, which no manifest declares: declare it in ${owner(use.permission)}`);
