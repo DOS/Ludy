@@ -1022,15 +1022,28 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
             [tokens.activeA2.hash],
           );
-          // Step 1 of #2740: accept both behaviours, revived (1 row) or stays refused (0 rows).
-          // The follow-up PR tightens this to "stays refused".
-          expect([0, 1], 'restored member token: revived or stays refused').toContain(restoredVerify.rows.length);
+          // Step 2 of #2740: the demotion voided the token for good (revoked_at is set), so restoring the role does not revive it.
+          expect(restoredVerify.rows.length, 'restored member token must stay refused').toBe(0);
+
+          // The disable step needs its own live token: the demotion above already voided activeA2, so testing it again
+          // would pass even without a trigger on user_account.
+          const disableToken = makeToken();
+          await c.query(
+            `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+             VALUES ($1, $2, $3, $4, 'Disable step', ARRAY['meetings'], now(), now() + interval '90 days', $3)`,
+            [orgAId, disableToken.id, users.memberA2, disableToken.hash],
+          );
+          const liveVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [disableToken.hash],
+          );
+          expect(liveVerify.rows.length, 'the fresh token is live before the user is disabled').toBe(1);
 
           // (b) Setting user_account.disabled_at = now() immediately causes verify_extension_token to return 0 rows
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA2]);
           const disabledVerify = await appClient.query(
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
-            [tokens.activeA2.hash],
+            [disableToken.hash],
           );
           expect(disabledVerify.rows.length, 'disabled user token must return 0 rows').toBe(0);
 
@@ -1038,19 +1051,35 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.memberA2]);
           const enabledVerify = await appClient.query(
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
-            [tokens.activeA2.hash],
+            [disableToken.hash],
           );
-          // Step 1 of #2740: revived (1 row) or stays refused (0 rows), as above.
-          expect([0, 1], 're-enabled user token: revived or stays refused').toContain(enabledVerify.rows.length);
+          // Step 2 of #2740: disabling voided the token for good, so re-enabling the user does not revive it.
+          expect(enabledVerify.rows.length, 're-enabled user token must stay refused').toBe(0);
+          const disabledRow = await c.query(`SELECT revoked_at FROM crove_kernel.extension_token WHERE id = $1`, [disableToken.id]);
+          expect(disabledRow.rows[0]?.revoked_at, 'disabling the user voids the token for good').not.toBeNull();
 
-          // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows
+          // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows.
+          // A live token again, so the removal itself is what the assertions test.
+          const removalToken = makeToken();
+          await c.query(
+            `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+             VALUES ($1, $2, $3, $4, 'Removal step', ARRAY['meetings'], now(), now() + interval '90 days', $3)`,
+            [orgAId, removalToken.id, users.memberA2, removalToken.hash],
+          );
+          const removalLive = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [removalToken.hash],
+          );
+          expect(removalLive.rows.length, 'the fresh token is live before the member is removed').toBe(1);
           await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [
             orgAId,
             users.memberA2,
           ]);
+          const removalRow = await c.query(`SELECT revoked_at FROM crove_kernel.extension_token WHERE id = $1`, [removalToken.id]);
+          expect(removalRow.rows[0]?.revoked_at, 'removing the member voids the token and records it').not.toBeNull();
           const removedVerify = await appClient.query(
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
-            [tokens.activeA2.hash],
+            [removalToken.hash],
           );
           expect(removedVerify.rows.length, 'removed member token must return 0 rows').toBe(0);
         });
@@ -1121,5 +1150,85 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         }
       }
     });
+  });
+  it('lets no login role or agent run the internal ext_device_* routines (they are named outside the definer pattern above)', async () => {
+    if (!tables.extension_token) {
+      expect(tables.extension_token).toBe(false);
+      return;
+    }
+    await admin(async (c) => {
+      const routines = await c.query<{ oid: string; proname: string }>(
+        `SELECT p.oid, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'crove_kernel' AND p.proname LIKE 'ext\\_device\\_%'`,
+      );
+      // The routines exist once the lifecycle migration has run; before it there is nothing to check.
+      for (const r of routines.rows) {
+        for (const role of ['public', 'crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'crove_prober', 'crove_reporter']) {
+          const exec = await c.query<{ has_exec: boolean }>(`SELECT has_function_privilege($1, $2::oid, 'EXECUTE') AS has_exec`, [role, r.oid]);
+          expect(exec.rows[0]?.has_exec, `${r.proname} ${role} EXECUTE must be false`).toBe(false);
+        }
+        const pinned = await c.query<{ proconfig: string[] | null }>(`SELECT proconfig FROM pg_proc WHERE oid = $1::oid`, [r.oid]);
+        expect(pinned.rows[0]?.proconfig, `${r.proname} must pin search_path`).toContain('search_path=pg_catalog, pg_temp');
+      }
+    });
+  });
+
+  it('voids, once, the tokens whose member was already disabled or already a viewer before the lifecycle migration, and keeps them void after a restore', async () => {
+    if (!tables.extension_token) {
+      expect(tables.extension_token).toBe(false);
+      return;
+    }
+    const hasBackfill = await admin(async (c) => (await c.query(`SELECT to_regprocedure('crove_kernel.ext_device_backfill_suspended()') IS NOT NULL AS ok`)).rows[0]?.ok === true);
+    expect(hasBackfill, 'the lifecycle migration adds ext_device_backfill_suspended()').toBe(true);
+    const viewerToken = makeToken();
+    const disabledToken = makeToken();
+    const insertToken = (c: pg.Client, orgId: string, userId: string, t: ReturnType<typeof makeToken>, name: string) =>
+      c.query(
+        `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, ARRAY['meetings'], now(), now() + interval '90 days', $3)`,
+        [orgId, t.id, userId, t.hash, name],
+      );
+    const verify = (hash: Buffer) => admin(async (c) => (await c.query(`SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`, [hash])).rows.length);
+    await admin(async (c) => {
+      // The state before the migration: a token of a member who is a viewer, and one of a disabled user, both still unrevoked
+      // (a demotion or a disable only suspended them). A token is inserted for the viewer as it stands; the disable is made with
+      // the trigger off, as it was made before the trigger existed.
+      await insertToken(c, orgAId, users.viewerA, viewerToken, 'Viewer before');
+      await insertToken(c, orgBId, users.memberB1, disabledToken, 'Disabled before');
+      await c.query('ALTER TABLE crove_kernel.user_account DISABLE TRIGGER user_account_voids_extension_tokens');
+      try {
+        await c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.memberB1]);
+      } finally {
+        await c.query('ALTER TABLE crove_kernel.user_account ENABLE TRIGGER user_account_voids_extension_tokens');
+      }
+    });
+    // Suspended, not void: refused today, but unrevoked.
+    expect(await verify(viewerToken.hash)).toBe(0);
+    expect(await verify(disabledToken.hash)).toBe(0);
+    const unrevoked = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.extension_token WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL', [[viewerToken.id, disabledToken.id]])).rows[0].n as number);
+    expect(unrevoked).toBe(2);
+
+    const voided = await admin(async (c) => (await c.query<{ n: number }>('SELECT crove_kernel.ext_device_backfill_suspended() AS n')).rows[0]!.n);
+    expect(voided).toBeGreaterThanOrEqual(2);
+    const rows = await admin(async (c) => (await c.query('SELECT id, revoked_at FROM crove_kernel.extension_token WHERE id = ANY($1::uuid[])', [[viewerToken.id, disabledToken.id]])).rows as Array<{ id: string; revoked_at: Date | null }>);
+    expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
+    const audit = await admin(async (c) => (await c.query(`SELECT target_id, detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.auto_revoked' AND target_id = ANY($1::uuid[])`, [[viewerToken.id, disabledToken.id]])).rows as Array<{ target_id: string; detail: Record<string, unknown> }>);
+    expect(audit).toHaveLength(2);
+    expect(audit.find((a) => a.target_id === viewerToken.id)?.detail).toEqual({ tokenId: viewerToken.id, userId: users.viewerA, reason: 'role_change' });
+    expect(audit.find((a) => a.target_id === disabledToken.id)?.detail).toEqual({ tokenId: disabledToken.id, userId: users.memberB1, reason: 'user_disabled' });
+
+    // Restoring the role and the account does not bring either back.
+    await admin(async (c) => {
+      await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.viewerA]);
+      await c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.memberB1]);
+    });
+    expect(await verify(viewerToken.hash), 'a token suspended before the migration stays void after the role is restored').toBe(0);
+    expect(await verify(disabledToken.hash), 'a token suspended before the migration stays void after the account is re-enabled').toBe(0);
+    // Idempotent: a second run finds nothing live to void for these two.
+    await admin(async (c) => {
+      await c.query('SELECT crove_kernel.ext_device_backfill_suspended()');
+    });
+    const after = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.auto_revoked' AND target_id = ANY($1::uuid[])`, [[viewerToken.id, disabledToken.id]])).rows[0].n as number);
+    expect(after).toBe(2);
   });
 });
