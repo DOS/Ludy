@@ -109,11 +109,10 @@ export function createClient(address: string, token: string | null, fetchImpl: F
         if (!stored?.ok) throw new LudyError('STORAGE_UPLOAD_FAILED', stored?.status ?? 0, 'Không tải được tệp lên kho lưu trữ');
         return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media`, json({ uploadId: grant.uploadId, kind, lengthSeconds })))).json()) as Uploaded;
       }
-      const form = new FormData();
-      form.append('kind', kind);
-      form.append('file', file);
-      form.append('lengthSeconds', String(lengthSeconds));
-      return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media?kind=${kind}`, { method: 'POST', body: form }))).json()) as Uploaded;
+      // The file itself as the body (#2780), sealed by the server as it arrives; the kind and length are in the query.
+      const query = new URLSearchParams({ kind, lengthSeconds: String(lengthSeconds) });
+      const type = /^(?:audio|video)\/[\w.+-]+$/.test(file.type) ? file.type : 'application/octet-stream';
+      return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: file }))).json()) as Uploaded;
     },
   };
 }
