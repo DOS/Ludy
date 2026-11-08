@@ -94,19 +94,19 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
 
 /** The "previous invoice" source of the draft form (#2721): a person picks a customer, sees the last invoice issued to them, and either copies its lines (by code, works with AI off) or lets the coworker
  * read those lines together with the text. Reading goes through the person's own finance permission; nothing is saved or issued here. */
-function PreviousInvoice({ date, onCopy, onPicked }: { date: string; onCopy: (invoice: NonNullable<EInvoicePrevious['invoice']>) => { added: number; rateChanged: number }; onPicked: (draftId: string | null) => void }) {
+function PreviousInvoice({ date, legalEntityId, onCopy, onPicked }: { date: string; legalEntityId: string | undefined; onCopy: (invoice: NonNullable<EInvoicePrevious['invoice']>) => { added: number; rateChanged: number }; onPicked: (source: { draftId: string; buyerPartyId: string } | null) => void }) {
   const t = useTranslations('salesInvoices.ai.previous');
   const f = useFormat();
   const [customerId, setCustomerId] = useState('');
   const [copied, setCopied] = useState<{ draftId: string; count: number; rateChanged: number } | null>(null);
   const customers = useQuery(orpc.parties.customers.queryOptions({ input: {} }));
-  const previous = useQuery({ ...orpc.einvoice.drafts.previousInvoice.queryOptions({ input: { buyerPartyId: customerId, date } }), enabled: customerId !== '' && date !== '' });
+  const previous = useQuery({ ...orpc.einvoice.drafts.previousInvoice.queryOptions({ input: { buyerPartyId: customerId, date, ...(legalEntityId ? { legalEntityId } : {}) } }), enabled: customerId !== '' && date !== '' });
   const invoice = previous.data?.invoice ?? null;
   // The coworker reads the invoice only while it is the one on screen.
   const draftId = customerId !== '' && invoice ? invoice.draftId : null;
   useLayoutEffect(() => {
-    onPicked(draftId);
-  }, [draftId, onPicked]);
+    onPicked(draftId === null ? null : { draftId, buyerPartyId: customerId });
+  }, [draftId, customerId, onPicked]);
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-border p-3" data-testid="invoice-previous">
       <Label htmlFor="sales-invoice-previous">{t('label')}</Label>
@@ -224,7 +224,7 @@ function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
 
 /** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
  * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
-function CoworkerBox({ date, room, invoiceDraftId, text, onText, onProposal }: { date: string; room: number; invoiceDraftId: string | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
+function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, onProposal }: { date: string; room: number; legalEntityId: string | undefined; invoiceSource: { draftId: string; buyerPartyId: string } | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
   const tp = useTranslations('salesInvoices.ai.previous');
   const current = useRef(date);
@@ -235,7 +235,7 @@ function CoworkerBox({ date, room, invoiceDraftId, text, onText, onProposal }: {
   const [state, setState] = useState<'filled' | 'partial' | 'stale' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
   const ask = useMutation({
     // The date the request was made for travels in the mutation's variables: the options of a request still pending are replaced on every render, so a date taken from the closure could already be the new one.
-    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked, ...(invoiceDraftId ? { invoiceDraftId } : {}) }),
+    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked, ...(invoiceSource ? { invoiceDraftId: invoiceSource.draftId, buyerPartyId: invoiceSource.buyerPartyId } : {}), ...(legalEntityId ? { legalEntityId } : {}) }),
     onSuccess: (proposal, asked) => {
       // The VAT rates were checked for the date asked with: if the invoice date was changed meanwhile, nothing is filled.
       if (proposal.ai === 'used' && current.current !== asked) {
@@ -255,7 +255,7 @@ function CoworkerBox({ date, room, invoiceDraftId, text, onText, onProposal }: {
           {t('button')}
         </Button>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
-        {invoiceDraftId && <p className="text-xs text-subtle-foreground" data-testid="invoice-ai-source">{tp('askNote')}</p>}
+        {invoiceSource && <p className="text-xs text-subtle-foreground" data-testid="invoice-ai-source">{tp('askNote')}</p>}
       </div>
       {state !== null && (
         <p className="text-xs text-foreground" role="status" data-testid="invoice-ai-state" data-state={state}>
@@ -271,7 +271,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const [form, setForm] = useState(initial);
-  const [sourceInvoice, setSourceInvoice] = useState<string | null>(null);
+  const [sourceInvoice, setSourceInvoice] = useState<{ draftId: string; buyerPartyId: string } | null>(null);
   const [aiText, setAiText] = useState('');
   // The buyer of the invoice copied last: a second copy replaces that buyer, never one a person typed or a proposal brought.
   const copiedBuyer = useRef<string | null>(null);
@@ -326,6 +326,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
       </div>
       <PreviousInvoice
         date={form.date}
+        legalEntityId={legalEntityId}
         onPicked={setSourceInvoice}
         onCopy={(invoice) => {
           // The counts come from the form as it is now; the form itself changes through the updater, so a proposal that lands in the same tick is not overwritten.
@@ -337,7 +338,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
         }}
       />
       <CrmSource onAdd={(sentence) => setAiText((text) => appendSource(text, sentence, EINVOICE_SUGGEST_TEXT_MAX))} />
-      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} invoiceDraftId={sourceInvoice} text={aiText} onText={setAiText} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
+      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} legalEntityId={legalEntityId} invoiceSource={sourceInvoice} text={aiText} onText={setAiText} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
       {form.buyerAi && (
         <p className="mt-3 text-xs text-subtle-foreground" data-testid="invoice-buyer-ai">
           <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t('ai.buyerNote')}</span>

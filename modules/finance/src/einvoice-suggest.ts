@@ -10,6 +10,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money, salesVatRatesOn } from '@crove/l10n-vn';
 import { invoiceSourceText, type SourceLine } from './domain/einvoice-source.ts';
+import { resolveLegalEntity } from './legal-entity.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
@@ -45,10 +46,18 @@ type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 // A decimal read from the database (numeric keeps its scale: '200000.0000') as the API writes it ('200000').
 const plain = (value: string): string => money(value).toFixed();
 
-// The lines of an invoice of the org that was issued, in the books of an entity the caller may see (the row policies of the draft tables decide), or null. Another org's invoice, a draft that was not
-// issued and one the caller's entities do not hold are all the same answer: none.
-async function issuedLines(ctx: Ctx, draftId: string): Promise<SourceLine[] | null> {
-  const draft = await ctx.trx.selectFrom('crove_finance.einvoice_draft').select('id').where('org_id', '=', ctx.orgId).where('id', '=', draftId).where('state', '=', 'issued').executeTakeFirst();
+// The lines of an invoice to `buyerPartyId` that was issued, in the books of `entity` (the row policies of the draft tables also decide what the caller sees), or null. Another org's invoice, a draft
+// that was not issued, another buyer's and another entity's are all the same answer: none.
+async function issuedLines(ctx: Ctx, draftId: string, buyerPartyId: string, entity: string): Promise<SourceLine[] | null> {
+  const draft = await ctx.trx
+    .selectFrom('crove_finance.einvoice_draft')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', draftId)
+    .where('state', '=', 'issued')
+    .where('buyer_party_id', '=', buyerPartyId)
+    .where('legal_entity_id', '=', entity)
+    .executeTakeFirst();
   if (!draft) return null;
   const rows = await ctx.trx
     .selectFrom('crove_finance.einvoice_draft_line')
@@ -73,8 +82,9 @@ export const einvoiceDraftSuggestSource = defineQuery({
   handler: async (ctx, input): Promise<EInvoiceSuggestSource> => {
     const words = nameWords(input.text);
     let invoice: EInvoiceSuggestSource['invoice'] = null;
-    if (input.invoiceDraftId !== undefined) {
-      const lines = await issuedLines(ctx, input.invoiceDraftId);
+    if (input.invoiceDraftId !== undefined && input.buyerPartyId !== undefined) {
+      const entity = await resolveLegalEntity(ctx, input.legalEntityId);
+      const lines = await issuedLines(ctx, input.invoiceDraftId, input.buyerPartyId, entity);
       if (lines === null) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy hóa đơn này');
       invoice = { text: invoiceSourceText(lines, salesVatRatesOn(input.date)) };
     }
@@ -125,11 +135,13 @@ export const einvoicePreviousInvoice = defineQuery({
   input: zEInvoicePreviousInput,
   access: EDITORS,
   handler: async (ctx, input): Promise<EInvoicePrevious> => {
+    const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const draft = await ctx.trx
       .selectFrom('crove_finance.einvoice_draft')
       .select(['id', 'invoice_date', 'issued_number', 'buyer_kind', 'buyer_party_id', 'buyer_tax_code', 'buyer_name', 'buyer_address', 'buyer_email'])
       .where('org_id', '=', ctx.orgId)
       .where('buyer_party_id', '=', input.buyerPartyId)
+      .where('legal_entity_id', '=', entity)
       .where('state', '=', 'issued')
       .orderBy('issued_at', 'desc')
       .orderBy('id', 'desc')
@@ -143,6 +155,16 @@ export const einvoicePreviousInvoice = defineQuery({
       .where('draft_id', '=', draft.id)
       .orderBy('line_no')
       .execute();
+    // The buyer's details are the party record's as they are now (a tax code or an address added since is not lost); the invoice's own where the record has none.
+    const party = (
+      await sql<{ name: string | null; tax_code: string | null; address: string | null; email: string | null }>`
+        SELECT p.name, p.tax_code, p.address, p.email FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${input.buyerPartyId}`.execute(ctx.trx)
+    ).rows[0];
+    // A record value that is empty or longer than the field of the form takes (the party tables allow far longer ones than a draft) is not used: the invoice's own value stands.
+    const pick = (fresh: string | null | undefined, held: string | null, max: number): string | null => {
+      const value = fresh?.trim() ?? '';
+      return value !== '' && value.length <= max ? value : held;
+    };
     const allowed = salesVatRatesOn(input.date);
     const date = typeof draft.invoice_date === 'string' ? draft.invoice_date : new Date(draft.invoice_date).toISOString().slice(0, 10);
     return {
@@ -150,7 +172,14 @@ export const einvoicePreviousInvoice = defineQuery({
         draftId: draft.id,
         date,
         number: draft.issued_number,
-        buyer: { kind: draft.buyer_kind, partyId: draft.buyer_party_id, taxCode: draft.buyer_tax_code, name: draft.buyer_name, address: draft.buyer_address, email: draft.buyer_email },
+        buyer: {
+          kind: draft.buyer_kind,
+          partyId: draft.buyer_party_id,
+          taxCode: pick(party?.tax_code, draft.buyer_tax_code, 20),
+          name: pick(party?.name, draft.buyer_name, 400),
+          address: pick(party?.address, draft.buyer_address, 500),
+          email: pick(party?.email, draft.buyer_email, 254),
+        },
         lines: rows.map((r) => ({ description: r.description, unit: r.unit, quantity: plain(r.quantity), unitPrice: plain(r.unit_price), vatRate: r.vat_rate, vatAllowed: allowed.includes(r.vat_rate) })),
       },
     };
