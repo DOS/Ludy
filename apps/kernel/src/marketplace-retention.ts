@@ -3,7 +3,9 @@
 //
 // crove_finance.marketplace_retention_due (worker only) lists the order and income reports a member decided more than MARKETPLACE_ORIGINAL_RETENTION_DAYS ago whose original is
 // still there. For each, in its own org: the blob key is read (finance.marketplace_retention.key), the object is deleted unless another file row names the same key, and only then
-// does finance.marketplace_retention.apply mark the original deleted and delete the staged extraction versions that hold the per-order amounts. The object goes first, so a crash
+// does finance.marketplace_retention.apply mark the original deleted and delete the staged extraction versions that hold the per-order amounts, and the object is deleted once more
+// (closing the window of a same-bytes upload in between). What the store's delete does is the store's: on a versioned bucket (production, with Object Lock) it adds a delete marker and
+// the noncurrent version stays until the storage-side fix (#2789), which is why every reader of a file's bytes refuses a marked file. The object goes first, so a crash
 // between the two steps repeats the delete (a delete of a missing object is a no-op) and never leaves a file row marked deleted whose object still exists. Safe to run twice.
 // A failing file is left for the next run and never holds the others behind it. Nothing here logs a filename, an order or an amount: ids and counts.
 import { sql } from 'kysely';
@@ -54,6 +56,9 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
             run.deleted += 1;
             run.versions += out.versions;
             progress += 1;
+            // The same bytes uploaded between the first delete and the marker are stored under the same key (the file was still unmarked, so nothing cleared or refused it): deleting once more
+            // after the marker closes that window. From here on a duplicate upload clears the marker (file_original_restore) and the next run deletes it again.
+            if (!key.shared) await deps.store.delete(key.storageKey);
           }
         }
       } catch (error) {

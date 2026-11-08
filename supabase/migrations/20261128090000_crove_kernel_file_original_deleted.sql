@@ -8,8 +8,9 @@ SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.file ADD COLUMN IF NOT EXISTS original_deleted_at timestamptz;
 
--- original_deleted_at moves from NULL to a time only for the worker acting as the system (the retention definer), and back to NULL only inside a SECURITY DEFINER function
--- (file_original_restore below: SESSION_USER differs from CURRENT_USER there). Every other change is refused. A separate trigger, so file_guard (the reference that never changes) stays as it is.
+-- original_deleted_at moves from NULL to a time only when the login role is a member of crove_worker and the sealed context is a system actor (in practice the retention definer; the
+-- trigger cannot tell which function runs it), and back to NULL only inside a SECURITY DEFINER function (file_original_restore below: SESSION_USER differs from CURRENT_USER there;
+-- another definer could do it too, so the trigger is a backstop, not an authorization: who may call a definer is the definer's own check). Every other change is refused. A separate trigger, so file_guard (the reference that never changes) stays as it is.
 CREATE OR REPLACE FUNCTION crove_kernel.file_original_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN

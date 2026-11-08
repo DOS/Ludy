@@ -61,7 +61,10 @@ class MemoryStore implements BlobStore {
     if (!b) throw new Error('missing blob');
     return b;
   }
+  // How many times each key was deleted: the job deletes once before the marker and once after.
+  readonly deletes = new Map<string, number>();
   async delete(key: string) {
+    this.deletes.set(key, (this.deletes.get(key) ?? 0) + 1);
     this.blobs.delete(key);
   }
   has(key: string) {
@@ -212,6 +215,8 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await age(fileId, DAY + 1);
     expect(await run()).toMatchObject({ deleted: 1, objects: 1, versions: 1, failed: 0 });
     expect(store.has(before.storage_key)).toBe(false);
+    // Once before the marker and once after it (the window of a same-bytes upload in between).
+    expect(store.deletes.get(before.storage_key)).toBe(2);
     const after = await fileRow(fileId);
     expect(after.original_deleted_at).not.toBeNull();
     expect(after.sha256).toBe(before.sha256);
@@ -332,6 +337,58 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await expect(query(o, 'kernel.file.get', { id: fileId })).rejects.toMatchObject({ code: 'FILE_ORIGINAL_DELETED' });
   });
 
+  it('lets no reader open a file whose original was deleted, even when the store still holds the recorded version (a versioned bucket keeps it)', async () => {
+    const o = await org();
+    const bytes = workbook(lines(o.a, o.b), 125750, 'versioned');
+    const { fileId } = await read(o, bytes);
+    await confirm(o, fileId);
+    await age(fileId, DAY + 1);
+    await run();
+    const { storage_key: key } = await fileRow(fileId);
+    // The store's delete left the noncurrent version readable by its recorded generation: put the bytes back to stand for it.
+    await store.put(key, bytes);
+    const system = { actor: { type: 'system' as const, component: 'finance.extract' }, orgId: o.orgId };
+    // The one query every finance reader (extraction, order report, income report, bank statement) starts from answers as for a file that is not there.
+    expect(await worker.query('finance.extraction.file', { fileId }, system)).toBeNull();
+    expect(await worker.query('finance.extraction.file', { fileId, version: 1 }, system)).toBeNull();
+    expect(await readMarketplaceIncomeFile({ runtime: worker, store, extract }, o.orgId, fileId)).toEqual({ handled: false });
+    // An .xlsx arrives as a ZIP: the archive reader is refused too.
+    expect(await worker.query('kernel.file.archive.source', { fileId }, system)).toBeNull();
+    // The download and the re-read are refused.
+    await expect(query(o, 'kernel.file.get', { id: fileId })).rejects.toMatchObject({ code: 'FILE_ORIGINAL_DELETED' });
+    await expect(execute(o, 'kernel.file.reextract', { fileId })).rejects.toMatchObject({ code: 'FILE_ORIGINAL_DELETED' });
+  });
+
+  it('never deletes a file under an evidence hold or named by a purchase document as its source', async () => {
+    const o = await org();
+    const held = await read(o, workbook(lines(o.a, o.b), 125750, 'held'));
+    await confirm(o, held.fileId);
+    const named = await read(o, workbook(lines(o.a, o.b), 125750, 'named'));
+    await reject(o, named.fileId);
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      // The guards of held_until and of the purchase document's constraints are switched off for this one session only: the test stands in for the store's hold and a booked invoice.
+      await client.query('SET session_replication_role = replica');
+      await client.query("UPDATE crove_kernel.file SET held_until = now() + interval '1 year' WHERE id = $1", [held.fileId]);
+      await client.query(
+        `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id) VALUES ($1, $2, 'X1', '2026-11-01', 1, 0, 1, $3)`,
+        [o.orgId, randomUUID(), named.fileId],
+      );
+    } finally {
+      await client.end();
+    }
+    await age(held.fileId, DAY + 30);
+    await age(named.fileId, DAY + 30);
+    expect(await run()).toMatchObject({ deleted: 0, objects: 0, failed: 0 });
+    for (const fileId of [held.fileId, named.fileId]) {
+      const row = await fileRow(fileId);
+      expect(row.original_deleted_at).toBeNull();
+      expect(store.has(row.storage_key)).toBe(true);
+      expect((await versions(fileId)).length).toBe(2);
+    }
+  });
+
   it('refuses a shorter period, a caller that is not the worker, and any other change of the marker', async () => {
     const o = await org();
     const { fileId } = await read(o, workbook(lines(o.a, o.b), 125750, 'guards'));
@@ -339,6 +396,12 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await age(fileId, DAY + 1);
     // 30 days, asked straight of the database as the worker: refused, so no bug in the job can delete early.
     await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_retention_due(30, 10)')).rejects.toThrow(/MARKETPLACE_RETENTION_TOO_SHORT/);
+    // Asked straight of the database with no system context (the worker's login role alone), key and apply refuse: they need the system actor and the context org.
+    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_retention_apply($1::uuid, $2::uuid, $3::int)', [o.orgId, fileId, DAY])).rejects.toThrow(/MARKETPLACE_RETENTION_WORKER_ONLY/);
+    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_retention_key($1::uuid, $2::uuid, $3::int)', [o.orgId, fileId, DAY])).rejects.toThrow(/MARKETPLACE_RETENTION_WORKER_ONLY/);
+    // A member, even the owner, cannot run the command or the query through the runtime: both are for the system actor only.
+    await expect(execute(o, 'finance.marketplace_retention.apply', { fileId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(query(o, 'finance.marketplace_retention.key', { fileId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // The app role (the API process) cannot list, key or apply.
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_retention_due($1, 10)', [DAY])).rejects.toThrow(/permission denied|MARKETPLACE_RETENTION_WORKER_ONLY/);
     // Setting the marker by hand is refused by the trigger, even for the database owner.
