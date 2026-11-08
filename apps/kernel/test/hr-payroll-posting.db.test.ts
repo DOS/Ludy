@@ -63,7 +63,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
   }
   const rows = <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => withAdmin(async (c) => (await c.query<T>(sql, params)).rows);
 
-  async function org(regime: 'tt133' | 'tt99' = 'tt133') {
+  async function org(regime: 'tt133' | 'tt99' = 'tt133', people: 'standard' | 'trio' | 'solo' = 'standard') {
     const tag = randomUUID().slice(0, 8);
     const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'hrposting', subject: `${name}-${tag}`, email: `${name}-${tag}@hr.test`, name: null });
     const owner = await person('owner');
@@ -71,6 +71,10 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const member = await person('member');
     const { orgId } = await createOrg(rt, asUser(owner), `Hạch toán lương ${tag}`);
     await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
+    // Three people may approve a posting (an owner and two admins), or the owner alone.
+    const admin2 = await person('admin2');
+    if (people === 'trio') await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, admin2]));
+    if (people === 'solo') await withAdmin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = ANY ($2::uuid[])`, [orgId, [admin, member]]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
         c.query(
@@ -89,7 +93,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
         employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: t.wage, ...(t.payFunction ? { payFunction: t.payFunction } : {}) },
       });
     }
-    return { orgId, owner, admin, member, exec, query };
+    return { orgId, owner, admin, admin2, member, exec, query };
   }
   type Org = Awaited<ReturnType<typeof org>>;
 
@@ -304,5 +308,43 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     await rt.execute('finance.period.lock', { month: MONTH }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(approve(o, again.proposalId)).rejects.toMatchObject({ code: 'PERIOD_LOCKED' });
     expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+  });
+
+  it('counts the person who approved the run as a co-author of its posting: they do not approve it while another may (#2736)', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId, o.admin);
+    const [stored] = await rows<{ authors: { id: string }[]; co_authors: string[] }>('SELECT authors, co_authors FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    // The requester alone is an author; the run's approver is the co-author the preparer declared.
+    expect(stored?.authors.map((a) => a.id)).toEqual([o.admin]);
+    expect(stored?.co_authors).toEqual([o.owner]);
+    // The run's approver (the owner) and the requester (an admin) are refused; the other admin approves, and the Inbox offers Approve to that admin only.
+    const canApprove = async (user: string) => (await rt.query<{ canApprove: boolean }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId })).canApprove;
+    expect(await canApprove(o.owner)).toBe(false);
+    expect(await canApprove(o.admin)).toBe(false);
+    expect(await canApprove(o.admin2)).toBe(true);
+    await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
+    await expect(approve(o, proposalId, o.admin)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
+    await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+  });
+
+  it('keeps the one-person path: a lone owner who approved the run asks for and approves its posting, flagged self-approved', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId, o.owner);
+    await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    const [audit] = await rows<{ self_approved: string }>(`SELECT detail ->> 'self_approved' AS self_approved FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    expect(audit?.self_approved).toBe('true');
+  });
+
+  it('declares the run approver again when an expired posting proposal is asked for again', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await approvedRun(o);
+    const first = await ask(o, runId, o.admin);
+    await rows(`UPDATE crove_kernel.proposal SET status = 'expired', decided_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, first.proposalId]);
+    const again = await rt.execute<{ proposalId: string }>('kernel.proposal.resubmit', { id: first.proposalId }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, again.proposalId]);
+    expect(stored?.co_authors).toEqual([o.owner]);
+    await expect(approve(o, again.proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
   });
 });

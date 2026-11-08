@@ -55,7 +55,7 @@ export const prepareRunPosting = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const run = await ctx.trx
       .selectFrom('crove_hr.payroll_run')
-      .select(['id', 'legal_entity_id', 'month', 'status', 'approval'])
+      .select(['id', 'legal_entity_id', 'month', 'status', 'approval', 'approved_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', runId)
       // The run's row is held to the end of the request, so two requests for the same run take turns: the second sees the proposal the first made and is refused below.
@@ -160,7 +160,8 @@ export const prepareRunPosting = defineCommand({
     });
     const payload = { ...draft.payload, payrollRunId: runId, month: run.month, regime, mapStatus: result.mapStatus } as PayrollPostingProposal;
     ctx.audit({ runId, month: run.month, regime, accounts: result.lines.length, lines: stored.length });
-    return { kind: JOURNAL_VOUCHER_KIND, command: PAYROLL_POSTING_COMMAND, title: `Hạch toán lương tháng ${monthLabel(run.month)}`, payload };
+    // The person who approved and froze the run's figures is a co-author of its posting (four-eyes, #2736): they do not approve it while another eligible approver exists.
+    return { kind: JOURNAL_VOUCHER_KIND, command: PAYROLL_POSTING_COMMAND, title: `Hạch toán lương tháng ${monthLabel(run.month)}`, payload, ...(run.approved_by ? { coAuthors: [run.approved_by] } : {}) };
   },
 });
 

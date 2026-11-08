@@ -70,7 +70,7 @@ import { numberingCommands } from './numbering.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
-import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
+import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
 import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
@@ -602,6 +602,8 @@ export const requestProposal = defineCommand({
         // P12: who may approve this command right now; approval re-checks each one's role live.
         eligible_approvers: await eligibleApprovers(ctx.trx, ctx.orgId, draft.command),
         authors: JSON.stringify([actorRef(ctx.actor)]),
+        // The people the preparer says the proposal rests on besides the requester (never from the client); they count as authors in four-eyes.
+        ...(preparedCoAuthors(draft) ? { co_authors: preparedCoAuthors(draft) as string[] } : {}),
         // Kept so the requester can ask for it again if it expires (#876); the preparer then checks it all anew.
         request_input: JSON.stringify(input.input),
         // The entity it belongs to (#1538): a member limited to other entities neither sees nor decides it.

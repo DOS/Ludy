@@ -25,6 +25,17 @@ export function parseAuthors(raw: unknown): ActorRef[] | null {
   return result.success ? result.data : null;
 }
 
+// The commands whose preparer may declare co-authors (people the proposal rests on besides its requester). The database lists the same ones (proposal_co_authors_guard,
+// 20261126140000), and the invariant proposal-co-authors keeps the two equal.
+export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record'];
+
+// A proposal's authors for four-eyes: those written on it, then its co-authors (users only), never twice.
+function effectiveAuthors(authors: unknown, coAuthors: readonly string[] | null | undefined): ActorRef[] | null {
+  const written = parseAuthors(authors);
+  if (written === null) return null;
+  return (coAuthors ?? []).reduce<ActorRef[]>((acc, id) => addAuthor(acc, { type: 'user', id }), written);
+}
+
 const refKey = (a: ActorRef) => (a.type === 'system' ? `system:${a.component}` : `${a.type}:${a.id}`);
 
 // Authors only accumulate: an edit adds the editor, and nobody who wrote part of the content is removed.
@@ -236,6 +247,8 @@ export interface ProposalPolicyInput {
   status: string;
   eligible_approvers: string[] | null;
   authors: unknown;
+  // The people the proposal rests on besides its requester (the preparer declared them); they count as authors.
+  co_authors?: string[] | null;
 }
 
 // Decides whether `actor` may approve the proposal's current revision.
@@ -255,7 +268,7 @@ export async function decideApproval(
   // R3 and anything a proposal executes needs a human approver (P12); system actors never approve.
   if (actor.type !== 'user') return deny('not_eligible');
   const snapshot = proposal.eligible_approvers ?? [];
-  const authors = parseAuthors(proposal.authors);
+  const authors = effectiveAuthors(proposal.authors, proposal.co_authors);
   // Under the preset in force now, not the one at creation: a switch to the accountant preset stops an owner or admin
   // in the snapshot from approving at once (fail closed); a switch back does not add anyone to the snapshot.
   const policy = policyFor(proposal.command, org);
