@@ -9,6 +9,7 @@ import { boardQueries, stageCommands } from './stages.ts';
 import { eventTypeCommands, eventTypeQueries } from './event-types.ts';
 import { importCommands, importQueries } from './import.ts';
 import { nextStepCommands, nextStepQueries } from './next-steps.ts';
+import { quoteCommands, quoteQueries } from './quotes.ts';
 import { crmToday } from './today.ts';
 
 export { dealCommands, dealConversations, dealCreate, dealDelete, dealGet, dealList, dealMove, dealQueries, dealUpdate, partyConversations, partyDeals, partySearch, pipelineSetup, pipelineStages } from './deals.ts';
@@ -22,8 +23,10 @@ export { importCancel, importCommands, importCommit, importExpire, importPreview
 
 export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextStepList, nextStepQueries, nextStepRaise, nextStepSnooze, staleDays } from './next-steps.ts';
 
+export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, quoteGet, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSettingSet } from './quotes.ts';
+
 export { crmToday } from './today.ts';
 
-export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, crmToday];
+export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, crmToday];
 export { crmManifest } from './manifest.ts';
