@@ -815,7 +815,7 @@ export const vi = {
     acceptFlags: 'Tôi đã xem các dòng có cảnh báo',
     approve: 'Duyệt bảng lương',
     bankFileTitle: 'File chuyển lương cho ngân hàng',
-    bankFileHint: 'File này chỉ dùng để chuyển lương trong MỘT ngân hàng: tên ngân hàng bạn nhập được ghi cho mọi người trong file, vì hồ sơ nhân viên chưa lưu ngân hàng của từng người. Người ở ngân hàng khác phải được chuyển bằng file riêng. Ludy không tự chuyển tiền: bạn tải file này lên ngân hàng và tự xác nhận ở đó. File có tên và số tài khoản, không được lưu lại.',
+    bankFileHint: 'File liệt kê tất cả mọi người trong bảng lương tháng này dưới MỘT ngân hàng bạn nhập (hồ sơ nhân viên chưa lưu ngân hàng của từng người). Nếu có người được trả qua ngân hàng khác, đừng tải file này lên nguyên trạng; hãy chuyển riêng cho những người đó. Ludy không tự chuyển tiền: bạn tải file lên ngân hàng và tự xác nhận ở đó. File có tên và số tài khoản, không được lưu lại.',
     bankFileBank: 'Tên ngân hàng nhận tiền',
     bankFileDownload: 'Tải file chuyển lương',
     bankFileName: 'chuyen-luong-{month}.xlsx',

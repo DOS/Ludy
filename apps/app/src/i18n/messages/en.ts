@@ -817,7 +817,7 @@ export const en = {
     acceptFlags: 'I have looked at the lines with a warning',
     approve: 'Approve the pay run',
     bankFileTitle: 'Bank salary file',
-    bankFileHint: 'This file is for transfers within ONE bank only: the bank name you type is written for everyone in the file, because an employee record does not hold each person\'s bank yet. People at another bank need a file of their own. Ludy never makes a transfer: you upload this file to the bank and confirm there. The file holds names and account numbers and is not stored.',
+    bankFileHint: 'The file lists everyone in this pay month under the one bank you type (an employee record does not hold each person\'s bank yet). If some people are paid at another bank, do not upload it as is; transfer to them separately. Ludy never makes a transfer: you upload the file to the bank and confirm there. The file holds names and account numbers and is not stored.',
     bankFileBank: 'Bank the money goes to',
     bankFileDownload: 'Download the salary file',
     bankFileName: 'bank-salary-{month}.xlsx',
