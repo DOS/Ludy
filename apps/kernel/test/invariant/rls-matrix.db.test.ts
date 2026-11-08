@@ -67,6 +67,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_connection',
+  'crove_finance.marketplace_party',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -292,6 +293,8 @@ const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
 // A marketplace connection is unique per entity, provider and platform, so each seeded one names a provider of its own.
 let marketplaceSeq = 0;
+// A platform has one organization party per entity (marketplace_party), so each seeded link names a platform of its own.
+let marketplacePartySeq = 0;
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
@@ -1231,6 +1234,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
+      };
+    },
+  },
+  // #2516: the organization party that stands for a marketplace as the counterparty of the entity's 131 (ADR-0045 point 6, plan section 8.4): one per entity and platform, the party is an
+  // ordinary organization of the org. It takes the org's default entity by its trigger. Tenant roles read and insert; nothing updates or deletes it. Each seeded link names a platform
+  // of its own and a party of its own, since a platform is unique per entity and a party is linked once.
+  'crove_finance.marketplace_party': {
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
       };
     },
   },
