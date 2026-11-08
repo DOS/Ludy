@@ -6,6 +6,7 @@ import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList, transcribeQueryList } from './transcribe.ts';
 import { resultCommands, resultQueries } from './results.ts';
+import { summaryCommands } from './summary.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -880,6 +881,7 @@ export const meetingsCommands = [
   transcriptCorrect,
   ...transcribeCommandList,
   ...resultCommands,
+  ...summaryCommands,
 ];
 
 export const meetingsQueries = [
