@@ -714,6 +714,12 @@ export interface CrmQuoteTable {
   buyer_tax_code: string | null;
   buyer_address: string | null;
   buyer_email: string | null;
+  seller_name: string | null;
+  seller_tax_code: string | null;
+  seller_address: string | null;
+  seller_phone: string | null;
+  seller_email: string | null;
+  seller_bank_note: string | null;
 }
 
 /** crove_crm.sales_order_line */
