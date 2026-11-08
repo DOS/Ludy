@@ -30,9 +30,10 @@ describe('meetings manifest and constants', () => {
     expect(meetingsManifest.tables.crove_meetings.audio_segment).toBeDefined();
     expect(meetingsManifest.tables.crove_meetings.meeting_video).toBeDefined();
     expect(meetingsManifest.tables.crove_meetings.media_key).toBeDefined();
-    expect(meetingsManifest.routes).toHaveLength(2);
+    expect(meetingsManifest.routes).toHaveLength(3);
     expect(meetingsManifest.routes[0].path).toBe('meetings');
-    expect(meetingsManifest.routes[1].path).toBe('meetings/$id');
+    expect(meetingsManifest.routes[1].path).toBe('meetings/record');
+    expect(meetingsManifest.routes[2].path).toBe('meetings/$id');
     expect(meetingsManifest.nav).toEqual([]);
   });
 
@@ -87,6 +88,7 @@ describe('meetings commands and queries construction', () => {
     expect(names).toEqual([
       'meetings.meeting.list',
       'meetings.meeting.get',
+      'meetings.meeting.extension_status',
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
       'meetings.meeting.media_meta',

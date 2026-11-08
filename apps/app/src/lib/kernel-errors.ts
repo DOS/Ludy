@@ -22,6 +22,11 @@ export const KERNEL_ERROR_CODES = [
   'AUTH_NOT_READY',
   'ORG_REQUIRED',
   'ORG_CLOSED',
+  // The Ludy extension's sign-in and token (#2582).
+  'EXTENSION_CODE_INVALID',
+  'EXTENSION_TOKEN_INVALID',
+  'EXTENSION_TOKEN_NOT_FOUND',
+  'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',
   'NOT_FOUND',
@@ -184,6 +189,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_POSTING_ADJUSTMENTS',
   'HR_POSTING_MISMATCH',
   'HR_POSTING_MAP_UNCONFIRMED',
+  'HR_POSTING_APPROVER_ROLE',
   'HR_RUN_EXISTS',
   'HR_RUN_EMPTY',
   'HR_RUN_HAS_REFUSED',
@@ -502,6 +508,14 @@ export const KERNEL_ERROR_CODES = [
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',
   'MARKETPLACE_BUSY',
+  // Marketplace income reports (#2516).
+  'MARKETPLACE_INCOME_NOT_STAGED',
+  'MARKETPLACE_INCOME_BUSY',
+  'MARKETPLACE_INCOME_PERIOD_UNKNOWN',
+  'MARKETPLACE_INCOME_TOTAL_MISMATCH',
+  'MARKETPLACE_INCOME_UNKNOWN_ORDERS',
+  'MARKETPLACE_INCOME_OVERLAP',
+  'MARKETPLACE_INCOME_REPEATED_LINES',
   'STOCK_MOVE_ORDER_LINE',
   'MARKETPLACE_LINE_NOT_FOUND',
   'MARKETPLACE_LINE_NOT_SHIPPED',
@@ -868,6 +882,10 @@ export const KERNEL_ERROR_RULES = {
   before_opening_posting_date: 'BEFORE_OPENING_BALANCE',
   before_opening_fixed: 'BEFORE_OPENING_BALANCE',
   before_opening_later_date: 'BEFORE_OPENING_BALANCE',
+  // A Ludy extension token run outside its scopes, org or routes (#2582).
+  extension_scope: 'FORBIDDEN',
+  extension_org: 'FORBIDDEN',
+  extension_only: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;

@@ -27,7 +27,8 @@ export const vi = {
     closeMenu: 'Đóng menu',
   },
   hero: {
-    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, mỗi phòng\u00a0ban một đội\u00a0AI.',
+    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói',
+    tagline: 'mỗi phòng\u00a0ban một đội\u00a0AI.',
     lead: `${N.gm} điều phối cả đội: ${N.finance} lo kế\u00a0toán, ${N.sales} lo hộp\u00a0thư, khách\u00a0hàng và bán\u00a0hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt.`,
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',

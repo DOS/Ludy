@@ -1,0 +1,21 @@
+{
+  "name": "@crove/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "The Ludy browser extension (Manifest V3, Chrome and Edge): sign-in, org picker, features by module and permission, and meeting capture. No runtime dependencies.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check:manifest": "node scripts/check-manifest.mjs dist/manifest.json",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crove/meeting-recorder": "workspace:*"
+  },
+  "devDependencies": {
+    "@crove/kernel-contract": "workspace:*",
+    "@playwright/test": "catalog:"
+  }
+}

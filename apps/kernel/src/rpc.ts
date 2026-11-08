@@ -78,6 +78,8 @@ export function toORPCError(error: unknown): ORPCError<string, unknown> {
 }
 
 export async function resolveMembership(runtime: Runtime, user: AuthUser, slug: string | null): Promise<OrgSummary> {
+  // An extension token has one org and no org list to look it up in: the routes it reaches use resolveOrg (below).
+  if (user.extension) throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
   if (!slug) throw new DomainError('ORG_REQUIRED', 400, 'Thiếu tổ chức (header x-crove-org)');
   const orgs = await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId));
   const org = orgs.find((o) => o.slug === slug);
@@ -88,6 +90,12 @@ export async function resolveMembership(runtime: Runtime, user: AuthUser, slug: 
 }
 
 export async function resolveOrg(runtime: Runtime, user: AuthUser, slug: string | null): Promise<string> {
+  // An extension token names its one org (issue #2582). It is not a claim to trust: the runtime re-checks, in the
+  // transaction of every command and query, that this token belongs to this member and this org.
+  if (user.extension) {
+    setLogContext({ orgId: user.extension.orgId });
+    return user.extension.orgId;
+  }
   return (await resolveMembership(runtime, user, slug)).orgId;
 }
 
@@ -832,6 +840,7 @@ export function createRpcHandler(
     meetings: {
       list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
       get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
+      extensionStatus: os.meetings.extensionStatus.handler(meetingsQuery('meetings.meeting.extension_status')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
@@ -1981,6 +1990,12 @@ export function createRpcHandler(
           : inOrg(context, (orgId, actor) => runtime.execute('kernel.session.revoke', input, { actor, orgId })),
       ),
     },
+    extension: {
+      tokens: {
+        list: os.extension.tokens.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list', {}, { actor, orgId }))),
+        revoke: os.extension.tokens.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.extension.token.revoke', input, { actor, orgId }))),
+      },
+    },
     inbox: {
       list: os.inbox.list.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.list', input, { actor, orgId })),
@@ -2422,6 +2437,20 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('finance.marketplace.unassign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      incomeStaged: os.marketplace.incomeStaged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_income.staged', {}, { actor, orgId }))),
+      incomePreview: os.marketplace.incomePreview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_income.preview', input, { actor, orgId }))),
+      incomeConfirm: os.marketplace.incomeConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace_income.confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      incomeReject: os.marketplace.incomeReject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace_income.reject', rest, { actor, orgId, idempotencyKey });
         }),
       ),
     },

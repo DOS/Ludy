@@ -76,8 +76,16 @@ export async function fetchConversationImage(url: string, options: FetchConversa
   if (answer.status === 429 || answer.status >= 500) return { kind: 'failed', retry: true, code: `HTTP_${answer.status}` };
   if (answer.status !== 200) return { kind: 'failed', retry: false, code: `HTTP_${answer.status}` };
   if (answer.truncated || answer.body.byteLength === 0 || answer.body.byteLength > CONVERSATION_IMAGE_MAX_BYTES) return { kind: 'failed', retry: false, code: 'BAD_SIZE' };
-  const contentType = sniffConversationImage(answer.body);
-  if (!contentType) return { kind: 'failed', retry: false, code: 'NOT_AN_IMAGE' };
-  const shown = contentType === 'image/gif' ? gifSize(answer.body) : imageSize(answer.body, contentType);
-  return { kind: 'image', bytes: answer.body, contentType, width: shown?.width ?? null, height: shown?.height ?? null };
+  const image = inspectConversationImage(answer.body);
+  if (!image) return { kind: 'failed', retry: false, code: 'NOT_AN_IMAGE' };
+  return { kind: 'image', bytes: answer.body, ...image };
+}
+
+// What the bytes of an image say of themselves (the type from the first bytes, the size in pixels when the header gives it), or null when
+// they are not a JPEG, PNG, WebP or GIF. Shared by the fetch of a platform's image and the images a customer's mail carries (#2758).
+export function inspectConversationImage(bytes: Buffer): { contentType: ConversationImageType; width: number | null; height: number | null } | null {
+  const contentType = sniffConversationImage(bytes);
+  if (!contentType) return null;
+  const shown = contentType === 'image/gif' ? gifSize(bytes) : imageSize(bytes, contentType);
+  return { contentType, width: shown?.width ?? null, height: shown?.height ?? null };
 }

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Ludy",
+  "description": "Ghi lại cuộc họp trên trình duyệt vào Ludy: ghi âm tab họp cùng micro, tải lên khi dừng.",
+  "version": "0.0.0",
+  "minimum_chrome_version": "116",
+  "action": { "default_title": "Ludy", "default_popup": "popup.html" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["storage", "identity"],
+  "host_permissions": ["https://app.ludy.vn/*"],
+  "optional_permissions": ["tabCapture", "offscreen"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*"],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
+}

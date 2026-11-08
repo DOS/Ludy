@@ -134,7 +134,7 @@ suite('four-eyes while an org is offboarding (#2064)', () => {
           trx,
           orgId,
           asUser(owner),
-          { command: LEDGER_COMMAND, status: 'pending', eligible_approvers: [owner, second], authors: [{ type: 'user', id: owner }] },
+          { command: LEDGER_COMMAND, status: 'pending', eligible_approvers: [owner, second], authors: [{ type: 'user', id: owner }], co_authors: null },
           { lock: false },
         );
       });
