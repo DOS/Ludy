@@ -38,6 +38,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
   let workerUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
+  let apiRuntime: Runtime | undefined;
   let branch = '';
   const users = { owner: '', admin: '', author: '', vyUser: '', member: '', viewer: '', limited: '' };
   let agent = { agentId: '', runId: '' };
@@ -130,6 +131,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] }) };
     };
     const api = runtimeFor(appUrl);
+    apiRuntime = api.runtime;
     const worker = runtimeFor(workerUrl).runtime;
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(api.db, { issuer: 'member-vy', subject: key, email: `${key}@member-vy.test`, name: null });
@@ -388,8 +390,32 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       expect((await call(actor)).ok, `${actor.name} ending a member's runs (positive control)`).toBe(true);
     }
     for (const actor of [member('another member', () => users.member), member('the member', () => users.author), member('a viewer', () => users.viewer), agentActor]) {
-      expect(await call(actor), `${actor.name} ending a member's runs`).toMatchObject({ ok: false, code: '42501' });
+      // The refusal is the definer's own (MEMBER_VY_FORBIDDEN), not an entry refusal that also carries 42501, whichever filter the call names.
+      for (const filter of ['NULL, $1::uuid, NULL', `ARRAY[$1::uuid], NULL, NULL`, `NULL, NULL, 'notes'`]) {
+        const refused = await outcome(run(actor, (c) => c.query(`SELECT crove_kernel.member_vy_runs_cancel(${filter.replace('$1::uuid', '$1::uuid')}, $2::text)`, [users.author, 'TEST'])));
+        expect(refused, `${actor.name} ending runs with the filter ${filter}`).toMatchObject({ ok: false, code: '42501', message: expect.stringContaining('MEMBER_VY_FORBIDDEN') });
+      }
     }
+    // The reason is a fixed code, never text.
+    const badReason = await outcome(run(member('an owner', () => users.owner), (c) => c.query(`SELECT crove_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, 'free text')`, [users.author])));
+    expect(badReason.ok, 'a reason that is text').toBe(false);
+    // Another org's owner ends nothing of this org, whatever ids they name: a live run of a member's Vy here stays running.
+    if (!apiRuntime) return;
+    const seeded = await admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      const agentId = randomUUID();
+      const runId = randomUUID();
+      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, randomUUID()]);
+      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`, [orgId, runId, agentId]);
+      return { agentId, runId };
+    });
+    const otherOrg = (await createOrg(apiRuntime, asUser(users.viewer), 'Vy khác')).orgId;
+    const ended = await inContext(appUrl, (c) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [otherOrg, contextToken(users.viewer, otherOrg)]), (c) =>
+      c.query<{ n: string }>('SELECT crove_kernel.member_vy_runs_cancel(ARRAY[$1::uuid], NULL, $2::text, $3::text) AS n', [seeded.agentId, 'notes', 'TEST']),
+    );
+    expect(ended.rows[0]?.n, 'the other org ended no run of this one').toBe('0');
+    const still = await admin((c) => c.query<{ status: string }>('SELECT status FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, seeded.runId]));
+    expect(still.rows[0]?.status, 'the live run is untouched').toBe('running');
   });
 
   describe('the member_vy agent and its runs', () => {
