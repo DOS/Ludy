@@ -6,5 +6,7 @@
 -- unbound one can no longer be exchanged by anything (the 4-argument exchange refuses it), and codes live five minutes.
 SET LOCAL lock_timeout = '2s';
 
+-- crove:contract adr=0047
 DROP FUNCTION IF EXISTS crove_kernel.issue_extension_auth_code(bytea, text, text, text[], text);
+-- crove:contract adr=0047
 DROP FUNCTION IF EXISTS crove_kernel.exchange_extension_auth_code(bytea, text, bytea);
