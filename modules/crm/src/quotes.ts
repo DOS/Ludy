@@ -668,8 +668,8 @@ export const quoteSend = defineCommand({
       throw new DomainError('QUOTE_EMAIL_REQUIRED', 422, 'Khách hàng này chưa có email hợp lệ; hãy nhập email người nhận hoặc cập nhật hồ sơ khách hàng');
     }
     let issuer =
-      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst()) ??
-      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst());
+      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst()) ??
+      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst());
     if (!issuer) throw new DomainError('QUOTE_ISSUER_MISSING', 422, 'Tổ chức chưa có pháp nhân để phát hành báo giá');
     let number: string;
     if (quote.revises_id) {
@@ -679,7 +679,7 @@ export const quoteSend = defineCommand({
       // The revision keeps the number, so it keeps the entity whose series gave it: with the default entity changed in between, the number would otherwise sit in another
       // entity's key and collide with a quote of that entity's own series.
       if (source.issuer_entity_id && source.issuer_entity_id !== issuer.id) {
-        const sourceIssuer = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', source.issuer_entity_id).executeTakeFirst();
+        const sourceIssuer = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', source.issuer_entity_id).executeTakeFirst();
         if (sourceIssuer) issuer = sourceIssuer;
       }
     } else {
@@ -688,9 +688,22 @@ export const quoteSend = defineCommand({
       const year = /^\d{4}/.test(allocated.periodKey) ? allocated.periodKey.slice(0, 4) : today.slice(0, 4);
       number = `BG-${year}-${String(allocated.number).padStart(4, '0')}`;
     }
+    // The seller as the document will show it, frozen with the quote (#2826): a change to the letterhead later does not change a quote that was sent.
+    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const text = (value: string | null | undefined, max: number): string | null => {
+      const trimmed = value?.trim() ?? '';
+      return trimmed === '' ? null : trimmed.slice(0, max);
+    };
     await ctx.trx
       .updateTable('crove_crm.quote')
       .set({
+        seller_name: text(issuer.name, 400) ?? text(org.name, 400) ?? 'Người bán',
+        seller_tax_code: text(issuer.tax_code, 40),
+        seller_address: text(org.address, 1000),
+        seller_phone: text(letterhead?.phone, 40),
+        seller_email: text(letterhead?.email, 254),
+        seller_bank_note: text(letterhead?.bank_note, 500),
         status: 'sent',
         number,
         sent_at: ctx.now,
