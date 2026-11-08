@@ -808,6 +808,12 @@ export function createRpcHandler(
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
         },
+        bankTemplates: {
+          list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
+          create: os.hr.payroll.bankTemplates.create.handler(hrCommand('hr.payroll.bank_template.create')),
+          edit: os.hr.payroll.bankTemplates.edit.handler(hrCommand('hr.payroll.bank_template.edit')),
+          delete: os.hr.payroll.bankTemplates.delete.handler(hrCommand('hr.payroll.bank_template.delete')),
+        },
         employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
         dependents: {
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),

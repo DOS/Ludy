@@ -42,6 +42,9 @@ describe('module manifests declare their permissions (#1630)', () => {
     expect(uses.map((u) => `${u.by}: ${u.permission}`).sort()).toEqual([
       'command finance.period.unlock: finance.period.unlock',
       'command finance.vat.return_mark: finance.vat.file',
+      'command hr.payroll.bank_template.create: hr.payroll.run',
+      'command hr.payroll.bank_template.delete: hr.payroll.run',
+      'command hr.payroll.bank_template.edit: hr.payroll.run',
       'command hr.payroll.dependent.add: hr.payroll.run',
       'command hr.payroll.dependent.end: hr.payroll.run',
       'command hr.payroll.employee.add: hr.payroll.run',
