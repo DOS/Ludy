@@ -788,6 +788,7 @@ export interface FinanceChannelSettlementLineTable {
   net: ColumnType<string, string, NotGranted>;
   source_row: ColumnType<number | null, number | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  adjustment: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_finance.channel_settlement */
@@ -802,6 +803,7 @@ export interface FinanceChannelSettlementTable {
   report_net: ColumnType<string, string, NotGranted>;
   source_sha256: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  reversal_of: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.chart_account */

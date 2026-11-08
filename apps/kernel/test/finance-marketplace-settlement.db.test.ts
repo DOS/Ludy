@@ -20,8 +20,9 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
-const SETTLEMENT_COLUMNS = ['created_at', 'id', 'legal_entity_id', 'org_id', 'payout_ref', 'period_end', 'period_start', 'platform', 'report_net', 'source_sha256'];
+const SETTLEMENT_COLUMNS = ['created_at', 'id', 'legal_entity_id', 'org_id', 'payout_ref', 'period_end', 'period_start', 'platform', 'report_net', 'reversal_of', 'source_sha256'];
 const LINE_COLUMNS = [
+  'adjustment',
   'commission',
   'created_at',
   'id',
@@ -89,19 +90,50 @@ suite('marketplace income reports as stored rows (#2516)', () => {
       client.release();
     }
   }
-  const order = (org: string) =>
+  // Several statements in one transaction as a user of the org (a reversal and its lines go together): the first refusal, at a statement or at COMMIT, rolls everything back.
+  async function inTxn(user: string, org: string, statements: Array<[string, unknown[]]>): Promise<{ code: string; constraint?: string | undefined }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      try {
+        await enterUser(client, user, org);
+        for (const [text, values] of statements) await client.query(text, values);
+        await client.query('COMMIT');
+        return { code: '' };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        const e = error as { code?: string; constraint?: string };
+        return { code: e.code ?? 'unknown', constraint: e.constraint };
+      }
+    } finally {
+      client.release();
+    }
+  }
+  const settlementSql = (id: string, extra: { platform?: string; start: string; end: string; net: string; reversalOf?: string | null }): [string, unknown[]] => [
+    'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [orgId, id, extra.platform ?? 'shopee', extra.start, extra.end, extra.net, extra.reversalOf ?? null],
+  ];
+  const lineSql = (settlement: string, orderId: string, columns: Record<string, string> = {}, key = 'L1'): [string, unknown[]] => {
+    const values: Record<string, string> = { sales: '100000', commission: '5000', net: '95000', ...columns };
+    const names = Object.keys(values);
+    return [
+      `INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, ${names.join(', ')}) VALUES ($1, $2, $3, $4, $5, ${names.map((_, i) => `$${i + 6}`).join(', ')})`,
+      [orgId, randomUUID(), settlement, orderId, key, ...names.map((n) => values[n])],
+    ];
+  };
+  const order = (org: string, platform = 'shopee') =>
     admin(async (c) => {
       const id = randomUUID();
-      await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, 'shopee', `ST${randomUUID().slice(0, 12)}`]);
+      await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [org, id, platform, `ST${randomUUID().slice(0, 12)}`]);
       return id;
     });
-  const insertSettlement = (user: string, id: string, extra: { platform?: string; start?: string; end?: string; net?: string; ref?: string | null } = {}) => {
+  const insertSettlement = (user: string, id: string, extra: { platform?: string; start?: string; end?: string; net?: string; ref?: string | null; reversalOf?: string | null } = {}) => {
     const d = periodDay();
     return asTenant(
       user,
       orgId,
-      'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, payout_ref, report_net) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [orgId, id, extra.platform ?? 'shopee', extra.start ?? d, extra.end ?? d, extra.ref ?? null, extra.net ?? '95000'],
+      'INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, payout_ref, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [orgId, id, extra.platform ?? 'shopee', extra.start ?? d, extra.end ?? d, extra.ref ?? null, extra.net ?? '95000', extra.reversalOf ?? null],
     );
   };
   const insertLine = (user: string, settlement: string, orderId: string, columns: Record<string, string> = {}, key = 'L1', org = orgId) => {
@@ -217,7 +249,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     );
     for (const table of ['channel_settlement', 'channel_settlement_line']) {
       for (const statement of [`UPDATE crove_finance.${table} SET org_id = org_id`, `DELETE FROM crove_finance.${table}`, `TRUNCATE crove_finance.${table} CASCADE`]) {
-        await expect(admin((c) => c.query(statement)), `${statement} as the table's owner`).rejects.toMatchObject({ message: expect.stringMatching(/./) });
+        await expect(admin((c) => c.query(statement)), `${statement} as the table's owner`).rejects.toMatchObject({ message: expect.stringMatching(/append-only/i) });
       }
     }
   });
@@ -248,8 +280,8 @@ suite('marketplace income reports as stored rows (#2516)', () => {
   });
 
   it('is inserted by an owner and a member of the org and refused to a viewer, and what is stored is the entity of the org', async () => {
-    const orderId = await order(orgId);
     for (const [who, user] of [['owner', owner], ['member', member]] as const) {
+      const orderId = await order(orgId);
       const settlement = randomUUID();
       expect(await insertSettlement(user, settlement), `${who} stores a settlement`).toEqual({ code: '', rowCount: 1 });
       expect(await insertLine(user, settlement, orderId, { sales: '120000', commission: '6000', service_fee: '2000', payment_fee: '1000', shipping: '500', tax_withheld: '1200', net: '109300' }), `${who} stores a line`).toEqual({
@@ -269,7 +301,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const refused = randomUUID();
     expect((await insertSettlement(viewer, refused)).code, 'a viewer stores a settlement').toBe('42501');
     const settlement = await seedSettlement();
-    expect((await insertLine(viewer, settlement, orderId, {}, 'LV')).code, 'a viewer stores a line').toBe('42501');
+    expect((await insertLine(viewer, settlement, await order(orgId), {}, 'LV')).code, 'a viewer stores a line').toBe('42501');
   });
 
   it('reads only the rows of the org, and stores nothing in another org', async () => {
@@ -315,7 +347,7 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     const start = '2027-03-01';
     const end = '2027-03-31';
     expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'tiktok_shop' })).code).toBe('');
-    expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'tiktok_shop' })).code, 'the same report again').toBe('23505');
+    expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'tiktok_shop' })).code, 'the same report again').toBe('23P01');
     expect((await insertSettlement(owner, randomUUID(), { start, end, platform: 'lazada' })).code, 'the same period of another platform').toBe('');
     expect((await insertSettlement(owner, randomUUID(), { platform: 'temu' })).code, 'a platform that is none of the three').toBe('23514');
     const settlement = await seedSettlement();
@@ -326,6 +358,172 @@ suite('marketplace income reports as stored rows (#2516)', () => {
     expect((await insertLine(owner, settlement, orderId, {}, '')).code, 'an empty line key').toBe('23514');
     expect((await insertLine(owner, settlement, orderId, {}, 'x'.repeat(121))).code, 'a line key past its cap').toBe('23514');
     expect((await insertSettlement(owner, randomUUID(), { ref: 'y'.repeat(121) })).code, 'a payout reference past its cap').toBe('23514');
+  });
+
+  it('refuses a period that overlaps another that stands, for the same entity and platform only', async () => {
+    const first = randomUUID();
+    expect((await insertSettlement(owner, first, { start: '2027-04-01', end: '2027-04-15' })).code).toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-10', end: '2027-04-30' })).code, 'a later part of it').toBe('23P01');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-03-20', end: '2027-04-01' })).code, 'an earlier part of it').toBe('23P01');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-05', end: '2027-04-06' })).code, 'inside it').toBe('23P01');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-16', end: '2027-04-30' })).code, 'the day after it').toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { start: '2027-04-01', end: '2027-04-15', platform: 'lazada' })).code, 'another platform').toBe('');
+  });
+
+  it('undoes a wrong confirmation by a reversal that mirrors every line, once, and then takes the corrected report', async () => {
+    const original = randomUUID();
+    const [o1, o2] = [await order(orgId), await order(orgId)];
+    const period = { start: '2027-05-01', end: '2027-05-31' };
+    expect((await insertSettlement(owner, original, { ...period, net: '190000' })).code).toBe('');
+    expect((await insertLine(owner, original, o1, {}, 'S1')).code).toBe('');
+    expect((await insertLine(owner, original, o2, {}, 'S2')).code).toBe('');
+    const bad = [
+      ['a net that is not the negative', { ...period, net: '190000' }],
+      ['another period', { start: '2027-05-01', end: '2027-05-30', net: '-190000' }],
+      ['another platform', { ...period, net: '-190000', platform: 'lazada' }],
+    ] as const;
+    for (const [why, extra] of bad) expect((await insertSettlement(owner, randomUUID(), { ...extra, reversalOf: original })).code, `a reversal with ${why}`).toBe('23514');
+    const mirror = (id: string, key: string, orderId: string) => lineSql(id, orderId, { adjustment: 'true' }, key);
+    const reverse = (id: string, of: string, lines: Array<[string, string]>) =>
+      inTxn(owner, orgId, [settlementSql(id, { ...period, net: '-190000', reversalOf: of }), ...lines.map(([key, orderId]) => mirror(id, key, orderId))]);
+    // Alone, or missing a line of the original, a reversal cancels only part of it, and the commit refuses it.
+    expect((await reverse(randomUUID(), original, [])).code, 'a reversal with no lines').toBe('23514');
+    expect((await reverse(randomUUID(), original, [['S1', o1]])).code, 'a reversal with one line of two').toBe('23514');
+    // Its lines are the original's, marked as adjustments, and nothing else.
+    const r = randomUUID();
+    const head = settlementSql(r, { ...period, net: '-190000', reversalOf: original });
+    expect((await inTxn(owner, orgId, [head, lineSql(r, o1, {}, 'S1')])).code, 'a mirrored line not marked as an adjustment').toBe('23514');
+    expect((await inTxn(owner, orgId, [head, lineSql(r, o1, { adjustment: 'true', sales: '0', commission: '0', net: '0' }, 'S1')])).code, 'a line with other figures').toBe('23514');
+    expect((await inTxn(owner, orgId, [head, mirror(r, 'S9', o1)])).code, 'a line the original does not have').toBe('23514');
+    const reversal = randomUUID();
+    expect((await reverse(reversal, original, [['S1', o1], ['S2', o2]])).code, 'the reversal with all its lines').toBe('');
+    expect((await reverse(randomUUID(), original, [['S1', o1], ['S2', o2]])).code, 'a second reversal').toBe('23505');
+    expect((await insertSettlement(owner, randomUUID(), { ...period, net: '190000', reversalOf: reversal })).code, 'a reversal of a reversal').toBe('23514');
+    // The reversed settlement takes no more lines.
+    expect((await insertLine(owner, original, await order(orgId), {}, 'S3')).code, 'a line added to a settlement that was reversed').toBe('23514');
+    // The corrected report for the same period stands, its sale lines repeat the same orders and keys, and a third import of the period is refused.
+    const corrected = randomUUID();
+    expect((await insertSettlement(owner, corrected, { ...period, net: '189000' })).code, 'the corrected report').toBe('');
+    expect((await insertLine(owner, corrected, o1, { commission: '6000', net: '94000' }, 'S1')).code, 'its first sale line').toBe('');
+    expect((await insertLine(owner, corrected, o2, {}, 'S2')).code, 'its second sale line').toBe('');
+    expect((await insertSettlement(owner, randomUUID(), { ...period, net: '189000' })).code, 'the same period a third time').toBe('23P01');
+  });
+
+  it('refuses a sale line already stored for the order and line in another settlement that stands, and an adjustment that carries a sale', async () => {
+    const orderId = await order(orgId);
+    const a = randomUUID();
+    const b = randomUUID();
+    expect((await insertSettlement(owner, a, { start: '2027-06-01', end: '2027-06-15' })).code).toBe('');
+    expect((await insertSettlement(owner, b, { start: '2027-06-16', end: '2027-06-30' })).code).toBe('');
+    expect((await insertLine(owner, a, orderId, {}, 'S1')).code).toBe('');
+    expect((await insertLine(owner, b, orderId, {}, 'S1')).code, 'the same sale again').toBe('23505');
+    expect((await insertLine(owner, b, orderId, { adjustment: 'true' }, 'S1')).code, 'the same sale marked as an adjustment').toBe('23514');
+    expect((await insertLine(owner, b, orderId, { adjustment: 'true', sales: '0', commission: '0', other: '-250', net: '-250' }, 'S1')).code, 'a later adjustment that carries no sale').toBe('');
+    expect((await insertLine(owner, b, orderId, { sales: '0', commission: '0', refund: '30000', net: '-30000' }, 'R1')).code, 'a refund line is not a sale line').toBe('');
+    const c = randomUUID();
+    expect((await insertSettlement(owner, c, { start: '2027-07-01', end: '2027-07-15' })).code).toBe('');
+    expect((await insertLine(owner, c, await order(orgId), {}, 'S1')).code, 'the same key of another order').toBe('');
+  });
+
+  it('mirrors every amount column in a reversal, not only the sales and the net', async () => {
+    const original = randomUUID();
+    const orderId = await order(orgId);
+    const period = { start: '2027-11-01', end: '2027-11-30' };
+    expect((await insertSettlement(owner, original, { ...period, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, original, orderId, {}, 'S1')).code).toBe('');
+    const reversal = randomUUID();
+    const head = settlementSql(reversal, { ...period, net: '-95000', reversalOf: original });
+    // The same sales and net, split otherwise, would post other fees, so it is refused at the line.
+    // Each other amount column in turn takes the commission's 5000 (other as a negative adjustment), so the sales and the net stay the original's and only the split differs.
+    for (const column of ['seller_discount', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other']) {
+      const moved = lineSql(reversal, orderId, { adjustment: 'true', commission: '0', [column]: column === 'other' ? '-5000' : '5000' }, 'S1');
+      expect((await inTxn(owner, orgId, [head, moved])).code, `same net, ${column} instead of the commission`).toBe('23514');
+    }
+    expect((await inTxn(owner, orgId, [head, lineSql(reversal, orderId, { adjustment: 'true', commission: '4000', other: '-1000' }, 'S1')])).code, 'same net, commission less and an adjustment').toBe('23514');
+    expect((await inTxn(owner, orgId, [head, lineSql(reversal, orderId, { adjustment: 'true' }, 'S1')])).code, 'every column the same').toBe('');
+  });
+
+  it('refuses a line whose order is of another platform than its settlement', async () => {
+    const settlement = randomUUID();
+    expect((await insertSettlement(owner, settlement, { start: '2027-12-01', end: '2027-12-31', platform: 'shopee' })).code).toBe('');
+    expect((await insertLine(owner, settlement, await order(orgId, 'lazada'), {}, 'P1')).code, 'a Lazada order in a Shopee settlement').toBe('23514');
+    expect((await insertLine(owner, settlement, await order(orgId, 'shopee'), {}, 'P1')).code, 'a Shopee order').toBe('');
+  });
+
+  it('serializes a reversal against a line added to its original, whichever comes first', async () => {
+    // Waits, for at most 10 seconds, until another backend is queued on an advisory lock, so the test fails (not passes by luck) when the guard takes no lock.
+    const waitBlocked = async () => {
+      for (let i = 0; i < 100; i += 1) {
+        const waiting = await admin(async (c) => (await c.query("SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())")).rowCount ?? 0);
+        if (waiting > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('no backend waited on an advisory lock: the guard took none');
+    };
+    // 1. The reversal holds the lock (not yet committed) while a new line for its original waits: the line is refused once the reversal commits.
+    const original = randomUUID();
+    const o1 = await order(orgId);
+    const period = { start: '2028-01-01', end: '2028-01-31' };
+    expect((await insertSettlement(owner, original, { ...period, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, original, o1, {}, 'S1')).code).toBe('');
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await enterUser(holder, owner, orgId);
+      const reversal = randomUUID();
+      for (const [text, values] of [settlementSql(reversal, { ...period, net: '-95000', reversalOf: original }), lineSql(reversal, o1, { adjustment: 'true' }, 'S1')]) await holder.query(text, values);
+      const late = insertLine(owner, original, await order(orgId), {}, 'S2');
+      await waitBlocked();
+      await holder.query('COMMIT');
+      expect((await late).code, 'a line that waited for the reversal').toBe('23514');
+    } finally {
+      holder.release();
+    }
+    // 2. A new line holds the lock while a reversal waits: the reversal, which does not mirror it, is refused at its commit.
+    const second = randomUUID();
+    const o2 = await order(orgId);
+    const period2 = { start: '2028-02-01', end: '2028-02-29' };
+    expect((await insertSettlement(owner, second, { ...period2, net: '95000' })).code).toBe('');
+    expect((await insertLine(owner, second, o2, {}, 'S1')).code).toBe('');
+    const writer = await pool.connect();
+    try {
+      await writer.query('BEGIN');
+      await enterUser(writer, owner, orgId);
+      const [text, values] = lineSql(second, await order(orgId), {}, 'S2');
+      await writer.query(text, values);
+      const reversal2 = randomUUID();
+      const racing = inTxn(owner, orgId, [settlementSql(reversal2, { ...period2, net: '-95000', reversalOf: second }), lineSql(reversal2, o2, { adjustment: 'true' }, 'S1')]);
+      await waitBlocked();
+      await writer.query('COMMIT');
+      expect((await racing).code, 'a reversal that waited for a new line').toBe('23514');
+    } finally {
+      writer.release();
+    }
+  });
+
+  it('serializes imports made at once: of four settlements for one period one is stored, and of two sale lines for one order one', async () => {
+    const results = await Promise.all([1, 2, 3, 4].map(() => insertSettlement(owner, randomUUID(), { start: '2027-08-01', end: '2027-08-31' })));
+    expect(results.map((r) => r.code).sort()).toEqual(['', '23P01', '23P01', '23P01']);
+    const orderId = await order(orgId);
+    const sa = randomUUID();
+    const sb = randomUUID();
+    expect((await insertSettlement(owner, sa, { start: '2027-09-01', end: '2027-09-10' })).code).toBe('');
+    expect((await insertSettlement(owner, sb, { start: '2027-09-11', end: '2027-09-20' })).code).toBe('');
+    const lines = await Promise.all([insertLine(owner, sa, orderId, {}, 'C1'), insertLine(owner, sb, orderId, {}, 'C1')]);
+    expect(lines.map((r) => r.code).sort()).toEqual(['', '23505']);
+  });
+
+  it('refuses to run in a transaction stricter than READ COMMITTED, where the locks would not protect', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      await enterUser(client, owner, orgId);
+      const [text, values] = settlementSql(randomUUID(), { start: '2027-10-01', end: '2027-10-02', net: '0' });
+      await expect(client.query(text, values)).rejects.toMatchObject({ code: '25000' });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('names an order and a settlement of its own org, and no other', async () => {
