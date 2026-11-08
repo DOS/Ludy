@@ -9,6 +9,7 @@ import {
   isBudgetAmount,
   isEveryEntity,
   scopeNames,
+  meetingItemOf,
   socialPostOf,
   taskDueDay,
   taskDueFromDay,
@@ -99,6 +100,17 @@ describe('holderCandidates', () => {
   it('offers none of another role, or any before the templates are known', () => {
     expect(ids(holderCandidates({ id: 'p2', roleKey: 'auditor' }, agents, positions, templateRoles))).toEqual([]);
     expect(ids(holderCandidates({ id: 'p2', roleKey: 'accountant' }, agents, positions, new Map()))).toEqual([]);
+  });
+});
+
+describe('meetingItemOf', () => {
+  it('reads the action item id of a task made from a meeting, and nothing else', () => {
+    const id = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
+    expect(meetingItemOf({ type: 'meetings.action_item', id })).toBe(id);
+    expect(meetingItemOf({ type: 'social.post', id })).toBeNull();
+    expect(meetingItemOf({ type: 'meetings.action_item', id: 'not-a-uuid' })).toBeNull();
+    expect(meetingItemOf(null)).toBeNull();
+    expect(meetingItemOf('x')).toBeNull();
   });
 });
 

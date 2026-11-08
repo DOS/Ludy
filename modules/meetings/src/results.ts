@@ -29,6 +29,7 @@ import {
   type MeetingResults,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { vnDayStart } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
@@ -253,20 +254,17 @@ export const resultPublish = defineCommand({
 });
 
 // Makes the task of one item, and marks the item (once). The caller has read the item under RLS; the database function checks again that they may accept it.
-async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: string; due: string | null; positionId: string; skipAccepted?: boolean }): Promise<string | null> {
+async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: string; due: string | null; positionId: string }): Promise<string> {
   const item = await ctx.trx.selectFrom('crove_meetings.action_item').select(['id', 'meeting_id', 'title', 'status', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   if (!item) throw itemNotFound();
   await openMeeting(ctx.trx, ctx.orgId, item.meeting_id); // the text-retention gate, as for every other read and write of a meeting's text
-  if (item.status !== 'suggested') {
-    if (choice.skipAccepted) return null;
-    throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
-  }
+  if (item.status !== 'suggested') throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
   // `tainted` stays while the model's text is unedited: the item still holds it and the person kept the title.
   const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_meeting', {
     itemId,
     title: choice.title,
     positionId: choice.positionId,
-    due: choice.due === null ? null : `${choice.due}T00:00:00+07:00`,
+    due: choice.due === null ? null : vnDayStart(choice.due),
     tainted: item.tainted && choice.title === item.title,
   });
   try {
@@ -289,7 +287,6 @@ export const actionItemAccept = defineCommand({
   handler: async (ctx, input) => {
     userOf(ctx.actor);
     const taskId = await acceptItem(ctx, input.itemId, { title: input.title, due: input.due, positionId: input.positionId });
-    if (taskId === null) throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
     ctx.audit({ itemId: input.itemId, taskId });
     return { itemId: input.itemId, taskId };
   },
@@ -330,9 +327,14 @@ export const actionItemAcceptClean = defineCommand({
       const held = row.who_parsed ? (seats.get(row.who_parsed) ?? []) : [];
       const flags = Array.isArray(row.flags) ? (row.flags as string[]) : [];
       if (!itemIsClean({ flags, whoUserId: row.who_parsed, whenDate: row.when_parsed }, held.length)) continue;
-      // An item another person accepted since the list was read is left to them, not a failure of the whole click.
-      const taskId = await acceptItem(ctx, row.id, { title: row.title, due: row.when_parsed, positionId: (held[0] as { id: string }).id, skipAccepted: true });
-      if (taskId !== null) taskIds.push(taskId);
+      // Each item is its own nested command run with a savepoint: an item another person accepted since the list was read is left to them (its task, if one
+      // was begun, is undone with the savepoint), and any other refusal ends the click.
+      const attempt = await ctx.tryRun<{ itemId: string; taskId: string }>(
+        'meetings.action_item.accept',
+        { itemId: row.id, confirmed: true, title: row.title, due: row.when_parsed, positionId: (held[0] as { id: string }).id },
+        { recover: (refusal) => refusal.code === 'ACTION_ITEM_ACCEPTED' },
+      );
+      if (attempt.status === 'ok') taskIds.push(attempt.value.taskId);
     }
     if (taskIds.length === 0) throw new DomainError('NO_CLEAN_ITEMS', 409, 'There is no clean action item to accept');
     ctx.audit({ meetingId: input.meetingId, accepted: taskIds.length });
