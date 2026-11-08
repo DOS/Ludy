@@ -17,6 +17,9 @@ const MAIL_FILES_LOOKED_AT = 20;
 // The longest note listing the files a mail carried, so the list never crowds out the text.
 export const MAIL_FILE_NOTE_MAX = 1500;
 const NAME_MAX = 80;
+// The most pixels a mail's image may have: the stored bytes are served as they came (no re-encoding), so a small file that unpacks into a huge picture
+// would cost whoever opens the thread. A header that gives no size is let through (the browser decodes it, as for a platform's image).
+export const MAIL_IMAGE_MAX_PIXELS = 40_000_000;
 // A real image of a format the store does not take: said so, not called invalid.
 const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['heic', 'heif', 'bmp', 'tif', 'tiff']);
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'bmp', 'tif', 'tiff', 'heif', 'svg']);
@@ -40,7 +43,7 @@ export interface MailFiles {
 export function cleanFileName(name: string | null): string {
   const base = (name ?? '').split(/[\\/]/).pop() ?? '';
   // oxlint-disable-next-line no-control-regex
-  const plain = base.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const plain = base.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]+/g, ' ').replace(/\s+/g, ' ').trim();
   return plain === '' ? 'tệp không tên' : plain.slice(0, NAME_MAX);
 }
 
@@ -58,7 +61,8 @@ function typeLabel(name: string, bytes: Buffer): string {
   return IMAGE_EXTENSIONS.has(extension) ? (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension) ? 'ảnh định dạng chưa hỗ trợ' : 'không phải ảnh hợp lệ') : extension.toUpperCase();
 }
 
-export function readMailFiles(attachments: ReadonlyArray<{ filename: string | null; content: string }>): MailFiles {
+// storeImages false: the org's day of mailed images is spent, so every image is listed like any other file and none is stored.
+export function readMailFiles(attachments: ReadonlyArray<{ filename: string | null; content: string }>, storeImages = true): MailFiles {
   const images: MailImage[] = [];
   const lines: string[] = [];
   for (const attachment of attachments.slice(0, MAIL_FILES_LOOKED_AT)) {
@@ -70,6 +74,10 @@ export function readMailFiles(attachments: ReadonlyArray<{ filename: string | nu
       lines.push(`- ${name} (${typeLabel(name, bytes)}, ${sizeLabel(bytes.byteLength)})`);
     } else if (bytes.byteLength > CONVERSATION_IMAGE_MAX_BYTES) {
       lines.push(`- ${name} (ảnh ${sizeLabel(bytes.byteLength)}, quá lớn nên không lưu)`);
+    } else if (image.width !== null && image.height !== null && image.width * image.height > MAIL_IMAGE_MAX_PIXELS) {
+      lines.push(`- ${name} (ảnh ${image.width}x${image.height}, độ phân giải quá lớn nên không lưu)`);
+    } else if (!storeImages) {
+      lines.push(`- ${name} (ảnh ${sizeLabel(bytes.byteLength)}, hôm nay Hộp thư đã nhận nhiều ảnh nên không lưu)`);
     } else if (images.length >= CONVERSATION_ATTACHMENTS_MAX) {
       lines.push(`- ${name} (ảnh ${sizeLabel(bytes.byteLength)}, thư có quá nhiều ảnh nên không lưu)`);
     } else {

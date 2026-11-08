@@ -128,6 +128,8 @@ export const zConversationEvent = z.strictObject({
   // Email only (#2758): how many images the worker found in the mail (it read their type from the bytes and held each to the size cap). The core reserves
   // a row with a blob key for each and hands the keys back; the worker writes the bytes, which never travel in an event.
   mailImages: z.number().int().min(1).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
+  // Email only: the total bytes of those images, counted in the org's day of attachment bytes (the same metric as the invoice reader's, checked at a quarter of its limit).
+  mailImageBytes: z.number().int().min(1).max(CONVERSATION_ATTACHMENTS_MAX * CONVERSATION_IMAGE_MAX_BYTES).optional(),
 });
 export type ConversationEvent = z.infer<typeof zConversationEvent>;
 

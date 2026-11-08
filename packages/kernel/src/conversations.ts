@@ -325,6 +325,9 @@ export const conversationEmailIngest = defineCommand({
     const result = await ingestEvents(ctx, await emailConnectionId(ctx), input.events);
     // What the org used of its daily limit of customer mail: a mail kept counts, a redelivery counts nothing; the invoice reader's limit is its own.
     if (result.stored > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'conversation_emails', amount: String(result.stored) }).execute();
+    // The bytes of the images a new mail reserved count against the org's day of attachment bytes (#2758): a published address must not fill the store.
+    const imageBytes = result.stored > 0 ? input.events.reduce((sum, event) => sum + (event.mailImageBytes ?? 0), 0) : 0;
+    if (imageBytes > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'attachment_bytes', amount: String(imageBytes) }).execute();
     return result;
   },
 });
@@ -424,7 +427,7 @@ async function ingestEvent(
   let event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
-    .select(['id', 'conversation_id', 'body', 'direction', 'hidden_at', 'platform_removed_at'])
+    .select(['id', 'conversation_id', 'body', 'direction', 'hidden_at', 'platform_removed_at', 'author_identity_id', 'sender_verified'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
     .where('external_message_id', '=', event.messageId)
@@ -468,7 +471,14 @@ async function ingestEvent(
       }
     }
     // A redelivery of a mail whose worker died before it wrote every image: the rows it reserved are handed out again, so the images are not lost.
-    if (event.kind === 'email' && event.mailImages && existing.direction === 'in' && !existing.platform_removed_at) {
+    // Only from the sender of the stored message, with the same standing: someone copied on the mail, or who learned its Message-ID, must not fill or
+    // take the slots of a customer's message with their own images.
+    const sameSender =
+      event.kind === 'email' &&
+      existing.author_identity_id !== null &&
+      existing.sender_verified === (event.verified === true) &&
+      (await ctx.trx.selectFrom('crove_kernel.conversation_identity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', existing.author_identity_id).where('external_user_id', '=', event.contact.id).executeTakeFirst()) !== undefined;
+    if (sameSender && event.mailImages && existing.direction === 'in' && !existing.platform_removed_at) {
       const waiting = await ctx.trx
         .selectFrom('crove_kernel.conversation_attachment')
         .select(['id', 'storage_key'])

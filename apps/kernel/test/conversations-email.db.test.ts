@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import type { ExtractClient } from '@crove/extract-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type UsageLimits } from '@crove/kernel';
+import { DEFAULT_USAGE_LIMITS, createOrg, kernelCommands, kernelQueries, upsertIdentity, type UsageLimits } from '@crove/kernel';
 import type { ConversationDetail, ConversationListed } from '@crove/kernel-contract';
 import { Runtime, defineQuery, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { processInboundEmail } from '../src/inbound.ts';
@@ -698,6 +698,51 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
       const { rows: due } = await workerPool.query('SELECT * FROM crove_kernel.conversation_attachment_due(10, 60)');
       expect(due).toEqual([]);
       expect(await attachmentRows(o)).toHaveLength(2);
+    });
+
+    it('counts the bytes of mailed images in the day’s attachment bytes and, past a quarter of the limit, keeps the text and lists the images', async () => {
+      const o = await org();
+      const limits: UsageLimits = { ...DEFAULT_USAGE_LIMITS, attachment_bytes: '1000' };
+      const padded = Buffer.concat([PNG, Buffer.alloc(300)]);
+      await deliver(o.address, raw({ to: o.address, messageId: '<budget1@mau.test>', files: [{ name: 'mot.png', bytes: padded, type: 'image/png' }] }), limits);
+      expect(await attachmentRows(o)).toHaveLength(1);
+      const [used] = await rows<{ n: string }>("SELECT coalesce(sum(amount), 0)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'attachment_bytes'", [o.orgId]);
+      expect(used?.n).toBe(String(padded.byteLength));
+      // More than the 250 bytes a day that mailed images may use: the next mail's text arrives and its image is a line.
+      const out = await deliver(o.address, raw({ to: o.address, messageId: '<budget2@mau.test>', body: 'Chữ vẫn đến.', files: [{ name: 'hai.png', bytes: padded, type: 'image/png' }] }), limits);
+      expect(out).toMatchObject({ conversation: 'stored' });
+      expect(await attachmentRows(o)).toHaveLength(1);
+      const bodies = (await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 ORDER BY sent_at, seq', [o.orgId])).map((r) => r.body);
+      expect(bodies.some((b) => b.includes('Chữ vẫn đến.') && b.includes('hai.png (ảnh'))).toBe(true);
+    });
+
+    it('hands a message’s waiting slots to nobody but its own sender, with the same standing', async () => {
+      const o = await org();
+      const id = '<slots1@mau.test>';
+      const files = [{ name: 'a.png', bytes: PNG, type: 'image/png' }];
+      let failing = true;
+      const flaky: BlobStore = {
+        put: async (key, bytes) => {
+          if (failing && key.startsWith('conversation/')) throw new Error('store down');
+          return store.put(key, bytes);
+        },
+        get: (key) => store.get(key),
+        delete: (key) => store.delete(key),
+      };
+      const run = async (message: Uint8Array) => {
+        const blobId = newInboundBlobId();
+        await store.put(inboundKey(blobId), message);
+        return processInboundEmail({ runtime: worker, store: flaky, domain: DOMAIN, extract, authservId: AUTHSERV }, { blobId, sha256: sha256Hex(message), sizeBytes: message.byteLength, recipient: o.address });
+      };
+      await expect(run(raw({ to: o.address, messageId: id, files }))).rejects.toThrow('store down');
+      failing = false;
+      // Someone else who learned the Message-ID, and the customer's address written by a server that did not vouch for it: neither takes the slot.
+      await run(raw({ to: o.address, messageId: id, from: 'Người Khác <khac@khac.test>', files: [{ name: 'x.png', bytes: JPEG, type: 'image/jpeg' }] }));
+      await run(raw({ to: o.address, messageId: id, auth: 'none', files: [{ name: 'y.png', bytes: JPEG, type: 'image/jpeg' }] }));
+      expect((await attachmentRows(o)).map((a) => a.state)).toEqual(['pending']);
+      // The customer's own redelivery fills it.
+      await run(raw({ to: o.address, messageId: id, files }));
+      expect((await attachmentRows(o)).map((a) => [a.state, a.content_type])).toEqual([['stored', 'image/png']]);
     });
 
     it('goes with its thread on erase_contact and the retention purge, and keeps no file name or byte in an audit row or an event', async () => {

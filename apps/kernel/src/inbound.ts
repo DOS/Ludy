@@ -280,7 +280,7 @@ export type ConversationMail = { event: ConversationEvent; images: MailImage[] }
 // `refs`, within the org, and never by subject. Text from the mail is tainted external text and stays text: the extract sandbox reduced any HTML to
 // text already. Its attachments are read by readMailFiles (#2758): images are kept (the event says how many, the bytes go to the store, never in the
 // event) and every other file is listed by name, size and type at the end of the text.
-export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date, authservId?: string): ConversationMail {
+export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date, authservId?: string, storeImages = true): ConversationMail {
   if (email.automated === true) return { ignored: 'automated' };
   if (email.multipleFrom === true) return { ignored: 'no_sender' };
   const sender = (email.from ?? '').trim().toLowerCase();
@@ -293,7 +293,7 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   // In-Reply-To comes last, the nearest ancestor, so the cut to the last ones never drops it.
   const refs = [...new Set([...(email.references ?? []), email.inReplyTo ?? ''].map((r) => r.trim()).filter((r) => MESSAGE_ID.test(r) && r !== messageId))].slice(-EMAIL_REFS_MAX);
   const written = (email.text ?? '').trim();
-  const files = readMailFiles(email.attachments);
+  const files = readMailFiles(email.attachments, storeImages);
   const note = mailFilesNote(files.lines);
   const body = written === '' ? (files.images.length > 0 ? NO_TEXT_IMAGES : NO_TEXT) : written;
   const text = `${body.slice(0, CONVERSATION_BODY_MAX - note.length - 2)}${note === '' ? '' : `\n\n${note}`}`;
@@ -318,7 +318,7 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
       ...(subject ? { subject } : {}),
       ...(refs.length > 0 ? { refs } : {}),
       verified: senderVerified(email.authResults ?? [], authservId, sender.slice(sender.lastIndexOf('@') + 1)),
-      ...(files.images.length > 0 ? { mailImages: files.images.length } : {}),
+      ...(files.images.length > 0 ? { mailImages: files.images.length, mailImageBytes: files.images.reduce((sum, i) => sum + i.bytes.byteLength, 0) } : {}),
     },
   };
 }
@@ -423,9 +423,16 @@ export interface ConversationMailResult {
 // A customer's mail to the org's conversation address: the intake of the Inbox, in the org the address names, as the system. Idempotent: a redelivery
 // of the same Message-ID is a duplicate and changes nothing.
 async function processConversationEmail(deps: InboundProcessDeps, orgId: string, email: ExtractedEmail, rawSha256: string, domain: string): Promise<ConversationMailResult> {
-  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId ?? configuredAuthservId);
-  if ('ignored' in made) return { conversation: 'ignored', reason: made.ignored };
   const options = { actor: { type: 'system' as const, component: 'inbound.conversation' }, orgId };
+  // Mailed images count in the org's day of attachment bytes, but conversation spam may use a quarter of it at most, so a flood on the published address
+  // never defers the invoice reader. Over that, the mail's text still arrives and its images are listed like any other file.
+  let storeImages = true;
+  if (deps.limits && email.attachments.length > 0) {
+    const quarter = String(Math.floor(Number(deps.limits.attachment_bytes) / 4));
+    storeImages = (await deps.runtime.query<UsageOver | null>('kernel.usage.over', { metrics: ['attachment_bytes'], limits: { attachment_bytes: quarter } }, options)) === null;
+  }
+  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId ?? configuredAuthservId, storeImages);
+  if ('ignored' in made) return { conversation: 'ignored', reason: made.ignored };
   const out = await deps.runtime.execute<ConversationIngested>('kernel.conversation.email_ingest', { events: [made.event] }, options);
   await storeMailImages(deps, made.images, out.images ?? [], options);
   return { conversation: out.stored > 0 ? 'stored' : out.duplicates > 0 ? 'duplicate' : 'ignored' };
