@@ -715,6 +715,24 @@ export interface CrmQuoteTable {
   buyer_email: string | null;
 }
 
+/** crove_crm.sales_order_line */
+export interface CrmSalesOrderLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_no: ColumnType<number, number, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  description: ColumnType<string, string, NotGranted>;
+  unit: ColumnType<string | null, string | null, NotGranted>;
+  quantity: ColumnType<string | null, string | null, NotGranted>;
+  unit_price: ColumnType<string | null, string | null, NotGranted>;
+  discount_percent: ColumnType<string, string | undefined, NotGranted>;
+  vat_rate: ColumnType<string | null, string | null, NotGranted>;
+  amount: ColumnType<string, string | undefined, NotGranted>;
+  vat_amount: ColumnType<string, string | undefined, NotGranted>;
+  stock_item_id: ColumnType<string | null, string | null, NotGranted>;
+}
+
 /** crove_crm.sales_order */
 export interface CrmSalesOrderTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -742,24 +760,6 @@ export interface CrmSalesOrderTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
-}
-
-/** crove_crm.sales_order_line */
-export interface CrmSalesOrderLineTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  order_id: ColumnType<string, string, NotGranted>;
-  line_no: ColumnType<number, number, NotGranted>;
-  kind: ColumnType<string, string, NotGranted>;
-  description: ColumnType<string, string, NotGranted>;
-  unit: ColumnType<string | null, string | null, NotGranted>;
-  quantity: ColumnType<string | null, string | null, NotGranted>;
-  unit_price: ColumnType<string | null, string | null, NotGranted>;
-  discount_percent: ColumnType<string, string | undefined, NotGranted>;
-  vat_rate: ColumnType<string | null, string | null, NotGranted>;
-  amount: ColumnType<string, string | undefined, NotGranted>;
-  vat_amount: ColumnType<string, string | undefined, NotGranted>;
-  stock_item_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.account */
