@@ -22,7 +22,8 @@ test('an owner records the identifiers, reads each declaration list with its lay
     await form.getByLabel('Mã số thuế cá nhân').fill('8123456789');
     await form.getByLabel('Số sổ BHXH').fill('7305186294');
     // The bank the person is paid at (#2897) sits next to the sealed account number.
-    await form.getByLabel('Ngân hàng', { exact: true }).fill('Vietcombank');
+    await form.getByLabel('Tìm ngân hàng').fill('ngoai thuong');
+    await form.getByLabel('Ngân hàng', { exact: true }).selectOption('VCB');
     await form.getByLabel('Lương cơ bản (đ/tháng)').fill('15000000');
     await page.getByTestId('hr-employee-save').click();
     await page.getByTestId('hr-employee-row').filter({ hasText: 'Nguyễn Thị Kê Khai' }).getByTestId('hr-employee-open').click();

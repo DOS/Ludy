@@ -6,7 +6,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HR_CONTRACT_TYPES, HR_PAY_FUNCTIONS, HR_PERSON_BANK_MAX, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrPayFunction, type HrRegion, type HrRelation } from '@crove/kernel-contract';
+import { HR_CONTRACT_TYPES, HR_PAY_FUNCTIONS, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrPayFunction, type HrRegion, type HrRelation } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -14,6 +14,8 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { bankByCode } from '@crove/l10n-vn';
+import { BankSelect } from '../components/bank-select.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -100,7 +102,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(identity.trim() ? { identityNumber: identity.trim() } : {}),
         ...(account.trim() ? { accountNumber: account.trim() } : {}),
-        ...(bank.trim() ? { bankName: bank.trim() } : {}),
+        ...(bank ? { bankCode: bank } : {}),
         ...(birth ? { birthDate: birth } : {}),
         ...(tax.trim() ? { taxCode: tax.trim() } : {}),
         ...(insurance.trim() ? { insuranceNumber: insurance.trim() } : {}),
@@ -134,7 +136,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-bank`}>{t('bankName')}</Label>
-          <Input id={`${id}-bank`} value={bank} maxLength={HR_PERSON_BANK_MAX} onChange={(e) => setBank(e.target.value)} />
+          <BankSelect id={`${id}-bank`} value={bank} onChange={setBank} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
@@ -201,7 +203,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
           ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
           ...(edit && (edit.clear.account ? { accountNumber: null } : edit.account.trim() ? { accountNumber: edit.account.trim() } : {})),
-          ...(edit && (edit.clear.bank ? { bankName: null } : edit.bank.trim() ? { bankName: edit.bank.trim() } : {})),
+          ...(edit && (edit.clear.bank ? { bankCode: null } : edit.bank ? { bankCode: edit.bank } : {})),
           ...(edit && edit.birth ? { birthDate: edit.birth } : {}),
           ...(edit && (edit.clear.tax ? { taxCode: null } : edit.tax.trim() ? { taxCode: edit.tax.trim() } : {})),
           ...(edit && (edit.clear.insurance ? { insuranceNumber: null } : edit.insurance.trim() ? { insuranceNumber: edit.insurance.trim() } : {})),
@@ -252,7 +254,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           </div>
           <div>
             <dt className="text-subtle-foreground">{t('bankName')}</dt>
-            <dd data-testid="hr-employee-bank">{e.bankName ?? none}</dd>
+            <dd data-testid="hr-employee-bank">{e.bankCode === null ? none : (bankByCode(e.bankCode)?.shortName ?? e.bankCode)}</dd>
           </div>
           <div>
             <dt className="text-subtle-foreground">{t('birthDate')}</dt>
@@ -329,8 +331,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-bank">{t('bankName')}</Label>
-                <Input id="hr-edit-bank" value={edit.bank} maxLength={HR_PERSON_BANK_MAX} disabled={edit.clear.bank} onChange={(ev) => setEdit({ ...edit, bank: ev.target.value })} />
-                {e.bankName !== null && (
+                <BankSelect id="hr-edit-bank" value={edit.bank} disabled={edit.clear.bank} onChange={(code) => setEdit({ ...edit, bank: code })} />
+                {e.bankCode !== null && (
                   <label className="flex items-center gap-1 text-xs text-subtle-foreground">
                     <input type="checkbox" checked={edit.clear.bank} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, bank: ev.target.checked } })} />
                     {t('clearStored')}
