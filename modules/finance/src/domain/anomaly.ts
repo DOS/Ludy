@@ -150,3 +150,17 @@ export function anomalyChecks(
     (c): c is InvoiceCheck => c !== null,
   );
 }
+
+// The net pay of a pay run paid in cash while some net pay is 5 million or more (#2532, docs/plan/payroll.md row 19: a payment of 5 million or more in one go must be non-cash for the pay to be
+// deductible; commentary until the accountant confirms it, #2535). `count` is how many people's net pay reaches the limit, a number and never a name or a figure; none raises nothing. A warning that
+// never blocks, in the same family as the flags above, so the proposal that carries it is approved one by one.
+export function payrollCashCheck(count: number): InvoiceCheck | null {
+  if (!Number.isInteger(count) || count <= 0) return null;
+  return {
+    id: 'anomaly_cash',
+    status: 'warn',
+    code: 'anomaly_cash.payroll_limit',
+    message: `Cảnh báo: ${count} người có lương thực lĩnh từ 5.000.000 đồng trở lên mà chi bằng tiền mặt; khoản chi từ 5 triệu đồng một lần cần thanh toán không dùng tiền mặt mới được tính chi phí được trừ. Hãy chuyển khoản hoặc hỏi kế toán`,
+    params: { count: String(count) },
+  };
+}

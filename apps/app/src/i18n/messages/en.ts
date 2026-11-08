@@ -8300,6 +8300,7 @@ export const en = {
     duplicate: { found: 'This invoice is already in the Inbox or in the books' },
     // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
     anomaly_bank: { changed: "Warning: the receiving bank account differs from last time (before {previous}, now {current}). Confirm it with the vendor before paying." },
+    anomaly_cash: { payrollLimit: 'Warning: {count} people have a net pay of 5,000,000 dong or more but the payment is in cash; a payment of 5 million in one go must be non-cash for the pay to be deductible. Pay by transfer or ask the accountant.' },
     anomaly_amount: {
       high: 'Warning: the amount {total} is {ratio} times this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged from 3 times).',
       low: 'Warning: the amount {total} is only {percent}% of this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged below a third).',
@@ -8539,7 +8540,11 @@ export const en = {
       HR_POSTING_ADJUSTMENTS: 'This pay run has adjustment lines; a run like that cannot be posted yet',
       HR_POSTING_MISMATCH: 'The pay run does not match its totals or the accounting regime changed; the entry cannot be built',
       HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
-      HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting, because the approver has to compare it with the pay run',
+      HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting or a pay payment, because the approver has to compare it with the pay run',
+      HR_PAYMENT_NOT_POSTED: 'This pay run has not been posted yet; post it before recording the pay or a remittance',
+      HR_PAYMENT_DONE: 'This payment of the pay run has already been recorded',
+      HR_PAYMENT_OPEN: 'This payment of the pay run already has a proposal waiting for approval',
+      HR_PAYMENT_NOTHING_DUE: 'This pay run has nothing of this kind to pay',
       HR_RUN_NOT_DRAFT: 'This pay run is approved and cannot be edited; correct it with an adjustment line in a later month',
       HR_RUN_EXISTS: 'This month already has a pay run',
       HR_RUN_EMPTY: 'The pay run has no line to approve',
@@ -9602,6 +9607,10 @@ export const en = {
         preview: 'Preview opening balances',
       },
       overview: 'View the accounting overview: cash, profit, receivables, payables',
+      payroll_payment: {
+        prepare: 'Check the pay or remittance payment before it is proposed',
+        record: 'Post the payment of a pay run\'s net pay or remittance',
+      },
       payroll_posting: {
         check: 'Check the payroll entry before it is proposed',
         record: 'Post the month\'s payroll entry',
@@ -9693,6 +9702,10 @@ export const en = {
             set: 'Enter one employee\'s inputs for the month and recalculate the line',
           },
           payslip: 'View an employee\'s payslip for the month',
+        },
+        payment: {
+          prepare: 'Prepare the payment proposal for the net pay or a remittance of a posted pay month',
+          verify: 'Rebuild what the pay run owes from the approved run to compare it when the payment is posted',
         },
         posting: {
           prepare: 'Prepare the posting proposal of an approved pay month',

@@ -58,6 +58,8 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
     case 'anomaly_amount.unusual':
       if (!has('total', 'usual', 'count')) return check.message;
       return amountSentence(t, p, money);
+    case 'anomaly_cash.payroll_limit':
+      return has('count') ? t('invoiceChecks.anomaly_cash.payrollLimit', { count: p.count ?? '' }) : check.message;
     case 'anomaly_price.jump':
       return has('item', 'usual', 'current', 'percent')
         ? t('invoiceChecks.anomaly_price.jump', { item: p.item ?? '', usual: money(p.usual ?? ''), current: money(p.current ?? ''), percent: p.percent ?? '' })

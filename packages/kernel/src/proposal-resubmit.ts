@@ -28,6 +28,8 @@ export const PROPOSAL_PREPARERS = {
   'finance.stock.count_confirm': 'finance.stock.prepare_count',
   // The posting of an approved pay run (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
   'finance.payroll_posting.record': 'hr.payroll.posting.prepare',
+  // The payment of a pay run's net pay or one of its remittances (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
+  'finance.payroll_payment.record': 'hr.payroll.payment.prepare',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',
