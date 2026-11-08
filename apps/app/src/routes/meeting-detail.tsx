@@ -51,7 +51,7 @@ export function MeetingDetailPage() {
   );
 
   // The same query the transcript panel runs (one request): the AI-off notice gives way once there is a transcript.
-  const transcriptQuery = useQuery(orpc.meetings.transcript.get.queryOptions({ input: { meetingId: id } }));
+  const transcriptQuery = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId: id } }), staleTime: 5 * 60_000, refetchOnWindowFocus: false });
   const hasTranscript = (transcriptQuery.data?.segments.length ?? 0) > 0;
 
   const orgQuery = useQuery(orpc.org.get.queryOptions());

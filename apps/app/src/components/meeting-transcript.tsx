@@ -15,6 +15,9 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
+// Reading a transcript is a sensitive read that leaves an audit row: no refetch on focus or remount.
+const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
+
 // 3725.4 seconds as 1:02:05; under an hour as 2:05.
 export function clock(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds));
@@ -93,7 +96,7 @@ function Line({ segment, editable }: { segment: TranscriptSegment; editable: boo
 
 export function MeetingTranscript({ meetingId }: { meetingId: string }) {
   const t = useTranslations('meetings.transcript');
-  const query = useQuery(orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }));
+  const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;

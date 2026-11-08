@@ -66,12 +66,17 @@ const invalid = () => new TranscriptionError('invalid_response');
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const finite = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
-const tidy = (text: string) => text.replace(/\s+/g, ' ').trim();
+// A lone surrogate (half of an emoji a provider cut) is not valid text for the database: it becomes U+FFFD.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const tidy = (text: string) => text.replace(LONE_SURROGATE, '\uFFFD').replace(/\s+/g, ' ').trim();
+// The latest second a transcript may name (the contract's bound for a segment).
+const TIMELINE_MAX = 86_400;
 
 // A speaker label is a short plain string; anything else is the default.
 export function speakerLabelOf(value: unknown): string {
   if (typeof value !== 'string') return DEFAULT_SPEAKER;
-  const label = tidy(value).slice(0, TRANSCRIPT_SPEAKER_MAX);
+  // By code points, so a cut never splits a surrogate pair.
+  const label = Array.from(tidy(value)).slice(0, TRANSCRIPT_SPEAKER_MAX).join('');
   return label === '' ? DEFAULT_SPEAKER : label;
 }
 
@@ -81,7 +86,10 @@ function pieces(text: string): string[] {
   let rest = text;
   while (rest.length > TRANSCRIPT_TEXT_MAX) {
     const cut = rest.lastIndexOf(' ', TRANSCRIPT_TEXT_MAX);
-    const at = cut > TRANSCRIPT_TEXT_MAX / 2 ? cut : TRANSCRIPT_TEXT_MAX;
+    let at = cut > TRANSCRIPT_TEXT_MAX / 2 ? cut : TRANSCRIPT_TEXT_MAX;
+    // Never between the two halves of a surrogate pair.
+    const before = rest.charCodeAt(at - 1);
+    if (before >= 0xd800 && before <= 0xdbff) at -= 1;
     out.push(rest.slice(0, at).trim());
     rest = rest.slice(at).trim();
   }
@@ -114,7 +122,7 @@ export function parseTranscription(raw: unknown, options: ParseOptions): Transcr
     let cursor = from;
     for (const part of parts) {
       const share = parts.length === 1 ? to - from : ((to - from) * part.length) / total;
-      out.push({ startSeconds: round3(offset + cursor), endSeconds: round3(offset + cursor + share), speakerLabel: speaker, text: part });
+      out.push({ startSeconds: round3(Math.min(TIMELINE_MAX, offset + cursor)), endSeconds: round3(Math.min(TIMELINE_MAX, offset + cursor + share)), speakerLabel: speaker, text: part });
       cursor += share;
     }
   };
@@ -152,6 +160,34 @@ export function mergeChunkTranscripts(chunks: readonly (readonly TranscriptSegme
   return merged.sort((a, b) => a.startSeconds - b.startSeconds || a.endSeconds - b.endSeconds);
 }
 
+// The body as text, read as a stream and refused once it passes RESPONSE_BYTES_MAX bytes: a provider that never stops
+// cannot make the process buffer it.
+async function readCapped(response: Response): Promise<string> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > RESPONSE_BYTES_MAX) throw invalid();
+  if (!response.body) throw invalid();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > RESPONSE_BYTES_MAX) {
+      await reader.cancel().catch(() => undefined);
+      throw invalid();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 function kindOf(status: number): TranscriptionErrorKind {
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
@@ -186,9 +222,7 @@ export async function transcribeAudio(config: TranscribeConfig, input: Transcrib
   if (!response.ok) throw new TranscriptionError(kindOf(response.status), response.status);
   let raw: unknown;
   try {
-    const text = await response.text();
-    if (text.length > RESPONSE_BYTES_MAX) throw invalid();
-    raw = JSON.parse(text);
+    raw = JSON.parse(await readCapped(response));
   } catch (error: unknown) {
     throw error instanceof TranscriptionError ? error : invalid();
   }

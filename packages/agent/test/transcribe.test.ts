@@ -58,6 +58,24 @@ describe('parseTranscription (pure)', () => {
     expect(segments.map((s) => s.text).join(' ')).toBe(text);
   });
 
+  it('never leaves half of an emoji: a cut keeps the pair together and a stray half becomes a replacement character', () => {
+    const emoji = '😀';
+    const long = emoji.repeat(2100);
+    const segments = parseTranscription({ segments: [{ start: 0, end: 10, text: long }] }, WHOLE);
+    expect(segments.length).toBeGreaterThan(1);
+    for (const s of segments) expect(s.text).toBe(s.text.toWellFormed());
+    expect(segments.map((s) => s.text).join('')).toBe(long);
+    expect(parseTranscription({ text: 'a\uD83Db' }, WHOLE)[0]!.text).toBe('a\uFFFDb');
+    expect(speakerLabelOf('😀'.repeat(100)).length).toBe(160);
+    expect(speakerLabelOf('😀'.repeat(100))).toBe(speakerLabelOf('😀'.repeat(100)).toWellFormed());
+  });
+
+  it('keeps every time on the timeline the contract allows', () => {
+    const [segment] = parseTranscription({ text: 'muộn' }, { lengthSeconds: 600, offsetSeconds: 90_000 });
+    expect(segment!.startSeconds).toBeLessThanOrEqual(86_400);
+    expect(segment!.endSeconds).toBeLessThanOrEqual(86_400);
+  });
+
   it('refuses an answer that is not a transcript', () => {
     for (const raw of [null, 'text', 5, [], {}, { text: 5 }, { segments: 'x' }, { segments: [null] }, { segments: [{ start: 'a', end: 1, text: 'x' }] }, { segments: [{ start: 0, end: 1 }] }, { segments: Array.from({ length: 5001 }, () => ({ start: 0, end: 1, text: 'x' })) }]) {
       expect(() => parseTranscription(raw, WHOLE), JSON.stringify(raw)?.slice(0, 40)).toThrow(TranscriptionError);
@@ -138,6 +156,13 @@ describe('the provider adapter (fake provider)', () => {
       fileName: 'chunk.ogg',
       fileSize: 4,
     });
+  });
+
+  it('refuses a body past the cap, declared or streamed, without reading it all', async () => {
+    const big = fakeProvider([{ raw: 'x'.repeat(9 * 1024 * 1024) }]);
+    expect(((await transcribeAudio(big.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
+    const declared = { ...fakeProvider([{ body: { text: 'x' } }]).config, fetch: (async () => new Response('{"text":"x"}', { headers: { 'content-length': String(9 * 1024 * 1024) } })) as typeof fetch };
+    expect(((await transcribeAudio(declared, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
   });
 
   it('sends no key header when the deployment has none', async () => {
