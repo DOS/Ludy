@@ -14,10 +14,13 @@
 //     touch the deal) from raising the same step again tomorrow, and an edit that leaves the deal overdue from raising past_close again at once.
 //   - At most RAISE_LIMIT new steps per run, the longest quiet first; running it again raises nothing new (one open step per deal, by index).
 //   - Steps of deals that left the open stages are closed (the commands already do it; this is the safety net).
+//   - After that pass, a sent quote nobody answered (or about to expire) raises quote_unanswered or quote_expiring on its deal, if the deal has no step yet (raiseQuoteSteps, #2699).
 import { sql } from 'kysely';
 import {
   DEAL_STALE_DAYS_DEFAULT,
   NEXT_STEP_PAGE_SIZE,
+  QUOTE_EXPIRING_DAYS,
+  QUOTE_UNANSWERED_DAYS,
   vietnamToday,
   zDealSettingSet,
   zNextStepDone,
@@ -128,10 +131,64 @@ export const nextStepRaise = defineCommand({
         .execute();
       raised = inserted.length;
     }
-    ctx.audit({ raised, closed: closedRows.length });
-    return { raised, closed: closedRows.length };
+    // The follow-up of sent quotes (#2699): the same one-step-per-deal rule, after the stale pass, so a deal that just got a stale step keeps that one.
+    const quotes = await raiseQuoteSteps(ctx, today);
+    raised += quotes.raised;
+    ctx.audit({ raised, closed: closedRows.length + quotes.closed });
+    return { raised, closed: closedRows.length + quotes.closed };
   },
 });
+
+// A sent quote of an open deal that nobody answered (the follow-up of docs/plan/crm-quotes.md section 7): a quote sent QUOTE_UNANSWERED_DAYS ago or more, or valid for
+// QUOTE_EXPIRING_DAYS more or fewer, raises one next step for the member in charge of the deal. The reason code and the day are all it holds: no quote number, amount
+// or text. A step whose quote is no longer waiting (accepted, declined, replaced by a revision or deleted: no quote of the deal is `sent`) closes by itself with
+// quote_decided. A deal gets a step only when it has none open and none resolved in the last 7 days, as for a stale deal, so "done" does not raise it again tomorrow.
+async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ raised: number; closed: number }> {
+  const decided = await ctx.trx
+    .updateTable('crove_crm.deal_next_step')
+    .set({ status: 'closed', closed_reason: 'quote_decided', resolved_at: ctx.now, snoozed_until: null })
+    .where('org_id', '=', ctx.orgId)
+    .where('status', '=', 'open')
+    .where('reason', 'in', ['quote_unanswered', 'quote_expiring'])
+    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_crm.quote q WHERE q.org_id = deal_next_step.org_id AND q.deal_id = deal_next_step.deal_id AND q.status = 'sent')`)
+    .returning('id')
+    .execute();
+  const resolvedSince = new Date(ctx.now.getTime() - 7 * DAY_MS);
+  const soon = sql<boolean>`(q.valid_until >= ${today}::date AND q.valid_until <= ${today}::date + ${QUOTE_EXPIRING_DAYS}::int)`;
+  const found = await sql<{ deal_id: string; owner_user_id: string | null; owner_role: string | null; reason: DealNextStepReason; since_on: Date | string }>`
+    SELECT DISTINCT ON (d.id) d.id AS deal_id, d.owner_user_id,
+           (SELECT m.role FROM crove_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id) AS owner_role,
+           CASE WHEN ${soon} THEN 'quote_expiring' ELSE 'quote_unanswered' END AS reason,
+           CASE WHEN ${soon} THEN q.valid_until ELSE (coalesce(q.sent_at, q.created_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date END AS since_on
+    FROM crove_crm.quote q
+    JOIN crove_crm.deal d ON d.org_id = q.org_id AND d.id = q.deal_id
+    WHERE q.org_id = ${ctx.orgId}::uuid AND q.status = 'sent' AND d.closed_at IS NULL
+      AND (${soon} OR coalesce(q.sent_at, q.created_at) <= ${new Date(ctx.now.getTime() - QUOTE_UNANSWERED_DAYS * DAY_MS)})
+      AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${resolvedSince}))
+    ORDER BY d.id, (CASE WHEN ${soon} THEN 0 ELSE 1 END), q.valid_until, q.id
+    LIMIT ${RAISE_LIMIT}`.execute(ctx.trx);
+  let raised = 0;
+  if (found.rows.length > 0) {
+    const inserted = await ctx.trx
+      .insertInto('crove_crm.deal_next_step')
+      .values(
+        found.rows.map((r) => ({
+          org_id: ctx.orgId,
+          deal_id: r.deal_id,
+          reason: r.reason,
+          // A viewer cannot act on a step, so a deal a viewer owns is raised for the owners and admins (no assignee), as an unowned one is.
+          assignee_user_id: r.owner_role === 'viewer' ? null : r.owner_user_id,
+          since_on: dayOf(r.since_on),
+          raised_at: ctx.now,
+        })),
+      )
+      .onConflict((oc) => oc.columns(['org_id', 'deal_id']).where('status', '=', 'open').doNothing())
+      .returning('id')
+      .execute();
+    raised = inserted.length;
+  }
+  return { raised, closed: decided.length };
+}
 
 // Marks next steps done in the caller's name. A step already resolved, or gone with its deal, is skipped, not an error: a second click on the
 // same row does nothing. The audit row holds step ids and a count.

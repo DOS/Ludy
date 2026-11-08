@@ -789,9 +789,9 @@ export type CrmQuoteTable = Refine<
 export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
-export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
+export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close', 'quote_unanswered', 'quote_expiring'] as const;
 export const DEAL_NEXT_STEP_STATUSES = ['open', 'done', 'closed'] as const;
-export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed'] as const;
+export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed', 'quote_decided'] as const;
 export type CrmDealNextStepTable = Refine<
   G.CrmDealNextStepTable,
   {

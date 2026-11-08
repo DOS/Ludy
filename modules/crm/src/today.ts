@@ -44,7 +44,20 @@ export const crmToday = defineQuery({
     const steps = await loadNextSteps(ctx, 'mine', null, NEXT_STEP_ITEMS);
     for (const step of steps.items) {
       const days = daysBetween(step.sinceOn, today);
-      if (step.reason === 'past_close') {
+      if (step.reason === 'quote_unanswered' || step.reason === 'quote_expiring') {
+        // The follow-up of a sent quote (#2699): a reminder of the deal, with no quote number or amount in it.
+        const expiring = step.reason === 'quote_expiring';
+        items.push({
+          kind: expiring ? 'deadline' : 'flag',
+          app: 'crm',
+          id: `next-step:${step.id}`,
+          title: { key: expiring ? 'crm.quoteExpiring' : 'crm.quoteUnanswered', params: { days } },
+          amount: step.amount,
+          currency: 'VND',
+          ...(expiring ? { dueAt: `${step.sinceOn}T00:00:00${VIETNAM_OFFSET}` } : { severity: 'info' as const }),
+          href: '/deals?tab=next',
+        } as TodayItem);
+      } else if (step.reason === 'past_close') {
         items.push({
           kind: 'deadline',
           app: 'crm',

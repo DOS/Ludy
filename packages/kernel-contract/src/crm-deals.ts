@@ -41,7 +41,8 @@ export interface PipelineStage {
 // The next step an open deal raises when nobody touched it for a while, or when its expected close has passed (#2381, the
 // stale-deal rule of docs/plan/crm.md): a reason code and a day, never a text. A deal shows it as `followUp` while it is open and not
 // snoozed.
-export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
+// quote_unanswered and quote_expiring (#2699) follow up a sent quote of the deal: no answer 5 days after it was sent, or valid for 3 more days or fewer.
+export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close', 'quote_unanswered', 'quote_expiring'] as const;
 export type DealNextStepReason = (typeof DEAL_NEXT_STEP_REASONS)[number];
 // After how many days without a change an open deal is stale: the org's setting, between the two, 14 until set.
 export const DEAL_STALE_DAYS_DEFAULT = 14;
@@ -53,11 +54,14 @@ export type NextStepSnoozeDays = (typeof NEXT_STEP_SNOOZE_DAYS)[number];
 // Most next steps one done or snooze action takes: one click and a bulk are the same command, one audit row.
 export const NEXT_STEP_BULK_MAX = 20;
 export const NEXT_STEP_PAGE_SIZE = 50;
+// A sent quote with no answer after this many days, and one valid for this many more days or fewer, raise a next step of their deal (#2699).
+export const QUOTE_UNANSWERED_DAYS = 5;
+export const QUOTE_EXPIRING_DAYS = 3;
 
 export interface DealFollowUp {
   id: string;
   reason: DealNextStepReason;
-  // The day the deal was last changed (no_activity) or its expected close (past_close).
+  // The day the deal was last changed (no_activity), its expected close (past_close), the day the quote was sent (quote_unanswered) or the quote's last valid day (quote_expiring).
   sinceOn: string;
 }
 
