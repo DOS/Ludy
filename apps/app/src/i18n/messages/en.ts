@@ -2139,6 +2139,7 @@ export const en = {
       meta: 'Valid until {date} · {count} lines · {total}',
       edit: 'Edit',
       view: 'View',
+      pdf: 'Download PDF',
       delete: 'Delete draft',
       deleteTitle: 'Delete this draft quote?',
       deleteDescription: 'The draft and its lines will be deleted. The history stays in the activity log.',
@@ -9133,6 +9134,7 @@ export const en = {
       quote: {
         defaults: "See the org's defaults and a customer's earlier prices for a quote",
         delete_draft: 'Delete a draft quote',
+        document: 'Read a quote with the seller and buyer for its PDF',
         get: 'See a quote',
         list: 'See the list of quotes',
         revise: 'Make a revision of a sent quote',

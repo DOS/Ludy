@@ -40,7 +40,7 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
-type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
+export type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 
 function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -237,7 +237,7 @@ async function loadLines(ctx: Reader, quoteId: string): Promise<QuoteLine[]> {
   }));
 }
 
-async function loadQuote(ctx: Reader, quoteId: string, now: Date = new Date()): Promise<Quote> {
+export async function loadQuote(ctx: Reader, quoteId: string, now: Date = new Date()): Promise<Quote> {
   const row = await base(ctx).where('q.id', '=', quoteId).executeTakeFirst();
   if (!row) throw notFound();
   return { ...summary(row, now), notes: row.remarks, terms: row.terms, lines: await loadLines(ctx, quoteId) };
