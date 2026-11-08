@@ -19,7 +19,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { splitQuoted } from '../lib/email-text.ts';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { canInsertQuoteLink } from '../lib/quote-reply.ts';
+import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
@@ -679,18 +679,35 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   const [from, setFrom] = useState<{ draftId?: string; savedReplyId?: string }>({});
   const id = detail.conversation.id;
   const kind = detail.conversation.kind;
+  // The longest reply this channel takes: the box stops typing there, and a quote message put in by code is checked against it too (#2827).
+  const replyMax =
+    detail.conversation.channel.provider === 'instagram'
+      ? kind === 'direct'
+        ? CONVERSATION_INSTAGRAM_DIRECT_MAX
+        : CONVERSATION_INSTAGRAM_COMMENT_MAX
+      : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
+        ? CONVERSATION_FACEBOOK_DIRECT_MAX
+        : CONVERSATION_REPLY_MAX;
+  const [insertTooLong, setInsertTooLong] = useState(false);
+  // The listener below reads what is in the box now without being set up again at every keystroke.
+  const textNow = useRef(text);
+  textNow.current = text;
   // A quote link the contact panel offers (#2694): its message lands in this box for the person to read, edit and send. Nothing is sent from there.
   useEffect(() => {
     const onInsert = (event: Event) => {
       const { conversationId, text: inserted } = (event as CustomEvent<ReplyInsert>).detail;
       // A quote link is a private document's address: never into a public reply (a comment thread), whoever sends the event (#2827).
       if (conversationId !== id || !canInsertQuoteLink(kind)) return;
-      setText((current) => (current.trim() === '' ? inserted : `${current.trimEnd()}\n\n${inserted}`));
+      // A message that would pass the channel's limit is not added (cutting it would cut the link): the box says so, and the draft stays as it is (#2827).
+      const next = appendQuoteMessage(textNow.current, inserted, replyMax);
+      setInsertTooLong(!next.fits);
+      if (!next.fits) return;
+      setText(next.text);
       setFrom({});
     };
     window.addEventListener(REPLY_INSERT_EVENT, onInsert);
     return () => window.removeEventListener(REPLY_INSERT_EVENT, onInsert);
-  }, [id, kind]);
+  }, [id, kind, replyMax]);
   const send = useMutation({
     mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen, ...from }),
     onSuccess: (done) => {
@@ -738,19 +755,12 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       <Textarea
         aria-label={t('replyLabel')}
         rows={3}
-        maxLength={
-          detail.conversation.channel.provider === 'instagram'
-            ? detail.conversation.kind === 'direct'
-              ? CONVERSATION_INSTAGRAM_DIRECT_MAX
-              : CONVERSATION_INSTAGRAM_COMMENT_MAX
-            : detail.conversation.channel.provider === 'facebook_page' && detail.conversation.kind === 'direct'
-              ? CONVERSATION_FACEBOOK_DIRECT_MAX
-              : CONVERSATION_REPLY_MAX
-        }
+        maxLength={replyMax}
         value={text}
         placeholder={t('replyPlaceholder')}
         onChange={(e) => {
           setText(e.target.value);
+          setInsertTooLong(false);
           if (e.target.value === '') setFrom({});
           else if (Date.now() - lastMarked.current > COMPOSING_EVERY_MS) {
             lastMarked.current = Date.now();
@@ -759,6 +769,7 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         }}
         data-testid="conversation-reply-text"
       />
+      {insertTooLong && <ErrorText>{t('quoteTooLong', { max: String(replyMax) })}</ErrorText>}
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
       <Button type="submit" size="sm" loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">

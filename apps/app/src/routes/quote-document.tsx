@@ -3,9 +3,9 @@
 // with the seller's letterhead, the buyer as they were when the quote was sent, the lines, the totals, the notes and the terms, and prints on A4 (the browser's
 // "Save as PDF" is the PDF until the server one of Q3). The token stays after the # and goes to the API in a POST body only. Every text is shown as text.
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_TOKEN_PATTERN, vietnamToday, type QuoteDocument } from '@crove/kernel-contract';
+import { vietnamToday, type QuoteDocument } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -13,11 +13,7 @@ import { apiUrl } from '../lib/api-base.ts';
 import { errorMessage } from '../lib/api.ts';
 import { apiErrorFromResponse } from '../lib/errors.ts';
 import { usePrintInLight } from '../lib/print.ts';
-
-const tokenOf = (): string | null => {
-  const t = window.location.hash.replace(/^#/, '');
-  return QUOTE_TOKEN_PATTERN.test(t) ? t : null;
-};
+import { quoteTokenOfHash, subscribeToHash } from '../lib/quote-hash.ts';
 
 async function load(token: string): Promise<QuoteDocument | null> {
   const res = await fetch(apiUrl('/api/quote/view'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'omit', referrerPolicy: 'no-referrer' });
@@ -32,7 +28,8 @@ const plain = (value: string | null): string => (value === null ? '' : value.inc
 export function QuoteDocumentPage() {
   const t = useTranslations('quoteDocument');
   const f = useFormat();
-  const [token] = useState(tokenOf);
+  // The token follows the address: a hash-only change in this tab shows the other quote (the query is keyed by the token).
+  const token = useSyncExternalStore(subscribeToHash, quoteTokenOfHash, quoteTokenOfHash);
   const page = useQuery({ queryKey: ['quote-document', token], queryFn: () => load(token as string), enabled: token !== null, retry: false });
   usePrintInLight();
   const doc = page.data;
