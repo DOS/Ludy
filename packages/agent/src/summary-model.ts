@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The one model call of the recorder's Vy summarizing a meeting (#2580, M6 part B2, ADR-0049 stage A): a system text and a user text in, the answer text and the
+// tokens out, through the AI budget meter (the member's own: the scope carries the run) and the deployment's OpenAI-compatible endpoint. The model is given no tools
+// and no output schema: its answer is text that the checks in member-vy/meeting-summary.ts parse and prune. This file is org-level code, so it takes plain strings; the
+// kernel's built-in model port hands it the prompt the member-Vy feature built. Nothing here logs the prompt or the answer.
+import { generateText } from 'ai';
+import { chatModel, type AiConfig } from './index.ts';
+import { AiBudgetExhaustedError, AiMeterMissingError, metered } from './meter.ts';
+
+export class SummaryModelError extends Error {
+  readonly kind: 'timeout' | 'failed';
+  constructor(kind: 'timeout' | 'failed') {
+    super(kind === 'timeout' ? 'SUMMARY_TIMEOUT' : 'SUMMARY_FAILED');
+    this.name = 'SummaryModelError';
+    this.kind = kind;
+  }
+}
+
+/** The hard limit of one summary call, in milliseconds: the member waits for it, so it is short (a longer meeting is refused before the call). */
+export const SUMMARY_TIMEOUT_MS = 60_000;
+
+export async function generateMeetingSummaryText(config: AiConfig, prompt: { system: string; user: string }, timeoutMs: number = SUMMARY_TIMEOUT_MS): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
+  try {
+    const { text, usage } = await metered('meetings.summary', () =>
+      generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, abortSignal: AbortSignal.timeout(timeoutMs), maxRetries: 0 }),
+    );
+    return { text, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+  } catch (error: unknown) {
+    // The meter's own refusals (a spent budget, no scope) and nothing else keep their type; every provider failure is a fixed word, never the provider's message.
+    if (error instanceof AiBudgetExhaustedError || error instanceof AiMeterMissingError) throw error;
+    const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    throw new SummaryModelError(timedOut ? 'timeout' : 'failed');
+  }
+}

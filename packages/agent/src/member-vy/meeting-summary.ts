@@ -16,8 +16,9 @@ export const SUMMARY_LIMITS = {
   titleChars: 300,
   textChars: 200,
   items: 100,
-  // The transcript sent to the model, in characters (a longer meeting is cut at a line, and says so in the prompt).
-  transcriptChars: 120_000,
+  // The transcript sent to the model, in characters. The caller refuses a longer one before any call (the member waits for the answer, so the call is short);
+  // runFeature would cut it silently, which a summary of half a meeting must never do.
+  transcriptChars: 60_000,
 } as const;
 
 export interface SummarySegment {
@@ -45,7 +46,7 @@ export interface MeetingSummaryBody {
   dropped: number;
 }
 
-export type SummaryErrorCode = 'SUMMARY_UNPARSABLE' | 'SUMMARY_EMPTY';
+export type SummaryErrorCode = 'SUMMARY_UNPARSABLE' | 'SUMMARY_EMPTY' | 'SUMMARY_TOO_LONG' | 'SUMMARY_NO_TRANSCRIPT';
 export class SummaryError extends Error {
   code: SummaryErrorCode;
   constructor(code: SummaryErrorCode) {
@@ -210,6 +211,9 @@ export interface MeetingSummaryResult {
 /** One run of the recorder's Vy over a transcript: the model is asked once, the checks above decide what is kept. */
 export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundPorts): Promise<MeetingSummaryResult> {
   const text = transcriptLines(input.segments);
+  // Refused before any call, never cut: a summary of half a meeting would read as the whole.
+  if (input.segments.length === 0) throw new SummaryError('SUMMARY_NO_TRANSCRIPT');
+  if (text.length > SUMMARY_LIMITS.transcriptChars) throw new SummaryError('SUMMARY_TOO_LONG');
   const out = await runFeature(
     { instruction: INSTRUCTION(input.language), subject: privateText(text), maxSubjectChars: SUMMARY_LIMITS.transcriptChars },
     ports,

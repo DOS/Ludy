@@ -7,7 +7,8 @@
 -- crove_meetings.meeting_result_taint(), action_item_taint()
 --     BEFORE UPDATE triggers. `tainted` marks text the model wrote and nobody has reviewed. A row is born tainted only by an insert (the recorder's copy of a
 --     Vy result, meetings.summary.copy_result); no update ever makes a row tainted; the tenant context (crove_tenant, which every user request runs as) cannot
---     change the mark at all (inside the definer draft_review, current_user is its owner; in a user request it is the login role), and only draft_review below clears it; and a draft that is still tainted is never published, whoever asks.
+--     change the mark at all (the check trusts the owner of draft_review: a superuser, the owner itself, or a session in replica mode can bypass it, which is outside
+--     the threat model of a user request) (inside the definer draft_review, current_user is its owner; in a user request it is the login role), and only draft_review below clears it; and a draft that is still tainted is never published, whoever asks.
 -- crove_meetings.draft_review(org, meeting, item)
 --     the recorder's explicit "I read this": clears the mark on the draft rows of their own meeting (one item, or every draft row when no item is named). The
 --     edit command calls it for the item whose title the recorder just changed, and meetings.draft.review for the whole draft. User context only, recorder only.

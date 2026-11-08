@@ -208,6 +208,16 @@ describe('summarizeMeeting', () => {
   });
 });
 
+describe('what is refused before any model call', () => {
+  it('refuses an empty transcript and one longer than the cap, without calling the model', async () => {
+    const { ports, seen } = fakeModel(body({ summary: 'Họp.', decisions: [], items: [] }));
+    await expect(summarizeMeeting({ segments: [], language: 'vi' }, bindPorts(A, ports))).rejects.toMatchObject({ code: 'SUMMARY_NO_TRANSCRIPT' });
+    const long = Array.from({ length: 40 }, (_, i) => seg(i * 10, i * 10 + 9, 'Lan', 'x'.repeat(2000)));
+    await expect(summarizeMeeting({ segments: long, language: 'vi' }, bindPorts(A, ports))).rejects.toMatchObject({ code: 'SUMMARY_TOO_LONG' });
+    expect(seen).toHaveLength(0);
+  });
+});
+
 describe('helpers', () => {
   it('writes the transcript one line per segment with its time and speaker, and reads figures as written', () => {
     expect(transcriptLines([seg(3725, 3730, 'Anh  Nam', 'xin   chào\nmọi người')])).toBe('[1:02:05] Anh Nam: xin chào mọi người');

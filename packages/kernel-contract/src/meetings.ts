@@ -394,3 +394,14 @@ export type SummaryResult = z.infer<typeof zSummaryResult>;
 // The recorder's explicit review of the draft Vy wrote: `confirmed: true` is their own click, never defaulted. Only then can the draft be shared.
 export const zDraftReview = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
 export const zDraftReviewed = z.strictObject({ meetingId: zId, cleared: z.number().int().min(0) });
+
+// The recorder's Vy summarizing a meeting (#2580, M6 part B2). `start` is the module's own command (the route runs it first); `summarize` is the route the screen
+// calls: it starts the run, reads the transcript as the recorder, makes the one model call and stores the answer in the recorder's own Vy result, then says how it
+// went in fixed words. The recorder copies a finished result into their draft with copySummary.
+export const SUMMARY_STATES = ['ready', 'failed'] as const;
+export const zSummaryStart = z.strictObject({ meetingId: zId });
+export const zSummaryStarted = z.strictObject({ meetingId: zId, runId: zId });
+export const zSummaryRef = z.strictObject({ meetingId: zId });
+export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolean() });
+export const zSummarized = z.strictObject({ meetingId: zId, runId: zId, state: z.enum(SUMMARY_STATES), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() });
+export type Summarized = z.infer<typeof zSummarized>;

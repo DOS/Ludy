@@ -5,8 +5,8 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zDraftReview, zDraftReviewed, zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zDraftReview, zDraftReviewed, zSummaryStart, zSummaryStarted, zSummaryStatus, zSummaryRef, zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX } from '@crove/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { dayAfter, vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
@@ -190,9 +190,9 @@ export const summaryCopyResult = defineCommand({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
           title: item.title,
-          who_drafted: item.who,
+          who_drafted: itemFlags(item.who).length > 0 ? '' : item.who,
           who_parsed: matchAttendee(item.who, people),
-          when_drafted: item.when,
+          when_drafted: itemFlags(item.when).length > 0 ? '' : item.when,
           when_parsed: parseWhen(item.when, meetingDay),
           transcript_seconds: item.seconds,
           stage: 'draft',
@@ -204,6 +204,41 @@ export const summaryCopyResult = defineCommand({
     }
     ctx.audit({ meetingId: input.meetingId, runId: input.runId, decisionCount: body.decisions.length, itemCount: items.length, dropped: body.dropped });
     return zSummaryCopied.parse({ meetingId: input.meetingId, decisions: body.decisions.length, items: items.length, dropped: body.dropped + (body.items.length - items.length) });
+  },
+});
+
+// Starts the recorder's own Vy run for this meeting's summary: the recorder only, with the deployment's switch on and a transcript to read. The kernel's
+// run.start then checks vy.use, the org, module and agent kill switches, the global ai switch and the budget, makes the member's Vy and this run, and binds the
+// run's subject to this meeting; nothing is read or sent here. The route that calls the model (apps/kernel) runs this first and reads the transcript after.
+export const summaryStart = defineCommand({
+  name: 'meetings.summary.start',
+  input: zSummaryStart,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    if (!summaryEnabled) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to summarize it');
+    const any = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
+    if (!any) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to summarize yet');
+    const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
+    ctx.audit({ meetingId: input.meetingId, runId: started.runId });
+    return zSummaryStarted.parse({ meetingId: input.meetingId, runId: started.runId });
+  },
+});
+
+// Whether this deployment lets the recorder's Vy summarize, for the button.
+export const summaryStatus = defineQuery({
+  name: 'meetings.summary.status',
+  input: zSummaryRef,
+  access: ROLES,
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    return zSummaryStatus.parse({ meetingId: input.meetingId, enabled: summaryEnabled && meeting.recorder_user_id === userId });
   },
 });
 
@@ -227,4 +262,5 @@ export const draftReview = defineCommand({
   },
 });
 
-export const summaryCommands = [summaryCopyResult, draftReview];
+export const summaryCommands = [summaryCopyResult, draftReview, summaryStart];
+export const summaryQueries = [summaryStatus];
