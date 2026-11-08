@@ -25,7 +25,7 @@ export function ReportsPage() {
       ) : (
         <div className="space-y-6">
           <Tabs value={tab} onValueChange={(value) => void navigate({ to: '/o/$slug/reports', params: { slug }, search: { area: value as ReportTab }, replace: true })}>
-            <TabsList aria-label={t('tabsLabel')}>
+            <TabsList aria-label={t('tabsLabel')} className="flex flex-wrap group-data-horizontal/tabs:h-auto">
               {tabs.map((id) => (
                 <TabsTrigger key={id} value={id}>
                   {t(`tabs.${id}`)}
