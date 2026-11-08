@@ -6,7 +6,7 @@
 --   ctx_acting_user_id()                 now also the sealed member of a member-scoped agent context (kind 'member_vy').
 --   enter_member_vy_context(org, agent, run)
 --                                        worker login only. Refuses an org-chart agent, a run that is not live, a member who is no
---                                        longer active (MEMBER_NOT_ACTIVE), a kill switch and a spent budget. The seal is an agent
+--                                        longer active (MEMBER_NOT_ACTIVE) or no longer holds vy.use (VY_NOT_ALLOWED), a kill switch and a spent budget. The seal is an agent
 --                                        context with a null user and two more fields: member and kind. Rights are the member's
 --                                        (role and entity scope as enter_context computes them), max_risk R1 at most.
 --   agent_write_guard                    a second branch for kind 'member_vy': a write passes only on a catalog table with mode
@@ -107,6 +107,11 @@ BEGIN
     RAISE EXCEPTION 'AGENT_RUN_NOT_LIVE' USING ERRCODE = '42501';
   END IF;
   IF NOT crove_kernel.member_vy_member_active(p_org_id, v_member) THEN
+    -- Still a member with an enabled account, so what is missing is vy.use: the reason the screens and the runtime know (VY_NOT_ALLOWED).
+    IF EXISTS (SELECT 1 FROM crove_kernel.tenant_member m JOIN crove_kernel.user_account u ON u.id = m.user_id
+               WHERE m.org_id = p_org_id AND m.user_id = v_member AND m.role IN ('owner', 'admin', 'member', 'viewer') AND u.disabled_at IS NULL) THEN
+      RAISE EXCEPTION 'VY_NOT_ALLOWED' USING ERRCODE = '42501';
+    END IF;
     RAISE EXCEPTION 'MEMBER_NOT_ACTIVE' USING ERRCODE = '42501';
   END IF;
   IF EXISTS (
@@ -332,13 +337,24 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_forbid() FROM PUBLIC;
 
-DROP TRIGGER IF EXISTS a00_member_vy_forbid ON crove_kernel.task;
-CREATE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.task
-  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
-DROP TRIGGER IF EXISTS a00_member_vy_forbid ON crove_kernel.task_comment;
-CREATE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.task_comment
-  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
--- outbox_event is a hot table: its trigger is created in the lock-retry block (plan §5.5).
+-- task, task_comment and refusal_tally are locked together, NOWAIT, in a retry block, and their triggers are replaced under that lock:
+-- the migration never waits for one of them while holding another, and CREATE OR REPLACE TRIGGER needs only SHARE ROW EXCLUSIVE, which the
+-- LOCK already holds (DROP TRIGGER would upgrade it to ACCESS EXCLUSIVE). A busy table fails the whole attempt, which gives its locks back
+-- (the block is a subtransaction), sleeps and tries again. outbox_event, the hot table, comes last so that its lock is held for the
+-- shortest time, in the canonical retry block the migration lint asks of a hot table. A command that emits an event and then updates
+-- a task in the same moment can still make Postgres abort one of the two on a deadlock; the migration is one transaction, so an aborted
+-- migration changes nothing (the deploy stops with the old release serving) and a rerun passes.
+DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
+    LOCK TABLE crove_kernel.task, crove_kernel.task_comment, crove_kernel.refusal_tally IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+    CREATE OR REPLACE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.task
+      FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
+    CREATE OR REPLACE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.task_comment
+      FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
+    CREATE OR REPLACE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.refusal_tally
+      FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
+    EXIT;
+  EXCEPTION WHEN lock_not_available THEN n := n + 1; IF n >= 15 THEN RAISE; END IF; PERFORM pg_sleep(1 + random());
+  END; END LOOP; END $$;
 DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
     PERFORM set_config('lock_timeout', '2s', true);
     CREATE OR REPLACE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.outbox_event
@@ -346,6 +362,3 @@ DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
     EXIT;
   EXCEPTION WHEN lock_not_available THEN n := n + 1; IF n >= 15 THEN RAISE; END IF; PERFORM pg_sleep(1 + random());
   END; END LOOP; END $$;
-DROP TRIGGER IF EXISTS a00_member_vy_forbid ON crove_kernel.refusal_tally;
-CREATE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.refusal_tally
-  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
