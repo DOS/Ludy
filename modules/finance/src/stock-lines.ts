@@ -6,7 +6,7 @@
 // A line matches an item of the document's entity by a fixed chain: the item's code (the line's text is the code, in the item's unit), else an alias a person taught (the
 // normalized text, with its factor to the item's unit). Nothing is guessed. A voided document reverses the moves it made (reverseDocumentStock).
 import { sql } from 'kysely';
-import { zStockAssign, zStockUnassignedInput, type StockUnassignedLine } from '@crove/kernel-contract';
+import { ORDER_SOURCE_KIND, zStockAssign, zStockUnassignedInput, type StockUnassignedLine } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
@@ -20,6 +20,8 @@ const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 type Direction = 'purchase' | 'sale';
 
+// A line made from a CRM sales order (ORDER_SOURCE_KIND, ADR-0050) moves its stock with the delivery (finance.stock.move_from_order_line), never with the document.
+
 // A line of a document being posted, as the posting holds it: the account is the line's own (the debit account of a purchase line, the revenue account of a sale line).
 export interface PostedLine {
   lineNo: number;
@@ -29,6 +31,8 @@ export interface PostedLine {
   // The line's amount: a line that is not above zero (a discount, a credit) is not goods moving.
   amount: string;
   account: string;
+  // The order line the invoice line was made from (ADR-0050 A4): the delivery of that line owns its stock move, so the document line moves nothing and is not "unassigned".
+  source?: { kind: string; id: string; lineNo: number } | null;
 }
 
 // The accounts among `codes` that are goods on this side: the goods account itself or a sub-account of it in the entity's chart.
@@ -84,6 +88,7 @@ export async function postDocumentStock(
   // An adjustment invoice carries a difference, not goods.
   if (document.adjustment) return { moved: 0, unassigned: 0 };
   const withQuantity = lines.flatMap((line) => {
+    if (line.source?.kind === ORDER_SOURCE_KIND) return [];
     const quantity = movableQuantity(line.quantity);
     return quantity === null || !money(line.amount).greaterThan(0) ? [] : [{ line, quantity }];
   });
@@ -114,6 +119,24 @@ export async function postDocumentStock(
     moved += 1;
   }
   return { moved, unassigned };
+}
+
+// The item an order line moves, by the same fixed chain as a document line (the item's code in the item's unit, else a taught name with its factor); nothing is guessed. Null
+// when no active item of the entity matches, for a person to teach the name.
+export async function matchLineItem(
+  ctx: CommandContext,
+  legalEntityId: string,
+  line: { description: string; unit: string | null },
+): Promise<{ itemId: string; factor: string } | null> {
+  const key = normalizeAlias(line.description);
+  if (key === '') return null;
+  const { byCode, byAlias } = await matchesFor(ctx, legalEntityId, [key]);
+  const code = byCode.get(key);
+  const alias = byAlias.get(key);
+  const aliasFits = alias !== undefined && (alias.unit === null || sameUnit(line.unit, alias.unit));
+  if (code && sameUnit(line.unit?.trim() ? line.unit : code.unit, code.unit)) return { itemId: code.id, factor: '1' };
+  if (alias && aliasFits) return { itemId: alias.itemId, factor: alias.factor };
+  return null;
 }
 
 // A voided document takes back the stock it made: every move of its lines that is not reversed yet gets its reversing move on the date of the void.
@@ -152,7 +175,7 @@ export const stockUnassigned = defineQuery({
       .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
       .select(['l.document_id', 'l.line_no', 'l.description', 'l.unit', 'l.quantity', 'd.legal_entity_id', 'd.direction', 'd.invoice_date', 'd.invoice_series', 'd.invoice_number'])
       .where('l.org_id', '=', ctx.orgId)
-      .where(sql<boolean>`l.quantity > 0 AND l.amount > 0 AND d.correction_kind IS DISTINCT FROM 'adjustment'`)
+      .where(sql<boolean>`l.quantity > 0 AND l.amount > 0 AND d.correction_kind IS DISTINCT FROM 'adjustment' AND l.source_kind IS DISTINCT FROM ${ORDER_SOURCE_KIND}`)
       .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void AS v WHERE v.org_id = l.org_id AND v.document_id = l.document_id)`)
       // A line has a live move when its latest try was not reversed; one whose move was reversed (assigned to the wrong item) is unassigned again.
       .where(
@@ -199,12 +222,13 @@ export const stockAssign = defineCommand({
     const line = await ctx.trx
       .selectFrom('crove_finance.purchase_line as l')
       .innerJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.id', '=', 'l.document_id'))
-      .select(['l.description', 'l.unit', 'l.quantity', 'l.amount', 'l.debit_account', 'l.credit_account', 'd.direction', 'd.legal_entity_id', 'd.invoice_date', 'd.correction_kind'])
+      .select(['l.description', 'l.unit', 'l.quantity', 'l.amount', 'l.debit_account', 'l.credit_account', 'd.direction', 'd.legal_entity_id', 'd.invoice_date', 'd.correction_kind', 'l.source_kind'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.document_id', '=', input.documentId)
       .where('l.line_no', '=', input.lineNo)
       .executeTakeFirst();
     if (!line) throw new DomainError('STOCK_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng hóa đơn này');
+    if (line.source_kind === ORDER_SOURCE_KIND) throw new DomainError('STOCK_LINE_ORDER_SOURCE', 409, 'Dòng này lập từ đơn bán hàng, kho ghi theo lần giao hàng của đơn');
     if (line.legal_entity_id !== item.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và hóa đơn thuộc hai pháp nhân khác nhau');
     const voided = await ctx.trx.selectFrom('crove_finance.purchase_document_void').select('document_id').where('org_id', '=', ctx.orgId).where('document_id', '=', input.documentId).executeTakeFirst();
     if (voided) throw new DomainError('STOCK_LINE_VOIDED', 409, 'Hóa đơn này đã bị hủy');

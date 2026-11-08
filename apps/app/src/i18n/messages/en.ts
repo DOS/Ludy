@@ -1031,7 +1031,7 @@ export const en = {
     balance: 'Balance',
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
-    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count' },
+    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order' },
     trades: { goods: 'Goods', services: 'Services', catering: 'Catering', other: 'Other' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {

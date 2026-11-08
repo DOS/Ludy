@@ -1025,6 +1025,9 @@ export interface FinanceEinvoiceDraftLineTable {
   amount: string;
   vat_rate: string;
   vat_amount: string;
+  source_kind: string | null;
+  source_id: string | null;
+  source_line_no: number | null;
 }
 
 /** crove_finance.einvoice_draft */
@@ -1332,6 +1335,9 @@ export interface FinancePurchaseLineTable {
   debit_account: ColumnType<string | null, string | null, NotGranted>;
   credit_account: ColumnType<string | null, string | null, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  source_kind: ColumnType<string | null, string | null | undefined, NotGranted>;
+  source_id: ColumnType<string | null, string | null | undefined, NotGranted>;
+  source_line_no: ColumnType<number | null, number | null | undefined, NotGranted>;
 }
 
 /** crove_finance.purchase_tax_rate */
@@ -1423,6 +1429,8 @@ export interface FinanceStockMoveTable {
   order_attempt: ColumnType<number, number | undefined, NotGranted>;
   count_line_id: ColumnType<string | null, string | null, NotGranted>;
   amount: ColumnType<string | null, string | null, NotGranted>;
+  crm_order_id: ColumnType<string | null, string | null, NotGranted>;
+  crm_order_line_no: ColumnType<number | null, number | null, NotGranted>;
 }
 
 /** crove_finance.stock_period_item */

@@ -1029,7 +1029,7 @@ export const vi = {
     balance: 'Tồn',
     cardValue: 'Giá trị nhập',
     directions: { purchase: 'Mua vào', sale: 'Bán ra' },
-    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê' },
+    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán' },
     trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', other: 'Khác' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
