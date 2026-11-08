@@ -325,7 +325,7 @@ export const marketplaceIncomeConfirm = defineCommand({
     }
     await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'imported', newLines: staged.lines.length, duplicateLines: 0, importId: settlementId });
     // The audit names the platform and counts, never an order number or an amount of the file.
-    ctx.audit({ fileId: input.fileId, platform: staged.platform, settlementId, lines: staged.lines.length, orders: staged.summary.orders });
+    ctx.audit({ fileId: input.fileId, platform: staged.platform, settlementId, lines: staged.lines.length, orders: new Set(staged.lines.map((l) => l.orderNo)).size });
     return { settlementId, lines: staged.lines.length, reportNet: standing.preview.reportNet, other: staged.summary.totals.other };
   },
 });
