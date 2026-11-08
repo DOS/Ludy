@@ -256,7 +256,7 @@ const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit'
   table: 'crove_finance.journal_line',
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
 });
-const vyAgentOf = new Map<string, Record<string, string>>();
+const vyAgentOf = new Map<string, { id: string } & Record<string, string>>();
 const agentRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
