@@ -34,6 +34,7 @@ import {
   type BankMatchedBy,
   type CashVoucherPage,
   type CashVoucherProposal,
+  type Check,
   type VoucherType,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -131,64 +132,160 @@ async function voucherChecks(ctx: QueryContext, type: VoucherType, partyId: stri
   return flag ? [flag] : [];
 }
 
+// A voucher request checked and built into its proposal: shared by the voucher a person enters (finance.voucher.prepare) and the payment voucher of a pay run
+// (finance.payroll_payment.prepare, payroll-payment.ts), which adds checks of its own.
+export async function buildVoucherProposal(ctx: CommandContext, input: z.infer<typeof zCashVoucherRequest>, extraChecks: readonly Check[] = []) {
+  const partyId = input.partyId ?? null;
+  await checkVoucher(ctx, { type: input.type, cashAccount: input.cashAccount, partyId, lines: input.lines });
+  // The legal entity whose books the voucher goes to (#1280): a bank line's own, else the one resolved for the caller.
+  // It is stored with the proposal, so the approver posts it there.
+  let legalEntityId: string;
+  // How the party of a voucher made from a bank line was found (#2385).
+  let matchedBy: BankMatchedBy | undefined;
+  if (input.bankLineId) {
+    // One voucher proposal per line at a time: a second request for the line waits here for the first to commit,
+    // then sees its proposal.
+    await lockBankLine(ctx, input.bankLineId);
+    const voucher = { type: input.type, date: input.date, cashAccount: input.cashAccount, total: voucherTotal(input.lines) };
+    const line = await checkBankLineVoucher(ctx, input.bankLineId, voucher, { pendingToo: true, legalEntityId: input.legalEntityId });
+    // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
+    // another entity's lines).
+    legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
+    matchedBy = await verifiedMatch(ctx, line, partyId, input.matchedBy);
+  } else {
+    legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+  }
+  const party = partyId ? await findParty(ctx, partyId, false) : null;
+  const checks = [...(await voucherChecks(ctx, input.type, partyId, voucherTotal(input.lines), legalEntityId)), ...extraChecks];
+  const built: CashVoucherProposal = {
+    type: input.type,
+    date: input.date,
+    cashAccount: input.cashAccount,
+    party: party ? { id: party.id, name: party.name, taxCode: party.tax_code } : null,
+    personName: input.personName?.trim() || null,
+    description: input.description.trim(),
+    lines: input.lines.map((l) => ({ account: l.account, amount: l.amount, ...(l.memo?.trim() ? { memo: l.memo.trim() } : {}) })),
+    total: voucherTotal(input.lines),
+    ...(checks.length > 0 ? { checks } : {}),
+    ...(input.bankLineId ? { bankLineId: input.bankLineId } : {}),
+    ...(matchedBy ? { matchedBy } : {}),
+    legalEntityId,
+  };
+  // The payload is stored as the proposal and parsed again with this schema when it is approved
+  // (finance.voucher.record). A payload the schema refuses (a party whose stored name or tax code is longer than a
+  // voucher holds, say) could never be approved, and would abort every bulk approval it is part of, so it is refused
+  // now, while the user is still on the form.
+  const parsed = zCashVoucherProposal.safeParse(built);
+  if (!parsed.success) {
+    throw new DomainError('VOUCHER_INVALID', 422, 'Không lập được chứng từ từ dữ liệu này; hãy kiểm tra lại đối tượng và các dòng hạch toán', {
+      problems: ['PROPOSAL_INVALID'],
+      fields: [...new Set(parsed.error.issues.map((i) => i.path.join('.')))],
+    });
+  }
+  const payload = parsed.data;
+  return { kind: VOUCHER_KIND, command: VOUCHER_COMMAND, title: voucherTitle(payload), payload };
+}
+
 export const prepareVoucher = defineCommand({
   name: 'finance.voucher.prepare',
   input: zCashVoucherRequest,
   risk: 'R1',
   sideEffect: 'internal',
   access: REQUESTERS,
-  handler: async (ctx, input) => {
-    const partyId = input.partyId ?? null;
-    await checkVoucher(ctx, { type: input.type, cashAccount: input.cashAccount, partyId, lines: input.lines });
-    // The legal entity whose books the voucher goes to (#1280): a bank line's own, else the one resolved for the caller.
-    // It is stored with the proposal, so the approver posts it there.
-    let legalEntityId: string;
-    // How the party of a voucher made from a bank line was found (#2385).
-    let matchedBy: BankMatchedBy | undefined;
-    if (input.bankLineId) {
-      // One voucher proposal per line at a time: a second request for the line waits here for the first to commit,
-      // then sees its proposal.
-      await lockBankLine(ctx, input.bankLineId);
-      const voucher = { type: input.type, date: input.date, cashAccount: input.cashAccount, total: voucherTotal(input.lines) };
-      const line = await checkBankLineVoucher(ctx, input.bankLineId, voucher, { pendingToo: true, legalEntityId: input.legalEntityId });
-      // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
-      // another entity's lines).
-      legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
-      matchedBy = await verifiedMatch(ctx, line, partyId, input.matchedBy);
-    } else {
-      legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
-    }
-    const party = partyId ? await findParty(ctx, partyId, false) : null;
-    const checks = await voucherChecks(ctx, input.type, partyId, voucherTotal(input.lines), legalEntityId);
-    const built: CashVoucherProposal = {
-      type: input.type,
-      date: input.date,
-      cashAccount: input.cashAccount,
-      party: party ? { id: party.id, name: party.name, taxCode: party.tax_code } : null,
-      personName: input.personName?.trim() || null,
-      description: input.description.trim(),
-      lines: input.lines.map((l) => ({ account: l.account, amount: l.amount, ...(l.memo?.trim() ? { memo: l.memo.trim() } : {}) })),
-      total: voucherTotal(input.lines),
-      ...(checks.length > 0 ? { checks } : {}),
-      ...(input.bankLineId ? { bankLineId: input.bankLineId } : {}),
-      ...(matchedBy ? { matchedBy } : {}),
-      legalEntityId,
-    };
-    // The payload is stored as the proposal and parsed again with this schema when it is approved
-    // (finance.voucher.record). A payload the schema refuses (a party whose stored name or tax code is longer than a
-    // voucher holds, say) could never be approved, and would abort every bulk approval it is part of, so it is refused
-    // now, while the user is still on the form.
-    const parsed = zCashVoucherProposal.safeParse(built);
-    if (!parsed.success) {
-      throw new DomainError('VOUCHER_INVALID', 422, 'Không lập được chứng từ từ dữ liệu này; hãy kiểm tra lại đối tượng và các dòng hạch toán', {
-        problems: ['PROPOSAL_INVALID'],
-        fields: [...new Set(parsed.error.issues.map((i) => i.path.join('.')))],
-      });
-    }
-    const payload = parsed.data;
-    return { kind: VOUCHER_KIND, command: VOUCHER_COMMAND, title: voucherTitle(payload), payload };
-  },
+  handler: (ctx, input) => buildVoucherProposal(ctx, input),
 });
+
+// A stored voucher proposal checked again and posted: shared by finance.voucher.record and finance.payroll_payment.record, which names the pay run and what it pays on the voucher (`payroll`).
+export async function recordVoucherPayload(ctx: CommandContext, payload: CashVoucherProposal, payroll: { runId: string; kind: string } | null = null) {
+  if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
+  const partyId = payload.party?.id ?? null;
+  // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
+  // refused here. The total is the lines' sum, never taken from the payload as is.
+  await checkVoucher(ctx, { type: payload.type, cashAccount: payload.cashAccount, partyId, lines: payload.lines });
+  const total = voucherTotal(payload.lines);
+  if (total !== payload.total) throw new DomainError('VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của chứng từ', { problems: ['TOTAL_MISMATCH'] });
+  // The line it settles is checked again: another voucher may have settled it since the proposal was made. The
+  // database checks it once more under the line's lock when the voucher is inserted. The voucher is in the line's
+  // legal entity (#1280), else in the one stored with the proposal (resolved again, so the approver must see it).
+  let legalEntityId: string;
+  // The text of the bank line a person's own choice of party was made from (#2402), kept to teach a rule below.
+  let taughtBy: { description: string; counterpartyAccount: string | null } | null = null;
+  if (payload.bankLineId) {
+    const line = await checkBankLineVoucher(
+      ctx,
+      payload.bankLineId,
+      { type: payload.type, date: payload.date, cashAccount: payload.cashAccount, total },
+      { pendingToo: false, legalEntityId: payload.legalEntityId },
+    );
+    // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
+    // another entity's lines).
+    legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
+    if (payload.matchedBy?.kind === 'manual') taughtBy = { description: line.description, counterpartyAccount: line.counterpartyAccount };
+  } else {
+    legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
+  }
+  const party = partyId ? await findParty(ctx, partyId, true) : null;
+  const journal = buildVoucherJournal(payload);
+  if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
+
+  const voucher = await ctx.trx
+    .insertInto('crove_finance.cash_voucher')
+    .values({
+      org_id: ctx.orgId,
+      legal_entity_id: legalEntityId,
+      voucher_type: payload.type,
+      voucher_date: payload.date,
+      cash_account: payload.cashAccount,
+      party_id: party?.id ?? null,
+      person_name: payload.personName,
+      description: payload.description,
+      amount: total,
+      proposal_id: ctx.proposalId,
+      bank_line_id: payload.bankLineId ?? null,
+      ...(payroll ? { payroll_run_id: payroll.runId, payroll_payment_kind: payroll.kind } : {}),
+      created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
+    })
+    .returning(['id', 'number'])
+    .executeTakeFirstOrThrow()
+    .catch((error: { code?: string; message?: string }) => {
+      // A voucher of the same line committed between the check above and this insert (the database's check waits for
+      // it under the line's lock, then sees it).
+      if (error?.code === '23505' && /is already settled by another cash voucher/.test(error.message ?? '')) {
+        throw new DomainError('BANK_LINE_MATCHED', 409, 'Dòng sao kê này vừa được ghi chứng từ khác; hãy tải lại trang ngân hàng');
+      }
+      // A payment of the same run and kind committed between the command's check and this insert (the unique index waited for it).
+      if (payroll && error?.code === '23505') throw new DomainError('HR_PAYMENT_DONE', 409, 'Khoản này của bảng lương đã được chi');
+      throw error;
+    });
+  const code = voucherCode(payload.type, voucher.number);
+  // The party as it is now (its name may have changed since the voucher was asked for).
+  const described = { description: payload.description, party: party ? { name: party.name } : null };
+  const journalEntryId = await postNewEntry(ctx, {
+    entryDate: payload.date,
+    description: voucherEntryDescription(code, described),
+    sourceType: VOUCHER_SOURCE,
+    sourceId: voucher.id,
+    legalEntityId,
+    // A voucher made from a bank statement line has the line's date; any other voucher's date is the user's.
+    beforeOpening: payload.bankLineId ? 'fixed' : 'later_date',
+    lines: journal.map((j) => ({
+      lineNo: j.lineNo,
+      accountCode: j.accountCode,
+      debit: j.debit,
+      credit: j.credit,
+      // Every line but the cash line names the party, so 131 and 331 per party (and an advance per employee on 141)
+      // follow the voucher.
+      partyId: party && j.accountCode !== payload.cashAccount ? party.id : null,
+      memo: j.memo,
+    })),
+  });
+  // The person chose the party themselves for a bank line: the line's words now point at it (#2402).
+  const learned = taughtBy !== null && party ? await learnFromVoucher(ctx, { voucherId: voucher.id, partyId: party.id, legalEntityId, ...taughtBy }) : null;
+  ctx.audit({ voucher_type: payload.type, number: voucher.number, amount: total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(learned?.text ? { learned_bank_rule: learned.text } : {}), ...(learned?.account ? { learned_bank_account_rule: learned.account } : {}) });
+  await ctx.activity('finance.cash_voucher', voucher.id, 'voucher.recorded', `Ghi sổ ${VOUCHER_LABELS[payload.type].toLowerCase()} ${code}`);
+  await ctx.emit('finance.voucher.recorded', { voucherId: voucher.id, journalEntryId, type: payload.type, number: voucher.number });
+  return { voucherId: voucher.id, journalEntryId, code };
+}
 
 export const recordVoucher = defineCommand({
   name: VOUCHER_COMMAND,
@@ -197,93 +294,7 @@ export const recordVoucher = defineCommand({
   sideEffect: 'financial',
   access: 'proposal',
   proposalKind: VOUCHER_KIND,
-  handler: async (ctx, { payload }) => {
-    if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
-    const partyId = payload.party?.id ?? null;
-    // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
-    // refused here. The total is the lines' sum, never taken from the payload as is.
-    await checkVoucher(ctx, { type: payload.type, cashAccount: payload.cashAccount, partyId, lines: payload.lines });
-    const total = voucherTotal(payload.lines);
-    if (total !== payload.total) throw new DomainError('VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của chứng từ', { problems: ['TOTAL_MISMATCH'] });
-    // The line it settles is checked again: another voucher may have settled it since the proposal was made. The
-    // database checks it once more under the line's lock when the voucher is inserted. The voucher is in the line's
-    // legal entity (#1280), else in the one stored with the proposal (resolved again, so the approver must see it).
-    let legalEntityId: string;
-    // The text of the bank line a person's own choice of party was made from (#2402), kept to teach a rule below.
-    let taughtBy: { description: string; counterpartyAccount: string | null } | null = null;
-    if (payload.bankLineId) {
-      const line = await checkBankLineVoucher(
-        ctx,
-        payload.bankLineId,
-        { type: payload.type, date: payload.date, cashAccount: payload.cashAccount, total },
-        { pendingToo: false, legalEntityId: payload.legalEntityId },
-      );
-      // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
-      // another entity's lines).
-      legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
-      if (payload.matchedBy?.kind === 'manual') taughtBy = { description: line.description, counterpartyAccount: line.counterpartyAccount };
-    } else {
-      legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
-    }
-    const party = partyId ? await findParty(ctx, partyId, true) : null;
-    const journal = buildVoucherJournal(payload);
-    if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
-
-    const voucher = await ctx.trx
-      .insertInto('crove_finance.cash_voucher')
-      .values({
-        org_id: ctx.orgId,
-        legal_entity_id: legalEntityId,
-        voucher_type: payload.type,
-        voucher_date: payload.date,
-        cash_account: payload.cashAccount,
-        party_id: party?.id ?? null,
-        person_name: payload.personName,
-        description: payload.description,
-        amount: total,
-        proposal_id: ctx.proposalId,
-        bank_line_id: payload.bankLineId ?? null,
-        created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
-      })
-      .returning(['id', 'number'])
-      .executeTakeFirstOrThrow()
-      .catch((error: { code?: string; message?: string }) => {
-        // A voucher of the same line committed between the check above and this insert (the database's check waits for
-        // it under the line's lock, then sees it).
-        if (error?.code === '23505' && /is already settled by another cash voucher/.test(error.message ?? '')) {
-          throw new DomainError('BANK_LINE_MATCHED', 409, 'Dòng sao kê này vừa được ghi chứng từ khác; hãy tải lại trang ngân hàng');
-        }
-        throw error;
-      });
-    const code = voucherCode(payload.type, voucher.number);
-    // The party as it is now (its name may have changed since the voucher was asked for).
-    const described = { description: payload.description, party: party ? { name: party.name } : null };
-    const journalEntryId = await postNewEntry(ctx, {
-      entryDate: payload.date,
-      description: voucherEntryDescription(code, described),
-      sourceType: VOUCHER_SOURCE,
-      sourceId: voucher.id,
-      legalEntityId,
-      // A voucher made from a bank statement line has the line's date; any other voucher's date is the user's.
-      beforeOpening: payload.bankLineId ? 'fixed' : 'later_date',
-      lines: journal.map((j) => ({
-        lineNo: j.lineNo,
-        accountCode: j.accountCode,
-        debit: j.debit,
-        credit: j.credit,
-        // Every line but the cash line names the party, so 131 and 331 per party (and an advance per employee on 141)
-        // follow the voucher.
-        partyId: party && j.accountCode !== payload.cashAccount ? party.id : null,
-        memo: j.memo,
-      })),
-    });
-    // The person chose the party themselves for a bank line: the line's words now point at it (#2402).
-    const learned = taughtBy !== null && party ? await learnFromVoucher(ctx, { voucherId: voucher.id, partyId: party.id, legalEntityId, ...taughtBy }) : null;
-    ctx.audit({ voucher_type: payload.type, number: voucher.number, amount: total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(learned?.text ? { learned_bank_rule: learned.text } : {}), ...(learned?.account ? { learned_bank_account_rule: learned.account } : {}) });
-    await ctx.activity('finance.cash_voucher', voucher.id, 'voucher.recorded', `Ghi sổ ${VOUCHER_LABELS[payload.type].toLowerCase()} ${code}`);
-    await ctx.emit('finance.voucher.recorded', { voucherId: voucher.id, journalEntryId, type: payload.type, number: voucher.number });
-    return { voucherId: voucher.id, journalEntryId, code };
-  },
+  handler: (ctx, { payload }) => recordVoucherPayload(ctx, payload),
 });
 
 // The posted vouchers of a date range, newest first (by date, then by id: ids are time-ordered, so the newest voucher of

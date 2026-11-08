@@ -30,7 +30,7 @@ export function parseAuthors(raw: unknown): ActorRef[] | null {
 // Co-authors only restrict, never grant: a co-author who wrote nothing is held back while another eligible approver exists who is neither an author nor a co-author, and always under the
 // accountant preset (if the only holder of the approval permission froze the run, nobody can approve its posting: reject it, add a second approver and ask again). The owner override and the
 // sole-approver exception are judged on the written authors alone, so a forged co-author list cannot let a requester approve their own posting.
-export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record'];
+export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record', 'finance.payroll_payment.record'];
 
 const refKey = (a: ActorRef) => (a.type === 'system' ? `system:${a.component}` : `${a.type}:${a.id}`);
 
@@ -87,6 +87,8 @@ const POLICIES: Record<string, CommandPolicy> = {
   'finance.stock.count_confirm': LEDGER,
   // The posting of an approved pay run (#2532) is a general journal voucher built from the frozen run (gross by function, the funds, the PIT): the same rule.
   'finance.payroll_posting.record': LEDGER,
+  // The payment of a pay run's net pay or a remittance (#2532) is a payment voucher built from the frozen run: the same rule.
+  'finance.payroll_payment.record': LEDGER,
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): a plain base-role policy, no approval
   // permission and no ledger. Owners and admins approve (Q2), with four-eyes and the one-person path (P10): an owner alone
   // approves their own request, flagged self_approved; with two eligible approvers someone other than an author approves.
@@ -118,7 +120,8 @@ export function liveApprovalCommands(): string[] {
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build. 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; decideApproval and proposal_approval_decide).
-export const APPROVAL_POLICY_VERSION = 9;
+// 10: the payment of a pay run's net pay or a remittance (finance.payroll_payment.record, #2532) was given its approval policy.
+export const APPROVAL_POLICY_VERSION = 10;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
