@@ -1600,6 +1600,20 @@ export const en = {
       saved: 'The retention settings were saved.',
       adminOnly: 'Only an owner or admin changes these periods.',
     },
+    transcript: {
+      title: 'Transcript',
+      draftTitle: 'Draft transcript',
+      draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
+      publishedNote: 'The transcript the recorder shared with the meeting.',
+      emptyRecorder: 'No transcript yet. The recording and its playback work without one.',
+      speaker: 'Speaker',
+      text: 'What was said',
+      edit: 'Correct',
+      editLine: 'Correct the line at {time}',
+      save: 'Save',
+      cancel: 'Cancel',
+      corrected: 'Corrected',
+    },
     detail: {
       back: 'Back to meetings',
       delete: 'Delete meeting',
@@ -8343,6 +8357,7 @@ export const en = {
       NOTE_LINK_NOT_FOUND: 'This link was not found.',
       NOTE_LINK_TARGET_NOT_FOUND: 'The record to link was not found.',
       MEETING_NOT_FOUND: 'Meeting not found.',
+      TRANSCRIPT_SEGMENT_NOT_FOUND: 'Transcript segment not found.',
       INVALID_READER: 'A reader must be an active owner, admin or member of this organization.',
       INVALID_MEDIA_CONTAINER: 'This file is not a supported audio or video format.',
       VIDEO_NOT_ENABLED: 'This meeting was not set up to keep video.',
@@ -9863,6 +9878,11 @@ export const en = {
       reader: {
         add: 'Add meeting reader',
         remove: 'Remove meeting reader',
+      },
+      transcript: {
+        correct: 'Correct a line of the draft transcript',
+        draft_store: 'Store the draft transcript of a meeting',
+        get: 'Read the transcript of a meeting',
       },
     },
     notes: {

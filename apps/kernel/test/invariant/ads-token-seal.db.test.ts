@@ -28,6 +28,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime, type BlobStore } from '@crove/kernel-runtime';
 import { orgPurgeCommand, purgeOrg } from '../../src/org-purge.ts';
+import { enterUser } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -849,7 +850,7 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
         if (!local) await c.query(`SELECT set_config('crove.org_purge_hold', $1, false)`, [org.orgId]);
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [org.userId, org.orgId]);
+          await enterUser(c, org.userId, org.orgId);
           if (local) await c.query(`SELECT set_config('crove.org_purge_hold', $1, true)`, [org.orgId]);
           expect((await c.query(`SELECT current_setting('crove.org_purge_hold', true) AS mark`)).rows[0]?.mark, 'the session did set the mark').toBe(org.orgId);
           await c.query('SELECT crove_kernel.credential_drop($1::uuid)', [conn.id]);

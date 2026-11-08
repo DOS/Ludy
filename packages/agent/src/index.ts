@@ -23,6 +23,7 @@ export * from './einvoice-draft.ts';
 export * from './quote-lines.ts';
 export * from './summary.ts';
 export * from './today.ts';
+export * from './transcribe.ts';
 
 export interface AiConfig {
   baseURL: string;

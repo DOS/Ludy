@@ -174,7 +174,7 @@ A stock move is made when goods leave, never when the order is confirmed: the ru
 
 ### 6.6 ADR
 
-The hand-off contract (the schema, the source reference on draft lines, the rule that finance re-checks what it is given, the delivery key) is a cross-module contract and gets one short ADR, written at the start of step Q4 before its code, with the Accounting PO's answers to the questions of section 10 recorded in it.
+The hand-off contract (the schema, the source reference on draft lines, the rule that finance re-checks what it is given, the delivery key) is a cross-module contract and gets one short ADR, written at the start of step Q4 before its code, with the Accounting PO's answers to the questions of section 10 recorded in it: [ADR-0050](../adr/0050-quote-acceptance-sales-order-and-accounting-handoff.md) (proposed 2026-11-08; A1 to A6 confirmed by the Accounting PO on #2696).
 
 ## 7. Dy's part (the AI-first gate)
 
