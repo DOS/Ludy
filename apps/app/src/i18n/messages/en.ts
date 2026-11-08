@@ -4278,7 +4278,7 @@ export const en = {
         net: 'Paid by the platform',
       },
       otherHint: 'The "not explained" amount is the gap between what the platform paid and the columns Ludy understands. Check the file before importing.',
-      netStated: 'The file states the total paid as {net}; the lines add up to it.',
+      netStated: 'The file states the total paid as {net}.',
       netNotStated: 'The file states no total. If you import it, Ludy uses the sum of the lines, {net}.',
       ignoredRows: '{count, number} rows are not an order\'s line (a totals row or a merged cell) and were not read.',
       blockers: {

@@ -4274,7 +4274,7 @@ export const vi = {
         net: 'Sàn thực trả',
       },
       otherHint: 'Khoản "chưa giải thích được" là phần chênh giữa số sàn thực trả và các cột Ludy hiểu. Hãy xem lại tệp trước khi nhập.',
-      netStated: 'Tệp ghi tổng sàn thực trả là {net}; các dòng cộng lại đúng số này.',
+      netStated: 'Tệp ghi tổng sàn thực trả là {net}.',
       netNotStated: 'Tệp không ghi tổng. Nếu nhập, Ludy dùng tổng các dòng là {net}.',
       ignoredRows: 'Có {count, number} dòng không phải dòng của một đơn (dòng tổng cộng hoặc ô gộp) nên không được đọc.',
       blockers: {
