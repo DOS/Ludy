@@ -64,8 +64,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  // Q4b (#2697, ADR-0050 point 4): the delivery of a sales order line and its reversal.
-  'crove_crm.sales_order_delivery',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_connection',
