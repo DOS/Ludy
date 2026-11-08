@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   # The checks run in parallel jobs (#1041): lint, typecheck and unit tests here, the database tests in `db` split in
-  # three, and `check` below, the required "Lint, typecheck, test", passes only when every one of them passed.
+  # five, and `check` below, the required "Lint, typecheck, test", passes only when every one of them passed.
   static:
     name: Lint, typecheck, unit tests
     runs-on: ubuntu-latest
@@ -95,9 +95,16 @@ jobs:
         run: node tools/ci/spa-secrets.mjs apps/app/dist apps/kernel/src/config.ts
 
   # The database tests run one file at a time (fileParallelism: false) and took 17 minutes in one job (#1041). Two
-  # files take 44% of that (finance-search on 50,000 documents, about 260 s; archive, about 150 s), so they run in a
-  # job of their own and every other file in two shards, each job on its own PostgreSQL. A renamed heavy file fails the
-  # heavy job (no test files found) until this list follows it.
+  # files take a large share of that (finance-search on 50,000 documents, about 21 s of tests; archive, about 150 s), so
+  # they run in a job of their own and every other file in four shards, each job on its own PostgreSQL. A renamed heavy
+  # file fails the heavy job (no test files found) until this list follows it.
+  # Timings (#2735), from the jobs of the `main` runs of 2026-11-08 (every job starts testing about 35 s after it begins):
+  # with two shards one took 14 minutes and the other 19.5 (limit 20), about 31 minutes of files in all (about 190 files,
+  # 1 to 40 s each, most of it the migrated database every file builds); the heavy job took 3.5 minutes. Vitest's
+  # --shard splits the sorted file list by count, so four shards give about 8 minutes of files each plus the 35 s start,
+  # at least 5 minutes under the limit with room for the slowest shard (a rise in file count or length shows here first).
+  # The limit stays 20 minutes: a shard that nears 15 means add a shard, not raise it. The required check is `check`
+  # (Lint, typecheck, test), which needs `db` as a whole, so the part names are not a branch-protection setting.
   db:
     name: Database tests (${{ matrix.part.name }})
     runs-on: ubuntu-latest
@@ -109,11 +116,17 @@ jobs:
           - name: heavy files
             args: apps/kernel/test/finance-search.db.test.ts apps/kernel/test/archive.db.test.ts
             exclude: ''
-          - name: shard 1 of 2
-            args: --shard=1/2
+          - name: shard 1 of 4
+            args: --shard=1/4
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
-          - name: shard 2 of 2
-            args: --shard=2/2
+          - name: shard 2 of 4
+            args: --shard=2/4
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 3 of 4
+            args: --shard=3/4
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 4 of 4
+            args: --shard=4/4
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
     services:
       postgres:
