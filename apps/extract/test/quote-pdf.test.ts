@@ -111,6 +111,17 @@ describe('the number, the date and the line breaking', () => {
     expect(vnNumber('0.5')).toBe('0,5');
     expect(vnNumber('2.50')).toBe('2,5');
     expect(vnNumber('100')).toBe('100');
+    expect(vnNumber('000123')).toBe('123');
+    expect(vnNumber('0')).toBe('0');
+    expect(vnNumber('0.000')).toBe('0');
+    expect(vnNumber('1000')).toBe('1.000');
+    expect(vnNumber('123456')).toBe('123.456');
+    expect(vnNumber('1234567890.100')).toBe('1.234.567.890,1');
+    // Its cost does not grow with a long run of zeros (a regular expression that backtracks would).
+    const started = Date.now();
+    expect(vnNumber(`${'0'.repeat(200_000)}1.${'0'.repeat(200_000)}1`).endsWith(',' + '0'.repeat(200_000) + '1')).toBe(true);
+    expect(vnNumber(`1.${'0'.repeat(300_000)}`)).toBe('1');
+    expect(Date.now() - started).toBeLessThan(1000);
     expect(vnNumber('')).toBe('');
     expect(vnNumber(null)).toBe('');
     expect(vnNumber('khác')).toBe('khác');

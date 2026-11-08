@@ -47,9 +47,16 @@ export function vnNumber(value: string | null | undefined): string {
   if (value === null || value === undefined || value === '') return '';
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
   if (!match) return value;
-  const whole = (match[2] as string).replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  const fraction = (match[3] ?? '').replace(/0+$/, '');
-  return `${match[1]}${whole}${fraction ? `,${fraction}` : ''}`;
+  // By hand, not with regular expressions that backtrack: a figure is short in practice, but the cost of this must not depend on what it is given.
+  const digits = match[2] as string;
+  let start = 0;
+  while (start < digits.length - 1 && digits[start] === '0') start++;
+  let whole = '';
+  for (let end = digits.length; end > start; end -= 3) whole = `${digits.slice(Math.max(start, end - 3), end)}${whole === '' ? '' : `.${whole}`}`;
+  const decimals = match[3] ?? '';
+  let last = decimals.length;
+  while (last > 0 && decimals[last - 1] === '0') last--;
+  return `${match[1]}${whole}${last > 0 ? `,${decimals.slice(0, last)}` : ''}`;
 }
 
 // A day as dd/mm/yyyy.
