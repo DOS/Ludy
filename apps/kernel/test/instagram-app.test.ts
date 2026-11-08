@@ -12,7 +12,7 @@ import { acceptMetaDeletion } from '../src/meta-deletion.ts';
 const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' };
 // Made-up apps (the shape of a Meta app id and secret, nothing real).
 const PAGES = { CHANNEL_META_APP_ID: '1111111111', CHANNEL_META_APP_SECRET: 'pages-app-secret-0123456789abcdef' };
-const INSTAGRAM = { CHANNEL_INSTAGRAM_APP_ID: '2222222222', CHANNEL_INSTAGRAM_APP_SECRET: 'instagram-app-secret-0123456789ab' };
+const INSTAGRAM = { CHANNEL_INSTAGRAM_APP_ID: '2222222223', CHANNEL_INSTAGRAM_APP_SECRET: 'instagram-app-secret-0123456789ab' };
 const REDIRECT = 'https://app.example.com/channels/oauth/x/callback';
 const clientId = (url: string) => new URL(url).searchParams.get('client_id');
 const dialog = (provider: string, config: ReturnType<typeof loadConfig>) =>
@@ -60,8 +60,8 @@ describe('CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET', () => {
 
   it('count the Instagram app as shared with the ads write app, as the Pages app is', () => {
     const config = (write: string, instagram: string | undefined) => ({ CHANNEL_META_ADS_WRITE_APP_ID: write, CHANNEL_META_ADS_APP_ID: undefined, CHANNEL_META_APP_ID: undefined, CHANNEL_INSTAGRAM_APP_ID: instagram });
-    expect(metaWriteAppShared(config('2222222222', '2222222222'))).toBe(true);
-    expect(metaWriteAppShared(config('3333333333', '2222222222'))).toBe(false);
+    expect(metaWriteAppShared(config('2222222223', '2222222223'))).toBe(true);
+    expect(metaWriteAppShared(config('3333333334', '2222222223'))).toBe(false);
     expect(() =>
       loadConfig({ ...BASE, ...INSTAGRAM, CHANNEL_META_ADS_WRITE_APP_ID: INSTAGRAM.CHANNEL_INSTAGRAM_APP_ID, CHANNEL_META_ADS_WRITE_APP_SECRET: 'another-secret-0123456789abcdef' }),
     ).toThrow(/one Meta app has one secret/);
