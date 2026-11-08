@@ -175,7 +175,18 @@ suite('meeting summary and action item writes on PostgreSQL (#2580, ADR-0047)', 
   });
 
   it('accepts an item only for a user who may read it, once, and grants the function to crove_app alone', async () => {
-    const accept = (actor: Actor, item: string) => attempt(actor, `SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, item, randomUUID()]);
+    // A task of the org whose source is the item, as the accepting command makes it.
+    const taskFor = async (item: string): Promise<string> => {
+      const id = randomUUID();
+      await admin((c) =>
+        c.query(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, source_ref) VALUES ($1, $2, 'Việc', 'human', 'user', $3::jsonb)`, [orgId, id, JSON.stringify({ type: 'meetings.action_item', id: item })]),
+      );
+      return id;
+    };
+    const accept = async (actor: Actor, item: string) => attempt(actor, `SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, item, await taskFor(item)]);
+    // The task must be that item's own: a random id, and another item's task, are refused.
+    expect((await attempt(asUser('attendee'), `SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.publishedItem, randomUUID()])).code).toBe('42501');
+    expect((await attempt(asUser('attendee'), `SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.publishedItem, await taskFor(ids.draftItem)])).code).toBe('42501');
     // The published item: the attendee and the recorder may; a member outside the meeting, the owner and the system may not.
     expect((await accept(asUser('attendee'), ids.publishedItem)).code).toBeNull();
     for (const [name, actor] of [['member', asUser('member')], ['owner', asUser('owner')], ['system', asSystem]] as const) {
@@ -190,8 +201,9 @@ suite('meeting summary and action item writes on PostgreSQL (#2580, ADR-0047)', 
     try {
       await c.query('BEGIN');
       await asUser('attendee').enter(c);
-      await c.query(`SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.publishedItem, randomUUID()]);
-      await expect(c.query(`SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.publishedItem, randomUUID()])).rejects.toMatchObject({ message: expect.stringContaining('MEETINGS_ITEM_ACCEPTED') });
+      const t = await taskFor(ids.publishedItem);
+      await c.query(`SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.publishedItem, t]);
+      await expect(c.query(`SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.publishedItem, t])).rejects.toMatchObject({ message: expect.stringContaining('MEETINGS_ITEM_ACCEPTED') });
     } finally {
       await c.query('ROLLBACK').catch(() => {});
       await c.end();

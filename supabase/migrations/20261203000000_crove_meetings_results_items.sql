@@ -102,7 +102,8 @@ CREATE POLICY action_item_delete ON crove_meetings.action_item AS RESTRICTIVE FO
   USING (stage = 'draft' AND status = 'suggested' AND crove_meetings.is_meeting_recorder(org_id, meeting_id));
 
 -- An item is accepted when its task was made: by the recorder from a draft, or by any reader once it is published. The caller's own context only (a user),
--- the item still suggested (a second accept is refused, never a second task); the task is the one the accepting command just made.
+-- the item still suggested (a second accept is refused, never a second task); the task must be one of the org whose source is the item. The grant to crove_app
+-- is not a control by itself: every login role of the app can run it, so the checks above and below are what bind a caller to their own context.
 CREATE OR REPLACE FUNCTION crove_meetings.action_item_accept(p_org_id uuid, p_item_id uuid, p_task_id uuid)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -126,6 +127,14 @@ BEGIN
   END IF;
   IF v_status <> 'suggested' THEN
     RAISE EXCEPTION 'MEETINGS_ITEM_ACCEPTED' USING ERRCODE = '42501';
+  END IF;
+  -- The task is one of this org whose source is this very item (the command made it a moment ago): a caller cannot link an item to any other task.
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_kernel.task t
+    WHERE t.org_id = v_org AND t.id = p_task_id
+      AND t.source_ref ->> 'type' = 'meetings.action_item' AND t.source_ref ->> 'id' = p_item_id::text
+  ) THEN
+    RAISE EXCEPTION 'MEETINGS_ITEM_TASK_MISMATCH' USING ERRCODE = '42501';
   END IF;
   UPDATE crove_meetings.action_item
   SET status = 'accepted', task_id = p_task_id, accepted_by = v_user, accepted_at = pg_catalog.now(), updated_at = pg_catalog.now()
