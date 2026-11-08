@@ -41,15 +41,17 @@ CREATE POLICY le_scope ON crove_finance.marketplace_party AS RESTRICTIVE FOR ALL
   USING ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))
   WITH CHECK ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]));
 
--- The party a link names is an organization: a person is never a platform. Runs as the writer, which reads the party through its own policies.
+-- The party a link names is an organization that is not merged into another: a person is never a platform. Runs as the writer, which reads the party through its own policies; a party it
+-- cannot see is refused too (stricter than the foreign key alone).
 CREATE OR REPLACE FUNCTION crove_finance.marketplace_party_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM crove_kernel.party p WHERE p.org_id = NEW.org_id AND p.id = NEW.party_id AND p.kind <> 'organization') THEN
+  IF NOT EXISTS (SELECT 1 FROM crove_kernel.party p WHERE p.org_id = NEW.org_id AND p.id = NEW.party_id AND p.kind = 'organization' AND p.duplicate_of IS NULL) THEN
     RAISE EXCEPTION 'MARKETPLACE_PARTY_KIND' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
 END $$;
+REVOKE ALL ON FUNCTION crove_finance.marketplace_party_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS marketplace_party_guard ON crove_finance.marketplace_party;
 CREATE TRIGGER marketplace_party_guard BEFORE INSERT OR UPDATE OF party_id ON crove_finance.marketplace_party
   FOR EACH ROW EXECUTE FUNCTION crove_finance.marketplace_party_guard();

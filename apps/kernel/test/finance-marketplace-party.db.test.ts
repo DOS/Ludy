@@ -118,9 +118,13 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
     await link('tiktok_shop', other);
   });
 
-  it('refuses a person as a platform and a platform id of the wrong shape', async () => {
+  it('refuses a person or a merged party as a platform, and a platform id of the wrong shape', async () => {
     const person = await party('person');
     await expect(link('lazada', person)).rejects.toMatchObject({ message: expect.stringContaining('MARKETPLACE_PARTY_KIND') });
+    const target = await party('organization');
+    const merged = await party('organization');
+    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [orgA, merged, target]));
+    await expect(link('lazada', merged)).rejects.toMatchObject({ message: expect.stringContaining('MARKETPLACE_PARTY_KIND') });
     const p = await party('organization');
     for (const bad of ['', 'S', 'Shopee', '1shopee', 'shop-ee', 'x'.repeat(32)]) {
       await expect(link(bad, p)).rejects.toMatchObject({ constraint: 'marketplace_party_platform_check' });
@@ -134,6 +138,8 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
     await expect(
       asMember(stranger, orgB, (c) => c.query('INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, $2, $3)', [orgA, 'lazada', p])),
     ).rejects.toThrow();
+    // Refused by the guard (the party is invisible to the other org) or by RLS: either way nothing landed.
+    expect((await admin((c) => c.query('SELECT 1 FROM crove_finance.marketplace_party WHERE party_id = $1', [p]))).rowCount).toBe(0);
   });
 
   it('lets a tenant role read and insert but never update or delete', async () => {
