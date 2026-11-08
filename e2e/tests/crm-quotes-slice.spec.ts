@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // CRM quotes, the whole slice end to end (#2699, docs/plan/crm-quotes.md section 9): a deal, a quote made from it with a priced line, the quote sent by link (the send
 // panel inside the editor does not submit the editor's own save, #2825), the public page that link opens with no sign-in, the customer's yes recorded by a person,
-// the order that makes, and "Lập hóa đơn" on that order switched off until Kế toán's side lands (#2818). The Báo giá report then counts the accepted quote. It runs with no
-// external account: nothing is mailed, nothing is posted to the books.
+// the order that makes, and "Lập hóa đơn" on that order making a draft in Kế toán (#2818, #2697). The Báo giá report then counts the accepted quote. It runs with no
+// external account: nothing is mailed, nothing is issued to a provider, nothing is posted to the books (a draft is a working copy).
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { exec } from '../lib/db.ts';
@@ -88,8 +88,10 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     const orders = page.getByTestId('deal-orders');
     await expect(orders.getByTestId('order-row')).toHaveCount(1);
     await expect(orders.getByTestId('order-row')).toContainText('Đã xác nhận');
-    // "Lập hóa đơn" stays off until Kế toán's side is switched on; nothing was invoiced or moved out of stock.
-    await expect(orders.getByTestId('order-invoice')).toBeDisabled();
+    // "Lập hóa đơn" is on where Kế toán runs: one click makes a draft (not an issued invoice) and links to the sales invoices.
+    await expect(orders.getByTestId('order-invoice')).toBeEnabled();
+    await orders.getByTestId('order-invoice').click();
+    await expect(orders.getByTestId('order-invoice-done')).toContainText('Đã tạo bản nháp hóa đơn');
   });
 
   await test.step('a second acceptance is not offered, and the Báo giá report counts the accepted quote', async () => {
