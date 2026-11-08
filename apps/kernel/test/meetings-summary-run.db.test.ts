@@ -201,6 +201,17 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(modelCalls).toBe(1);
   });
 
+  it('does not supersede a transcription of the recorder that is still running, and starts once it has finished', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const other = await seedMeeting('recorder');
+    const live = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', { feature: 'meetings.transcribe', subjectType: 'meeting', subjectId: other });
+    const before = modelCalls;
+    expect(await refuses(runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId))).toBe('TRANSCRIBE_RUNNING');
+    expect(modelCalls).toBe(before);
+    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, live.runId]);
+    expect((await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
+  });
+
   it('is rate limited per member, one at a time', async () => {
     const meetingId = await seedMeeting('recorder');
     const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 100 });

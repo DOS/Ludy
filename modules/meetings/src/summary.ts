@@ -232,6 +232,21 @@ export const summaryStart = defineCommand({
     if (!summaryEnabled) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to summarize it');
+    // The meeting is held FOR SHARE, so a concurrent erase or retention change waits for this start (as transcribe does).
+    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    // The member has one Vy run at a time and the kernel's start supersedes a live one: a transcription of any meeting that is still going (paid for) is not cut off.
+    const live = await ctx.trx
+      .selectFrom('crove_kernel.member_vy_result as v')
+      .innerJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .select('v.id')
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.member_user_id', '=', userId)
+      .where('v.feature', '=', 'meetings.transcribe')
+      .where('v.status', '=', 'running')
+      .where('r.status', '=', 'running')
+      .where('r.expires_at', '>', new Date())
+      .executeTakeFirst();
+    if (live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'A transcription of yours is still running; wait for it to finish');
     const any = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
     if (!any) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to summarize yet');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
