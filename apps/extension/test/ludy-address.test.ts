@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The one configured Ludy address, and the rule that no request goes anywhere else.
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ADDRESS, isDefaultAddress, ludyUrl, originPattern, parseAddress } from '../src/ludy-address.ts';
+import { DEFAULT_ADDRESS, isDefaultAddress, ludyUrl, originPattern, parseAddress, stalePattern } from '../src/ludy-address.ts';
 import { assertGrantUrl, createClient, LudyError } from '../src/api.ts';
 
 describe('parseAddress', () => {
@@ -17,6 +17,9 @@ describe('parseAddress', () => {
   it.each([
     ['', 'empty'],
     ['http://ludy.congty.vn', 'insecure'],
+    // Only localhost is an optional host permission, so the other loopback names are refused here, not at the browser.
+    ['http://127.0.0.1:8080', 'insecure'],
+    ['http://[::1]:8080', 'insecure'],
     ['https://user:pw@ludy.congty.vn', 'credentials'],
     ['javascript:alert(1)', 'invalid'],
     ['ftp://ludy.congty.vn', 'invalid'],
@@ -79,8 +82,46 @@ describe('no request goes anywhere but the configured address', () => {
   });
 
   it('refuses a granted upload address that is not plain https', () => {
-    expect(() => assertGrantUrl('http://bucket.example/stage')).toThrow(/Refused/);
-    expect(() => assertGrantUrl('https://u:p@bucket.example/stage')).toThrow(/Refused/);
-    expect(assertGrantUrl('https://bucket.example/stage').hostname).toBe('bucket.example');
+    const cloud = 'https://app.ludy.vn';
+    expect(() => assertGrantUrl('http://bucket.example/stage', cloud)).toThrow(/Refused/);
+    expect(() => assertGrantUrl('https://u:p@bucket.example/stage', cloud)).toThrow(/Refused/);
+    expect(assertGrantUrl('https://bucket.example/stage', cloud).hostname).toBe('bucket.example');
+  });
+
+  it('accepts an http loopback grant only when the configured address is itself http on localhost', () => {
+    expect(assertGrantUrl('http://localhost:9000/stage', 'http://localhost:8080').hostname).toBe('localhost');
+    // A remote https server cannot point the upload at the member's own machine.
+    expect(() => assertGrantUrl('http://localhost:9000/stage', 'https://ludy.congty.vn')).toThrow(/Refused/);
+    expect(() => assertGrantUrl('http://127.0.0.1:9000/stage', 'http://localhost:8080')).toThrow(/Refused/);
+    expect(() => assertGrantUrl('http://bucket.example/stage', 'http://localhost:8080')).toThrow(/Refused/);
+  });
+
+  it('never follows a redirect: every request says so', async () => {
+    const seen: Array<RequestInit | undefined> = [];
+    const fetchImpl = vi.fn(async (input: string, init?: RequestInit) => {
+      seen.push(init);
+      if (input.endsWith('/api/files/uploads')) return Response.json({ uploadId: 'u1', url: 'https://bucket.example/stage', fields: {} });
+      return Response.json({ fileId: 'f1', json: { meetingId: 'm' }, uploads: 'direct', features: {} });
+    });
+    const client = createClient('https://app.ludy.vn', 'crx_t', fetchImpl);
+    await client.config();
+    await client.me();
+    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite' });
+    await client.uploadMedia({ meetingId: '11111111-1111-4111-8111-111111111111', kind: 'audio', file: new File(['a'], 'a.webm'), lengthSeconds: 1, uploads: 'presigned' });
+    expect(seen.length).toBeGreaterThanOrEqual(6);
+    for (const init of seen) expect(init?.redirect).toBe('error');
+  });
+});
+
+describe('the host permission of a previous address', () => {
+  it('is given back when the address moves, never the default one', () => {
+    expect(stalePattern('https://old.example', 'https://new.example')).toBe('https://old.example/*');
+    expect(stalePattern('https://old.example', DEFAULT_ADDRESS)).toBe('https://old.example/*');
+    expect(stalePattern(DEFAULT_ADDRESS, 'https://new.example')).toBeNull();
+  });
+
+  it('is kept when the new address needs the same pattern or nothing moved', () => {
+    expect(stalePattern('https://old.example:8443', 'https://old.example:9443')).toBeNull();
+    expect(stalePattern('https://old.example', 'https://old.example')).toBeNull();
   });
 });

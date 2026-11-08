@@ -22,6 +22,7 @@ export * from './stock.ts';
 export * from './einvoice-draft.ts';
 export * from './summary.ts';
 export * from './today.ts';
+export * from './transcribe.ts';
 
 export interface AiConfig {
   baseURL: string;

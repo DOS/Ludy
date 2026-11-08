@@ -29,7 +29,7 @@ jobs:
       - name: Install gitleaks
         run: |
           cd "$RUNNER_TEMP"
-          curl -sSfL -o gitleaks.tar.gz \
+          curl -sSfL --retry 5 --retry-delay 10 --retry-all-errors -o gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
           tar -xzf gitleaks.tar.gz gitleaks
@@ -42,5 +42,7 @@ jobs:
           G1_REQUIRE: ${{ github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]' }}
         run: python3 .github/scripts/g1_config.py "$RUNNER_TEMP/gitleaks.toml"
 
-      - name: Scan full git history
-        run: gitleaks git . --config "$RUNNER_TEMP/gitleaks.toml" --redact --verbose --no-color --exit-code 1
+      # The full history of the commit under test only (HEAD: the PR's merge commit, or the pushed branch), not every
+      # branch the checkout fetched: a leak on an unrelated branch must fail that branch's PR, not every PR in the repo.
+      - name: Scan full git history of the commit under test
+        run: gitleaks git . --log-opts="HEAD" --config "$RUNNER_TEMP/gitleaks.toml" --redact --verbose --no-color --exit-code 1

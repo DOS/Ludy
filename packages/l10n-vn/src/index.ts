@@ -9,3 +9,4 @@ export * from './marketplace-income.ts';
 export * from './marketplace-orders.ts';
 export * from './invoice-lookup.ts';
 export * from './payroll/index.ts';
+export * from './line-totals.ts';

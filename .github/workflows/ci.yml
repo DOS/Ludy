@@ -96,8 +96,12 @@ jobs:
 
   # The database tests run one file at a time (fileParallelism: false) and took 17 minutes in one job (#1041). Two
   # files take 44% of that (finance-search on 50,000 documents, about 260 s; archive, about 150 s), so they run in a
-  # job of their own and every other file in two shards, each job on its own PostgreSQL. A renamed heavy file fails the
+  # job of their own and every other file in four shards, each job on its own PostgreSQL. A renamed heavy file fails the
   # heavy job (no test files found) until this list follows it.
+  # The shards are balanced by measured file time (tools/ci/db-shards.mjs, times in tools/ci/db-test-times.json), not by
+  # file name as vitest's --shard does: the two name-based halves ran 13 and 19 minutes against the 20-minute timeout
+  # (#2769). Every file is in exactly one shard (tools/test/db-shards.test.ts). Each job prints its planned and actual
+  # duration in its summary.
   db:
     name: Database tests (${{ matrix.part.name }})
     runs-on: ubuntu-latest
@@ -107,13 +111,19 @@ jobs:
       matrix:
         part:
           - name: heavy files
-            args: apps/kernel/test/finance-search.db.test.ts apps/kernel/test/archive.db.test.ts
+            shard: ''
             exclude: ''
-          - name: shard 1 of 2
-            args: --shard=1/2
+          - name: shard 1 of 4
+            shard: '1'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
-          - name: shard 2 of 2
-            args: --shard=2/2
+          - name: shard 2 of 4
+            shard: '2'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 3 of 4
+            shard: '3'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 4 of 4
+            shard: '4'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
     services:
       postgres:
@@ -150,13 +160,34 @@ jobs:
       - name: Database tests (PostgreSQL 17, S3 tests against MinIO)
         env:
           CROVE_TEST_S3_URL: http://crove-ci:crove-ci-minio@127.0.0.1:9000/crove-test
-          PART_ARGS: ${{ matrix.part.args }}
+          PART_SHARD: ${{ matrix.part.shard }}
           # Read by vitest.config.ts: the files another part runs (vitest's --exclude does not reach a project).
           CROVE_DB_TEST_EXCLUDE: ${{ matrix.part.exclude }}
         run: |
-          # PART_ARGS is this file's own matrix value, split into arguments on purpose.
-          # shellcheck disable=SC2086
-          pnpm exec vitest run --project db $PART_ARGS
+          echo "DB_PART_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          if [ -z "$PART_SHARD" ]; then
+            files=(apps/kernel/test/finance-search.db.test.ts apps/kernel/test/archive.db.test.ts)
+          else
+            mapfile -t files < <(node tools/ci/db-shards.mjs "$PART_SHARD" 4)
+          fi
+          echo "Running ${#files[@]} database test files"
+          pnpm exec vitest run --project db "${files[@]}"
+
+      # Planned against actual time, so an imbalance shows in the summary before it reaches the timeout (#2769).
+      - name: Duration of this part
+        if: always()
+        env:
+          PART_NAME: ${{ matrix.part.name }}
+          PART_SHARD: ${{ matrix.part.shard }}
+        run: |
+          started="${DB_PART_STARTED:-}"
+          [ -n "$started" ] || exit 0
+          elapsed=$(( $(date +%s) - started ))
+          planned="n/a"
+          if [ -n "$PART_SHARD" ]; then
+            planned=$(node tools/ci/db-shards.mjs --plan 4 | awk -F'|' -v n="$PART_SHARD" '$2 ~ "^ "n" of" { gsub(/ /, "", $4); print $4 "s" }')
+          fi
+          printf '%s: tests ran %dm%02ds (planned file time %s, job timeout 20m)\n' "$PART_NAME" $((elapsed / 60)) $((elapsed % 60)) "$planned" >> "$GITHUB_STEP_SUMMARY"
 
   # The core invariants with CROVE_SHARED_DATABASE=true (#2284): the same migrations in shared-database mode, where PUBLIC keeps
   # TEMPORARY. The cross-org RLS matrix, the EXECUTE matrix of the login roles and the definer search_path hijack test (all in

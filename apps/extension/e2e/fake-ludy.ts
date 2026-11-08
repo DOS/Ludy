@@ -18,6 +18,8 @@ export interface FakeLudy {
   uploads: Upload[];
   features: { meetings: boolean };
   failUploads: boolean;
+  // When set, /api/extension/me answers 302 to this address (a misconfigured proxy).
+  redirectMeTo: string | null;
   close(): Promise<void>;
 }
 
@@ -29,7 +31,7 @@ const read = (req: IncomingMessage): Promise<Buffer> =>
   });
 
 export async function startFakeLudy(): Promise<FakeLudy> {
-  const fake: FakeLudy = { origin: '', requests: [], created: [], uploads: [], features: { meetings: true }, failUploads: false, close: async () => undefined };
+  const fake: FakeLudy = { origin: '', requests: [], created: [], uploads: [], features: { meetings: true }, failUploads: false, redirectMeTo: null, close: async () => undefined };
   const server: Server = createServer((req, res) => {
     void (async () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
@@ -41,6 +43,7 @@ export async function startFakeLudy(): Promise<FakeLudy> {
       const body = await read(req);
       const json = (value: unknown, status = 200) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value));
       if (path === '/api/config') return json({ uploads: 'direct' });
+      if (path === '/api/extension/me' && fake.redirectMeTo) return void res.writeHead(302, { location: `${fake.redirectMeTo}/api/extension/me` }).end();
       if (path === '/api/extension/me') {
         return json({ tokenId: 't1', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z', features: { meetings: fake.features.meetings } });
       }
