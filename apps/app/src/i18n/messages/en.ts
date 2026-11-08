@@ -8662,7 +8662,7 @@ export const en = {
       TOO_MANY_ITEMS: 'A meeting holds at most 100 action items.',
       NOTHING_TO_PUBLISH: 'There is nothing to share yet: write a summary or add an action item first.',
       NO_CLEAN_ITEMS: 'No action item is clean: pick the person, the date and the seat of each one yourself.',
-      DRAFT_NOT_REVIEWED: 'Read the draft Vy wrote, then confirm it, before sharing it.',
+      DRAFT_NOT_REVIEWED: 'Some items Vy suggested have not been reviewed by you yet. Read and confirm them before sharing.',
       DRAFT_SUMMARY_EXISTS: 'You already have a summary draft. Share it or save over it, then copy Vy\'s summary.',
       SUMMARY_OFF: 'Summaries by Vy are not turned on on this system. Type the summary by hand.',
       SUMMARY_RESULT_INVALID: 'The summary result cannot be read. Ask Vy to summarize again.',
