@@ -234,6 +234,20 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(query('owner', 'meetings.action_item.source', { itemId }))).toBe('MEETING_NOT_FOUND');
   });
 
+  it('keeps the taint when only the date changes, refuses an impossible date, and closes an item once the meeting text expires', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    const seat = await seedPosition('attendee', 'Bán hàng');
+    const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId));
+    await sqlAdmin(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+    await exec('recorder', 'meetings.action_item.edit', { itemId, whenDate: '2026-11-20' });
+    expect((await results('recorder', meetingId)).items[0]).toMatchObject({ tainted: true, whenDate: '2026-11-20' });
+    expect(await refuses(exec('recorder', 'meetings.action_item.edit', { itemId, whenDate: '2026-13-45' }))).toBe('VALIDATION');
+    await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    expect(await refuses(exec('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('MEETING_NOT_FOUND');
+    expect(await refuses(query('attendee', 'meetings.action_item.source', { itemId }))).toBe('MEETING_NOT_FOUND');
+  });
+
   it('goes with its meeting', async () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tóm tắt', decisions: [] });

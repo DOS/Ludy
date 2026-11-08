@@ -278,7 +278,7 @@ export const ITEMS_PER_MEETING_MAX = 100;
 export const ITEM_FLAGS = ['contact_in_title'] as const;
 export type ItemFlag = (typeof ITEM_FLAGS)[number];
 
-const zDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const zDay = z.iso.date();
 
 // Saves the recorder's own summary and decisions as the draft (replacing the earlier draft).
 export const zMeetingResultSave = z.strictObject({

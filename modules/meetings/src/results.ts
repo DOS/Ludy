@@ -135,7 +135,7 @@ export const actionItemEdit = defineCommand({
     if (meeting.recorder_user_id !== userId) throw itemNotFound();
     if (input.whoUserId !== undefined) await checkAttendee(ctx.trx, ctx.orgId, item.meeting_id, userId, input.whoUserId);
     const title = input.title ?? item.title;
-    // The recorder's own edit makes the text theirs: the taint goes, and code looks at the title again.
+    // Code looks at the title again on every edit.
     await ctx.trx
       .updateTable('crove_meetings.action_item')
       .set({
@@ -146,7 +146,8 @@ export const actionItemEdit = defineCommand({
         ...(input.whenDate === undefined ? {} : { when_parsed: input.whenDate }),
         ...(input.transcriptSeconds === undefined ? {} : { transcript_seconds: input.transcriptSeconds }),
         flags: sql`${JSON.stringify(itemFlags(title))}::jsonb`,
-        tainted: false,
+        // Only a changed title is the recorder's own text; fixing a date or an attendee leaves the model's title tainted.
+        ...(input.title !== undefined && input.title !== item.title ? { tainted: false } : {}),
         updated_at: sql<Date>`pg_catalog.now()`,
       })
       .where('org_id', '=', ctx.orgId)
@@ -208,10 +209,14 @@ export const resultPublish = defineCommand({
 });
 
 // Makes the task of one item, and marks the item (once). The caller has read the item under RLS; the database function checks again that they may accept it.
-async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: string; due: string | null; positionId: string }): Promise<string> {
+async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: string; due: string | null; positionId: string; skipAccepted?: boolean }): Promise<string | null> {
   const item = await ctx.trx.selectFrom('crove_meetings.action_item').select(['id', 'meeting_id', 'title', 'status', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   if (!item) throw itemNotFound();
-  if (item.status !== 'suggested') throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
+  await openMeeting(ctx.trx, ctx.orgId, item.meeting_id); // the text-retention gate, as for every other read and write of a meeting's text
+  if (item.status !== 'suggested') {
+    if (choice.skipAccepted) return null;
+    throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
+  }
   // `tainted` stays while the model's text is unedited: the item still holds it and the person kept the title.
   const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_meeting', {
     itemId,
@@ -240,6 +245,7 @@ export const actionItemAccept = defineCommand({
   handler: async (ctx, input) => {
     userOf(ctx.actor);
     const taskId = await acceptItem(ctx, input.itemId, { title: input.title, due: input.due, positionId: input.positionId });
+    if (taskId === null) throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
     ctx.audit({ itemId: input.itemId, taskId });
     return { itemId: input.itemId, taskId };
   },
@@ -280,7 +286,9 @@ export const actionItemAcceptClean = defineCommand({
       const held = row.who_parsed ? (seats.get(row.who_parsed) ?? []) : [];
       const flags = Array.isArray(row.flags) ? (row.flags as string[]) : [];
       if (!itemIsClean({ flags, whoUserId: row.who_parsed, whenDate: row.when_parsed }, held.length)) continue;
-      taskIds.push(await acceptItem(ctx, row.id, { title: row.title, due: row.when_parsed, positionId: (held[0] as { id: string }).id }));
+      // An item another person accepted since the list was read is left to them, not a failure of the whole click.
+      const taskId = await acceptItem(ctx, row.id, { title: row.title, due: row.when_parsed, positionId: (held[0] as { id: string }).id, skipAccepted: true });
+      if (taskId !== null) taskIds.push(taskId);
     }
     if (taskIds.length === 0) throw new DomainError('NO_CLEAN_ITEMS', 409, 'There is no clean action item to accept');
     ctx.audit({ meetingId: input.meetingId, accepted: taskIds.length });
@@ -352,6 +360,7 @@ export const actionItemSource = defineQuery({
   handler: async (ctx, input): Promise<{ meetingId: string }> => {
     const item = await ctx.trx.selectFrom('crove_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).executeTakeFirst();
     if (!item) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     return zActionItemSource.parse({ meetingId: item.meeting_id });
   },
 });
