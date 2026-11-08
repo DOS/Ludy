@@ -245,7 +245,7 @@ describe('transcription behind the AI budget meter', () => {
     const transcript = await withAiScope({ orgId: 'org-1', meter }, () => transcribeChunks(provider.config, [chunk(0), chunk(600)]));
     expect(transcript.map((s) => [s.startSeconds, s.text])).toEqual([[0, 'một'], [600, 'hai']]);
     expect(events).toEqual(['admit', 'record', 'admit', 'record']);
-    expect(calls[0]).toEqual({ feature: 'meetings.transcribe', module: 'meetings', orgId: 'org-1', agentId: null });
+    expect(calls[0]).toEqual({ feature: 'meetings.transcribe', module: 'meetings', orgId: 'org-1', agentId: null, memberRunId: null });
   });
 
   it('refuses before the call when the budget is spent, and sends no later chunk', async () => {

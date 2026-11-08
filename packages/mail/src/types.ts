@@ -22,7 +22,7 @@ export interface OutboundMail {
   // The name shown as the sender (the org's own name, #2439), the address staying the deployment's; a control character or an
   // angle bracket in it is dropped by the provider.
   fromName?: string;
-  // Files sent with the mail, as text (#1319: a booking's .ics event).
+  // Files sent with the mail: text (#1319: a booking's .ics event) or bytes (#2695: a quote's PDF).
   attachments?: readonly MailAttachment[];
 }
 
@@ -30,7 +30,8 @@ export interface MailAttachment {
   filename: string;
   // The MIME type, parameters included ("text/calendar; method=PUBLISH; charset=UTF-8").
   contentType: string;
-  content: string;
+  // Text is sent as UTF-8; bytes are sent as they are. A provider never reads either.
+  content: string | Uint8Array;
 }
 
 // How safe it is to repeat a send whose outcome is unknown (ADR-0025): 'idempotent' when the provider drops a repeat
