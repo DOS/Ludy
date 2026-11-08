@@ -5,7 +5,7 @@ import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOU
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -47,6 +47,7 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
@@ -328,6 +329,13 @@ export function createRpcHandler(
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
+  const payrollAi: PayrollAi = {
+    reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
+      ? { payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader), payrollFlag: conversationReader.payrollFlag.bind(conversationReader), payrollExplain: conversationReader.payrollExplain.bind(conversationReader) }
+      : null,
+    budget: suggestionBudget(),
+  };
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -475,6 +483,11 @@ export function createRpcHandler(
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inHr(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const payrollReads = (orgId: string, actor: UserActor): PayrollReads => ({
+    sheet: (runId) => runtime.query<HrRunSheet>('hr.payroll.run.sheet', { runId }, { actor, orgId }),
+    runs: () => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120 }, { actor, orgId }),
+    payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
+  });
   const hrQuery =
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
@@ -806,6 +819,12 @@ export function createRpcHandler(
           setInputs: os.hr.payroll.lines.setInputs.handler(hrCommand('hr.payroll.line.inputs.set')),
           adjust: os.hr.payroll.lines.adjust.handler(hrCommand('hr.payroll.line.adjust')),
           payslip: os.hr.payroll.lines.payslip.handler(hrQuery('hr.payroll.line.payslip')),
+        },
+        // The coworker's part (#2534): the stored run is read through the audited sensitive queries in the member's own authority, then the model is asked outside any transaction.
+        coworker: {
+          prepare: os.hr.payroll.coworker.prepare.handler(({ context, input }) => inHr(context, (orgId, actor) => prepareMonth(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.runId, input.lang ?? 'vi'))),
+          flag: os.hr.payroll.coworker.flag.handler(({ context, input }) => inHr(context, (orgId, actor) => flagMonth(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.runId, input.lang ?? 'vi'))),
+          explain: os.hr.payroll.coworker.explain.handler(({ context, input }) => inHr(context, (orgId, actor) => explainPayslip(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.lineId, input.lang ?? 'vi'))),
         },
       },
     },

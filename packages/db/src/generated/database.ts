@@ -2122,6 +2122,7 @@ export interface KernelMemberPermissionOverrideTable {
   permission: ColumnType<string, NotGranted, NotGranted>;
   allowed: ColumnType<boolean, NotGranted, NotGranted>;
   set_by: ColumnType<string, NotGranted, NotGranted>;
+  set_by_owner: ColumnType<boolean, NotGranted, NotGranted>;
   set_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
