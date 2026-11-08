@@ -267,27 +267,49 @@ export function encryptBlobBuffer(plaintext: Buffer, dataKey: Buffer, binding: B
 // 16-byte tag, ciphertext), so decryptBlobBuffer, decryptBlobChunks and the Range mapping read it unchanged. A chunk's AAD says
 // whether it is the last, so a full chunk is sealed only once more plaintext has arrived (or finish() says there is none): the
 // encryptor holds at most one chunk of plaintext plus the piece being pushed, whatever the blob's size.
+//
+// The caller declares the length it expects. A stream that stops early still ends in a chunk that is "last", so without the
+// declared length a body cut short would seal into a shorter file that decrypts cleanly: push() refuses more than the declared
+// length and finish() refuses fewer. Any error (a refusal, a failed seal) ends the encryptor: every later call throws, and what
+// it held is wiped.
+//
+// The encryptor keeps a reference to dataKey, not a copy: the caller wipes the key only after finish() returned or the
+// encryptor failed, never before (a wiped key would seal garbage).
 export interface BlobEncryptor {
   // Plaintext in; ciphertext pieces out, in order (the header comes with the first call).
   push(plaintext: Uint8Array): Buffer[];
-  // Seals what is left as the last chunk. Call once, after the last push; the encryptor is finished afterwards.
+  // Seals what is left as the last chunk, after checking the declared length. Call once, after the last push.
   finish(): Buffer[];
 }
 
-export function createBlobEncryptor(dataKey: Buffer, binding: BlobMediaBinding): BlobEncryptor {
+export function createBlobEncryptor(dataKey: Buffer, binding: BlobMediaBinding, expectedLength: number): BlobEncryptor {
   if (dataKey.length !== KEY_LENGTH) {
     throw new Error('Data key must be 32 bytes');
   }
+  if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) {
+    throw new Error('Blob encryptor expectedLength must be a non-negative integer');
+  }
+  // The binding is checked once, here (blobChunkAad refuses empty or NUL-bearing fields), and kept as a frozen copy: a caller
+  // that changes its object later cannot change what the chunks are bound to.
+  blobChunkAad(binding, 0, true);
+  const bound: BlobMediaBinding = Object.freeze({ orgId: binding.orgId, meetingId: binding.meetingId, kind: binding.kind });
   // The one chunk held back, filled in place: its own copy, so the caller may reuse the buffer it pushed.
   const held = Buffer.allocUnsafe(BLOB_CHUNK_SIZE);
   let heldLength = 0;
+  let pushed = 0;
   let chunkIndex = 0;
   let started = false;
-  let finished = false;
+  // Set by finish() and by any error: nothing more is accepted.
+  let ended = false;
+  const end = () => {
+    ended = true;
+    held.fill(0);
+    heldLength = 0;
+  };
   const seal = (plaintext: Buffer, isLast: boolean): Buffer => {
     const iv = randomBytes(IV_LENGTH);
     const cipher = createCipheriv('aes-256-gcm', dataKey, iv);
-    cipher.setAAD(blobChunkAad(binding, chunkIndex, isLast));
+    cipher.setAAD(blobChunkAad(bound, chunkIndex, isLast));
     const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     chunkIndex += 1;
     return Buffer.concat([iv, cipher.getAuthTag(), ct]);
@@ -302,30 +324,41 @@ export function createBlobEncryptor(dataKey: Buffer, binding: BlobMediaBinding):
   };
   return {
     push(plaintext) {
-      if (finished) throw new Error('Blob encryptor already finished');
-      const out = header();
-      let offset = 0;
-      while (offset < plaintext.length) {
-        // The held chunk is full and more plaintext has come: it is not the last.
-        if (heldLength === BLOB_CHUNK_SIZE) {
-          out.push(seal(held, false));
-          heldLength = 0;
+      if (ended) throw new Error('Blob encryptor already finished or failed');
+      try {
+        if (pushed + plaintext.length > expectedLength) throw new Error('Blob encryptor was given more than its declared length');
+        const out = header();
+        let offset = 0;
+        while (offset < plaintext.length) {
+          // The held chunk is full and more plaintext has come: it is not the last.
+          if (heldLength === BLOB_CHUNK_SIZE) {
+            out.push(seal(held, false));
+            heldLength = 0;
+          }
+          const take = Math.min(BLOB_CHUNK_SIZE - heldLength, plaintext.length - offset);
+          held.set(plaintext.subarray(offset, offset + take), heldLength);
+          heldLength += take;
+          offset += take;
         }
-        const take = Math.min(BLOB_CHUNK_SIZE - heldLength, plaintext.length - offset);
-        held.set(plaintext.subarray(offset, offset + take), heldLength);
-        heldLength += take;
-        offset += take;
+        pushed += plaintext.length;
+        return out;
+      } catch (error) {
+        end();
+        throw error;
       }
-      return out;
     },
     finish() {
-      if (finished) throw new Error('Blob encryptor already finished');
-      finished = true;
-      const out = header();
-      // An empty blob is one empty last chunk, as encryptBlobBuffer writes it.
-      out.push(seal(held.subarray(0, heldLength), true));
-      heldLength = 0;
-      return out;
+      if (ended) throw new Error('Blob encryptor already finished or failed');
+      try {
+        // A body that stopped early is not a shorter blob: it is refused.
+        if (pushed !== expectedLength) throw new Error(`Blob encryptor was given ${pushed} bytes, not its declared ${expectedLength}`);
+        const out = header();
+        // An empty blob is one empty last chunk, as encryptBlobBuffer writes it.
+        out.push(seal(held.subarray(0, heldLength), true));
+        return out;
+      } finally {
+        end();
+      }
     },
   };
 }

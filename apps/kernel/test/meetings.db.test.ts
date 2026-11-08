@@ -988,6 +988,16 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(huge.status).toBe(413);
     expect(pulled).toBe(false);
 
+    // A body that ends short of the length it declared (an aborted upload) is refused and stores nothing: a stream that stops
+    // still ends in a "last" chunk, so the declared length is what tells a cut file from a whole one (Platform PO N1).
+    const cut = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(ogg.length + 500) },
+      body: new Uint8Array(ogg),
+    });
+    expect(cut.status).toBe(400);
+    expect(store.storage.size).toBe(objectsBefore);
+
     const ok = await send('?kind=audio&lengthSeconds=12', ogg, 'audio/ogg');
     expect(ok.status).toBe(200);
     expect(store.storage.size).toBe(objectsBefore + 1);

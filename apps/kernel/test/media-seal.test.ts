@@ -38,14 +38,16 @@ describe('sealMedia', () => {
   async function* pieces(...list: Uint8Array[]) {
     for (const piece of list) yield piece;
   }
-  const run = (source: AsyncIterable<Uint8Array>, over: { maxBytes?: number; kind?: 'audio' | 'video' } = {}) =>
-    sealMedia({ source, kind: over.kind ?? 'audio', dataKey, binding, maxBytes: over.maxBytes ?? 10_000_000, store, orgId });
+  // A source with the length it declares: the sum of its pieces, unless a test says otherwise.
+  const sized = (list: Uint8Array[]) => ({ source: pieces(...list), length: list.reduce((n, p) => n + p.byteLength, 0) });
+  const run = (given: { source: AsyncIterable<Uint8Array>; length: number }, over: { maxBytes?: number; kind?: 'audio' | 'video'; length?: number } = {}) =>
+    sealMedia({ source: given.source, expectedLength: over.length ?? given.length, kind: over.kind ?? 'audio', dataKey, binding, maxBytes: over.maxBytes ?? 10_000_000, store, orgId });
   const dataKey = generateMediaDataKey();
 
   it('stores ciphertext in the blob cipher format under its own content address, and the plaintext comes back', async () => {
     const plaintext = Buffer.concat([WEBM, randomBytes(200_000)]);
     // Pieces that split the container prefix, and a chunk boundary.
-    const sealed = await run(pieces(plaintext.subarray(0, 5), plaintext.subarray(5, 70_000), plaintext.subarray(70_000)));
+    const sealed = await run(sized([plaintext.subarray(0, 5), plaintext.subarray(5, 70_000), plaintext.subarray(70_000)]));
     const stored = Buffer.from(await store.get(sealed.key));
     expect(sealed).toMatchObject({ contentType: 'audio/webm', plaintextBytes: plaintext.length, size: stored.length, sha256: sha256Hex(stored) });
     expect(sealed.key).toBe(`org/${orgId}/${sealed.sha256}`);
@@ -56,8 +58,8 @@ describe('sealMedia', () => {
 
   it('takes a source in one piece and from a web stream', async () => {
     const plaintext = Buffer.concat([WEBM, randomBytes(1000)]);
-    const a = await run(onepiece(plaintext));
-    const b = await run(streamPieces(new Blob([plaintext]).stream() as ReadableStream<Uint8Array>));
+    const a = await run({ source: onepiece(plaintext), length: plaintext.length });
+    const b = await run({ source: streamPieces(new Blob([plaintext]).stream() as ReadableStream<Uint8Array>), length: plaintext.length });
     for (const sealed of [a, b]) expect(decryptBlobBuffer(Buffer.from(await store.get(sealed.key)), dataKey, binding).equals(plaintext)).toBe(true);
     // Random IVs: the same plaintext seals to two different objects.
     expect(a.key).not.toBe(b.key);
@@ -65,12 +67,12 @@ describe('sealMedia', () => {
 
   it('refuses a body that is not a media container, an empty one and one shorter than a header, and writes nothing', async () => {
     const before = await filesLeft();
-    await expect(run(pieces(Buffer.from('this is plain text, not media')))).rejects.toMatchObject({ code: 'INVALID_MEDIA_CONTAINER' });
-    await expect(run(pieces(Buffer.from('short')))).rejects.toMatchObject({ code: 'INVALID_MEDIA_CONTAINER' });
-    await expect(run(pieces())).rejects.toMatchObject({ code: 'NO_FILE' });
-    await expect(run(pieces(new Uint8Array(0)))).rejects.toMatchObject({ code: 'NO_FILE' });
+    await expect(run(sized([Buffer.from('this is plain text, not media')]))).rejects.toMatchObject({ code: 'INVALID_MEDIA_CONTAINER' });
+    await expect(run(sized([Buffer.from('short')]))).rejects.toMatchObject({ code: 'INVALID_MEDIA_CONTAINER' });
+    await expect(run(sized([]))).rejects.toMatchObject({ code: 'NO_FILE' });
+    await expect(run(sized([new Uint8Array(0)]))).rejects.toMatchObject({ code: 'NO_FILE' });
     // A video container is not accepted as audio-only types are, and a video kind accepts only video containers.
-    await expect(run(pieces(Buffer.concat([Buffer.from('OggS'), randomBytes(100)])), { kind: 'video' })).rejects.toMatchObject({ code: 'INVALID_MEDIA_CONTAINER' });
+    await expect(run(sized([Buffer.concat([Buffer.from('OggS'), randomBytes(100)])]), { kind: 'video' })).rejects.toMatchObject({ code: 'INVALID_MEDIA_CONTAINER' });
     expect(await filesLeft()).toEqual(before);
   });
 
@@ -89,7 +91,7 @@ describe('sealMedia', () => {
         closed = true;
       }
     }
-    await expect(run(endless(), { maxBytes: 5 * 1024 * 1024 })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', status: 413 });
+    await expect(run({ source: endless(), length: 5 * 1024 * 1024 }, { maxBytes: 5 * 1024 * 1024 })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', status: 413 });
     expect(closed).toBe(true);
     // It stopped reading at the cap, not after the whole (endless) body.
     expect(read).toBeLessThanOrEqual(6);
@@ -102,22 +104,52 @@ describe('sealMedia', () => {
       yield WEBM;
       throw new BlobTooLargeError('staging/x', 1);
     }
-    await expect(run(tooBig())).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
+    await expect(run({ source: tooBig(), length: 1000 })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
     async function* broken() {
       yield WEBM;
       yield randomBytes(100_000);
       throw new Error('connection reset');
     }
-    await expect(run(broken())).rejects.toThrow('connection reset');
+    await expect(run({ source: broken(), length: 1_000_000 })).rejects.toThrow('connection reset');
     expect(await filesLeft()).toEqual(before);
     expect(DomainError).toBeDefined();
+  });
+
+  it('refuses a body that ends short of its declared length, or runs past it, and stores nothing (Platform PO N1)', async () => {
+    const before = await filesLeft();
+    const body = Buffer.concat([WEBM, randomBytes(196_618 - WEBM.length)]);
+    // An aborted body: the bytes that did arrive end cleanly at 131072 of the 196618 declared. Without the declared length this
+    // would seal into a shorter file that decrypts cleanly.
+    async function* cutShort() {
+      yield body.subarray(0, 65_536);
+      yield body.subarray(65_536, 131_072);
+    }
+    await expect(run({ source: cutShort(), length: body.length })).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    await expect(run(sized([body]), { length: body.length - 1 })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(run(sized([body]), { length: body.length + 1 })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await filesLeft()).toEqual(before);
+    // Declared and delivered agree: sealed.
+    const ok = await run(sized([body]));
+    expect(ok.plaintextBytes).toBe(body.length);
+  });
+
+  it('refuses a declared length over the cap before reading, and one that is not a whole number of bytes', async () => {
+    let read = false;
+    async function* never() {
+      read = true;
+      yield WEBM;
+    }
+    await expect(run({ source: never(), length: 10 }, { maxBytes: 5, length: 6 })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' });
+    expect(read).toBe(false);
+    await expect(run({ source: never(), length: 10 }, { length: Number.NaN })).rejects.toThrow(/declared length/);
+    await expect(run({ source: never(), length: 10 }, { length: -1 })).rejects.toThrow(/declared length/);
   });
 
   it('writes through a store without a streamed write (held whole, put at the end)', async () => {
     const puts = new Map<string, Uint8Array>();
     const plain = { put: async (k: string, b: Uint8Array) => (puts.set(k, b), 'content:x'), get: async () => new Uint8Array(), delete: async (k: string) => void puts.delete(k) };
     const plaintext = Buffer.concat([WEBM, randomBytes(70_000)]);
-    const sealed = await sealMedia({ source: onepiece(plaintext), kind: 'audio', dataKey, binding, maxBytes: 1_000_000, store: plain, orgId });
+    const sealed = await sealMedia({ source: onepiece(plaintext), expectedLength: plaintext.length, kind: 'audio', dataKey, binding, maxBytes: 1_000_000, store: plain, orgId });
     expect(decryptBlobBuffer(Buffer.from(puts.get(sealed.key)!), dataKey, binding).equals(plaintext)).toBe(true);
   });
 
@@ -133,7 +165,7 @@ describe('sealMedia', () => {
     const sampler = setInterval(() => (peak = Math.max(peak, process.memoryUsage().rss - before)), 20);
     let sealed;
     try {
-      sealed = await run(big(), { maxBytes: 600 * 1024 * 1024, kind: 'video' });
+      sealed = await run({ source: big(), length: 512 * 1024 * 1024 + WEBM.length }, { maxBytes: 600 * 1024 * 1024, kind: 'video' });
     } finally {
       clearInterval(sampler);
     }

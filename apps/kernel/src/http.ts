@@ -2133,8 +2133,9 @@ export function createHttpApp(deps: HttpDeps) {
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         let lengthSeconds: number | undefined;
-        // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole.
+        // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
+        let declaredLength: number;
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2189,11 +2190,14 @@ export function createHttpApp(deps: HttpDeps) {
           const cap = Math.min(claim.maxBytes, kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES);
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
-            source = (await direct.openStaged(claim.stagingKey, cap).catch(missing)).chunks;
-          } else if (direct) {
-            source = onepiece((await direct.readStaged(claim.stagingKey, cap).catch(missing)).bytes);
+            const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
+            if (opened.size === null) throw new Error('The staged object has no declared size');
+            source = opened.chunks;
+            declaredLength = opened.size;
           } else {
-            source = onepiece(await store.get(claim.stagingKey, null, cap).catch(missing));
+            const bytes = direct ? (await direct.readStaged(claim.stagingKey, cap).catch(missing)).bytes : await store.get(claim.stagingKey, null, cap).catch(missing);
+            source = onepiece(bytes);
+            declaredLength = bytes.byteLength;
           }
         } else if (contentTypeHeader.includes('multipart/form-data')) {
           const formData = await c.req.formData().catch(() => null);
@@ -2225,6 +2229,7 @@ export function createHttpApp(deps: HttpDeps) {
           }
           // The form was parsed whole by the body reader (use the raw body below for a large file); the sealing still streams.
           source = streamPieces(fileVal.stream() as ReadableStream<Uint8Array>);
+          declaredLength = fileVal.size;
         } else if (/^(?:audio\/|video\/|application\/octet-stream)/i.test(contentTypeHeader)) {
           // The raw body of the file (#2780): sealed as it arrives, so a large recording is never held. The kind and the
           // length come in the query, because the body is the file and nothing else; the gate capped it by the same kind.
@@ -2243,6 +2248,8 @@ export function createHttpApp(deps: HttpDeps) {
           const rawBody = c.req.raw.body;
           if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
           source = streamPieces(rawBody as ReadableStream<Uint8Array>);
+          // The gate required a Content-Length; the sealing refuses a body that ends short of it or runs past it.
+          declaredLength = Number(c.req.header('content-length'));
         } else {
           throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be application/json, multipart/form-data or the file itself (audio/*, video/*, application/octet-stream)');
         }
@@ -2274,6 +2281,7 @@ export function createHttpApp(deps: HttpDeps) {
         // ciphertext goes to the store's streamed write, which hashes it and stores it under its content address.
         const sealed = await sealMedia({
           source,
+          expectedLength: declaredLength,
           kind,
           dataKey,
           binding,

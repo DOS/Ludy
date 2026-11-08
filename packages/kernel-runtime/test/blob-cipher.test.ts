@@ -180,14 +180,21 @@ describe('blob-cipher buffer encryption and decryption', () => {
 });
 
 describe('streaming blob encryptor (#2780)', () => {
-  const streamed = (plaintext: Buffer, piece: number): Buffer => {
-    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING);
+  const DATA_KEY = generateMediaDataKey();
+  // `declared` is the length the caller expects; it is the real length unless a test says otherwise.
+  const streamed = (plaintext: Buffer, piece: number, declared = plaintext.length): Buffer => {
+    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING, declared);
     const out: Buffer[] = [];
     for (let at = 0; at < plaintext.length; at += piece) out.push(...encryptor.push(plaintext.subarray(at, at + piece)));
     out.push(...encryptor.finish());
     return Buffer.concat(out);
   };
-  const DATA_KEY = generateMediaDataKey();
+  const chunkOf = (ciphertext: Buffer, index: number) => ciphertext.subarray(5 + index * CIPHER_CHUNK_FULL_SIZE, 5 + (index + 1) * CIPHER_CHUNK_FULL_SIZE);
+  const rangeRead = (ciphertext: Buffer, start: number, end: number) => {
+    const map = mapPlaintextRangeToChunks(start, end, ciphertext.length);
+    const window = decryptBlobChunks(ciphertext.subarray(map.ctStart, map.ctEnd + 1), DATA_KEY, BLOB_BINDING, map.firstChunk, map.lastChunk, map.totalChunks);
+    return window.subarray(map.offsetInFirstChunk, map.offsetInFirstChunk + map.requestedLength);
+  };
 
   it.each([0, 1, 100, BLOB_CHUNK_SIZE - 1, BLOB_CHUNK_SIZE, BLOB_CHUNK_SIZE + 1, 2 * BLOB_CHUNK_SIZE, 2 * BLOB_CHUNK_SIZE + 5, 5 * BLOB_CHUNK_SIZE + 123])(
     'writes the format of encryptBlobBuffer for %i bytes, whatever the pieces',
@@ -205,18 +212,27 @@ describe('streaming blob encryptor (#2780)', () => {
     },
   );
 
-  it('is read by the Range path of playback: a window of a streamed blob decrypts to the same bytes', () => {
-    const plaintext = randomBytes(4 * BLOB_CHUNK_SIZE + 777);
-    const ciphertext = streamed(plaintext, 100_000);
-    const start = BLOB_CHUNK_SIZE + 10;
-    const end = 3 * BLOB_CHUNK_SIZE + 5;
-    const map = mapPlaintextRangeToChunks(start, end, ciphertext.length);
-    const window = decryptBlobChunks(ciphertext.subarray(map.ctStart, map.ctEnd + 1), DATA_KEY, BLOB_BINDING, map.firstChunk, map.lastChunk, map.totalChunks);
-    expect(window.subarray(map.offsetInFirstChunk, map.offsetInFirstChunk + map.requestedLength)).toEqual(plaintext.subarray(start, end + 1));
-  });
+  it.each([4 * BLOB_CHUNK_SIZE + 777, 4 * BLOB_CHUNK_SIZE, 3 * BLOB_CHUNK_SIZE + 1, BLOB_CHUNK_SIZE])(
+    'is read by the Range path of playback for %i bytes: windows in the middle, across chunks and through the final chunk',
+    (size) => {
+      const plaintext = randomBytes(size);
+      const ciphertext = streamed(plaintext, 100_000);
+      const windows: Array<[number, number]> = [
+        [0, 0],
+        [BLOB_CHUNK_SIZE - 5, BLOB_CHUNK_SIZE + 5 > size - 1 ? size - 1 : BLOB_CHUNK_SIZE + 5],
+        [Math.floor(size / 2), size - 1],
+        [size - 1, size - 1],
+        // The last chunk alone (a full one when the size is an exact multiple of the chunk size).
+        [Math.floor((size - 1) / BLOB_CHUNK_SIZE) * BLOB_CHUNK_SIZE, size - 1],
+        [0, size - 1],
+      ];
+      for (const [start, end] of windows) expect(rangeRead(ciphertext, start, end).equals(plaintext.subarray(start, end + 1))).toBe(true);
+    },
+  );
 
-  it('still reads what the buffered path wrote before this change: a frozen ciphertext, and the buffered output of today', () => {
-    // Written by encryptBlobBuffer before the streaming encryptor existed (key of 32 bytes of 0x07, this binding).
+  it('still reads what the buffered path wrote before this change: a frozen ciphertext through both decrypt paths, and the buffered output of today', () => {
+    // Generated before the streaming encryptor existed (commit f7f7a8a), with the buffered path:
+    //   encryptBlobBuffer(Buffer.from('Ludy meeting media written by the buffered path'), Buffer.alloc(32, 7), legacyBinding).toString('hex')
     const legacyKey = Buffer.alloc(32, 7);
     const legacyBinding: BlobMediaBinding = { orgId: 'org-legacy', meetingId: 'meeting-legacy', kind: 'audio' };
     const legacy = Buffer.from(
@@ -224,16 +240,21 @@ describe('streaming blob encryptor (#2780)', () => {
       'hex',
     );
     expect(decryptBlobBuffer(legacy, legacyKey, legacyBinding).toString('utf8')).toBe('Ludy meeting media written by the buffered path');
-    // And a multi-chunk file from the buffered path reads through both decrypt paths.
+    // And through the Range path playback uses.
+    const legacyMap = mapPlaintextRangeToChunks(0, 46, legacy.length);
+    expect(
+      decryptBlobChunks(legacy.subarray(legacyMap.ctStart, legacyMap.ctEnd + 1), legacyKey, legacyBinding, legacyMap.firstChunk, legacyMap.lastChunk, legacyMap.totalChunks).toString('utf8'),
+    ).toBe('Ludy meeting media written by the buffered path');
+    // A multi-chunk file from the buffered path reads through both decrypt paths.
     const plaintext = randomBytes(3 * BLOB_CHUNK_SIZE + 9);
     const buffered = encryptBlobBuffer(plaintext, DATA_KEY, BLOB_BINDING);
     expect(decryptBlobBuffer(buffered, DATA_KEY, BLOB_BINDING)).toEqual(plaintext);
-    const map = mapPlaintextRangeToChunks(0, plaintext.length - 1, buffered.length);
-    expect(decryptBlobChunks(buffered.subarray(map.ctStart, map.ctEnd + 1), DATA_KEY, BLOB_BINDING, map.firstChunk, map.lastChunk, map.totalChunks)).toEqual(plaintext);
+    expect(rangeRead(buffered, 0, plaintext.length - 1).equals(plaintext)).toBe(true);
   });
 
   it('holds at most one chunk back: the ciphertext keeps pace with the plaintext pushed', () => {
-    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING);
+    const total = 128 * 1024 * 1024;
+    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING, total);
     const piece = Buffer.alloc(1024 * 1024, 0x41);
     let pushed = 0;
     let emitted = 0;
@@ -246,29 +267,68 @@ describe('streaming blob encryptor (#2780)', () => {
       const sealedPlain = (written / CIPHER_CHUNK_FULL_SIZE) * BLOB_CHUNK_SIZE;
       maxLag = Math.max(maxLag, pushed - sealedPlain);
     }
-    expect(pushed).toBe(128 * 1024 * 1024);
+    expect(pushed).toBe(total);
     expect(maxLag).toBeLessThanOrEqual(BLOB_CHUNK_SIZE + piece.length);
   });
 
-  it('seals the last chunk as last: a streamed blob cut short, or with a chunk dropped, does not decrypt', () => {
+  it('refuses a streamed blob with the last chunk cut, a middle chunk dropped, two chunks swapped, a wrong key or another meeting', () => {
     const ciphertext = streamed(randomBytes(3 * BLOB_CHUNK_SIZE + 5), 50_000);
-    const lastChunkStart = 5 + 3 * CIPHER_CHUNK_FULL_SIZE;
-    expect(() => decryptBlobBuffer(ciphertext.subarray(0, lastChunkStart), DATA_KEY, BLOB_BINDING)).toThrow();
-    const wrongKey = generateMediaDataKey();
-    expect(() => decryptBlobBuffer(ciphertext, wrongKey, BLOB_BINDING)).toThrow();
+    // Cut at the last chunk boundary.
+    expect(() => decryptBlobBuffer(ciphertext.subarray(0, 5 + 3 * CIPHER_CHUNK_FULL_SIZE), DATA_KEY, BLOB_BINDING)).toThrow();
+    // A middle chunk dropped: the chunks after it are read at the wrong index.
+    const dropped = Buffer.concat([ciphertext.subarray(0, 5), chunkOf(ciphertext, 0), chunkOf(ciphertext, 2), ciphertext.subarray(5 + 3 * CIPHER_CHUNK_FULL_SIZE)]);
+    expect(() => decryptBlobBuffer(dropped, DATA_KEY, BLOB_BINDING)).toThrow();
+    // Two full chunks swapped.
+    const swapped = Buffer.concat([ciphertext.subarray(0, 5), chunkOf(ciphertext, 1), chunkOf(ciphertext, 0), chunkOf(ciphertext, 2), ciphertext.subarray(5 + 3 * CIPHER_CHUNK_FULL_SIZE)]);
+    expect(() => decryptBlobBuffer(swapped, DATA_KEY, BLOB_BINDING)).toThrow();
+    expect(() => decryptBlobBuffer(ciphertext, generateMediaDataKey(), BLOB_BINDING)).toThrow();
     expect(() => decryptBlobBuffer(ciphertext, DATA_KEY, { ...BLOB_BINDING, meetingId: 'another-meeting' })).toThrow();
+    // And the untouched file reads.
+    expect(decryptBlobBuffer(ciphertext, DATA_KEY, BLOB_BINDING).length).toBe(3 * BLOB_CHUNK_SIZE + 5);
   });
 
-  it('refuses a push or a second finish after the end, and a key of the wrong size', () => {
-    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING);
+  it('refuses a body that ends short of its declared length: 131072 of 196618 bytes do not seal (Platform PO N1)', () => {
+    const body = randomBytes(196_618);
+    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING, body.length);
+    encryptor.push(body.subarray(0, 65_536));
+    encryptor.push(body.subarray(65_536, 131_072));
+    // The stream stopped here (an aborted body). finish() must not seal what arrived as if it were the whole.
+    expect(() => encryptor.finish()).toThrow(/131072 bytes, not its declared 196618/);
+    expect(() => encryptor.push(body.subarray(131_072))).toThrow(/finished or failed/);
+    expect(() => encryptor.finish()).toThrow(/finished or failed/);
+    // A body longer than declared is refused at the push that passes it.
+    const over = createBlobEncryptor(DATA_KEY, BLOB_BINDING, 100);
+    expect(() => over.push(Buffer.alloc(101))).toThrow(/more than its declared length/);
+    expect(() => over.push(Buffer.alloc(1))).toThrow(/finished or failed/);
+    // Nothing declared, nothing sent: an empty blob is still one empty last chunk.
+    expect(decryptBlobBuffer(streamed(Buffer.alloc(0), 10), DATA_KEY, BLOB_BINDING).length).toBe(0);
+    expect(() => createBlobEncryptor(DATA_KEY, BLOB_BINDING, -1)).toThrow(/expectedLength/);
+    expect(() => createBlobEncryptor(DATA_KEY, BLOB_BINDING, 1.5)).toThrow(/expectedLength/);
+    expect(() => createBlobEncryptor(DATA_KEY, BLOB_BINDING, Number.NaN)).toThrow(/expectedLength/);
+  });
+
+  it('ends for good after finish, and refuses a key of the wrong size', () => {
+    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING, 0);
     encryptor.finish();
     expect(() => encryptor.push(Buffer.from('x'))).toThrow(/finished/);
     expect(() => encryptor.finish()).toThrow(/finished/);
-    expect(() => createBlobEncryptor(Buffer.alloc(16), BLOB_BINDING)).toThrow(/32 bytes/);
+    expect(() => createBlobEncryptor(Buffer.alloc(16), BLOB_BINDING, 0)).toThrow(/32 bytes/);
+  });
+
+  it('validates the binding at creation and keeps its own frozen copy of it', () => {
+    expect(() => createBlobEncryptor(DATA_KEY, { ...BLOB_BINDING, orgId: '' }, 0)).toThrow(/non-empty/);
+    expect(() => createBlobEncryptor(DATA_KEY, { ...BLOB_BINDING, meetingId: 'a\u0000b' }, 0)).toThrow(/NUL/);
+    const mine: BlobMediaBinding = { ...BLOB_BINDING };
+    const encryptor = createBlobEncryptor(DATA_KEY, mine, 5);
+    // Changing the caller's object afterwards changes nothing the chunks are bound to.
+    mine.meetingId = 'changed-after-creation';
+    const out = Buffer.concat([...encryptor.push(Buffer.from('hello')), ...encryptor.finish()]);
+    expect(decryptBlobBuffer(out, DATA_KEY, BLOB_BINDING).toString()).toBe('hello');
+    expect(() => decryptBlobBuffer(out, DATA_KEY, mine)).toThrow();
   });
 
   it('copies what it holds, so the caller may reuse the buffer it pushed', () => {
-    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING);
+    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING, 1010);
     const reused = Buffer.alloc(1000, 0x61);
     const out = [...encryptor.push(reused)];
     reused.fill(0x62);
