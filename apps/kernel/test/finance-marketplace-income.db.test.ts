@@ -281,6 +281,33 @@ suite('marketplace income reports (#2516)', () => {
     await expect(confirm(o, later.fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_NOT_STAGED' });
   });
 
+  it('settles two confirmations of the same period made at once with one settlement and a clear refusal', async () => {
+    const o = await org();
+    const one = await read(o, workbook(lines(o.a, o.b), 125750, 'bản một'));
+    const two = await read(o, workbook(lines(o.a, o.b), 125750, 'bản hai'));
+    const results = await Promise.allSettled([confirm(o, one.fileId), confirm(o, two.fileId, o.owner)]);
+    const outcomes = results.map((r) => (r.status === 'fulfilled' ? 'ok' : (r.reason as { code?: string }).code)).sort();
+    // Whichever is second sees the first's settlement, by its own check or by the database's guard: either way it is the same refusal, and exactly one settlement stands.
+    expect(outcomes).toEqual(['MARKETPLACE_INCOME_OVERLAP', 'ok']);
+    expect(await settlements(o)).toHaveLength(1);
+    expect(await settlementLines(o)).toHaveLength(2);
+  });
+
+  it('keeps nothing of the file in any audit row or activity of the org, refusals included', async () => {
+    const o = await org(false);
+    await addOrders(o, o.a);
+    const { fileId } = await read(o, workbook(lines(o.a, o.b)));
+    await expect(confirm(o, fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_UNKNOWN_ORDERS' });
+    await addOrders(o, o.b);
+    await confirm(o, fileId);
+    const audit = JSON.stringify(await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]));
+    const activity = JSON.stringify(await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [o.orgId]));
+    for (const secret of [o.b, '80500', '45250', '125750', BUYER.name, BUYER.phone, BUYER.email]) {
+      expect(audit, `audit holds ${secret}`).not.toContain(secret);
+      expect(activity, `activity holds ${secret}`).not.toContain(secret);
+    }
+  });
+
   it('is read and decided by owners, admins and members only; a viewer sees and decides nothing', async () => {
     const o = await org();
     const { fileId } = await read(o, workbook(lines(o.a, o.b)));
