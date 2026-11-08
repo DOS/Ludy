@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Vy working for one member, stage B step (a) (ADR-0049 decision 7, issue #2756): what the member-scoped background
-// context must hold from the day it exists. Every function and table stage B adds is looked up first and its cases run
-// only when it exists, so this file passes on a database that has none of them (no it.skip: the invariant job fails on
-// a skipped test) and pins the behavior the feature PR must meet. The cases that need no new object hold now:
-// ctx_acting_user_id is the member's for a user context and NULL for the system and an org-chart agent, and no policy
-// or definer outside the known set reads it. Part of the invariant suite; it imports package code under test, never
-// helpers from outside test/invariant/. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Vy working for one member, stage B step (a) (ADR-0049 decision 7, issue #2756): what the member-scoped background context
+// must hold from the day it exists. Every function and table stage B adds is looked up first and its cases run only when it
+// exists, so this file passes on a database that has none of them (no it.skip: the invariant job fails on a skipped test)
+// and pins the behavior the feature PR must meet. What needs no new object holds now and is unconditional: the set of
+// functions that seal a context, who the helper ctx_acting_user_id answers for, and which policies and functions read it.
+// Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/. Set
+// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 //
 // The contract the feature PR must meet, as these cases read it:
-//   crove_kernel.enter_member_vy_context(org, agent, run)  worker login only; refuses an org-chart agent, a run that is
-//     not running or has expired, and a member who is removed, disabled or without vy.use (MEMBER_NOT_ACTIVE);
-//     afterwards ctx_actor_type() = 'agent', ctx_user_id() is NULL, ctx_agent_id() is the agent, ctx_acting_user_id()
-//     is the member.
-//   crove_kernel.member_vy_table(table_name text, mode text)  one row per table Vy in member mode may touch, table_name
-//     as 'schema.table' (regclass text), mode 'read' or 'write'; the policies that read ctx_acting_user_id are exactly
-//     the catalog's tables, and those policies that cover writes are on tables of mode 'write' only.
+//   crove_kernel.enter_member_vy_context(org, agent, run)  worker login only; refuses (42501) an org that is not active, an
+//     agent that is not a member's Vy or not active, a run that is not live, a member who is removed, disabled, demoted without a
+//     grant or denied vy.use (MEMBER_NOT_ACTIVE), an org, module or agent kill switch and the global ai switch (KILL_SWITCH_ON), a
+//     spent hard-stop budget (BUDGET_EXHAUSTED); takes FOR SHARE on the member's tenant_member row. The seal is an agent context:
+//     actor 'agent', user NULL, the member's role and entity scope as enter_user_context seals them, max_risk R0 or R1, kind
+//     'member_vy', member, no position.
+//   crove_kernel.member_vy_table(table_name text, mode text)  the catalog, 'schema.table' and 'read' or 'write'; a subset of
+//     CATALOG below; the policies that read ctx_acting_user_id are exactly its tables, and a write-covering one sits on a
+//     'write' table only. No login can write the catalog.
+//   Writes: only the catalog's 'write' tables (a result, the run) and the narrow audit rows (ids, enums and numbers only);
+//     no memory, note, task, task comment, proposal, activity, notification or any other guarded table.
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -38,28 +42,45 @@ const MIGRATIONS = fileURLToPath(
 );
 const SYSTEM = { type: "system" as const, component: "kernel.agent" };
 const suite = ADMIN ? describe : describe.skip;
-// The tables whose policies read ctx_acting_user_id today (stage A): the member's own rows and runs.
-const HELPER_TABLES_TODAY = [
-  "crove_kernel.ai_run",
-  "crove_kernel.member_vy_memory",
-  "crove_kernel.member_vy_result",
+// The functions that write the sealed context, and so the only ways into any context. ctx_write is the writer itself.
+const CTX_WRITERS = [
+  "crove_kernel.ctx_write(jsonb)",
+  "crove_kernel.enter_agent_context(uuid,uuid,uuid)",
+  "crove_kernel.enter_context(uuid,uuid)",
+  "crove_kernel.enter_system_context(uuid)",
 ];
-// The tables Vy in member mode must never write, with a minimal row that a user context can insert.
-const OFF_CATALOG: Array<{
-  table: string;
-  columns: string;
-  values: (org: string, user: string) => unknown[];
-}> = [
-  {
-    table: "crove_kernel.task",
-    columns: "(org_id, title, source, created_by_type)",
-    values: (org) => [org, "Việc", "human", "user"],
-  },
-  {
-    table: "crove_kernel.activity",
-    columns: "(org_id, record_type, record_id, kind, summary)",
-    values: (org) => [org, "kernel.party", randomUUID(), "note", "x"],
-  },
+const MEMBER_ENTRY = "crove_kernel.enter_member_vy_context(uuid,uuid,uuid)";
+// Policies that read ctx_acting_user_id, as (table, policy, command, permissive): before the catalog exists, and with it.
+const POLICIES_BEFORE = [
+  ["crove_kernel.ai_run", "member_vy_read", "*", false],
+  ["crove_kernel.member_vy_memory", "member_only", "*", false],
+  ["crove_kernel.member_vy_result", "member_only", "*", false],
+];
+const POLICIES_AFTER = [
+  ["crove_kernel.ai_run", "member_vy_read", "*", false],
+  ["crove_kernel.member_vy_memory", "member_read", "r", false],
+  ["crove_kernel.member_vy_result", "member_only", "*", false],
+  ["crove_notes.note", "note_read", "r", false],
+];
+// What the catalog may hold, nothing else. No meeting table (Platform PO decision on #2756), no task, proposal or notification.
+const CATALOG: Record<string, string> = {
+  "crove_kernel.ai_run": "write",
+  "crove_kernel.member_vy_memory": "read",
+  "crove_kernel.member_vy_result": "write",
+  "crove_notes.note": "read",
+};
+// Guarded tables that carry their own narrow rule, and the exempt ones: each pinned by name below, not by the enumeration.
+const NARROW = [
+  "crove_kernel.agent_wakeup",
+  "crove_kernel.audit_event",
+  "crove_kernel.idempotency_key",
+  "crove_kernel.outbox_pending",
+];
+const LOGINS = [
+  "crove_app",
+  "crove_worker",
+  "crove_tenant",
+  "crove_definer_tenant",
 ];
 
 suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
@@ -69,9 +90,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   let workerUrl = "";
   const pools: pg.Pool[] = [];
   let orgId = "";
-  const users = { owner: "", vyUser: "", other: "", viewer: "" };
-  let agent = { agentId: "", runId: "" };
-  let vy = { agentId: "", runId: "" };
+  let otherOrg = "";
+  let branch = "";
+  const users = { owner: "", vyUser: "", other: "", viewer: "", limited: "" };
+  let orgChart = { agentId: "", runId: "" };
+  const vyAgent: Record<string, string> = {};
   const has = { entry: false, catalog: false, kind: false, notes: false };
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -116,23 +139,35 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     userId,
     aal: "aal1" as const,
   });
-  const userEnter = (userId: string) => (c: pg.Client) =>
-    c.query("SELECT crove_kernel.enter_user_context($1::uuid, $2::text)", [
-      orgId,
-      contextToken(userId, orgId),
-    ]);
+  const userEnter =
+    (userId: string, org = orgId) =>
+    (c: pg.Client) =>
+      c.query("SELECT crove_kernel.enter_user_context($1::uuid, $2::text)", [
+        org,
+        contextToken(userId, org),
+      ]);
   const systemEnter = (c: pg.Client) =>
     c.query("SELECT crove_kernel.enter_system_context($1::uuid)", [orgId]);
   const agentEnter = (c: pg.Client) =>
     c.query(
       "SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)",
-      [orgId, agent.agentId, agent.runId],
+      [orgId, orgChart.agentId, orgChart.runId],
     );
-  const memberEnter = (agentId: string, runId: string) => (c: pg.Client) =>
-    c.query(
-      "SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)",
-      [orgId, agentId, runId],
-    );
+  const memberEnter =
+    (agentId: string, runId: string, org = orgId) =>
+    (c: pg.Client) =>
+      c.query(
+        "SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)",
+        [org, agentId, runId],
+      );
+  const sealOf = async (c: pg.Client) =>
+    JSON.parse(
+      (
+        await c.query<{ ctx: string }>(
+          "SELECT current_setting('crove.ctx') AS ctx",
+        )
+      ).rows[0]?.ctx as string,
+    ) as Record<string, unknown>;
   const acting = (url: string, enter: (c: pg.Client) => Promise<unknown>) =>
     inContext(
       url,
@@ -144,6 +179,76 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           )
         ).rows[0]?.u ?? null,
     );
+
+  // A member's own Vy agent (once) and a fresh running run for it, made in the member's own context and committed so the worker
+  // can enter it. A fresh run per case: an earlier case that cancelled or finished a run never makes a later one pass or fail.
+  async function ensureAgent(who: keyof typeof users) {
+    if (vyAgent[who]) return vyAgent[who] as string;
+    const agentId = randomUUID();
+    await inContext(
+      appUrl,
+      userEnter(users[who]),
+      (c) =>
+        c.query(
+          `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+          [orgId, agentId, users[who]],
+        ),
+      true,
+    );
+    vyAgent[who] = agentId;
+    return agentId;
+  }
+  async function liveRun(who: keyof typeof users) {
+    const agentId = await ensureAgent(who);
+    await admin((c) =>
+      c.query(
+        `UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND agent_id = $2 AND status = 'running'`,
+        [orgId, agentId],
+      ),
+    );
+    const runId = randomUUID();
+    await inContext(
+      appUrl,
+      userEnter(users[who]),
+      (c) =>
+        c.query(
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+          [orgId, runId, agentId],
+        ),
+      true,
+    );
+    return { agentId, runId };
+  }
+  // The result row of a run, inserted as the superuser with its triggers on, for the member the run belongs to.
+  const addResult = (runId: string, member: string, status = "running") =>
+    admin(async (c) => {
+      const id = randomUUID();
+      await c.query(
+        `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, $6, CASE WHEN $6 = 'ready' THEN 'x' END, true, true, now() + interval '30 minutes')`,
+        [orgId, id, member, runId, randomUUID(), status],
+      );
+      return id;
+    });
+  const asVy = async <T>(
+    who: keyof typeof users,
+    fn: (c: pg.Client, run: { agentId: string; runId: string }) => Promise<T>,
+  ) => {
+    const run = await liveRun(who);
+    return inContext(workerUrl, memberEnter(run.agentId, run.runId), (c) =>
+      fn(c, run),
+    );
+  };
+  const entry = async (who: keyof typeof users) => {
+    const run = await liveRun(who);
+    return outcome(
+      inContext(
+        workerUrl,
+        memberEnter(run.agentId, run.runId),
+        async () => "entered",
+      ),
+    );
+  };
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -192,10 +297,23 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       });
     }
     orgId = (await createOrg(api.runtime, asUser(users.owner), "Vy nền")).orgId;
+    otherOrg = (
+      await createOrg(api.runtime, asUser(users.other), "Công ty khác")
+    ).orgId;
     await admin(async (c) => {
+      branch = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`,
+          [orgId, users.owner],
+        )
+      ).rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')`,
-        [orgId, users.vyUser, users.other, users.viewer],
+        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`,
+        [orgId, users.vyUser, users.other, users.viewer, users.limited],
+      );
+      await c.query(
+        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [orgId, users.limited, branch, users.owner],
       );
       const found = await c.query<{ r: string; w: boolean }>(`
         SELECT 'entry' AS r, to_regprocedure('crove_kernel.enter_member_vy_context(uuid,uuid,uuid)') IS NOT NULL AS w
@@ -231,35 +349,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       { agentId: installed.agentId },
       { actor: SYSTEM, orgId },
     );
-    agent = { agentId: installed.agentId, runId: started.runId as string };
-    if (has.kind) {
-      // The member's own Vy and one running run, made in the member's own context and committed so the worker can enter it.
-      const made = await inContext(
-        appUrl,
-        userEnter(users.vyUser),
-        async (c) => {
-          const agentId = randomUUID();
-          const runId = randomUUID();
-          await c.query(
-            `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
-            [orgId, agentId, users.vyUser],
-          );
-          await c.query(
-            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
-            [orgId, runId, agentId],
-          );
-          return { agentId, runId };
-        },
-        true,
-      );
-      vy = made;
-    }
+    orgChart = { agentId: installed.agentId, runId: started.runId as string };
     if (has.notes) {
       await admin((c) =>
         c.query(
           `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
-           ($1, $2, $3, 'private', 'Của tôi', 'riêng của thành viên', '{}'), ($1, $4, $5, 'private', 'Của người khác', 'riêng của người khác', '{}')`,
-          [orgId, randomUUID(), users.vyUser, randomUUID(), users.other],
+           ($1, $2, $3, 'private', 'Của tôi', 'riêng của thành viên', '{}'), ($1, $4, $5, 'private', 'Của người khác', 'riêng của người khác', '{}'),
+           ($1, $6, $5, 'org', 'Chung', 'chia sẻ cho cả tổ chức', '{}')`,
+          [
+            orgId,
+            randomUUID(),
+            users.vyUser,
+            randomUUID(),
+            users.other,
+            randomUUID(),
+          ],
         ),
       );
     }
@@ -274,8 +378,44 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     await root.end();
   });
 
-  // Unconditional: the helper stage A shipped, and who it answers for.
-  it("answers ctx_acting_user_id with the user for a user context and NULL for the system and an org-chart agent", async () => {
+  // ---- Unconditional: nothing here needs a stage B object ----------------------------------------------------------------
+  it("pins the functions that write the sealed context, with the member entry among them only when it exists", async () => {
+    const { rows } = await admin((c) =>
+      c.query<{ n: string }>(
+        `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+         WHERE s.nspname LIKE 'crove\\_%' AND p.prokind = 'f' AND pg_get_functiondef(p.oid) ~* 'ctx_write\\s*\\('
+         ORDER BY 1`,
+      ),
+    );
+    // An entry under another name, or a second writer, escapes every other case of this file: the set is exact.
+    expect(
+      rows.map((r) => r.n).sort(),
+      "functions that call ctx_write",
+    ).toEqual([...CTX_WRITERS, ...(has.entry ? [MEMBER_ENTRY] : [])].sort());
+  });
+
+  it("refuses a member's Vy agent and run in enter_agent_context, and enters no member context through any other entry", async () => {
+    if (!has.kind) return;
+    const run = await liveRun("vyUser");
+    const viaAgent = await outcome(
+      inContext(
+        workerUrl,
+        async () => {},
+        (c) =>
+          c.query(
+            "SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)",
+            [orgId, run.agentId, run.runId],
+          ),
+      ),
+    );
+    expect(viaAgent, "enter_agent_context for a member's Vy").toMatchObject({
+      ok: false,
+      code: "42501",
+    });
+    expect(viaAgent.ok ? "" : viaAgent.message).toMatch(/AGENT_NOT_ORG_CHART/);
+  });
+
+  it("answers ctx_acting_user_id with the user for a user context and NULL for the system, an org-chart agent and no context", async () => {
     expect(
       await acting(appUrl, userEnter(users.vyUser)),
       "a user context",
@@ -291,264 +431,688 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(await acting(appUrl, async () => {}), "no context").toBeNull();
   });
 
-  it("reads ctx_acting_user_id in the policies of the catalog's tables only, and in no definer", async () => {
+  it("reads ctx_acting_user_id only in the pinned policies, and nowhere else: no function, wrapper or direct read of the sealed member", async () => {
     const found = await admin(async (c) => ({
       policies: (
-        await c.query<{ t: string; cmd: string }>(
-          `SELECT DISTINCT p.polrelid::regclass::text AS t, p.polcmd::text AS cmd FROM pg_policy p
-           WHERE coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') LIKE '%ctx\\_acting\\_user\\_id%'`,
+        await c.query<{ t: string; n: string; cmd: string; perm: boolean }>(
+          `SELECT p.polrelid::regclass::text AS t, p.polname::text AS n, p.polcmd::text AS cmd, p.polpermissive AS perm FROM pg_policy p
+           WHERE coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~* '(ctx_acting_user_id|ctx_verified)'
+             AND coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~* 'ctx_acting_user_id|''member'''
+           ORDER BY 1, 2`,
         )
       ).rows,
-      definers: (
+      // pg_get_functiondef covers a BEGIN ATOMIC body, whose prosrc is empty.
+      readers: (
         await c.query<{ n: string }>(
-          `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE p.prosecdef AND n.nspname LIKE 'crove\\_%' AND p.proname <> 'ctx_acting_user_id' AND p.prosrc LIKE '%ctx\\_acting\\_user\\_id%'`,
+          `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+           WHERE s.nspname LIKE 'crove\\_%' AND p.prokind = 'f' AND p.proname <> 'ctx_acting_user_id' AND pg_get_functiondef(p.oid) ~* 'ctx_acting_user_id'
+           ORDER BY 1`,
+        )
+      ).rows.map((r) => r.n),
+      sealReaders: (
+        await c.query<{ n: string }>(
+          `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+           WHERE s.nspname LIKE 'crove\\_%' AND p.prokind = 'f' AND pg_get_functiondef(p.oid) ~* 'ctx_verified\\s*\\(\\s*\\)\\s*(->>?|#>>?)\\s*(''member''|''{member}'')'
+           ORDER BY 1`,
         )
       ).rows.map((r) => r.n),
     }));
-    // No definer gates on it: an owner's Vy must never gain an owner-only definer (private_counts, the finder, erasure).
-    expect(found.definers, "definers that read ctx_acting_user_id").toEqual([]);
-    const tables = [...new Set(found.policies.map((r) => r.t))].sort();
-    if (!has.catalog) {
-      expect(
-        tables,
-        "tables whose policies read ctx_acting_user_id before the catalog exists",
-      ).toEqual(HELPER_TABLES_TODAY);
-      return;
-    }
+    expect(
+      found.readers,
+      "functions that call ctx_acting_user_id (a wrapper, or a definer that gates on it)",
+    ).toEqual([]);
+    expect(
+      found.sealReaders,
+      "functions that read the sealed member directly",
+    ).toEqual(has.catalog ? ["crove_kernel.ctx_acting_user_id()"] : []);
+    expect(
+      found.policies.map((p) => [p.t, p.n, p.cmd, p.perm]),
+      "policies that read the helper: (table, policy, command, permissive)",
+    ).toEqual(has.catalog ? POLICIES_AFTER : POLICIES_BEFORE);
+  });
+
+  // ---- The catalog -----------------------------------------------------------------------------------------------------------
+  it("holds only the catalog's tables, matches the policies in both directions, and is written by no login", async () => {
+    if (!has.catalog) return;
     const catalog = (
       await admin((c) =>
         c.query<{ table_name: string; mode: string }>(
-          "SELECT table_name, mode FROM crove_kernel.member_vy_table",
+          "SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1",
         ),
       )
     ).rows;
-    const listed = new Map(catalog.map((r) => [r.table_name, r.mode]));
+    // A subset of the explicit list: no meeting table, no task, proposal or notification, whatever policy comes with it.
+    for (const row of catalog)
+      expect(CATALOG[row.table_name], `catalog row ${row.table_name}`).toBe(
+        row.mode,
+      );
+    const tables = (
+      await admin((c) =>
+        c.query<{ t: string; cmd: string }>(
+          `SELECT DISTINCT p.polrelid::regclass::text AS t, p.polcmd::text AS cmd FROM pg_policy p
+           WHERE coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~* 'ctx_acting_user_id'`,
+        ),
+      )
+    ).rows;
     expect(
-      [...listed.values()].filter((m) => m !== "read" && m !== "write"),
-      "catalog modes",
-    ).toEqual([]);
-    expect(
-      tables,
+      [...new Set(tables.map((r) => r.t))].sort(),
       "policies that read the helper, against the catalog's tables",
-    ).toEqual([...listed.keys()].sort());
-    // pg_policy.polcmd: r select, a insert, w update, d delete, * all. A policy covering writes sits on a table of mode write.
-    for (const row of found.policies.filter((p) => p.cmd !== "r")) {
+    ).toEqual(catalog.map((r) => r.table_name).sort());
+    for (const row of tables.filter((p) => p.cmd !== "r")) {
       expect(
-        listed.get(row.t),
-        `${row.t} has a write policy that reads the helper`,
+        catalog.find((r) => r.table_name === row.t)?.mode,
+        `${row.t} has a write-covering policy that reads the helper`,
       ).toBe("write");
+    }
+    const privileges = await admin((c) =>
+      c.query<{ r: string; p: string; ok: boolean }>(
+        `SELECT r, p, has_table_privilege(r, 'crove_kernel.member_vy_table', p) AS ok
+         FROM unnest($1::text[]) r, unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p`,
+        [LOGINS],
+      ),
+    );
+    expect(
+      privileges.rows.filter((r) => r.ok),
+      "logins and tenant roles that can write the catalog",
+    ).toEqual([]);
+    for (const login of ["crove_app", "crove_worker"]) {
+      const written = await outcome(
+        inContext(
+          login === "crove_app" ? appUrl : workerUrl,
+          userEnter(users.owner),
+          (c) =>
+            c.query(
+              "INSERT INTO crove_kernel.member_vy_table (table_name, mode, adr) VALUES ('crove_meetings.transcript_segment', 'write', 'ADR-0049')",
+            ),
+        ),
+      );
+      expect(written, `${login} inserting a catalog row`).toMatchObject({
+        ok: false,
+        code: "42501",
+      });
     }
   });
 
-  it("enters a member-mode context only for a live run of an active member, as the worker, with the member's shape", async () => {
+  // ---- The entry -----------------------------------------------------------------------------------------------------------
+  it("enters a member-mode context for a live run of an active member, with the member's own rights and the sealed shape", async () => {
     if (!has.entry || !has.kind) return;
-    const enter = (agentId: string, runId: string, url = workerUrl) =>
-      outcome(
-        inContext(
-          url,
-          async () => {},
-          (c) => memberEnter(agentId, runId)(c),
+    const run = await liveRun("limited");
+    const seal = await inContext(
+      workerUrl,
+      memberEnter(run.agentId, run.runId),
+      sealOf,
+    );
+    // The member's role and entity scope are exactly what enter_user_context seals for them: an entity-limited member's Vy sees only those entities.
+    const user = await inContext(appUrl, userEnter(users.limited), sealOf);
+    expect(
+      user.le_scope,
+      "an entity-limited member has a scope to compare",
+    ).toEqual([branch]);
+    expect(seal).toMatchObject({
+      org: orgId,
+      actor: "agent",
+      user: null,
+      kind: "member_vy",
+      member: users.limited,
+      agent: run.agentId,
+      run: run.runId,
+      role: user.role,
+      le_scope: user.le_scope,
+      flags: [],
+    });
+    expect(seal.position ?? null, "a member's Vy holds no seat").toBeNull();
+    expect(["R0", "R1"], "max_risk is R1 at most").toContain(seal.max_risk);
+    const whole = await asVy("vyUser", (c) => sealOf(c));
+    expect(whole).toMatchObject({
+      kind: "member_vy",
+      member: users.vyUser,
+      le_scope: ["*"],
+    });
+  });
+
+  it("refuses the entry, each with its own cause: org, agent, run, member and the other orgs", async () => {
+    if (!has.entry || !has.kind) return;
+    const refused = (
+      o: { ok: boolean; code?: string; message?: string },
+      why: string,
+      re?: RegExp,
+    ) => {
+      expect(o, why).toMatchObject({ ok: false, code: "42501" });
+      if (re) expect(o.message, `${why}: its code`).toMatch(re);
+    };
+    // Each change is undone, and the case uses a fresh run each time.
+    const changed = async (apply: string, undo: string) => {
+      const run = await liveRun("vyUser");
+      await admin((c) =>
+        c.query(
+          apply.replaceAll("$RUN", run.runId).replaceAll("$AGENT", run.agentId),
         ),
       );
-    // The positive control: the member's own run, entered by the worker, has the sealed shape.
-    const shape = await outcome(
-      inContext(
-        workerUrl,
-        memberEnter(vy.agentId, vy.runId),
-        async (c) =>
-          (
-            await c.query<{
-              t: string;
-              u: string | null;
-              a: string | null;
-              m: string | null;
-            }>(
-              "SELECT crove_kernel.ctx_actor_type() AS t, crove_kernel.ctx_user_id()::text AS u, crove_kernel.ctx_agent_id()::text AS a, crove_kernel.ctx_acting_user_id()::text AS m",
-            )
-          ).rows[0],
-      ),
-    );
-    expect(shape.ok, "the worker entering the member's live run").toBe(true);
-    if (shape.ok)
-      expect(shape.value, "the sealed shape").toEqual({
-        t: "agent",
-        u: null,
-        a: vy.agentId,
-        m: users.vyUser,
-      });
-    // The org-chart agent, and the member's agent with another run, are refused.
-    expect(
-      (await enter(agent.agentId, agent.runId)).ok,
-      "an org-chart agent",
-    ).toBe(false);
-    expect(
-      (await enter(vy.agentId, agent.runId)).ok,
-      "the member's agent with an org-chart agent's run",
-    ).toBe(false);
-    expect(
-      (await enter(vy.agentId, randomUUID())).ok,
-      "a run that does not exist",
-    ).toBe(false);
-    expect(
-      (await enter(vy.agentId, vy.runId, appUrl)).ok,
-      "the API login",
-    ).toBe(false);
-    // Each change below is undone, so the cases stay independent.
-    const changed = async (
-      apply: string,
-      undo: string,
-      params: unknown[] = [],
-    ) => {
-      await admin((c) => c.query(apply, params));
       try {
-        return await enter(vy.agentId, vy.runId);
+        return await outcome(
+          inContext(
+            workerUrl,
+            memberEnter(run.agentId, run.runId),
+            async () => "entered",
+          ),
+        );
       } finally {
-        await admin((c) => c.query(undo, params));
+        await admin((c) =>
+          c.query(
+            undo
+              .replaceAll("$RUN", run.runId)
+              .replaceAll("$AGENT", run.agentId),
+          ),
+        );
       }
     };
-    const finished = await changed(
-      `UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = '${orgId}' AND id = '${vy.runId}'`,
-      `UPDATE crove_kernel.ai_run SET status = 'running', finished_at = NULL WHERE org_id = '${orgId}' AND id = '${vy.runId}'`,
+    const member = (set: string) =>
+      `UPDATE crove_kernel.tenant_member SET ${set} WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`;
+    refused(
+      await changed(
+        `SET session_replication_role = replica; UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = '${orgId}'`,
+        `SET session_replication_role = replica; UPDATE crove_kernel.tenant SET status = 'active' WHERE org_id = '${orgId}'`,
+      ),
+      "an org that is not active",
+      /TENANT_NOT_ACTIVE/,
     );
-    expect(finished.ok, "a run that is no longer running").toBe(false);
-    const expired = await changed(
-      `UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '${vy.runId}'`,
-      `UPDATE crove_kernel.ai_run SET started_at = now(), expires_at = now() + interval '30 minutes' WHERE org_id = '${orgId}' AND id = '${vy.runId}'`,
+    refused(
+      await changed(
+        `UPDATE crove_kernel.agent SET status = 'paused' WHERE org_id = '${orgId}' AND id = '$AGENT'`,
+        `UPDATE crove_kernel.agent SET status = 'active' WHERE org_id = '${orgId}' AND id = '$AGENT'`,
+      ),
+      "an agent that is not active",
+      /AGENT_NOT_ACTIVE/,
     );
-    expect(expired.ok, "an expired run").toBe(false);
-    const demoted = await changed(
-      `UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`,
-      `UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`,
+    refused(
+      await changed(
+        `UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = '${orgId}' AND id = '$RUN'`,
+        `SELECT 1`,
+      ),
+      "a run that is no longer running",
+      /AGENT_RUN_NOT_LIVE/,
     );
-    // A member who became a viewer still holds vy.use through the department grants they may have; with none, the entry is refused.
+    refused(
+      await changed(
+        `UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '$RUN'`,
+        `SELECT 1`,
+      ),
+      "an expired run",
+      /AGENT_RUN_NOT_LIVE/,
+    );
+    refused(
+      await changed(member("role = 'viewer'"), member("role = 'member'")),
+      "a member demoted to a viewer without a grant",
+      /MEMBER_NOT_ACTIVE|VY_NOT_ALLOWED/,
+    );
+    refused(
+      await changed(
+        `INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ('${orgId}', '${users.vyUser}', 'vy.use', false, '${users.owner}')`,
+        `DELETE FROM crove_kernel.member_permission_override WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`,
+      ),
+      "a member whose vy.use is denied",
+      /MEMBER_NOT_ACTIVE|VY_NOT_ALLOWED/,
+    );
+    refused(
+      await changed(
+        `UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = '${users.vyUser}'`,
+        `UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = '${users.vyUser}'`,
+      ),
+      "a disabled account",
+      /MEMBER_NOT_ACTIVE|VY_NOT_ALLOWED/,
+    );
+    refused(
+      await changed(
+        `DELETE FROM crove_kernel.tenant_member WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`,
+        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ('${orgId}', '${users.vyUser}', 'member')`,
+      ),
+      "a member who was removed",
+      /MEMBER_NOT_ACTIVE|VY_NOT_ALLOWED/,
+    );
+    // The org-chart agent and another org's entry, and the API login, are refused by the same entry.
+    const run = await liveRun("vyUser");
+    refused(
+      await outcome(
+        inContext(
+          workerUrl,
+          memberEnter(orgChart.agentId, orgChart.runId),
+          async () => 1,
+        ),
+      ),
+      "an org-chart agent",
+    );
+    refused(
+      await outcome(
+        inContext(
+          workerUrl,
+          memberEnter(run.agentId, run.runId, otherOrg),
+          async () => 1,
+        ),
+      ),
+      "the member's agent named in another org",
+    );
+    refused(
+      await outcome(
+        inContext(
+          workerUrl,
+          memberEnter(run.agentId, orgChart.runId),
+          async () => 1,
+        ),
+      ),
+      "the member's agent with another agent's run",
+    );
+    refused(
+      await outcome(
+        inContext(
+          workerUrl,
+          memberEnter(run.agentId, randomUUID()),
+          async () => 1,
+        ),
+      ),
+      "a run that does not exist",
+    );
+    refused(
+      await outcome(
+        inContext(appUrl, memberEnter(run.agentId, run.runId), async () => 1),
+      ),
+      "the API login",
+    );
+    // Control: everything restored, the member's live run enters.
     expect(
-      demoted.ok,
-      "a member demoted to a viewer without a vy.use grant",
-    ).toBe(false);
-    const denied = await changed(
-      `INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ('${orgId}', '${users.vyUser}', 'vy.use', false, '${users.owner}')`,
-      `DELETE FROM crove_kernel.member_permission_override WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`,
-    );
-    expect(denied.ok, "a member whose vy.use is denied").toBe(false);
-    expect(
-      denied.ok ? "" : denied.message,
-      "refused for the member, by its code",
-    ).toMatch(/MEMBER_NOT_ACTIVE/);
-    const disabled = await changed(
-      `UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = '${users.vyUser}'`,
-      `UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = '${users.vyUser}'`,
-    );
-    expect(disabled.ok, "a disabled account").toBe(false);
-    const removed = await changed(
-      `DELETE FROM crove_kernel.tenant_member WHERE org_id = '${orgId}' AND user_id = '${users.vyUser}'`,
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ('${orgId}', '${users.vyUser}', 'member')`,
-    );
-    expect(removed.ok, "a member who was removed").toBe(false);
-    // The control again: everything restored, the entry works.
-    expect(
-      (await enter(vy.agentId, vy.runId)).ok,
+      (await entry("vyUser")).ok,
       "the member's live run once everything is restored",
     ).toBe(true);
   });
 
-  it("lets a member-mode context write its member's own results and memory and nothing else, and read only its member's notes", async () => {
+  it("refuses the entry under an org, module or agent kill switch and under the global ai switch, and under a spent hard-stop budget", async () => {
     if (!has.entry || !has.kind) return;
-    const asVy = <T>(fn: (c: pg.Client) => Promise<T>) =>
-      inContext(workerUrl, memberEnter(vy.agentId, vy.runId), fn);
-    // The shapes are valid: a user context inserts them (positive control for the refusals below).
-    for (const row of OFF_CATALOG) {
-      const own = await outcome(
-        inContext(appUrl, userEnter(users.owner), (c) =>
-          c.query(
-            `INSERT INTO ${row.table} ${row.columns} VALUES (${row
-              .values(orgId, users.owner)
-              .map((_, i) => `$${i + 1}`)
-              .join(", ")})`,
-            row.values(orgId, users.owner),
-          ),
+    const engage = (scope: string, target: string) =>
+      admin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+              [orgId, scope, target, users.owner],
+            )
+          ).rows[0]?.id as string,
+      );
+    const release = (id: string) =>
+      admin((c) =>
+        c.query(
+          `UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND id = $3`,
+          [orgId, users.owner, id],
         ),
       );
-      expect(own.ok, `a user inserting into ${row.table}`).toBe(true);
-      const refused = await outcome(
-        asVy((c) =>
-          c.query(
-            `INSERT INTO ${row.table} ${row.columns} VALUES (${row
-              .values(orgId, users.vyUser)
-              .map((_, i) => `$${i + 1}`)
-              .join(", ")})`,
-            row.values(orgId, users.vyUser),
-          ),
-        ),
-      );
-      expect(
-        refused,
-        `member-mode context inserting into ${row.table}`,
-      ).toMatchObject({ ok: false, code: "42501" });
-    }
-    if (has.notes) {
-      const note = await outcome(
-        asVy((c) =>
-          c.query(
-            `INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title) VALUES ($1, $2, 'private', 'Vy viết')`,
-            [orgId, users.vyUser],
-          ),
-        ),
-      );
-      expect(note, "member-mode context writing a note").toMatchObject({
+    const agentId = await ensureAgent("vyUser");
+    for (const [scope, target] of [
+      ["org", "*"],
+      ["module", "notes"],
+      ["agent", agentId],
+    ] as const) {
+      const id = await engage(scope, target);
+      const refused = await entry("vyUser");
+      expect(refused, `a ${scope} kill switch`).toMatchObject({
         ok: false,
         code: "42501",
       });
-      const seen = await outcome(
-        asVy(async (c) =>
-          (
-            await c.query<{ author_user_id: string }>(
-              "SELECT author_user_id FROM crove_notes.note",
-            )
-          ).rows.map((r) => r.author_user_id),
+      expect(
+        refused.ok ? "" : refused.message,
+        `a ${scope} kill switch: its code`,
+      ).toMatch(/KILL_SWITCH_ON/);
+      await release(id);
+      expect(
+        (await entry("vyUser")).ok,
+        `after releasing the ${scope} switch`,
+      ).toBe(true);
+    }
+    const unrelated = await engage("module", "finance");
+    expect(
+      (await entry("vyUser")).ok,
+      "a switch for another module stops nothing",
+    ).toBe(true);
+    await release(unrelated);
+    const set = (engaged: boolean) =>
+      admin((c) =>
+        c.query(
+          `SELECT crove_kernel.global_kill_switch_set('ai', $1, 'diễn tập', 'ops')`,
+          [engaged],
         ),
       );
-      expect(seen.ok, "member-mode context reading notes").toBe(true);
-      // Only the member's own (private) notes: never another member's private note, never as the system.
-      if (seen.ok)
-        expect(
-          seen.value.filter((a) => a !== users.vyUser),
-          "authors of the notes a member-mode context reads",
-        ).toEqual([]);
+    await set(true);
+    try {
+      const refused = await entry("vyUser");
+      expect(refused, "the operator's global ai switch").toMatchObject({
+        ok: false,
+        code: "42501",
+      });
+      expect(refused.ok ? "" : refused.message).toMatch(/KILL_SWITCH_ON/);
+    } finally {
+      await set(false);
     }
-    // Its own member's memory is writable; another member's is refused.
-    const own = await outcome(
-      asVy((c) =>
+    const budget = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2) RETURNING id`,
+            [orgId, users.owner],
+          )
+        ).rows[0]?.id as string,
+    );
+    try {
+      const refused = await entry("vyUser");
+      expect(refused, "a spent hard-stop budget").toMatchObject({
+        ok: false,
+        code: "42501",
+      });
+      expect(refused.ok ? "" : refused.message).toMatch(/BUDGET_EXHAUSTED/);
+    } finally {
+      await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.member_vy_memory (org_id, member_user_id, body) VALUES ($1, $2, 'Gọi khách là anh')`,
-          [orgId, users.vyUser],
+          `DELETE FROM crove_kernel.budget_policy WHERE org_id = $1 AND id = $2`,
+          [orgId, budget],
         ),
-      ),
-    );
-    expect(own.ok, "member-mode context writing its member's memory").toBe(
-      true,
-    );
-    const other = await outcome(
-      asVy((c) =>
-        c.query(
-          `INSERT INTO crove_kernel.member_vy_memory (org_id, member_user_id, body) VALUES ($1, $2, 'Ghi hộ người khác')`,
-          [orgId, users.other],
-        ),
-      ),
-    );
+      );
+    }
     expect(
-      other,
-      "member-mode context writing another member's memory",
-    ).toMatchObject({ ok: false, code: "42501" });
-    // It never writes a task comment, proposal or approval either: no approval, no proposal, no R2 or R3 (decision 1).
-    const proposal = await outcome(
-      asVy((c) =>
-        c.query(
+      (await entry("vyUser")).ok,
+      "the member's live run once the budget is cleared",
+    ).toBe(true);
+  });
+
+  it("takes FOR SHARE on the member's membership row, so a removal waits for an entering transaction (55P03)", async () => {
+    if (!has.entry || !has.kind) return;
+    const run = await liveRun("vyUser");
+    const holder = new pg.Client({ connectionString: workerUrl });
+    await holder.connect();
+    try {
+      await holder.query("BEGIN");
+      await memberEnter(run.agentId, run.runId)(holder);
+      // The entering transaction is still open: a second connection's DELETE of the membership cannot take its row lock.
+      const removal = await outcome(
+        admin(async (c) => {
+          await c.query("BEGIN");
+          await c.query("SET LOCAL lock_timeout = '400ms'");
+          try {
+            return await c.query(
+              `DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`,
+              [orgId, users.vyUser],
+            );
+          } finally {
+            await c.query("ROLLBACK");
+          }
+        }),
+      );
+      expect(removal, "a removal while an entry is open").toMatchObject({
+        ok: false,
+        code: "55P03",
+      });
+    } finally {
+      await holder.query("ROLLBACK").catch(() => {});
+      await holder.end();
+    }
+  });
+
+  // ---- Writes ----------------------------------------------------------------------------------------------------------------
+  it("refuses a member-mode context every guarded table that is not a catalog 'write' table, enumerated from the catalog (AGENT_FORBIDDEN)", async () => {
+    if (!has.entry || !has.kind || !has.catalog) return;
+    const tables = (
+      await admin((c) =>
+        c.query<{ name: string }>(
+          `SELECT n.nspname || '.' || c.relname AS name
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+             AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'agent_write_guard' AND NOT t.tgisinternal AND t.tgenabled = 'O')
+           ORDER BY 1`,
+        ),
+      )
+    ).rows.map((r) => r.name);
+    const catalogWrite = Object.entries(CATALOG)
+      .filter(([, m]) => m === "write")
+      .map(([t]) => t);
+    const probed = tables.filter(
+      (t) => !catalogWrite.includes(t) && !NARROW.includes(t),
+    );
+    expect(probed.length, "an enumeration with teeth").toBeGreaterThan(40);
+    const run = await liveRun("vyUser");
+    const refusals = await admin(async (c) => {
+      const found: Array<[string, string]> = [];
+      await c.query("BEGIN");
+      try {
+        await memberEnter(run.agentId, run.runId)(c);
+        for (const name of probed) {
+          await c.query("SAVEPOINT probe");
+          const [schema, table] = name.split(".") as [string, string];
+          const out = await c
+            .query(`INSERT INTO ${schema}."${table}" DEFAULT VALUES`)
+            .then(
+              () => "inserted",
+              (e: { message: string }) => e.message,
+            );
+          await c.query("ROLLBACK TO SAVEPOINT probe");
+          found.push([name, out]);
+        }
+      } finally {
+        await c.query("ROLLBACK");
+      }
+      return found;
+    });
+    expect(
+      refusals.filter(([, out]) => out !== "AGENT_FORBIDDEN"),
+      "tables that did not refuse with AGENT_FORBIDDEN",
+    ).toEqual([]);
+  });
+
+  it("pins each exempt and narrow table by its own rule: audit detail, keys, wakeups, tasks, comments, activity, proposals, notifications, memory and notes", async () => {
+    if (!has.entry || !has.kind) return;
+    const taskId = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Việc', 'human', 'user') RETURNING id`,
+            [orgId],
+          )
+        ).rows[0]?.id as string,
+    );
+    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN" };
+    await asVy("vyUser", async (c, run) => {
+      const attempt = async (sql: string, params: unknown[] = []) => {
+        await c.query("SAVEPOINT s");
+        const o = await outcome(c.query(sql, params));
+        await c.query("ROLLBACK TO SAVEPOINT s");
+        return o;
+      };
+      const audit = (detail: unknown) =>
+        attempt(
+          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail) VALUES ($1, 'agent', $2, 'kernel.member_vy.result.store', $3, 'ok', 'x', $4::jsonb)`,
+          [orgId, run.agentId, randomUUID(), JSON.stringify(detail)],
+        );
+      // The audit row of this agent and run with ids, enums and numbers passes (the positive control); planted text, an unlisted key or a nested value never does.
+      const clean = await audit({
+        agentRun: run.runId,
+        resultId: randomUUID(),
+        feature: "notes.summary",
+        bodyLength: 120,
+      });
+      expect(
+        clean.ok || clean.message,
+        "an audit row with ids and numbers only",
+      ).toBe(true);
+      for (const [why, detail] of [
+        [
+          "planted text in a listed key",
+          {
+            agentRun: run.runId,
+            feature: "Tóm tắt riêng: khách đề nghị giảm giá 12%",
+          },
+        ],
+        ["a key off the list", { agentRun: run.runId, summary: "x" }],
+        ["a nested value", { agentRun: run.runId, status: { a: 1 } }],
+        ["another run", { agentRun: randomUUID() }],
+      ] as const) {
+        expect(await audit(detail), why).toMatchObject(forbidden);
+      }
+      expect(
+        await attempt(
+          `INSERT INTO crove_kernel.idempotency_key DEFAULT VALUES`,
+        ),
+        "an idempotency key of nobody's run",
+      ).toMatchObject(forbidden);
+      expect(
+        await attempt(`INSERT INTO crove_kernel.agent_wakeup DEFAULT VALUES`),
+        "a wakeup",
+      ).toMatchObject(forbidden);
+      // Tasks, comments and activity carry their own rules (no seat, no lease, an org-visible sink); the context writes none.
+      for (const [why, sql, params] of [
+        [
+          "a task",
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Việc', 'human', 'agent')`,
+          [orgId],
+        ],
+        [
+          "a task comment",
+          `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'x', 'agent')`,
+          [orgId, taskId],
+        ],
+        [
+          "an activity row",
+          `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'note', 'x')`,
+          [orgId, randomUUID()],
+        ],
+        [
+          "a proposal",
           `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, legal_entity_id) VALUES ($1, 'x', 'kernel.task.create', 'x', '{}', NULL)`,
           [orgId],
+        ],
+        [
+          "a notification",
+          `INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key) VALUES ($1, $2, 'kernel.x', 'k')`,
+          [orgId, users.owner],
+        ],
+      ] as const) {
+        const o = await attempt(sql, [...params]);
+        expect(o, `member-mode context writing ${why}`).toMatchObject({
+          ok: false,
+          code: "42501",
+        });
+      }
+      // Memory: a background run reads its member's memory and writes none (decisions 3 and 5): not insert, update or delete.
+      const memoryId = randomUUID();
+      await admin((a) =>
+        a.query(
+          `INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`,
+          [orgId, memoryId, users.vyUser],
         ),
-      ),
+      );
+      expect(
+        await attempt(
+          `INSERT INTO crove_kernel.member_vy_memory (org_id, member_user_id, body) VALUES ($1, $2, 'do mô hình viết')`,
+          [orgId, users.vyUser],
+        ),
+        "a memory insert",
+      ).toMatchObject({ ok: false, code: "42501" });
+      // An update or a delete finds no row the policy admits, or is refused: either way it changes nothing (read back below).
+      for (const [why, sql] of [
+        [
+          "a memory update",
+          `UPDATE crove_kernel.member_vy_memory SET body = 'đổi' WHERE id = $1`,
+        ],
+        [
+          "a memory delete",
+          `DELETE FROM crove_kernel.member_vy_memory WHERE id = $1`,
+        ],
+      ] as const) {
+        const o = await attempt(sql, [memoryId]);
+        expect(o.ok ? o.value.rowCount : o.code, why).toBe(o.ok ? 0 : "42501");
+      }
+      const seen = await c.query<{ body: string }>(
+        `SELECT body FROM crove_kernel.member_vy_memory`,
+      );
+      expect(
+        seen.rows.map((r) => r.body),
+        "the member's memory it may read",
+      ).toEqual(["Gọi khách là anh"]);
+    });
+    if (!has.notes) return;
+    await asVy("vyUser", async (c) => {
+      // The member's own notes and the shared ones its role and scope may read; never another member's private note; no write.
+      const seen = (
+        await c.query<{ title: string }>(
+          `SELECT title FROM crove_notes.note ORDER BY title`,
+        )
+      ).rows.map((r) => r.title);
+      expect(seen, "notes a member-mode context reads").toEqual([
+        "Chung",
+        "Của tôi",
+      ]);
+      const written = await outcome(
+        c.query(
+          `INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title) VALUES ($1, $2, 'private', 'Vy viết')`,
+          [orgId, users.vyUser],
+        ),
+      );
+      expect(written, "a note written by a member-mode context").toMatchObject({
+        ok: false,
+        code: "42501",
+      });
+    });
+    // An entity-limited member's Vy reads no shared note (note_read's rule for the member), only its member's own.
+    await asVy("limited", async (c) => {
+      expect(
+        (await c.query<{ title: string }>(`SELECT title FROM crove_notes.note`))
+          .rows,
+        "an entity-limited member's Vy",
+      ).toEqual([]);
+    });
+  });
+
+  it("writes only its own result: the run's result updates, another member's is out of reach, and the cross-member insert is refused", async () => {
+    if (!has.entry || !has.kind) return;
+    const run = await liveRun("vyUser");
+    const mine = await addResult(run.runId, users.vyUser);
+    const otherRun = await liveRun("other");
+    const theirs = await addResult(otherRun.runId, users.other);
+    await inContext(
+      workerUrl,
+      memberEnter(run.agentId, run.runId),
+      async (c) => {
+        const own = await outcome(
+          c.query(
+            `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'Tóm tắt' WHERE id = $1`,
+            [mine],
+          ),
+        );
+        expect(
+          own.ok && own.value.rowCount,
+          "updating the run's own result (the positive control)",
+        ).toBe(1);
+        const foreign = await outcome(
+          c.query(
+            `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'x' WHERE id = $1`,
+            [theirs],
+          ),
+        );
+        expect(
+          foreign.ok && foreign.value.rowCount,
+          "updating another member's result",
+        ).toBe(0);
+        const read = await c.query<{ id: string }>(
+          `SELECT id FROM crove_kernel.member_vy_result`,
+        );
+        expect(
+          read.rows.map((r) => r.id),
+          "results a member-mode context reads",
+        ).toEqual([mine]);
+        const cross = await outcome(
+          c.query(
+            `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, expires_at) VALUES ($1, $2, $3, 'notes.summary', 'note', $4, now() + interval '30 minutes')`,
+            [orgId, users.other, otherRun.runId, randomUUID()],
+          ),
+        );
+        expect(cross, "a result for another member").toMatchObject({
+          ok: false,
+          code: "42501",
+        });
+      },
     );
-    expect(proposal.ok, "member-mode context writing a proposal").toBe(false);
   });
 });
