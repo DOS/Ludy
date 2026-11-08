@@ -8732,6 +8732,7 @@ export const en = {
       DRAFT_NOT_REVIEWED: 'Some items Vy suggested have not been reviewed by you yet. Read and confirm them before sharing.',
       DRAFT_SUMMARY_EXISTS: 'You already have a summary draft. Share it or save over it, then copy Vy\'s summary.',
       SUMMARY_BUSY: 'Vy is busy summarizing. Try again in a few minutes.',
+      SUMMARY_ALREADY_COPIED: 'This summary was already copied into your draft.',
       SUMMARY_OFF: 'Summaries by Vy are not turned on on this system. Type the summary by hand.',
       SUMMARY_RESULT_INVALID: 'The summary result cannot be read. Ask Vy to summarize again.',
       SUMMARY_RESULT_NOT_FOUND: 'There is no summary result for this meeting.',

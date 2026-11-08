@@ -275,7 +275,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('recorder', 'meetings.action_item.edit', { itemId, whenDate: '2026-13-45' }))).toBe('VALIDATION');
     // Text the model wrote is not shared before the recorder has read it.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
-    await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true });
+    await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: (await results('recorder', meetingId)).items.map((i) => i.id) });
     await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
     await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
     expect(await refuses(exec('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('MEETING_NOT_FOUND');

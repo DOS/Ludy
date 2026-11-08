@@ -185,7 +185,7 @@ export const actionItemEdit = defineCommand({
     // Only a changed title is the recorder's own text; fixing a date or an attendee leaves the model's title tainted. The mark is cleared by the recorder's
     // review (a definer: the tenant context cannot change it), here for this one item.
     if (input.title !== undefined && input.title !== item.title) {
-      await sql`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ${input.itemId}::uuid)`.execute(ctx.trx);
+      await sql`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ARRAY[${input.itemId}]::uuid[])`.execute(ctx.trx);
     }
     ctx.audit({ itemId: input.itemId, meetingId: item.meeting_id });
     return { itemId: input.itemId };
