@@ -44,6 +44,7 @@ const PUBLIC: Record<string, string> = {
   '/api/review/media': 'the same review link, for the media of the post under review',
   '/api/review/file': 'the same review link, for one file of the post under review',
   '/api/review/answer': "the reviewer's answer, through the same review link",
+  '/api/quote/view': "a sent quote's page (#2694): a signed, expiring, revocable quote link is the credential; rate limited per client, it answers one quote document and nothing else",
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',
@@ -60,7 +61,8 @@ const PUBLIC: Record<string, string> = {
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
-const PENDING: Record<string, string> = {};
+const PENDING: Record<string, string> = {
+};
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
 const WEB_DIST = mkdtempSync(join(tmpdir(), 'crove-route-coverage-'));

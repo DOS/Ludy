@@ -152,7 +152,7 @@ export interface KernelAdapters {
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;

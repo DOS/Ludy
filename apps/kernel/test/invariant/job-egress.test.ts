@@ -108,11 +108,16 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   [`${QUEUES.adsSync} handler`]: { command: 'ads.account.link' },
   // The sweep queues the e-invoices whose time to ask has come, each approved by an owner or admin through finance.einvoice.issue (#2502).
   [`${QUEUES.einvoiceIssue} handler`]: { command: 'finance.einvoice.issue' },
-  // The sweep queues the marketplace connections of active orgs, each connected by an owner or admin through finance.marketplace_connection.connect (#2519).
-  [`${QUEUES.marketplacePoll} handler`]: { command: 'finance.marketplace_connection.connect' },
   // The cron tick of that sweep (boss.schedule in startWorker): the sweep it starts reads only linked accounts.
   startWorker: { command: 'ads.account.link' },
+  // The sweep queues the marketplace connections of active orgs, each connected by an owner or admin through finance.marketplace_connection.connect (#2519).
+  'finance-marketplace-poll handler': { command: 'finance.marketplace_connection.connect' },
 };
+
+// Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
+// the site. While the site is absent from the code the entry is not required to be found and its command is not required to exist; once the site is found it is reviewed like
+// any other. Remove the entry here once the site is on the base branch.
+const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {};
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
 const NO_COMMAND: Readonly<Record<string, string>> = {
@@ -329,7 +334,9 @@ describe('job egress (#1653)', () => {
     };
     const found = [...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort();
     // The reviewed sites: those above.
-    const reviewed: Readonly<Record<string, { command: string } | { reason: string }>> = OTHER_SENDS;
+    const reviewed: Readonly<Record<string, { command: string } | { reason: string }>> = Object.fromEntries(
+      Object.entries(OTHER_SENDS).filter(([site]) => found.includes(site) || !(site in OTHER_SENDS_PENDING)),
+    );
     expect(found).toEqual(Object.keys(reviewed).sort());
     for (const [site, why] of Object.entries(reviewed)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
 

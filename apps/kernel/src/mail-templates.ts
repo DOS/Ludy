@@ -8,6 +8,7 @@ import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-
 import { notificationMailTemplate } from './notification-mail.ts';
 import { PAYMENT_REMINDER_TEMPLATE, paymentReminderMailTemplate } from './payment-reminder-mail.ts';
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
+import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
 import { usageDeferredMailTemplate } from './usage-deferred-mail.ts';
@@ -33,4 +34,6 @@ export const MAIL_TEMPLATES: MailTemplates = {
   'kernel.conversation_reply': conversationReplyMailTemplate,
   // A booking of the public booking page confirmed, moved or cancelled, and its reminders (#1319).
   'crm.booking': bookingMailTemplate,
+  // A sent quote's mail with the link to its page (#2694).
+  [QUOTE_MAIL_TEMPLATE]: quoteMailTemplate,
 };

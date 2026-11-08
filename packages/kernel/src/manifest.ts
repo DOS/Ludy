@@ -12,10 +12,10 @@ export const kernelManifest = defineModule({
   tables: {
     crove_kernel: {
       activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id'], { summary: 'pii' }),
-      agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at']),
+      agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
-      ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error']),
+      ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error', 'private_read']),
       approval_preset: columns(['key', 'ledger_chief_accountant_only']),
       archive_batch: columns(['seq', 'window_from', 'window_to', 'row_count', 'batch_sha256', 'chain_sha256', 'object_key', 'written_at']),
       archive_verification: columns(['id', 'ok', 'batches', 'rows_checked', 'problems', 'verified_at', 'excused', 'restore_ack']),
@@ -54,7 +54,7 @@ export const kernelManifest = defineModule({
       ddl_event: columns(['id', 'occurred_at', 'session_role', 'set_role', 'command_tag', 'object_type', 'schema_name', 'object_identity', 'backend_pid', 'backend_start', 'alerted_at'], { client_addr: 'pii' }),
       external_call: columns(['org_id', 'id', 'key', 'module', 'target', 'step', 'retry_safety', 'request_hash', 'state', 'calls', 'external_ref', 'error_kind', 'error_code', 'started_at', 'finished_at', 'updated_at']),
       extraction: columns(['org_id', 'id', 'file_id', 'method', 'status', 'checks', 'error', 'tainted', 'created_at', 'version', 'requested_by', 'completed_at', 'entry_count', 'legal_entity_id', 'original_of_proposal_id', 'original_differs'], { result: 'pii' }),
-      file: columns(['org_id', 'id', 'sha256', 'storage_key', 'filename', 'content_type', 'size_bytes', 'source', 'created_by', 'created_at', 'generation', 'duration_ms', 'image_width', 'image_height', 'held_until', 'hold_attempted_at', 'hold_attempts', 'hold_error', 'upload_entity_id', 'inbound_message_id']),
+      file: columns(['org_id', 'id', 'sha256', 'storage_key', 'filename', 'content_type', 'size_bytes', 'source', 'created_by', 'created_at', 'generation', 'duration_ms', 'image_width', 'image_height', 'held_until', 'hold_attempted_at', 'hold_attempts', 'hold_error', 'upload_entity_id', 'inbound_message_id', 'original_deleted_at']),
       file_upload: columns(['org_id', 'id', 'staging_key', 'created_by', 'max_bytes', 'created_at', 'expires_at', 'used_at', 'purpose']),
       idempotency_key: columns(['org_id', 'actor_key', 'key', 'command', 'request_sha256', 'created_at'], { response: 'pii' }),
       inbound_drop: columns(['org_id', 'address_id', 'dropped_count', 'first_dropped_at', 'last_dropped_at']),
@@ -71,6 +71,9 @@ export const kernelManifest = defineModule({
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
+      member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_by_owner', 'set_at']),
+      member_vy_memory: columns(['org_id', 'id', 'member_user_id', 'created_at', 'updated_at'], { body: 'pii' }),
+      member_vy_result: columns(['org_id', 'id', 'member_user_id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'tainted', 'private_read', 'created_at', 'expires_at'], { body: 'pii' }),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
       notification_mute: columns(['org_id', 'user_id', 'kind', 'created_at']),
       number_allocation: columns(['org_id', 'id', 'series_id', 'legal_entity_id', 'number', 'target_type', 'target_id', 'allocated_by', 'allocated_at']),
@@ -83,6 +86,8 @@ export const kernelManifest = defineModule({
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
       party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
+      permission_catalog: columns(['permission', 'grantable_to_viewer', 'entity_roles_count']),
+      permission_default: columns(['base_role', 'permission']),
       position: columns(['org_id', 'id', 'title', 'module', 'role_key', 'reports_to', 'holder_user_id', 'holder_agent_id', 'le_scope', 'flags', 'job_description', 'status', 'created_at', 'updated_at']),
       prober_alert_state: columns(['id', 'problem', 'started_at', 'notified_at', 'updated_at']),
       proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
@@ -131,7 +136,11 @@ export const kernelManifest = defineModule({
   // The approval commands name finance.proposal.approve, which the finance manifest declares. Its own: reading private messages
   // (#2303, plan docs/plan/conversations.md section 8), which conversation_access asks of the database. The Service inbox (CV3, #2306) seeds it
   // for desk.agent: owners, admins and the holders of that role read private messages, other members and viewers never.
-  permissions: [{ key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: ['desk.agent'] }],
+  permissions: [
+    { key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: ['desk.agent'] },
+    // "Làm việc với Vy" (ADR-0049 decision 10): the base roles owner, admin and member hold it by default; these are the preset roles that grant it.
+    { key: 'vy.use', risk: 'R1', defaultRoles: ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager'] },
+  ],
   // Its entities (#1656), each with its table: every type its commands name as their audit target, the records the
   // kernel numbers, and the records other code names by type; apps/kernel/test/manifest.db.test.ts checks them.
   entities: [
@@ -149,6 +158,7 @@ export const kernelManifest = defineModule({
     { type: 'kernel.inbox_item', table: 'inbox_item', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.kill_switch', table: 'kill_switch', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.member_invite', table: 'member_invite', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.member_vy_memory', table: 'member_vy_memory', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.number_allocation', table: 'number_allocation', legalEntityScoped: true, audit: 'append_only' },
     { type: 'kernel.party', table: 'party', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.position', table: 'position', legalEntityScoped: false, audit: 'command' },

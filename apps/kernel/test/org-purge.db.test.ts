@@ -94,6 +94,15 @@ suite('org purge on PostgreSQL (#1024)', () => {
     const org = await createOrg(rt, asUser(owner), name);
     const { acceptPath } = await rt.execute<{ acceptPath: string }>('kernel.member.invite.create', { email: `member-${tag}@purge.test`, role: 'admin' }, { actor: asMfa(owner), orgId: org.orgId });
     await rt.executeOrgless('kernel.member.invite.accept', { token: acceptPath.split('#')[1] }, { actor: asUser(member) });
+    // A connected extension device of that member (#2740): the purge deletes it with the org, and the member rows going
+    // after it must not make the removal trigger write an audit row of a purged org.
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, expires_at, created_by)
+         VALUES ($1, $2, $3, 'Purge test device', ARRAY['meetings'], now() + interval '30 days', $2)`,
+        [org.orgId, member, randomBytes(32)],
+      ),
+    );
 
     const booked = await ingest(org.orgId, owner, FIXTURE, 'booked.xml');
     const { proposalId } = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, booked.fileId);
@@ -441,6 +450,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await status(s.org.orgId)).toBe('closed');
 
     const after = await snapshot(s.org.orgId);
+    // The extension device went with the org, and the member rows going after it left no audit row (the +1 below is the purge's own).
+    expect(before['crove_kernel.extension_token']).toBe(1);
+    expect(after['crove_kernel.extension_token'] ?? 0).toBe(0);
+    expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extension.token.auto_revoked'`, [s.org.orgId])).rowCount)).toBe(0);
     // Kept whole: the books, the audit and outbox streams, inbound addresses.
     // Bank feed accounts (#2044) are working rows, deleted with the connections they map; so are the sales e-invoice series, drafts and lines (#2500) and the stock aliases
     // (#2512). The stock moves are kept with the books, and the item they name with them.

@@ -46,6 +46,11 @@ export const AI_FEATURES = {
   // The finance coworker on a sales e-invoice draft (#2505): the lines, the VAT rate the text states and the customer it is for, proposed from a text a person typed or pasted. A figure the text
   // does not hold, or a rate the invoice date does not allow, refuses the proposal; a person reads the whole draft and issues it.
   'finance.einvoice_draft': 'finance',
+  // The finance coworker on payroll (#2534): prepare the month from the diff of last month, put the anomalies code found in a sentence, explain one payslip. The model sees the pseudonymized sheet only
+  // (an alias per employee, fixed component labels and amounts); every text is refused when it states a figure it was not given, and a person decides.
+  'finance.payroll_prepare': 'finance',
+  'finance.payroll_flag': 'finance',
+  'finance.payroll_explain': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
@@ -68,6 +73,9 @@ export type AiUsageSink = (usage: AiUsage) => void;
 export interface AiScope {
   orgId: string;
   agentId?: string | undefined;
+  // Vy working for one member (ADR-0049 decision 6): the run this call belongs to. The member is the meter's own user and the agent is
+  // the kernel's (the member's own Vy), never a value of the call.
+  memberRunId?: string | undefined;
   meter: AiMeter;
 }
 
@@ -76,6 +84,8 @@ export interface AiCall {
   module: string;
   orgId: string;
   agentId: string | null;
+  // Set for a call made by Vy in member mode: the run it belongs to, ids only.
+  memberRunId?: string | null | undefined;
 }
 
 export interface AiMeter {
@@ -135,7 +145,7 @@ export async function metered<R extends { usage: { inputTokens: number | undefin
   const scope = scopes.getStore();
   if (!scope) throw new AiMeterMissingError(feature);
   const { meter } = scope;
-  const info: AiCall = { feature, module: AI_FEATURES[feature], orgId: scope.orgId, agentId: scope.agentId ?? null };
+  const info: AiCall = { feature, module: AI_FEATURES[feature], orgId: scope.orgId, agentId: scope.agentId ?? null, memberRunId: scope.memberRunId ?? null };
   await meter.admit(info);
   const settle = async (used: AiUsage) => {
     onUsage?.(used);
