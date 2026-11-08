@@ -1546,6 +1546,7 @@ export const en = {
       saveFailed: 'This device has no room left to save the recording, so it stopped. What was recorded is uploaded now.',
       nothingSaved: 'No part was saved, so there is nothing to upload.',
       uploaded: 'The recording is uploaded and encrypted.',
+      uploadedPartial: 'Uploaded what was recorded. The end of the meeting is missing because this device ran out of room.',
       uploadFailed: 'The recording could not be uploaded; it is still on this device and you can retry below.',
       recoverTitle: 'Recordings not uploaded yet',
       recoverHint: 'These were interrupted (page reload, closed tab) or could not be uploaded. Upload to keep one, or discard it to remove it from this device.',

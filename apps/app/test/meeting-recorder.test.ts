@@ -170,3 +170,16 @@ describe('a recording on the device', () => {
     expect(await store.chunks('r1')).toHaveLength(0);
   });
 });
+
+describe('heartbeat', () => {
+  it('touch refreshes updatedAt and never moves the elapsed time back', async () => {
+    const store = memoryStore();
+    const writer = await beginRecording(store, { id: 'r2', scope: 's', meetingId: 'm', title: 't', kind: 'audio', mimeType: 'audio/webm', startedAt: 1 });
+    await writer.addChunk(new Blob(['a']), 5000);
+    const before = writer.meta().updatedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    await writer.touch(3000);
+    expect(writer.meta().elapsedMs).toBe(5000);
+    expect(writer.meta().updatedAt).toBeGreaterThan(before);
+  });
+});

@@ -106,6 +106,8 @@ export interface RecordingMeta {
   startedAt: number;
   elapsedMs: number;
   chunkCount: number;
+  // Touched while the recording is live (every chunk and a heartbeat), so another tab can tell it is still being written.
+  updatedAt: number;
 }
 
 // Where the chunks live. The screen uses IndexedDB; tests use a map.
@@ -142,9 +144,15 @@ export function createIndexedDbChunkStore(factory: IDBFactory = indexedDB): Chun
       db.createObjectStore('recordings', { keyPath: 'id' });
       db.createObjectStore('chunks', { keyPath: ['id', 'seq'] });
     };
-    open.onsuccess = () => resolve(open.result);
+    open.onsuccess = () => {
+      // A newer version of the app in another tab may upgrade the database: let it.
+      open.result.onversionchange = () => open.result.close();
+      resolve(open.result);
+    };
     open.onerror = () => reject(open.error ?? new Error('IndexedDB is not available'));
   });
+  // A refused open is reported by the first call that needs the database, not as an unhandled rejection.
+  opened.catch(() => undefined);
   const run = async (stores: string[], mode: IDBTransactionMode, work: (tx: IDBTransaction) => void): Promise<void> => {
     const tx = (await opened).transaction(stores, mode);
     work(tx);
@@ -176,10 +184,11 @@ export function createIndexedDbChunkStore(factory: IDBFactory = indexedDB): Chun
 export interface RecordingWriter {
   meta: () => RecordingMeta;
   addChunk(chunk: Blob, elapsedMs: number): Promise<void>;
+  touch(elapsedMs: number): Promise<void>;
 }
 
-export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta, 'chunkCount' | 'elapsedMs'>): Promise<RecordingWriter> {
-  let current: RecordingMeta = { ...meta, chunkCount: 0, elapsedMs: 0 };
+export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta, 'chunkCount' | 'elapsedMs' | 'updatedAt'>): Promise<RecordingWriter> {
+  let current: RecordingMeta = { ...meta, chunkCount: 0, elapsedMs: 0, updatedAt: Date.now() };
   await store.put(current);
   // Writes queue up behind each other: the browser may deliver a chunk while the last one is still being stored.
   let queue: Promise<void> = Promise.resolve();
@@ -189,7 +198,15 @@ export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta
       const next = queue.then(async () => {
         if (chunk.size === 0) return;
         await store.append(current.id, current.chunkCount, chunk);
-        current = { ...current, chunkCount: current.chunkCount + 1, elapsedMs };
+        current = { ...current, chunkCount: current.chunkCount + 1, elapsedMs, updatedAt: Date.now() };
+        await store.put(current);
+      });
+      queue = next.catch(() => undefined);
+      return next;
+    },
+    touch(elapsedMs) {
+      const next = queue.then(async () => {
+        current = { ...current, elapsedMs: Math.max(current.elapsedMs, elapsedMs), updatedAt: Date.now() };
         await store.put(current);
       });
       queue = next.catch(() => undefined);

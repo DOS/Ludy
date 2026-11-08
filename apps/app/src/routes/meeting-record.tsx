@@ -34,6 +34,9 @@ import {
 } from '../lib/meeting-recorder.ts';
 import { toast } from '../lib/toast.ts';
 
+// A recording whose meta was touched this recently is still being written, by another tab.
+const LIVE_WITHIN_MS = 15_000;
+
 type Phase = 'setup' | 'recording' | 'paused' | 'uploading';
 
 // Everything a running recording holds; one object so cleanup stops all of it.
@@ -45,6 +48,10 @@ interface Live {
   wakeLock: { release(): Promise<void> } | null;
   failed: boolean;
 }
+
+type WakeLockApi = { request(type: 'screen'): Promise<{ release(): Promise<void> }> };
+const requestWakeLock = async (): Promise<{ release(): Promise<void> } | null> =>
+  (await (navigator as Navigator & { wakeLock?: WakeLockApi }).wakeLock?.request('screen').catch(() => null)) ?? null;
 
 export function MeetingRecordPage() {
   const t = useTranslations('meetings');
@@ -76,11 +83,15 @@ export function MeetingRecordPage() {
   const live = useRef<Live | null>(null);
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const unmounted = useRef(false);
+  // The meeting created for this screen, reused if a later local step fails, so a retry makes no second meeting.
+  const createdMeetingId = useRef<string | null>(null);
+  // Recordings this tab wrote: shown in the recovery list at once; another tab's only once its heartbeat is stale.
+  const ownIds = useRef(new Set<string>());
 
   const refreshRecoverable = async () => {
     if (!store || !scope) return;
     const metas = await store.list(scope).catch(() => []);
-    if (!unmounted.current) setRecoverable(metas);
+    if (!unmounted.current) setRecoverable(metas.filter((m) => ownIds.current.has(m.id) || Date.now() - m.updatedAt > LIVE_WITHIN_MS));
   };
 
   useEffect(() => {
@@ -94,6 +105,27 @@ export function MeetingRecordPage() {
     const timer = setInterval(() => setElapsed(clock.current.elapsedMs(Date.now())), 500);
     return () => clearInterval(timer);
   }, [phase]);
+
+  // While recording or paused, the meta is touched every few seconds so another tab can tell this one is live (a pause writes no chunk).
+  useEffect(() => {
+    if (phase !== 'recording' && phase !== 'paused') return;
+    const beat = setInterval(() => void live.current?.writer.touch(clock.current.elapsedMs(Date.now())).catch(() => undefined), 5000);
+    return () => clearInterval(beat);
+  }, [phase]);
+
+  // The browser drops the wake lock when the tab is hidden: take it again when the tab is back.
+  useEffect(() => {
+    const again = () => {
+      const l = live.current;
+      if (document.visibilityState !== 'visible' || !l || l.recorder.state === 'inactive') return;
+      void requestWakeLock().then((lock) => {
+        if (lock && live.current === l) l.wakeLock = lock;
+        else void lock?.release().catch(() => undefined);
+      });
+    };
+    document.addEventListener('visibilitychange', again);
+    return () => document.removeEventListener('visibilitychange', again);
+  }, []);
 
   // Leaving the screen mid-recording stops the devices; what was saved stays on the device and is offered again.
   useEffect(() => {
@@ -139,7 +171,14 @@ export function MeetingRecordPage() {
       setError(t('record.unsupported'));
       return;
     }
-    let stream: MediaStream | null = null;
+    // The device store is opened first: a failure here leaves no meeting behind.
+    try {
+      await store.list(scope);
+    } catch {
+      setError(t('record.unsupported'));
+      return;
+    }
+    let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
@@ -149,16 +188,17 @@ export function MeetingRecordPage() {
       setError(t(withVideo ? 'record.deviceDeniedVideo' : 'record.deviceDenied'));
       return;
     }
-    let meetingId: string;
-    try {
-      // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-      meetingId = (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod })).meetingId;
-    } catch (err) {
+    const stopTracks = () => {
       for (const track of stream.getTracks()) track.stop();
-      setError(errorMessage(err));
-      return;
-    }
+    };
+    // Leaving the screen while setup is still awaiting: nothing may keep capturing with no controls.
+    if (unmounted.current) return stopTracks();
     try {
+      if (!createdMeetingId.current) {
+        // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
+        createdMeetingId.current = (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod })).meetingId;
+      }
+      const meetingId = createdMeetingId.current;
       const mimeType = pickRecorderMime((type) => MediaRecorder.isTypeSupported(type), kind);
       const recorder = new MediaRecorder(stream, {
         ...(mimeType ? { mimeType } : {}),
@@ -174,8 +214,13 @@ export function MeetingRecordPage() {
         mimeType: recorder.mimeType || mimeType || (withVideo ? 'video/webm' : 'audio/webm'),
         startedAt: Date.now(),
       });
-      const wakeLock = await (navigator as Navigator & { wakeLock?: { request(type: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen').catch(() => null);
-      const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: wakeLock ?? null, failed: false };
+      ownIds.current.add(writer.meta().id);
+      const wakeLock = await requestWakeLock();
+      const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock, failed: false };
+      if (unmounted.current) {
+        releaseDevices(l, false);
+        return;
+      }
       live.current = l;
       recorder.ondataavailable = (event) => {
         const write = writer.addChunk(event.data, clock.current.elapsedMs(Date.now())).catch(() => {
@@ -196,7 +241,9 @@ export function MeetingRecordPage() {
       recorder.start(5000);
       setPhase('recording');
     } catch (err) {
-      for (const track of stream.getTracks()) track.stop();
+      // Everything taken so far is released together, whichever step failed.
+      if (live.current) releaseDevices(live.current, true);
+      else stopTracks();
       setError(errorMessage(err));
     }
   };
@@ -236,10 +283,10 @@ export function MeetingRecordPage() {
     const meta = l.writer.meta();
     releaseDevices(l, false);
     if (unmounted.current) return;
-    await uploadAndClear(meta);
+    await uploadAndClear(meta, l.failed);
   };
 
-  const uploadAndClear = async (meta: RecordingMeta): Promise<boolean> => {
+  const uploadAndClear = async (meta: RecordingMeta, partial = false): Promise<boolean> => {
     if (!store) return false;
     setBusyId(meta.id);
     try {
@@ -253,7 +300,7 @@ export function MeetingRecordPage() {
       // Uploaded: the device copy is cleared at once.
       await store.remove(meta.id);
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
-      toast(t('record.uploaded'), 'success');
+      toast(t(partial ? 'record.uploadedPartial' : 'record.uploaded'), 'success');
       void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: meta.meetingId } });
       return true;
     } catch (err) {

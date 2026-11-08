@@ -1544,6 +1544,7 @@ export const vi = {
       saveFailed: 'Máy không còn chỗ để lưu bản ghi nên đã dừng. Phần đã ghi đang được tải lên.',
       nothingSaved: 'Chưa có đoạn nào được lưu nên không có gì để tải lên.',
       uploaded: 'Đã tải bản ghi lên và mã hóa.',
+      uploadedPartial: 'Đã tải phần ghi được lên. Phần cuối cuộc họp bị thiếu vì máy hết chỗ lưu.',
       uploadFailed: 'Chưa tải được bản ghi lên; bản ghi vẫn nằm trên máy này và bạn có thể tải lại bên dưới.',
       recoverTitle: 'Bản ghi chưa tải lên',
       recoverHint: 'Các bản ghi này bị gián đoạn (tải lại trang, đóng tab) hoặc chưa tải lên được. Tải lên để giữ, hoặc bỏ đi để xóa khỏi máy này.',
