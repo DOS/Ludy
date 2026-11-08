@@ -64,12 +64,14 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_crm.quote_link',
   // Q4 of the CRM quotes (#2696, ADR-0050): the sales order of an accepted quote, its frozen lines and the org's per-year number counter.
   'crove_crm.sales_order',
   'crove_crm.sales_order_counter',
   'crove_crm.sales_order_line',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.marketplace_connection',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -226,6 +228,8 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// A marketplace connection is unique per entity, provider and platform, so each seeded one names a provider of its own.
+let marketplaceSeq = 0;
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
@@ -775,6 +779,27 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
     update: { set: 'description = description' },
   },
+  // A public link to a sent quote (Q2 of docs/plan/crm-quotes.md, #2694): the hash of its token, its expiry and who made it. The quote it names has left
+  // `draft` (a link is made for a sent quote only), so the factory seeds it as the database owner would after a send.
+  'crove_crm.quote_link': {
+    noInsertControl: 'a link is made for a quote that has been sent, which only the send command makes (a guard trigger), so the own-org insert control cannot build its setup as a login role; crm-quote-send.db.test.ts tests the link insert as the runtime login',
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link' },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), quote_id: quote, token_sha256: hex64(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), created_by: o.owner },
+      };
+    },
+  },
   // The org's one row of quote settings (Q1): the days a quote stays valid, the VAT rate of a new line and the default terms. Tenant roles update those and who
   // set them (a column grant), so the update probes assign the days to themselves.
   'crove_crm.quote_setting': {
@@ -1094,6 +1119,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // default entity), so each row gets its own year.
   'crove_finance.legal_entity_books': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), regime: 'tt133', chart_version: '2026.1', effective_from: `${legalEntityBooksYear++}-01-01`, created_by: o.owner } }),
+  },
+  // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
+  // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
+  'crove_finance.marketplace_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      // An account is one per entity, provider and platform, so each row names a provider of its own.
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const connection = { ...channelConnectionRow(o), provider };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
+      };
+    },
   },
   // #1398: an org's MISA SME item and warehouse codes (Mã hàng, Mã kho) for purchase lines on a stock account (152, 153,
   // 156 or a sub-account of one), one row per (org, account). Owners and admins set and clear them.
