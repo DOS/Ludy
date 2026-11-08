@@ -65,7 +65,13 @@ interface MailParts {
   date?: string;
   // What the receiving server says of the sender: 'pass' (the default), 'none' (no header), or 'foreign' (a pass written by another server).
   auth?: 'pass' | 'none' | 'foreign';
+  // Files the customer attached (#2758): the name and the bytes as the customer's client sent them, with the MIME type it claimed.
+  files?: Array<{ name: string; bytes: Uint8Array; type: string }>;
 }
+// A 1x1 PNG, a minimal JPEG and a PDF header: what the intake must tell apart by the bytes themselves.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const JPEG = Buffer.from('ffd8ffe000104a46494600010100000100010000ffd9', 'hex');
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n', 'latin1');
 const fromDomainOf = (from: string | undefined) => /@([a-z0-9.-]+)/i.exec(from ?? 'khach@mau.test')?.[1] ?? 'mau.test';
 // A raw message as a customer's mail server would deliver it.
 function raw(parts: MailParts): Uint8Array {
@@ -81,7 +87,14 @@ function raw(parts: MailParts): Uint8Array {
     ...Object.entries(parts.headers ?? {}).map(([k, v]) => `${k}: ${v}`),
     'MIME-Version: 1.0',
   ];
-  if (parts.html !== undefined) {
+  if (parts.files && parts.files.length > 0) {
+    const boundary = `b-${randomUUID()}`;
+    lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: 8bit', '', parts.body ?? 'Cho tôi hỏi giá gạo ST25.');
+    for (const file of parts.files) {
+      lines.push(`--${boundary}`, `Content-Type: ${file.type}; name="${file.name}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${file.name}"`, '', Buffer.from(file.bytes).toString('base64'));
+    }
+    lines.push(`--${boundary}--`, '');
+  } else if (parts.html !== undefined) {
     lines.push('Content-Type: text/html; charset=utf-8', 'Content-Transfer-Encoding: 8bit', '', parts.html);
   } else {
     lines.push('Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: 8bit', '', parts.body ?? 'Cho tôi hỏi giá gạo ST25.');
@@ -604,5 +617,109 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     for (const text of [audits, events]) {
       expect(text).not.toMatch(/bí mật|0912345678|bimat@khach|Nguyễn Văn Mẫu/i);
     }
+  });
+  describe('images from customer mail (#2758)', () => {
+    const attachmentRows = (o: Org) =>
+      rows<{ id: string; message_id: string; state: string; content_type: string | null; size_bytes: number | null; source_url: string | null; storage_key: string; kind: string }>(
+        'SELECT id, message_id, state, content_type, size_bytes, source_url, storage_key, kind FROM crove_kernel.conversation_attachment WHERE org_id = $1 ORDER BY created_at, id',
+        [o.orgId],
+      );
+
+    it('stores a PNG and a JPEG from the mail and shows them in the thread; a PDF is a line of name, size and type with no bytes', async () => {
+      const o = await org();
+      const out = await deliver(o.address, raw({ to: o.address, messageId: '<img1@mau.test>', body: 'Ảnh hàng bị hỏng đây ạ.', files: [{ name: 'hong-1.png', bytes: PNG, type: 'image/png' }, { name: 'hong-2.jpg', bytes: JPEG, type: 'image/jpeg' }, { name: 'hoa-don.pdf', bytes: PDF, type: 'application/pdf' }] }));
+      expect(out).toMatchObject({ conversation: 'stored' });
+      const [thread] = await threads(o);
+      const stored = await attachmentRows(o);
+      expect(stored.map((a) => [a.state, a.content_type, a.source_url, a.kind])).toEqual([['stored', 'image/png', null, 'email'], ['stored', 'image/jpeg', null, 'email']]);
+      const shown = await detail(o, o.owner, thread?.id as string);
+      expect(shown.messages[0]?.attachments.map((a) => a.contentType)).toEqual(['image/png', 'image/jpeg']);
+      // The bytes are in the store under the keys the rows reserved, and are the customer's own.
+      for (const [i, a] of stored.entries()) expect(Buffer.from(await store.get(a.storage_key)).equals(i === 0 ? PNG : JPEG)).toBe(true);
+      const [message] = await messagesOf(thread?.id as string);
+      expect(message?.body).toContain('hoa-don.pdf (PDF,');
+      expect(message?.body).not.toContain('hong-1.png');
+      expect(message?.body).not.toContain('chưa hiển thị');
+      // A member without the direct-message permission reads neither the thread nor an image.
+      const first = stored[0] as { id: string };
+      await expect(query(o, o.member, 'kernel.conversation.attachment_get', { attachmentId: first.id })).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' });
+      expect(await query(o, o.owner, 'kernel.conversation.attachment_get', { attachmentId: first.id })).toMatchObject({ contentType: 'image/png' });
+    });
+
+    it('does not store as an image a file whose name or type says image but whose bytes are not one, nor an oversized image, and the text still arrives', async () => {
+      const o = await org();
+      const huge = Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024 + 10)]);
+      await deliver(o.address, raw({ to: o.address, messageId: '<img2@mau.test>', body: 'Chữ vẫn phải đến.', files: [{ name: 'gia-mao.png', bytes: PDF, type: 'image/png' }, { name: 'lon.png', bytes: huge, type: 'image/png' }] }));
+      expect(await attachmentRows(o)).toEqual([]);
+      const [thread] = await threads(o);
+      const [message] = await messagesOf(thread?.id as string);
+      expect(message?.body).toContain('Chữ vẫn phải đến.');
+      expect(message?.body).toContain('gia-mao.png (không phải ảnh hợp lệ,');
+      expect(message?.body).toContain('lon.png (ảnh');
+      expect(message?.body).toContain('quá lớn nên không lưu');
+    });
+
+    it('keeps an unverified sender’s images and the thread’s mark, and a redelivery stores nothing twice', async () => {
+      const o = await org();
+      const message = raw({ to: o.address, messageId: '<img3@mau.test>', auth: 'none', files: [{ name: 'a.png', bytes: PNG, type: 'image/png' }] });
+      await deliver(o.address, message);
+      expect(await deliver(o.address, message)).toMatchObject({ conversation: 'duplicate' });
+      expect((await attachmentRows(o)).map((a) => a.state)).toEqual(['stored']);
+      const [thread] = await threads(o);
+      const shown = await detail(o, o.owner, thread?.id as string);
+      expect(shown.conversation.senderUnverified).toBe(true);
+      expect(shown.messages[0]?.attachments).toHaveLength(1);
+    });
+
+    it('writes the bytes a worker left unwritten when the mail is delivered again, and drops a reserved row nobody wrote after an hour', async () => {
+      const o = await org();
+      const message = raw({ to: o.address, messageId: '<img4@mau.test>', files: [{ name: 'a.png', bytes: PNG, type: 'image/png' }, { name: 'b.jpg', bytes: JPEG, type: 'image/jpeg' }] });
+      // A worker that died after the intake: the rows are reserved and no byte is written.
+      let failing = true;
+      const flaky: BlobStore = {
+        put: async (key, bytes) => {
+          if (failing && key.startsWith('conversation/')) throw new Error('store down');
+          return store.put(key, bytes);
+        },
+        get: (key) => store.get(key),
+        delete: (key) => store.delete(key),
+      };
+      const blobId = newInboundBlobId();
+      await store.put(inboundKey(blobId), message);
+      const job = { blobId, sha256: sha256Hex(message), sizeBytes: message.byteLength, recipient: o.address };
+      await expect(processInboundEmail({ runtime: worker, store: flaky, domain: DOMAIN, extract, authservId: AUTHSERV }, job)).rejects.toThrow('store down');
+      expect((await attachmentRows(o)).map((a) => [a.state, a.source_url])).toEqual([['pending', null], ['pending', null]]);
+      failing = false;
+      expect(await processInboundEmail({ runtime: worker, store: flaky, domain: DOMAIN, extract, authservId: AUTHSERV }, job)).toMatchObject({ conversation: 'duplicate' });
+      expect((await attachmentRows(o)).map((a) => [a.state, a.content_type])).toEqual([['stored', 'image/png'], ['stored', 'image/jpeg']]);
+      // A reserved row whose bytes never came is dropped by the worker's list after an hour, and its key is queued for the blob sweep.
+      await rows("INSERT INTO crove_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, storage_key, created_at) SELECT org_id, message_id, channel_connection_id, kind, 'conversation/' || org_id::text || '/' || repeat('a', 64), now() - interval '2 hours' FROM crove_kernel.conversation_attachment WHERE org_id = $1 LIMIT 1", [o.orgId]);
+      expect(await attachmentRows(o)).toHaveLength(3);
+      const { rows: due } = await workerPool.query('SELECT * FROM crove_kernel.conversation_attachment_due(10, 60)');
+      expect(due).toEqual([]);
+      expect(await attachmentRows(o)).toHaveLength(2);
+    });
+
+    it('goes with its thread on erase_contact and the retention purge, and keeps no file name or byte in an audit row or an event', async () => {
+      const o = await org();
+      const message = raw({ to: o.address, messageId: '<img5@mau.test>', from: 'Bí Mật <bimat@khach.test>', files: [{ name: 'ten-tep-bi-mat.png', bytes: PNG, type: 'image/png' }, { name: 'ten-pdf-bi-mat.pdf', bytes: PDF, type: 'application/pdf' }] });
+      await deliver(o.address, message);
+      const audits = JSON.stringify(await rows('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]));
+      const events = JSON.stringify(await rows('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1', [o.orgId]));
+      for (const text of [audits, events]) expect(text).not.toMatch(/ten-tep-bi-mat|ten-pdf-bi-mat|bimat@khach|iVBOR/);
+      const [stored] = await attachmentRows(o);
+      const [thread] = await threads(o);
+      await rt.execute('kernel.conversation.erase_contact', { conversationId: thread?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(await attachmentRows(o)).toEqual([]);
+      const doomed = await rows<{ storage_key: string }>('SELECT storage_key FROM crove_kernel.conversation_blob_doomed');
+      expect(doomed.map((d) => d.storage_key)).toContain(stored?.storage_key);
+      // The retention purge: a second org's old thread.
+      const p = await org();
+      await deliver(p.address, raw({ to: p.address, messageId: '<img6@mau.test>', files: [{ name: 'b.png', bytes: PNG, type: 'image/png' }] }));
+      expect(await attachmentRows(p)).toHaveLength(1);
+      await rows("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '30 months', opened_at = now() - interval '30 months' WHERE org_id = $1", [p.orgId]);
+      await sys(p, 'kernel.conversation.purge_expired', { limit: 100 });
+      expect(await attachmentRows(p)).toEqual([]);
+    });
   });
 });

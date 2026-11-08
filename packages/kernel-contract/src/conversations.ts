@@ -125,6 +125,9 @@ export const zConversationEvent = z.strictObject({
   // Email only: the mail server that received it vouched for the sender's domain (SPF, DKIM or DMARC pass, read from its Authentication-Results). A mail
   // that is not verified does not join a thread by its References and brings no contact link with it.
   verified: z.boolean().optional(),
+  // Email only (#2758): how many images the worker found in the mail (it read their type from the bytes and held each to the size cap). The core reserves
+  // a row with a blob key for each and hands the keys back; the worker writes the bytes, which never travel in an event.
+  mailImages: z.number().int().min(1).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
 });
 export type ConversationEvent = z.infer<typeof zConversationEvent>;
 
@@ -139,7 +142,13 @@ export const zConversationEmailIngest = z.strictObject({
   events: z.array(zConversationEvent.refine((event) => event.kind === 'email', 'email events only')).min(1).max(CONVERSATION_EVENTS_MAX),
 });
 export type ConversationEmailIngestInput = z.infer<typeof zConversationEmailIngest>;
-export const zConversationIngested = z.strictObject({ stored: z.number().int().min(0), duplicates: z.number().int().min(0), ignored: z.number().int().min(0) });
+export const zConversationIngested = z.strictObject({
+  stored: z.number().int().min(0),
+  duplicates: z.number().int().min(0),
+  ignored: z.number().int().min(0),
+  // Email images whose bytes the worker still has to write (#2758): the reserved rows of the mail's message, new or left by a worker that died.
+  images: z.array(z.strictObject({ attachmentId: zId, storageKey: z.string().min(1).max(200) })).optional(),
+});
 export type ConversationIngested = z.infer<typeof zConversationIngested>;
 
 // What a thread's customer looks like on screen: the platform's name when it gave one, else a short tail of its id.

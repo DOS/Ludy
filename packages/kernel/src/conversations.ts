@@ -82,6 +82,7 @@ import {
   phoneKeysIn,
   type Availability,
   type ConversationIntent,
+  CONVERSATION_ATTACHMENTS_MAX,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationAttachmentView,
   type ConversationAutoDraft,
@@ -246,6 +247,7 @@ export const conversationIngest = defineCommand({
 
 async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[]): Promise<ConversationIngested> {
   const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
+  const reserved: MailImageSlot[] = [];
   const connection = await connectionOf(ctx, connectionId);
   const rules = connection && connection.status === 'active' ? conversationRules(connection.provider) : null;
   if (!connection || !rules) {
@@ -260,11 +262,12 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
       out.ignored++;
       continue;
     }
-    const result = await ingestEvent(ctx, connectionId, connection.provider, rules.windowHours, event);
+    const result = await ingestEvent(ctx, connectionId, connection.provider, rules.windowHours, event, reserved);
     out[result]++;
   }
+  // The audit row holds counts only: the reserved keys are the worker's to write and are never recorded.
   ctx.audit({ connection_id: connectionId, ...out });
-  return out;
+  return reserved.length > 0 ? { ...out, images: reserved } : out;
 }
 
 // The org's email connection (#2439): one, made when the first customer mail arrives, so an org that never gets mail has none. It has no
@@ -385,7 +388,37 @@ async function emailThreadId(ctx: CommandContext, connectionId: string, event: C
   return row?.external_thread_id ?? event.messageId;
 }
 
-async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, original: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
+// A mail's image whose bytes the worker has yet to write: its reserved row and blob key (#2758).
+type MailImageSlot = { attachmentId: string; storageKey: string };
+
+// The rows of a mail's images (#2758), reserved with no source address: the worker already holds the bytes, so nothing is fetched. Each has a blob
+// key of its own, as for a platform's image, and the worker writes the bytes under it and records them (attachment_record).
+async function reserveMailImages(ctx: CommandContext, messageId: string, connectionId: string, count: number): Promise<MailImageSlot[]> {
+  const rows = await ctx.trx
+    .insertInto('crove_kernel.conversation_attachment')
+    .values(
+      Array.from({ length: count }, () => ({
+        org_id: ctx.orgId,
+        message_id: messageId,
+        channel_connection_id: connectionId,
+        kind: 'email' as const,
+        storage_key: conversationKey(ctx.orgId, newConversationBlobId()),
+        created_at: ctx.now,
+      })),
+    )
+    .returning(['id', 'storage_key'])
+    .execute();
+  return rows.map((r) => ({ attachmentId: r.id, storageKey: r.storage_key }));
+}
+
+async function ingestEvent(
+  ctx: CommandContext,
+  connectionId: string,
+  provider: string,
+  windowHours: number | null,
+  original: ConversationEvent,
+  reserved: MailImageSlot[],
+): Promise<'stored' | 'duplicates' | 'ignored'> {
   let event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
@@ -431,6 +464,21 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         const has = await ctx.trx.selectFrom('crove_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
         if (!has) await addAttachments(ctx, existing.id, connectionId, event.kind, event.attachments);
       }
+    }
+    // A redelivery of a mail whose worker died before it wrote every image: the rows it reserved are handed out again, so the images are not lost.
+    if (event.kind === 'email' && event.mailImages && existing.direction === 'in' && !existing.platform_removed_at) {
+      const waiting = await ctx.trx
+        .selectFrom('crove_kernel.conversation_attachment')
+        .select(['id', 'storage_key'])
+        .where('org_id', '=', ctx.orgId)
+        .where('message_id', '=', existing.id)
+        .where('state', '=', 'pending')
+        .where('source_url', 'is', null)
+        .orderBy('created_at')
+        .orderBy('id')
+        .limit(CONVERSATION_ATTACHMENTS_MAX)
+        .execute();
+      for (const w of waiting) reserved.push({ attachmentId: w.id, storageKey: w.storage_key });
     }
     return 'duplicates';
   }
@@ -712,6 +760,8 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
   // them to the worker. The message keeps the placeholder text it was stored with until then, and for good when the fetch cannot be made.
   if (event.direction === 'in' && event.attachments && event.attachments.length > 0) await addAttachments(ctx, stored.id, connectionId, event.kind, event.attachments);
+  // A mail's images (#2758): one reserved row each, for the worker to write its bytes under; the thread shows each once it is stored.
+  if (event.kind === 'email' && event.direction === 'in' && event.mailImages) reserved.push(...(await reserveMailImages(ctx, stored.id, connectionId, event.mailImages)));
   // A draft answers the message that was last when it was asked for: a newer message of the thread (a customer's, or the org's own written in the platform's
   // inbox, which answers it) makes it stale, its text dropped (a new draft may be made).
   await staleDrafts(ctx, conversation.id);
