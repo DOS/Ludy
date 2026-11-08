@@ -22,6 +22,7 @@ import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.
 import {
   assembleRecording,
   beginRecording,
+  prepareCapture,
   createClock,
   createIndexedDbChunkStore,
   formatClock,
@@ -99,6 +100,14 @@ export function MeetingRecordPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, scope]);
 
+  // A recording another tab (or the page before a reload) was writing is offered once its heartbeat is stale, so look again while idle.
+  useEffect(() => {
+    if (phase !== 'setup') return;
+    const poll = setInterval(() => void refreshRecoverable(), 5000);
+    return () => clearInterval(poll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, store, scope]);
+
   // The timer on screen; the clock itself is exact, this only repaints it.
   useEffect(() => {
     if (phase !== 'recording') return;
@@ -171,79 +180,72 @@ export function MeetingRecordPage() {
       setError(t('record.unsupported'));
       return;
     }
-    // The device store is opened first: a failure here leaves no meeting behind.
-    try {
-      await store.list(scope);
-    } catch {
-      setError(t('record.unsupported'));
-      return;
-    }
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-        video: withVideo ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
-      });
-    } catch {
-      setError(t(withVideo ? 'record.deviceDeniedVideo' : 'record.deviceDenied'));
-      return;
-    }
-    const stopTracks = () => {
-      for (const track of stream.getTracks()) track.stop();
-    };
-    // Leaving the screen while setup is still awaiting: nothing may keep capturing with no controls.
-    if (unmounted.current) return stopTracks();
-    try {
-      if (!createdMeetingId.current) {
+    const result = await prepareCapture<MediaStream, MediaRecorder>({
+      openStore: async () => void (await store.list(scope)),
+      getStream: () =>
+        navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true },
+          video: withVideo ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+        }),
+      createMeeting: async () => {
         // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-        createdMeetingId.current = (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod })).meetingId;
-      }
-      const meetingId = createdMeetingId.current;
-      const mimeType = pickRecorderMime((type) => MediaRecorder.isTypeSupported(type), kind);
-      const recorder = new MediaRecorder(stream, {
-        ...(mimeType ? { mimeType } : {}),
-        audioBitsPerSecond: 64_000,
-        ...(withVideo ? { videoBitsPerSecond: 1_500_000 } : {}),
-      });
-      const writer = await beginRecording(store, {
-        id: crypto.randomUUID(),
-        scope,
-        meetingId,
-        title: title.trim(),
-        kind,
-        mimeType: recorder.mimeType || mimeType || (withVideo ? 'video/webm' : 'audio/webm'),
-        startedAt: Date.now(),
-      });
-      ownIds.current.add(writer.meta().id);
-      const wakeLock = await requestWakeLock();
-      const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock, failed: false };
-      if (unmounted.current) {
-        releaseDevices(l, false);
-        return;
-      }
-      live.current = l;
-      recorder.ondataavailable = (event) => {
-        const write = writer.addChunk(event.data, clock.current.elapsedMs(Date.now())).catch(() => {
-          // The device refused a chunk (storage full): keep what is saved, stop, and say so.
-          if (!l.failed) {
-            l.failed = true;
-            setError(t('record.saveFailed'));
-            if (l.recorder.state !== 'inactive') l.recorder.stop();
-          }
+        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod })).meetingId;
+        return createdMeetingId.current;
+      },
+      makeRecorder: (stream) => {
+        const mimeType = pickRecorderMime((type) => MediaRecorder.isTypeSupported(type), kind);
+        return new MediaRecorder(stream, {
+          ...(mimeType ? { mimeType } : {}),
+          audioBitsPerSecond: 64_000,
+          ...(withVideo ? { videoBitsPerSecond: 1_500_000 } : {}),
         });
-        l.pending.add(write);
-        void write.finally(() => l.pending.delete(write));
-      };
-      recorder.onstop = () => void onStopped(l);
+      },
+      begin: async (meetingId, recorder) => {
+        const mimeType = pickRecorderMime((type) => MediaRecorder.isTypeSupported(type), kind);
+        const writer = await beginRecording(store, {
+          id: crypto.randomUUID(),
+          scope,
+          meetingId,
+          title: title.trim(),
+          kind,
+          mimeType: recorder.mimeType || mimeType || (withVideo ? 'video/webm' : 'audio/webm'),
+          startedAt: Date.now(),
+        });
+        ownIds.current.add(writer.meta().id);
+        return writer;
+      },
+      wakeLock: requestWakeLock,
+      unmounted: () => unmounted.current,
+    });
+    if (result.status === 'aborted') return;
+    if (result.status === 'failed') {
+      setError(result.reason === 'store' ? t('record.unsupported') : result.reason === 'device' ? t(withVideo ? 'record.deviceDeniedVideo' : 'record.deviceDenied') : errorMessage(result.error));
+      return;
+    }
+    const { stream, recorder, writer } = result;
+    const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false };
+    live.current = l;
+    recorder.ondataavailable = (event) => {
+      const write = writer.addChunk(event.data, clock.current.elapsedMs(Date.now())).catch(() => {
+        // The device refused a chunk (storage full): keep what is saved, stop, and say so.
+        if (!l.failed) {
+          l.failed = true;
+          setError(t('record.saveFailed'));
+          if (l.recorder.state !== 'inactive') l.recorder.stop();
+        }
+      });
+      l.pending.add(write);
+      void write.finally(() => l.pending.delete(write));
+    };
+    recorder.onstop = () => void onStopped(l);
+    try {
       clock.current.start(Date.now());
       setElapsed(0);
       // A chunk every 5 seconds is written to the device while recording.
       recorder.start(5000);
       setPhase('recording');
     } catch (err) {
-      // Everything taken so far is released together, whichever step failed.
-      if (live.current) releaseDevices(live.current, true);
-      else stopTracks();
+      releaseDevices(l, true);
       setError(errorMessage(err));
     }
   };

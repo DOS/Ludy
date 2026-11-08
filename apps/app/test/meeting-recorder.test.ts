@@ -9,6 +9,7 @@ import {
   formatClock,
   lengthSecondsOf,
   pickRecorderMime,
+  prepareCapture,
   recordingExtension,
   startBlocker,
   type ChunkStore,
@@ -181,5 +182,91 @@ describe('heartbeat', () => {
     await writer.touch(3000);
     expect(writer.meta().elapsedMs).toBe(5000);
     expect(writer.meta().updatedAt).toBeGreaterThan(before);
+  });
+});
+
+describe('prepareCapture (setup order and cleanup, issue #2581 review finding 1)', () => {
+  function rig(opts: { unmountAfter?: 'stream' | 'meeting' | 'begin'; failAt?: 'store' | 'stream' | 'meeting' | 'recorder' | 'begin' } = {}) {
+    const log: string[] = [];
+    let gone = false;
+    const maybeLeave = (at: string) => {
+      if (opts.unmountAfter === at) gone = true;
+    };
+    const track = { stop: () => void log.push('track.stop') };
+    const stream = { getTracks: () => [track] };
+    const recorder = { state: 'inactive', stop: () => void log.push('recorder.stop') };
+    const writer = { meta: () => ({}) as RecordingMeta, addChunk: () => Promise.resolve(), touch: () => Promise.resolve() };
+    const deps = {
+      openStore: () => (opts.failAt === 'store' ? Promise.reject(new Error('idb')) : Promise.resolve()),
+      getStream: async () => {
+        if (opts.failAt === 'stream') throw new Error('denied');
+        log.push('stream');
+        maybeLeave('stream');
+        return stream;
+      },
+      createMeeting: async () => {
+        log.push('meeting');
+        if (opts.failAt === 'meeting') throw new Error('409');
+        maybeLeave('meeting');
+        return 'm1';
+      },
+      makeRecorder: () => {
+        if (opts.failAt === 'recorder') throw new Error('mime');
+        log.push('recorder');
+        return recorder;
+      },
+      begin: async () => {
+        if (opts.failAt === 'begin') throw new Error('quota');
+        log.push('begin');
+        maybeLeave('begin');
+        return writer;
+      },
+      wakeLock: () => Promise.resolve({ release: () => (log.push('wake.release'), Promise.resolve()) }),
+      unmounted: () => gone,
+    };
+    return { deps, log };
+  }
+
+  it('hands back a ready capture and releases nothing', async () => {
+    const { deps, log } = rig();
+    expect((await prepareCapture(deps)).status).toBe('ready');
+    expect(log).toEqual(['stream', 'meeting', 'recorder', 'begin']);
+  });
+
+  it('leaving the screen after the microphone is open creates no meeting and stops the tracks', async () => {
+    const { deps, log } = rig({ unmountAfter: 'stream' });
+    expect((await prepareCapture(deps)).status).toBe('aborted');
+    expect(log).toEqual(['stream', 'track.stop']);
+  });
+
+  it('leaving the screen while the meeting is being created stops the tracks and never builds a recorder', async () => {
+    const { deps, log } = rig({ unmountAfter: 'meeting' });
+    expect((await prepareCapture(deps)).status).toBe('aborted');
+    expect(log).toEqual(['stream', 'meeting', 'track.stop']);
+  });
+
+  it('leaving the screen at the last step releases the tracks and the wake lock', async () => {
+    const { deps, log } = rig({ unmountAfter: 'begin' });
+    expect((await prepareCapture(deps)).status).toBe('aborted');
+    expect(log).toContain('track.stop');
+    expect(log).toContain('wake.release');
+  });
+
+  it('a store that cannot open fails before the microphone or a meeting', async () => {
+    const { deps, log } = rig({ failAt: 'store' });
+    expect(await prepareCapture(deps)).toMatchObject({ status: 'failed', reason: 'store' });
+    expect(log).toEqual([]);
+  });
+
+  it('a refused microphone fails before any meeting exists', async () => {
+    const { deps, log } = rig({ failAt: 'stream' });
+    expect(await prepareCapture(deps)).toMatchObject({ status: 'failed', reason: 'device' });
+    expect(log).toEqual([]);
+  });
+
+  it.each(['meeting', 'recorder', 'begin'] as const)('a failure at %s stops the tracks', async (failAt) => {
+    const { deps, log } = rig({ failAt });
+    expect(await prepareCapture(deps)).toMatchObject({ status: 'failed', reason: 'setup' });
+    expect(log).toContain('track.stop');
   });
 });

@@ -223,3 +223,66 @@ export async function assembleRecording(store: ChunkStore, meta: RecordingMeta):
   const file = new File(parts, `meeting-${meta.meetingId}.${recordingExtension(meta.mimeType)}`, { type });
   return { file, lengthSeconds: lengthSecondsOf(meta.elapsedMs) };
 }
+
+export interface CaptureStream {
+  getTracks(): Array<{ stop(): void }>;
+}
+export interface CaptureRecorder {
+  state: string;
+  stop(): void;
+}
+export interface CaptureDeps<S extends CaptureStream, R extends CaptureRecorder> {
+  // Opens the device store: a failure here must leave no meeting behind.
+  openStore(): Promise<void>;
+  getStream(): Promise<S>;
+  // The meeting row stores the consent; the caller reuses an already created one on a retry.
+  createMeeting(): Promise<string>;
+  makeRecorder(stream: S): R;
+  begin(meetingId: string, recorder: R): Promise<RecordingWriter>;
+  wakeLock(): Promise<{ release(): Promise<void> } | null>;
+  // True once the screen has been left: nothing may keep capturing with no controls.
+  unmounted(): boolean;
+}
+export type CaptureResult<S extends CaptureStream, R extends CaptureRecorder> =
+  | { status: 'ready'; stream: S; recorder: R; writer: RecordingWriter; wakeLock: { release(): Promise<void> } | null }
+  | { status: 'aborted' }
+  | { status: 'failed'; reason: 'store' | 'device' | 'setup'; error?: unknown };
+
+// The order of setup, and its cleanup: store, then devices, then the meeting, the recorder, the device copy and the wake
+// lock. After every await the screen may have been left (aborted: devices released, the recorder never started); a
+// failure releases whatever was taken so far. The recorder is started by the caller, only on `ready`.
+export async function prepareCapture<S extends CaptureStream, R extends CaptureRecorder>(deps: CaptureDeps<S, R>): Promise<CaptureResult<S, R>> {
+  try {
+    await deps.openStore();
+  } catch {
+    return { status: 'failed', reason: 'store' };
+  }
+  let stream: S;
+  try {
+    stream = await deps.getStream();
+  } catch {
+    return { status: 'failed', reason: 'device' };
+  }
+  const stopTracks = () => {
+    for (const track of stream.getTracks()) track.stop();
+  };
+  let wakeLock: { release(): Promise<void> } | null = null;
+  try {
+    if (deps.unmounted()) return (stopTracks(), { status: 'aborted' });
+    const meetingId = await deps.createMeeting();
+    if (deps.unmounted()) return (stopTracks(), { status: 'aborted' });
+    const recorder = deps.makeRecorder(stream);
+    const writer = await deps.begin(meetingId, recorder);
+    wakeLock = await deps.wakeLock();
+    if (deps.unmounted()) {
+      stopTracks();
+      void wakeLock?.release().catch(() => undefined);
+      return { status: 'aborted' };
+    }
+    return { status: 'ready', stream, recorder, writer, wakeLock };
+  } catch (error) {
+    stopTracks();
+    void wakeLock?.release().catch(() => undefined);
+    return { status: 'failed', reason: 'setup', error };
+  }
+}
