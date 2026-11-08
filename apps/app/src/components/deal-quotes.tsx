@@ -15,6 +15,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
+import { DealOrders, QuoteDecision } from './deal-orders.tsx';
 import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
@@ -412,6 +413,7 @@ function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: bo
             {t('row.delete')}
           </ConfirmDialog>
         )}
+        <QuoteDecision quote={quote} canEdit={canEdit} />
         {canEdit && (quote.status === 'sent' || quote.status === 'declined') && (
           <Button size="sm" variant="outline" loading={revise.isPending} onClick={() => revise.mutate({ quoteId: quote.id })}>
             {t('row.revise')}
@@ -474,6 +476,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
           ))}
         </ul>
       )}
+      <DealOrders dealId={deal.id} canEdit={canEdit} />
       {openId !== null && opened.error && <ErrorText>{errorMessage(opened.error)}</ErrorText>}
       {openId !== null && opened.data && <QuoteEditor key={`${opened.data.id}:${opened.data.version}`} quote={opened.data} canEdit={canEdit} onClose={() => setOpenId(null)} />}
     </section>
