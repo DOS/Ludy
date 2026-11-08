@@ -11,6 +11,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
+import { QuoteLogoField } from './quote-logo.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -178,7 +179,7 @@ export function QuoteSettingsForm({ onDone }: { onDone: () => void }) {
   return <SettingsFields initial={setting.data} onDone={onDone} />;
 }
 
-function SettingsFields({ initial, onDone }: { initial: { validDays: number; defaultVat: string; defaultTerms: string | null; phone: string | null; email: string | null; bankNote: string | null }; onDone: () => void }) {
+function SettingsFields({ initial, onDone }: { initial: { validDays: number; defaultVat: string; defaultTerms: string | null; phone: string | null; email: string | null; bankNote: string | null; logoFileId: string | null }; onDone: () => void }) {
   const t = useTranslations('quotes.settings');
   const [validDays, setValidDays] = useState(String(initial.validDays));
   const [vat, setVat] = useState(initial.defaultVat);
@@ -219,6 +220,7 @@ function SettingsFields({ initial, onDone }: { initial: { validDays: number; def
       </Field>
       <Field label={t('phone')}>{(c) => <Input {...c} type="tel" maxLength={QUOTE_PHONE_MAX} value={phone} onChange={(e) => setPhone(e.target.value)} />}</Field>
       <Field label={t('email')}>{(c) => <Input {...c} type="email" maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
+      <QuoteLogoField fileId={initial.logoFileId} />
       <Field label={t('bankNote')} hint={t('bankNoteHint')} className="sm:col-span-2">
         {(c) => <Textarea {...c} rows={2} maxLength={QUOTE_BANK_NOTE_MAX} value={bank} onChange={(e) => setBank(e.target.value)} />}
       </Field>

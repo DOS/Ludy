@@ -12,10 +12,10 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { Deal, PipelineStage, Quote, QuoteDocument, QuoteLinkCreated, QuoteSent } from '@crove/kernel-contract';
 import { vietnamToday } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
+import { Runtime, contentGeneration, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument as QuotePdfDocument } from '@crove/mod-crm';
 import { quoteMailTemplate } from '../src/quote-mail.ts';
-import { quoteView } from '../src/quote-link.ts';
+import { quoteLogo, quoteView } from '../src/quote-link.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -24,6 +24,26 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 
 const SYSTEM = { type: 'system' as const, component: 'test.crm.quote' };
+
+// A blob store in memory, as the other composition tests keep one: the logo's bytes are read back by the page's route.
+class MemoryStore implements BlobStore {
+  readonly blobs = new Map<string, Uint8Array>();
+  async put(key: string, bytes: Uint8Array) {
+    this.blobs.set(key, bytes);
+    return contentGeneration(sha256Hex(bytes));
+  }
+  async get(key: string) {
+    const b = this.blobs.get(key);
+    if (!b) throw new Error('missing blob');
+    return b;
+  }
+  async delete(key: string) {
+    this.blobs.delete(key);
+  }
+}
+// The first bytes of a PNG and of a JPEG are all the upload sniffing reads; the rest is filler.
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1]);
 const item = (over: Record<string, unknown> = {}) => ({ kind: 'item' as const, description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', vatRate: '10%', ...over });
 
 suite('crm quote send on PostgreSQL (#2694)', () => {
@@ -54,7 +74,8 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    const adminUser = await person('admin');
+    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, adminUser]));
     const party = (name: string, email: string | null = null, taxCode = '0312345678') =>
       admin((c) =>
         c
@@ -74,7 +95,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     };
     const send = (user: string, quote: Quote, via: 'link' | 'email', to?: string) => exec<QuoteSent>(user, 'crm.quote.send', { quoteId: quote.id, version: quote.version, via, ...(to ? { to } : {}) });
     const link = (user: string, quoteId: string) => exec<QuoteLinkCreated>(user, 'crm.quote.create_link', { quoteId });
-    return { orgId, owner, member, viewer, party, exec, query, newDeal, readyDraft, send, link };
+    return { orgId, owner, member, viewer, adminUser, party, exec, query, newDeal, readyDraft, send, link };
   }
 
   async function as<T>(orgId: string, user: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -354,9 +375,16 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
         c.query(`INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_name) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, 'Bên bán')`, [o.orgId, o.member]),
       ),
     ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
-    expect(await as(o.orgId, o.member, async (c) => (await c.query(forgedSend(`${complete}, seller_name = 'Bên bán'`), [o.orgId, spare.id, entity])).rowCount)).toBe(1);
+    // The logo's freeze marker and file id are the send's too (#2814): not written on a new row nor by an edit of a draft, allowed in the send (also when a sender leaves them out).
+    await expect(
+      as(o.orgId, o.member, (c) =>
+        c.query(`INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_logo_frozen) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, true)`, [o.orgId, o.member]),
+      ),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
+    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.quote SET seller_logo_frozen = true WHERE org_id = $1 AND id = $2', [o.orgId, spare.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
+    expect(await as(o.orgId, o.member, async (c) => (await c.query(forgedSend(`${complete}, seller_name = 'Bên bán', seller_logo_frozen = true`), [o.orgId, spare.id, entity])).rowCount)).toBe(1);
     // A sent quote does not change, whoever asks and whatever the column.
-    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1', "seller_bank_note = 'Tài khoản khác'", "seller_name = 'Giả mạo'", "seller_phone = '0123'"]) {
+    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1', "seller_bank_note = 'Tài khoản khác'", "seller_name = 'Giả mạo'", "seller_phone = '0123'", 'seller_logo_frozen = false', 'seller_logo_file_id = gen_random_uuid()']) {
       await expect(as(o.orgId, o.owner, (c) => c.query(forgedSend(set), [o.orgId, sent.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // A sent quote's lines do not change: the share lock and the status check (the line policies also hide the row).
@@ -404,6 +432,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
       phone: '028 3829 1234',
       email: 'ban-hang@congty.test',
       bankNote: 'Vietcombank 0071000123456\nCông ty ABC',
+      logoFileId: null,
     });
     expect(await o.query(o.viewer, 'crm.quote_setting.get', {})).toMatchObject({ phone: '028 3829 1234', email: 'ban-hang@congty.test' });
     const { quote } = await o.send(o.member, draft, 'link');
@@ -428,6 +457,135 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(((await quoteView(rt, { token: next.token })) as QuoteDocument).seller).toMatchObject({ phone: '028 3829 0007', bankNote: 'Tài khoản MỚI 999' });
     // The letterhead can be cleared.
     expect(await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 21, defaultVat: '8', defaultTerms: null, phone: '', email: null, bankNote: null })).toMatchObject({ phone: null, email: null, bankNote: null });
+  });
+
+  // The logo of the letterhead (#2814): an owner or admin puts an image of the org's library on it, a quote takes the logo it has when it is sent, the page says there is one, and the image
+  // comes only by the link's token.
+  it('puts a logo on the letterhead: only an owner or admin, only a small PNG or JPEG of the org, frozen into a quote at send, and the page asks for the image by its own token', async () => {
+    const o = await org();
+    const store = new MemoryStore();
+    // A file row as the upload would record it (source 'social': never extracted), with its bytes in the store.
+    const makeFile = async (orgId: string, bytes: Uint8Array, over: { source?: string; contentType?: string; size?: number; width?: number | null; height?: number | null } = {}) => {
+      const sha = sha256Hex(bytes);
+      await store.put(fileKey(orgId, sha), bytes);
+      const inserted = await admin((c) =>
+        c.query<{ id: string }>(
+          "INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source, image_width, image_height) VALUES ($1, $2, $3, $4, 'logo', $5, $6, $7, $8, $9) RETURNING id",
+          [orgId, sha, fileKey(orgId, sha), contentGeneration(sha), over.contentType ?? 'image/png', over.size ?? bytes.byteLength, over.source ?? 'social', over.width === undefined ? 120 : over.width, over.height === undefined ? 40 : over.height],
+        ),
+      );
+      return inserted.rows[0]!.id;
+    };
+    const png = await makeFile(o.orgId, PNG_BYTES);
+    expect(await o.query(o.viewer, 'crm.quote_setting.get', {})).toMatchObject({ logoFileId: null });
+
+    // The refusals: a person who is not an owner or admin, a file that is not there or is another org's, not from the library, not a PNG or JPEG, too large.
+    await expect(o.exec(o.member, 'crm.quote_setting.logo_set', { fileId: png })).rejects.toMatchObject({ status: 403 });
+    await expect(o.exec(o.viewer, 'crm.quote_setting.logo_set', { fileId: png })).rejects.toMatchObject({ status: 403 });
+    await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: randomUUID() })).rejects.toMatchObject({ code: 'QUOTE_LOGO_NOT_FOUND', status: 404 });
+    const other = await org();
+    await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(other.orgId, PNG_BYTES) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_NOT_FOUND' });
+    await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 1]), { source: 'upload' }) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_NOT_FOUND' });
+    await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 2]), { contentType: 'image/webp' }) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_TYPE', status: 422 });
+    await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 3]), { size: 512 * 1024 + 1 }) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_TOO_LARGE', status: 422 });
+    // A picture over 1024 on a side or over a megapixel in all, and one whose size the upload could not read, are refused (the PDF decodes a PNG on the API's thread).
+    for (const [index, dims] of [[4, { width: 1025, height: 100 }], [5, { width: 100, height: 1025 }], [7, { width: null, height: null }]] as const) {
+      const fileId = await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, index]), dims);
+      await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId })).rejects.toMatchObject({ code: 'QUOTE_LOGO_DIMENSIONS', status: 422 });
+    }
+    // The most it takes is taken.
+    expect(await o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 8]), { width: 1024, height: 1024 }) })).toMatchObject({ validDays: 14 });
+    await o.exec(o.owner, 'crm.quote_setting.logo_remove', {});
+
+    // Quote A is sent with no logo: it has none, and keeps having none when the org adds one (the freeze marker says it was decided at the send).
+    const deal = await o.newDeal(await o.party('Công ty ABC'));
+    const sentA = (await o.send(o.member, await o.readyDraft(deal.id), 'link')).quote;
+    const linkA = await o.link(o.member, sentA.id);
+    const documentOf = (user: string, quoteId: string) => o.query<{ logoFile: { id: string; contentType: string } | null }>(user, 'crm.quote.document', { quoteId });
+    expect(((await quoteView(rt, { token: linkA.token })) as QuoteDocument).hasLogo).toBe(false);
+    expect(await quoteLogo(rt, store, { token: linkA.token })).toBeNull();
+    expect((await documentOf(o.viewer, sentA.id)).logoFile).toBeNull();
+    // Setting one makes the settings row if there is none yet, with its defaults. An admin may.
+    expect(await o.exec(o.adminUser, 'crm.quote_setting.logo_set', { fileId: png })).toMatchObject({ logoFileId: png, validDays: 14, defaultVat: '10%' });
+    expect(((await quoteView(rt, { token: linkA.token })) as QuoteDocument).hasLogo).toBe(false);
+    expect(await quoteLogo(rt, store, { token: linkA.token })).toBeNull();
+    expect((await documentOf(o.viewer, sentA.id)).logoFile).toBeNull();
+
+    // A draft shows the org's logo as it is; quote B, sent now, takes it and keeps it.
+    const draftB = await o.readyDraft(deal.id);
+    expect((await documentOf(o.viewer, draftB.id)).logoFile).toMatchObject({ id: png, contentType: 'image/png' });
+    const sentB = (await o.send(o.member, draftB, 'link')).quote;
+    const linkB = await o.link(o.member, sentB.id);
+    expect(((await quoteView(rt, { token: linkB.token })) as QuoteDocument).hasLogo).toBe(true);
+    const shown = await quoteLogo(rt, store, { token: linkB.token });
+    expect(shown?.contentType).toBe('image/png');
+    expect([...(shown?.bytes ?? [])]).toEqual([...PNG_BYTES]);
+    expect(await admin((c) => c.query('SELECT seller_logo_file_id, seller_logo_frozen FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, sentB.id]).then((r) => r.rows[0]))).toEqual({ seller_logo_file_id: png, seller_logo_frozen: true });
+    // The bytes have to be the type the row says, and the row has to be a logo type: otherwise nothing is served. (A file row never changes, so the quote is pointed at other rows.)
+    const liar = await makeFile(o.orgId, new Uint8Array([...PNG_BYTES, 9]), { contentType: 'image/jpeg' });
+    const webp = await makeFile(o.orgId, new Uint8Array([...PNG_BYTES, 8]), { contentType: 'image/webp' });
+    const point = (fileId: string) => admin((c) => c.query('UPDATE crove_crm.quote SET seller_logo_file_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, sentB.id, fileId]));
+    await point(liar);
+    expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
+    await point(webp);
+    expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
+    // A file that did not come from the photo library (a document, a scan) is not a logo even when it is a PNG.
+    await point(await makeFile(o.orgId, new Uint8Array([...PNG_BYTES, 7]), { source: 'upload' }));
+    expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
+    expect(((await quoteView(rt, { token: linkB.token })) as QuoteDocument).hasLogo).toBe(false);
+    expect((await documentOf(o.viewer, sentB.id)).logoFile).toBeNull();
+    await point(png);
+    expect((await quoteLogo(rt, store, { token: linkB.token }))?.contentType).toBe('image/png');
+    // Another image replaces the org's logo: quote B keeps the one it was sent with, a new draft has the new one. The other settings keep what they were.
+    await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: null, phone: '028 3829 0007' });
+    const jpeg = await makeFile(o.orgId, JPEG_BYTES, { contentType: 'image/jpeg' });
+    expect(await o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: jpeg })).toMatchObject({ logoFileId: jpeg, validDays: 30, phone: '028 3829 0007' });
+    expect((await quoteLogo(rt, store, { token: linkB.token }))?.contentType).toBe('image/png');
+    expect((await documentOf(o.viewer, sentB.id)).logoFile?.id).toBe(png);
+    expect((await documentOf(o.viewer, (await o.readyDraft(deal.id)).id)).logoFile?.id).toBe(jpeg);
+    // A revision takes a fresh snapshot when it is sent: the new logo.
+    const revision = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: sentB.id });
+    const resent = (await o.send(o.member, await o.exec<Quote>(o.member, 'crm.quote.save', { quoteId: revision.id, version: revision.version, lines: [item({ quantity: '3' })] }), 'link')).quote;
+    const linkR = await o.link(o.member, resent.id);
+    expect((await quoteLogo(rt, store, { token: linkR.token }))?.contentType).toBe('image/jpeg');
+    // A quote sent before the freeze existed (no marker) shows the org's logo as it is.
+    await admin((c) => c.query('UPDATE crove_crm.quote SET seller_logo_frozen = false, seller_logo_file_id = NULL WHERE org_id = $1 AND id = $2', [o.orgId, resent.id]));
+    expect((await documentOf(o.viewer, resent.id)).logoFile?.id).toBe(jpeg);
+    expect(((await quoteView(rt, { token: linkR.token })) as QuoteDocument).hasLogo).toBe(true);
+    // A file id without the marker is not a snapshot: the table refuses it.
+    await expect(admin((c) => c.query('UPDATE crove_crm.quote SET seller_logo_file_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, resent.id, jpeg]))).rejects.toMatchObject({ code: '23514' });
+
+    // One answer for every bad token and for a quote that is not open: the same as the page's.
+    for (const bad of ['', 'abc', 'x'.repeat(43), 'x'.repeat(44), `${linkR.token}!`, null, 5]) expect(await quoteLogo(rt, store, { token: bad }), String(bad)).toBeNull();
+    expect(await quoteLogo(rt, store, null)).toBeNull();
+    // Another org's token never reaches this org's logo; a quote that was replaced by its revision (its links are revoked) and a revoked link get none.
+    const otherDeal = await other.newDeal(await other.party('Công ty KHÁC'));
+    const otherSent = await other.send(other.member, await other.readyDraft(otherDeal.id), 'link');
+    const otherLink = await other.link(other.member, otherSent.quote.id);
+    // The other org has a logo of its own (a JPEG): its token serves its own bytes, and no token of this org ever serves them.
+    await other.exec(other.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(other.orgId, JPEG_BYTES, { contentType: 'image/jpeg' }) });
+    const otherSent2 = await other.send(other.member, await other.readyDraft(otherDeal.id), 'link');
+    const otherLink2 = await other.link(other.member, otherSent2.quote.id);
+    const theirs = await quoteLogo(rt, store, { token: otherLink2.token });
+    expect(theirs?.contentType).toBe('image/jpeg');
+    expect([...(theirs?.bytes ?? [])]).toEqual([...JPEG_BYTES]);
+    expect(await quoteLogo(rt, store, { token: otherLink.token })).toBeNull();
+    expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
+    expect(await quoteView(rt, { token: linkB.token })).toBeNull();
+    await o.exec(o.member, 'crm.quote.revoke_link', { linkId: linkR.linkId });
+    expect(await quoteLogo(rt, store, { token: linkR.token })).toBeNull();
+
+    // Taking it off: new quotes have none; a quote that was sent with it keeps it (a draft shows none). Taking off a logo that is not there is not an error.
+    expect(await o.exec(o.owner, 'crm.quote_setting.logo_remove', {})).toMatchObject({ logoFileId: null, validDays: 30 });
+    expect(await o.exec(o.owner, 'crm.quote_setting.logo_remove', {})).toMatchObject({ logoFileId: null });
+    await expect(o.exec(o.member, 'crm.quote_setting.logo_remove', {})).rejects.toMatchObject({ status: 403 });
+    expect((await documentOf(o.viewer, (await o.readyDraft(deal.id)).id)).logoFile).toBeNull();
+    const sentC = (await o.send(o.member, await o.readyDraft(deal.id), 'link')).quote;
+    expect((await documentOf(o.viewer, sentC.id)).logoFile).toBeNull();
+    // The audit rows hold the file id only, nothing of the image.
+    const audits = await admin((c) => c.query<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.quote_setting.logo_%'", [o.orgId]));
+    expect(audits.rows.length).toBeGreaterThanOrEqual(3);
+    for (const row of audits.rows) expect(JSON.stringify(row.detail)).not.toMatch(/PNG|filename|sha256|storage/i);
   });
 
   // The seam between the PDF (#2695) and sending (#2694): a sent quote's file says what the customer's page says, and does not move when the records behind it do.

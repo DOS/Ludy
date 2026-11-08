@@ -33,6 +33,7 @@ const doc = (over: Partial<QuoteDocument> = {}): QuoteDocument => ({
   vatAmount: '300000',
   total: '3300000',
   seller: { name: 'Công ty TNHH Hoa Mai', taxCode: '0312345678', address: '12 Lê Lợi, Quận 1', phone: '028 3829 1234', email: 'ban-hang@hoamai.test', bankNote: null },
+  hasLogo: false,
   buyer: { name: 'Công ty ABC', taxCode: '0109876543', address: '5 Trần Phú, Hà Nội' },
   lines: [
     { lineNo: 1, kind: 'item', description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', discountPercent: '0', vatRate: '10%', amount: '3000000', vatAmount: '300000' },
@@ -79,6 +80,16 @@ describe("a sent quote's public page (#2694)", () => {
     expect(html).toContain('Thanh toán trong 7 ngày');
     // No bank note was set, so none is printed.
     expect(html).not.toContain('Thanh toán</h3>');
+  });
+
+  it('does not wait for the logo (#2814): with one on the letterhead the page still shows the quote, and an image only once it has been fetched', () => {
+    // The logo is asked for apart, in the browser, by the same token: the server render has none yet, so there is no image and nothing of the quote is missing.
+    const html = render('vi', doc({ hasLogo: true }));
+    expect(html).not.toContain('data-testid="quote-logo"');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('Công ty TNHH Hoa Mai');
+    expect(html).toContain('Gói kế toán năm');
+    expect(render('vi', doc({ hasLogo: false }))).not.toContain('data-testid="quote-logo"');
   });
 
   it('shows the notes as text, never as markup', () => {
