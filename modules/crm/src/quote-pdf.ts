@@ -3,8 +3,7 @@
 // (the customer's record). Read only: members and viewers may read a quote, so they may read its document; nothing is written and no row is audited, as
 // for `crm.quote.get`. The bytes are made from this by `renderQuotePdf`, in the HTTP route for the download and later by the mail template of Q2.
 //
-// The seam for Q2 (#2694): `loadQuoteDocument(ctx, quoteId)` gives a `QuoteDocument`; a sent quote's buyer snapshot replaces `buyer` there, and
-// `issuedOn` becomes the day it was sent. `renderQuotePdf(document)` is a pure function of its input.
+// `loadQuoteDocument(ctx, quoteId)` gives a `QuoteDocument`; `renderQuotePdf(document)` is a pure function of its input.
 import { defineQuery } from '@crove/kernel-runtime';
 import { vietnamToday, zQuoteRef } from '@crove/kernel-contract';
 import { loadQuote, type Reader } from './quotes.ts';
@@ -12,18 +11,51 @@ import type { QuoteDocument, QuoteParty } from './pdf/quote-document.ts';
 
 const ALL = ['owner', 'admin', 'member', 'viewer'] as const;
 
+type Frozen = { sent: boolean; issuerEntityId: string | null };
+type Org = { name: string; tax_code: string | null; address: string | null; contact_email: string | null };
+
+// The one place the seller is decided (issue #2826 will freeze the letterhead into the quote when it is sent, and then only this function changes). Today a draft
+// is read live: the org's own record, with the contact email as the email when no letterhead email is set. A quote that has been sent reads what the customer's
+// public page shows: the issuing legal entity's name and tax code, the org's address, and the phone, email and bank note of the quote settings (no fallback).
+async function sellerOf(ctx: Reader, org: Org, frozen: Frozen): Promise<QuoteDocument['seller']> {
+  const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  if (!frozen.sent) {
+    return { name: org.name, taxCode: org.tax_code, address: org.address, phone: letterhead?.phone ?? null, email: letterhead?.email ?? org.contact_email, bankNote: letterhead?.bank_note ?? null };
+  }
+  const issuer =
+    frozen.issuerEntityId === null
+      ? undefined
+      : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', frozen.issuerEntityId).executeTakeFirst();
+  return { name: issuer?.name ?? org.name, taxCode: issuer?.tax_code ?? null, address: org.address, phone: letterhead?.phone ?? null, email: letterhead?.email ?? null, bankNote: letterhead?.bank_note ?? null };
+}
+
+// A draft is read live. A quote that has been sent is frozen at the moment of sending (Q2, #2694): the buyer is the snapshot taken then and the date is the
+// day it was sent, so the file does not move when the customer's record changes; the seller is `sellerOf`.
 export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<QuoteDocument> {
   const quote = await loadQuote(ctx, quoteId);
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-  const party = await ctx.trx
-    .selectFrom('crove_kernel.party')
-    .select(['name', 'tax_code', 'address', 'phone', 'email'])
+  const row = await ctx.trx
+    .selectFrom('crove_crm.quote')
+    .select(['sent_at', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', quote.partyId)
+    .where('id', '=', quoteId)
     .executeTakeFirstOrThrow();
-  const seller: QuoteDocument['seller'] = { name: org.name, taxCode: org.tax_code, address: org.address, phone: null, email: org.contact_email, bankNote: null };
-  const buyer: QuoteParty = { name: party.name, taxCode: party.tax_code, address: party.address, phone: party.phone, email: party.email };
-  return { quote, seller, buyer, issuedOn: vietnamToday(new Date(quote.createdAt)) };
+  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const sentAt = row.sent_at;
+  const sent = sentAt !== null && row.buyer_name !== null;
+  const seller = await sellerOf(ctx, org, { sent, issuerEntityId: row.issuer_entity_id });
+  if (!sent) {
+    const party = await ctx.trx
+      .selectFrom('crove_kernel.party')
+      .select(['name', 'tax_code', 'address', 'phone', 'email'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', quote.partyId)
+      .executeTakeFirstOrThrow();
+    const buyer: QuoteParty = { name: party.name, taxCode: party.tax_code, address: party.address, phone: party.phone, email: party.email };
+    return { quote, seller, buyer, issuedOn: vietnamToday(new Date(quote.createdAt)) };
+  }
+  // The snapshot holds what the customer's page shows (name, tax code, address) and the address the mail went to; it holds no phone.
+  const buyer: QuoteParty = { name: row.buyer_name ?? quote.partyName, taxCode: row.buyer_tax_code, address: row.buyer_address, phone: null, email: row.buyer_email };
+  return { quote, seller, buyer, issuedOn: vietnamToday(new Date(sentAt ?? quote.createdAt)) };
 }
 
 export const quoteDocument = defineQuery({
