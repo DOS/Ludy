@@ -126,7 +126,7 @@ export const proposalPolicySave = defineCommand({
 
 // The people who could approve the proposal's current revision now, by the same rules as the approve command: in the
 // snapshot taken at creation, still holding an approving role, and not stopped by four-eyes.
-async function approversNow(ctx: CommandContext, proposal: { command: string; status: string; eligible_approvers: string[] | null; authors: unknown }): Promise<string[]> {
+async function approversNow(ctx: CommandContext, proposal: { command: string; status: string; eligible_approvers: string[] | null; authors: unknown; co_authors: string[] | null }): Promise<string[]> {
   const out: string[] = [];
   for (const userId of proposal.eligible_approvers ?? []) {
     const decision = await decideApproval(ctx.trx, ctx.orgId, { type: 'user', userId, aal: 'aal2' }, proposal, { lock: false });
@@ -158,7 +158,7 @@ export const proposalRemind = defineCommand({
     // Under the proposal's lock, so a decision in flight is either seen or comes after.
     const proposal = await ctx.trx
       .selectFrom('crove_kernel.proposal')
-      .select(['id', 'command', 'status', 'title', 'created_at', 'reminded_at', 'escalated_at', 'eligible_approvers', 'authors'])
+      .select(['id', 'command', 'status', 'title', 'created_at', 'reminded_at', 'escalated_at', 'eligible_approvers', 'authors', 'co_authors'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.proposalId)
       .forUpdate()

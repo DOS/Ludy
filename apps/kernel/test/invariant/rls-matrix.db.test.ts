@@ -64,6 +64,9 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_crm.quote',
+  'crove_crm.quote_line',
+  'crove_crm.quote_setting',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
@@ -723,6 +726,47 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
   'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
+  // A quote of a deal (Q1 of docs/plan/crm-quotes.md, #2693): a draft of the org's, for a deal and its party, with the money columns at their zero defaults.
+  // Tenant roles update the mutable columns only (a column grant), so the update probes assign the remarks to themselves. Who may write is the command's access
+  // (owners, admins and members); a viewer never reaches the table.
+  'crove_crm.quote': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner },
+      };
+    },
+    update: { set: 'remarks = remarks' },
+  },
+  // A line of a quote: it names its quote (a composite key) and carries the amounts the quote's totals are the sum of.
+  'crove_crm.quote_line': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), quote_id: quote, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
+      };
+    },
+    update: { set: 'description = description' },
+  },
+  // The org's one row of quote settings (Q1): the days a quote stays valid, the VAT rate of a new line and the default terms. Tenant roles update those and who
+  // set them (a column grant), so the update probes assign the days to themselves.
+  'crove_crm.quote_setting': {
+    update: { set: 'valid_days = valid_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (crm-quotes.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
   // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
   // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
   // row gets its own. Written and removed whole by owners' and admins' commands: tenant roles read, insert and delete.

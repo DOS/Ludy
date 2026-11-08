@@ -4607,6 +4607,7 @@ export const en = {
     journalVoucherSubtitlePosted: 'Journal voucher {code} dated {date}, posted.',
     stepUpApproveVoucher: 'approve and post this cash or bank voucher',
     voucherFourEyes: 'Someone else must approve (you entered this voucher).',
+    journalCoAuthorFourEyes: 'Someone else must approve (you approved the pay run this entry is built from).',
     voucherNotEligible: 'Only owners and admins can approve cash and bank vouchers.',
     // A request to open the way to spend on an ad platform (#2294): it posts nothing to the books.
     adsChange: 'What changes',
@@ -8125,6 +8126,7 @@ export const en = {
       HR_EMPLOYEE_NOT_FOUND: 'This employee was not found',
       HR_EMPLOYEE_ENDED: 'This employee has left',
       HR_EMPLOYEE_NOT_ENDED: 'Only an employee who has left can be erased',
+      HR_YEAR_NOT_BEGUN: 'An authorization cannot be recorded for a year that has not begun',
       HR_EMPLOYEE_ERASED: 'This record was erased on request and cannot be changed any more',
       HR_RETENTION_NOT_PASSED: 'The retention period of this record is not over yet, so it cannot be erased',
       HR_EMPLOYMENT_NOT_NEWER: 'The effective date must be after the effective date of the latest row',
@@ -8141,6 +8143,7 @@ export const en = {
       HR_POSTING_ADJUSTMENTS: 'This pay run has adjustment lines; a run like that cannot be posted yet',
       HR_POSTING_MISMATCH: 'The pay run does not match its totals or the accounting regime changed; the entry cannot be built',
       HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
+      HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting, because the approver has to compare it with the pay run',
       HR_RUN_NOT_DRAFT: 'This pay run is approved and cannot be edited; correct it with an adjustment line in a later month',
       HR_RUN_EXISTS: 'This month already has a pay run',
       HR_RUN_EMPTY: 'The pay run has no line to approve',
@@ -9208,6 +9211,9 @@ export const en = {
           add: 'Add an employee with the first contract and wage row',
           edit: "Change an employee's personal details",
           end: 'End an employee',
+          finalization: {
+            set: 'Record that an employee authorized (or no longer authorizes) the payer to finalize their income tax for a year',
+          },
           erase: 'Erase the record of an employee who left, after the retention period',
           get: 'Open one employee, with the identity number and the account number',
           list: 'List the employees and their base wage',
@@ -9224,6 +9230,7 @@ export const en = {
         },
         posting: {
           prepare: 'Prepare the posting proposal of an approved pay month',
+          verify: 'Rebuild the pay entry from the approved pay run to compare it when it is posted',
         },
         run: {
           approve: 'Approve the month\'s pay run (second factor, freezes the figures)',

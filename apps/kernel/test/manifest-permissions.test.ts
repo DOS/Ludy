@@ -47,6 +47,7 @@ describe('module manifests declare their permissions (#1630)', () => {
       'command hr.payroll.employee.add: hr.payroll.run',
       'command hr.payroll.employee.edit: hr.payroll.run',
       'command hr.payroll.employee.end: hr.payroll.run',
+      'command hr.payroll.employee.finalization.set: hr.payroll.run',
       'command hr.payroll.employment.add: hr.payroll.run',
       'command hr.payroll.line.adjust: hr.payroll.run',
       'command hr.payroll.line.inputs.set: hr.payroll.run',

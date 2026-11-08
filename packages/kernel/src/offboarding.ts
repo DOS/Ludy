@@ -303,7 +303,7 @@ export const exportSnapshot = defineQuery({
 // or agent actor can run. The sealed identity and bank account numbers are left out (they open only with the org's subject
 // keys, ADR-0017, and an owner reads them in the app). The pay runs and their lines (#2531) carry no identity or account number: figures, input labels and free text.
 export const OWNER_RUN_EXPORT_TABLES = {
-  'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed'] },
+  'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed'] },
   'hr.payroll_employment': { from: 'crove_hr.payroll_employment', omit: [] },
   'hr.payroll_dependent': { from: 'crove_hr.payroll_dependent', omit: [] },
   'hr.payroll_run': { from: 'crove_hr.payroll_run', omit: [] },
