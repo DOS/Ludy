@@ -32,7 +32,8 @@ test('an owner records the identifiers, reads each declaration list with its lay
     await expect(detail.getByTestId('hr-employee-tax')).toHaveText('8123456789');
     await expect(detail.getByTestId('hr-employee-insurance')).toHaveText('7305186294');
     const authorized = detail.getByTestId('hr-employee-authorized').getByRole('checkbox');
-    await authorized.check();
+    // The box shows what the server stored, so it changes once the command has answered: click and wait for it, not `check()`, which fails if the state does not flip at once.
+    await authorized.click();
     await expect(authorized).toBeChecked();
   });
 
