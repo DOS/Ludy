@@ -64,10 +64,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  // Q4 of the CRM quotes (#2696, ADR-0050): the sales order of an accepted quote, its frozen lines and the org's per-year number counter.
-  'crove_crm.sales_order',
-  'crove_crm.sales_order_counter',
-  'crove_crm.sales_order_line',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
@@ -377,8 +373,6 @@ let calendarHour = 0;
 let bankAccountNumber = 0;
 // A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
 let stagePosition = 1;
-// A sales order number counter (Q4, #2696) is unique per org and year: each seeded one takes the next year from 2000.
-let salesOrderYear = 2000;
 // A staged import row's number is unique per batch (#2229): each factory row takes the next one.
 let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
@@ -841,13 +835,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
     update: { set: 'cancel_reason = cancel_reason' },
-  },
-  // The org's number counter for sales orders (Q4): one row per org and year, taken by the accept command in its own transaction. Tenant roles update the last number
-  // only (a column grant), so the update probes assign it to itself.
-  'crove_crm.sales_order_counter': {
-    update: { set: 'last_no = last_no' },
-    noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
-    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
   },
   // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
   'crove_crm.sales_order_line': {
