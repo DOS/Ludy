@@ -292,7 +292,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const unbound = await sharedRuntime.execute(
       'kernel.extension.code.issue',
       { codeHash: createHash('sha256').update(unboundCode).digest('hex'), codeChallenge: challengeOf(verifier), scopes: ['meetings'], deviceName: 'Chrome' },
-      { actor: { type: 'user', userId: await userIdOf('recorder'), aal: 'aal1', mfaAt: null }, orgId },
+      { actor: { type: 'user', userId: await userIdOf('recorder'), aal: 'aal1', sessionId: randomUUID(), mfaAt: null }, orgId },
     );
     expect(unbound).toMatchObject({ expiresInSeconds: 300 });
     expect((await exchange(unboundCode, verifier, originOf(EXT_ID), twoIds)).status).toBe(400);
