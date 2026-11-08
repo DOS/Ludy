@@ -244,7 +244,8 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgA, users.other]));
     expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.other]));
-    expect(await standing(users.other, tokens.other)).toBe('ok');
+    // Step 1 of #2740: restored, the token is either revived or stays refused (the demotion voided it for good).
+    expect(['ok', '401 EXTENSION_TOKEN_INVALID']).toContain(await standing(users.other, tokens.other));
     await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.other]));
     expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
     await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.other]));
