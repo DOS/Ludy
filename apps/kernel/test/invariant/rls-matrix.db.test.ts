@@ -73,6 +73,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_kernel.member_permission_override',
+  'crove_kernel.member_vy_memory',
+  'crove_kernel.member_vy_result',
   'crove_meetings.action_item',
   'crove_meetings.meeting_result',
   'crove_meetings.transcript_segment',
@@ -99,6 +102,10 @@ const AUTHOR_ONLY = new Map<string, string>([
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
+  // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
+  ['crove_kernel.member_vy_memory', 'false'],
+  // One run's result for one member (ADR-0049 decision 3): the member's alone, the system context's included; only named definers expire or purge it.
+  ['crove_kernel.member_vy_result', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -1642,6 +1649,44 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // on a pending invite.
   'crove_kernel.member_invite': {
     make: (o) => ({ row: { org_id: o.id, email: `invite-${tag()}@rls.test`, role: 'member', invited_by: o.owner } }),
+  },
+  // A permission one member holds or lacks beyond their role presets (ADR-0049 decision 10): written only by the audited command kernel.member.permission.set, so tenant roles write it through that command, not directly.
+  'crove_kernel.member_permission_override': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, permission: 'vy.use', allowed: 'false', set_by: o.owner } }),
+  },
+  // What Vy keeps about one member (ADR-0049 decision 3): an entry the member made or confirmed, sealed to that member by a restrictive policy.
+  'crove_kernel.member_vy_memory': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), member_user_id: o.owner, body: 'RLS matrix memory' } }),
+  },
+  // One Vy run's result for one member (ADR-0049 decision 3), with the run it came from. The run is an ordinary agent run as the matrix seeds it (as the superuser, the binding policies of a member's own agent do not apply); the result is the owner's, the user every member-context actor enters as.
+  'crove_kernel.member_vy_result': {
+    make: (o) => {
+      const agent = agentRow(o);
+      const run = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.agent', values: agent },
+          {
+            table: 'crove_kernel.ai_run',
+            values: { org_id: o.id, id: run, agent_id: agent.id, module: 'notes', status: 'succeeded', started_at: '2026-10-01T00:00:00Z', expires_at: '2026-10-01T00:15:00Z', finished_at: '2026-10-01T00:10:00Z' },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          member_user_id: o.owner,
+          run_id: run,
+          feature: 'notes.summary',
+          subject_type: 'note',
+          subject_id: randomUUID(),
+          status: 'ready',
+          body: 'RLS matrix result',
+          tainted: 'true',
+          private_read: 'true',
+          expires_at: '2036-10-01T00:00:00Z',
+        },
+      };
+    },
   },
   // A notification for one member (#671), the kernel's own for every module (a finance proposal to approve, a file
   // that failed to read). A restrictive policy shows each member only their own; the factory's rows belong to the
