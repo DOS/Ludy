@@ -144,9 +144,11 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.notification_mute', () => 'false'], // Per member.
   ['crove_kernel.saved_view', () => 'false'], // Per member.
   ['crove_kernel.today_mail', () => 'false'], // Per member.
+  ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
+  ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
