@@ -193,6 +193,7 @@ function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesO
     },
     onSuccess: () => {
       attempt.current = null;
+      void queryClient.invalidateQueries({ queryKey: orpc.stock.key() });
     },
   });
   const deliver = useMutation(
@@ -217,7 +218,10 @@ function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesO
   const live = delivery !== undefined && !delivery.reversed;
   // What the stock command last said, or what to ask when nothing was asked in this session (the order does not remember: asking again is safe, the answer is the same).
   const step: StockStep | null = delivery === undefined ? null : delivery.reversed ? { action: 'return', date: vietnamToday() } : { action: 'deliver', date: delivery.deliveredOn };
-  const stockShown = withStock && canEdit && step !== null && !(stock.isSuccess && stock.data.status === 'service');
+  // A stock answer counts only for the step the row is at now (another person may have reversed the delivery since), else the row offers the current step.
+  const stockCurrent = stock.variables?.action === step?.action;
+  const stockOk = stock.isSuccess && stockCurrent;
+  const stockShown = withStock && canEdit && step !== null && !(stockOk && stock.data.status === 'service');
   return (
     <li className="space-y-1 rounded-md border border-border px-3 py-2 text-sm" data-testid="order-delivery-line">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -239,7 +243,7 @@ function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesO
             </Button>
           )}
           {canEdit && live && (
-            <Button size="sm" variant="ghost" loading={undeliver.isPending} onClick={() => undeliver.mutate({ orderId: order.id, lineNo: line.lineNo })} data-testid="order-delivery-undo">
+            <Button size="sm" variant="ghost" loading={undeliver.isPending} disabled={stock.isPending} onClick={() => undeliver.mutate({ orderId: order.id, lineNo: line.lineNo })} data-testid="order-delivery-undo">
               {t('takeBack')}
             </Button>
           )}
@@ -249,14 +253,14 @@ function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesO
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="order-delivery-stock">
           {stock.isPending ? (
             <span>{t('stockWriting')}</span>
-          ) : stock.isSuccess ? (
+          ) : stockOk ? (
             <span>{stock.variables.action === 'return' ? t('stockReturned') : t('stockDone')}</span>
           ) : (
-            <span>{stock.isError ? t('stockPending') : t('stockUnknown')}</span>
+            <span>{stock.isError && stockCurrent ? t('stockPending') : t('stockUnknown')}</span>
           )}
-          {canEdit && !stock.isPending && !stock.isSuccess && (
-            <Button size="sm" variant="outline" onClick={() => stock.mutate(stock.variables?.action === step.action ? stock.variables : step)} data-testid="order-delivery-stock-retry">
-              {stock.isError ? t('stockRetry') : step.action === 'return' ? t('stockRecordReturn') : t('stockRecord')}
+          {canEdit && !stock.isPending && !stockOk && (
+            <Button size="sm" variant="outline" onClick={() => stock.mutate(stockCurrent && stock.variables ? stock.variables : step)} data-testid="order-delivery-stock-retry">
+              {stock.isError && stockCurrent ? t('stockRetry') : step.action === 'return' ? t('stockRecordReturn') : t('stockRecord')}
             </Button>
           )}
           {stock.isError && errorCode(stock.error) === 'STOCK_ORDER_LINE_NO_ITEM' && (
@@ -310,10 +314,13 @@ function useInvoiceDraft(order: SalesOrderSummary, enabled: boolean) {
       const input = invoiceInput(handoff);
       if (input === null) throw new ApiError('ORDER_LINE_DISCOUNTED', 409, null);
       attempt.current = keyFor(attempt.current, JSON.stringify(input));
-      return client.einvoice.drafts.fromOrder({ ...input, idempotencyKey: attempt.current.key });
+      const draft = await client.einvoice.drafts.fromOrder({ ...input, idempotencyKey: attempt.current.key });
+      // The lines left out are those of this handoff, not of the preview, which may be old or not loaded.
+      return { draft, skipped: invoicePlan(handoff.lines).skipped };
     },
     onSuccess: () => {
       attempt.current = null;
+      void queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.key() });
     },
     // A refusal (the order changed, a line was already invoiced) leaves the reading stale: read the order again.
     onError: () => {
@@ -333,7 +340,7 @@ function InvoiceNote({ orderId, draft }: { orderId: string; draft: ReturnType<ty
       {allSkipped ? <span className="block">{t('invoiceAllDiscounted')}</span> : skipped.length > 0 ? <span className="block">{t('invoiceDiscounted', { lines: skipped.join(', ') })}</span> : null}
       {invoice.isSuccess && (
         <span className="block" data-testid="order-invoice-done">
-          {t('invoiceDone')}{' '}
+          {t('invoiceDone')} {invoice.data.skipped.length > 0 ? `${t('invoiceDiscounted', { lines: invoice.data.skipped.join(', ') })} ` : ''}
           <Link to="/o/$slug/sales-invoices" params={{ slug }} className="text-link hover:underline">
             {t('invoiceOpen')}
           </Link>
