@@ -91,7 +91,7 @@ export function useConversationPages(input: ListInput) {
     refetchInterval: POLL_MS,
   });
   const items = useMemo(() => mergeConversationPages(pages.data?.pages ?? []), [pages.data]);
-  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadMore: () => void pages.fetchNextPage() };
+  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadFailed: pages.isFetchNextPageError, loadMore: () => void pages.fetchNextPage() };
 }
 
 // "Load older conversations" under a list: shown only while the server says there are more.
@@ -175,7 +175,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
             <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => setSelected(c.id)} />
           ))}
         </ul>
-        <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} onLoad={list.loadMore} />
+        <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} failed={list.loadFailed} onLoad={list.loadMore} />
       </section>
       <section aria-label={t('threadLabel')} className="min-w-0">
         {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} /> : <Empty title={t('pick')} />}

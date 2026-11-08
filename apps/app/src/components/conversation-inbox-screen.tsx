@@ -172,7 +172,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
               <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => onSearch({ ...search, c: c.id })} suggested={suggested.get(c.id) ?? null} />
             ))}
           </ul>
-          <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} onLoad={list.loadMore} />
+          <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} failed={list.loadFailed} onLoad={list.loadMore} />
         </section>
         <section aria-label={t('threadLabel')} className="min-w-0">
           {openId ? (
