@@ -198,6 +198,8 @@ suite('the bank salary file of a pay run (#2532)', () => {
     expect((await get(url(runId, 'bank=VCB&columns=name,name'))).status).toBe(400);
     expect((await get(url(runId, 'bank=VCB&columns=password'))).status).toBe(400);
     expect((await get(url(runId, 'bank='))).status).toBe(400);
+    // A bank name that is nothing but control characters is no name.
+    expect((await get(url(runId, 'bank=%01%02'))).status).toBe(400);
     expect((await get(`/api/payroll-bank-file/${runId}.csv?bank=VCB`)).status).toBe(404);
     expect((await rows<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId]))[0]?.n).toBe(before);
   });

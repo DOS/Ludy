@@ -69,9 +69,11 @@ export const bankFileGet = defineQuery({
     const items = paid.map((l) => ({ sealed: (byId.get(l.employee_id) as { bank_account_sealed: string }).bank_account_sealed, place: ACCOUNT_PLACE, ref: subjectOf(l.employee_id) }));
     const opened = await ctx.openMany(items);
     // A key shredded since the check (an erasure in between) reads as erased: the same refusal.
-    const gone = opened.filter((v) => typeof v !== 'string').length;
+    // (an account that is nothing but spaces or control characters is no account)
+    const gone = opened.filter((v) => typeof v !== 'string' || clean(v.replace(/\s+/g, '')) === '').length;
     if (gone > 0) throw new DomainError('HR_BANK_ACCOUNT_MISSING', 422, `${gone} người trong bảng lương chưa có số tài khoản ngân hàng; hãy bổ sung rồi xuất lại`, { missing: gone });
     const bank = clean(input.bankName);
+    if (bank === '') throw new DomainError('BAD_REQUEST', 400, 'Hãy nhập tên ngân hàng nhận tiền');
     const content = `Luong thang ${monthText(run.month)}`;
     const rows = paid
       .map((l, i) => ({ name: clean((byId.get(l.employee_id) as { display_name: string }).display_name), account: clean(String(opened[i]).replace(/\s+/g, '')), amount: money(l.net as string).toFixed() }))
