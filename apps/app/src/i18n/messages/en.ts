@@ -8083,6 +8083,7 @@ export const en = {
       HR_EMPLOYEE_NOT_FOUND: 'This employee was not found',
       HR_EMPLOYEE_ENDED: 'This employee has left',
       HR_EMPLOYEE_NOT_ENDED: 'Only an employee who has left can be erased',
+      HR_YEAR_NOT_BEGUN: 'An authorization cannot be recorded for a year that has not begun',
       HR_EMPLOYEE_ERASED: 'This record was erased on request and cannot be changed any more',
       HR_RETENTION_NOT_PASSED: 'The retention period of this record is not over yet, so it cannot be erased',
       HR_EMPLOYMENT_NOT_NEWER: 'The effective date must be after the effective date of the latest row',

@@ -8080,6 +8080,7 @@ export const vi = {
       HR_EMPLOYEE_NOT_FOUND: 'Không tìm thấy nhân viên này',
       HR_EMPLOYEE_ENDED: 'Nhân viên này đã nghỉ việc',
       HR_EMPLOYEE_NOT_ENDED: 'Chỉ xóa được hồ sơ của nhân viên đã nghỉ việc',
+      HR_YEAR_NOT_BEGUN: 'Chưa thể ghi nhận ủy quyền cho một năm chưa bắt đầu',
       HR_EMPLOYEE_ERASED: 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa',
       HR_RETENTION_NOT_PASSED: 'Hồ sơ này chưa hết thời hạn lưu trữ nên chưa xóa được',
       HR_EMPLOYMENT_NOT_NEWER: 'Ngày hiệu lực phải sau ngày hiệu lực của dòng gần nhất',
