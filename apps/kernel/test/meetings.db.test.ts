@@ -48,7 +48,11 @@ class TestBlobStore implements BlobStore {
     return item.bytes;
   }
 
+  // Every ranged read the playback makes: its length shows how much ciphertext one window holds (#2874).
+  readonly ranges: Array<{ key: string; length: number }> = [];
+
   async getRange(key: string, start: number, end: number): Promise<Uint8Array> {
+    this.ranges.push({ key, length: end - start + 1 });
     const bytes = await this.get(key);
     return bytes.subarray(start, end + 1);
   }
@@ -875,6 +879,41 @@ suite('meetings module database integration tests (#2576)', () => {
     // The stream errors before the whole audio is out; it never completes after the delete.
     expect(failed).toBe(true);
     expect(received).toBeLessThan(audio.length);
+  });
+
+  it('12b. full-file playback reads and decrypts one window at a time, never the whole file (#2874)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Bounded Playback', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    // 13 MiB: four 4 MiB windows, so a whole-file read would show as one ranged read of the file's size.
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(13 * 1024 * 1024, 0x62)]);
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'bounded.ogg');
+    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    expect(up.status).toBe(200);
+
+    const before = store.ranges.length;
+    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    expect(play.status).toBe(200);
+    const reader = play.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(first.value!.length).toBeLessThanOrEqual(4 * 1024 * 1024);
+    // One window out and at most one read ahead (the stream's queue of one): the other windows are not read until the client asks.
+    expect(store.ranges.length - before).toBeLessThanOrEqual(2);
+
+    let received = first.value!.length;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      expect(value.length).toBeLessThanOrEqual(4 * 1024 * 1024);
+      received += value.length;
+    }
+    expect(received).toBe(audio.length);
+    const reads = store.ranges.slice(before);
+    expect(reads.length).toBeGreaterThanOrEqual(4);
+    // A window is 4 MiB of plaintext plus the cipher's per-chunk overhead, never the sealed file (13 MiB and more).
+    for (const r of reads) expect(r.length).toBeLessThan(5 * 1024 * 1024);
   });
 
   it('13. an audio upload over the audio cap is refused before its body is read', async () => {

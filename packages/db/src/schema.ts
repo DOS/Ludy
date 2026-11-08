@@ -492,7 +492,7 @@ export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
   G.FinanceStockItemTable,

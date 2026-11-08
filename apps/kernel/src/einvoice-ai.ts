@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The finance coworker on a sales e-invoice draft, on the API side (#2505): the lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
+// The finance coworker on a sales e-invoice draft, on the API side (#2505, #2721): the lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted and, when they
+// picked one, the lines of the previous issued invoice to the buyer (read by finance.einvoice_draft.suggest_source in the member's own transaction; the model sees them as text).
 // finance.einvoice_draft.suggest_source runs in the member's own transaction and says what the model may see (the text, the names of the customers that fit it, and earlier VAT rates:
 // no address, tax code, credential, bank account or provider data); the model call then runs here, outside any transaction, through the AI budget meter (the request's AI scope names the
 // org and the member).
@@ -14,7 +15,7 @@
 // - amounts are not here at all: the draft's own check computes them from the quantities and prices a person saves.
 // When the model is off, the AI budget is spent, the member's calls are too frequent, the call fails or its answer is refused, the answer names the state (`ai`) and gives nothing to fill in,
 // so the form works as it does with AI off. A failure is named, never quoted: neither the text nor the model's answer is logged.
-import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type InboxReader } from '@crove/agent';
+import { AiBudgetExhaustedError, EINVOICE_DRAFT_TEXT_MAX, type EInvoiceDraftRequest, type InboxReader } from '@crove/agent';
 import type { EInvoiceSuggestInput, EInvoiceSuggested } from '@crove/kernel-contract';
 import { parseTaxCode, salesVatRatesOn } from '@crove/l10n-vn';
 import type { EInvoiceSuggestParty, EInvoiceSuggestSource, RateCount } from '@crove/mod-finance';
@@ -45,6 +46,21 @@ export function buyerOf(party: EInvoiceSuggestParty): NonNullable<EInvoiceSugges
   return { kind: party.kind === 'organization' ? 'business' : 'individual', partyId: party.id, taxCode, name: within(party.name, 400), address: within(party.address, 500), email: within(party.email, 254) };
 }
 
+// The typed text, then as many whole lines of the invoice text as fit in what the model reads and the checks cut at (EINVOICE_DRAFT_TEXT_MAX).
+export function withInvoice(typed: string, invoice: string): string {
+  if (invoice === '') return typed;
+  const kept: string[] = [];
+  let length = typed.length;
+  for (const line of invoice.split('\n')) {
+    length += 1 + line.length + (kept.length === 0 ? 1 : 0);
+    if (length > EINVOICE_DRAFT_TEXT_MAX) break;
+    kept.push(line);
+  }
+  // The header line alone is no source.
+  return kept.length > 1 ? `${typed}\n\n${kept.join('\n')}` : typed;
+}
+
+
 export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId: string, source: EInvoiceSuggestSource, input: EInvoiceSuggestInput): Promise<EInvoiceSuggested> {
   const answer = (state: EInvoiceSuggested['ai'], lines: EInvoiceSuggested['lines'] = [], buyer: EInvoiceSuggested['buyer'] = null): EInvoiceSuggested => ({ ai: state, lines, buyer });
   const ask = ai.reader?.einvoiceDraft;
@@ -52,7 +68,11 @@ export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
-    const request: EInvoiceDraftRequest = { text: input.text, date: input.date, parties: source.parties.map((p) => ({ name: p.name })) };
+    // What the model reads and what its figures are checked against are one text (packages/agent cuts both at the same length): what the person typed, then the lines of the invoice they picked as
+    // a source (#2721). A figure the invoice holds is a figure the source holds; one that neither holds refuses the proposal, as before.
+    // Only whole invoice lines that fit under the cut are added: a cut inside a figure would make the model and the check read a different number.
+    const text = withInvoice(input.text, source.invoice?.text ?? '');
+    const request: EInvoiceDraftRequest = { text, date: input.date, parties: source.parties.map((p) => ({ name: p.name })) };
     const result = await ask(request);
     if (result.kind === 'none') {
       console.error(`[einvoice-ai] draft refused: ${result.code}`);
