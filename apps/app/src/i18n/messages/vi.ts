@@ -8615,6 +8615,8 @@ export const vi = {
       HR_POSTING_OPEN: 'Bảng lương này đã có một đề xuất hạch toán đang chờ duyệt',
       HR_POSTING_DONE: 'Bảng lương này đã được hạch toán',
       HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
+      HR_BANK_ACCOUNT_MISSING: 'Có người trong bảng lương chưa có số tài khoản ngân hàng; hãy bổ sung rồi xuất lại',
+      HR_BANK_FILE_EMPTY: 'Bảng lương này không có khoản thực nhận nào để chuyển',
       HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
       HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
       HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương hoặc chi lương, vì người duyệt phải đối chiếu được với bảng lương',
@@ -9770,6 +9772,10 @@ export const vi = {
         dependent: {
           add: 'Thêm người phụ thuộc của nhân viên',
           end: 'Kết thúc người phụ thuộc của nhân viên',
+        },
+        bank_file: {
+          export: 'Ghi nhận một lần tải file chuyển lương cho ngân hàng (chỉ số lượng, không có tên, số tài khoản hay số tiền)',
+          get: 'Xem file chuyển lương cho ngân hàng của một bảng lương đã duyệt, kể cả số tài khoản ngân hàng của từng người',
         },
         declaration: {
           export: 'Ghi nhận một lần tải bảng kê khai báo (chỉ số lượng, không có tên hay số tiền)',

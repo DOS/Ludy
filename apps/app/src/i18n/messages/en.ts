@@ -8618,6 +8618,8 @@ export const en = {
       HR_POSTING_OPEN: 'This pay run already has a posting proposal waiting for approval',
       HR_POSTING_DONE: 'This pay run is already posted',
       HR_POSTING_ADJUSTMENTS: 'This pay run has adjustment lines; a run like that cannot be posted yet',
+      HR_BANK_ACCOUNT_MISSING: 'Some people in this pay run have no bank account number; add them and export again',
+      HR_BANK_FILE_EMPTY: 'This pay run has no net pay to transfer',
       HR_POSTING_MISMATCH: 'The pay run does not match its totals or the accounting regime changed; the entry cannot be built',
       HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
       HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting or a pay payment, because the approver has to compare it with the pay run',
@@ -9773,6 +9775,10 @@ export const en = {
         dependent: {
           add: "Add an employee's dependent",
           end: "End an employee's dependent",
+        },
+        bank_file: {
+          export: 'Record a download of the bank salary file (counts only, no name, account number or amount)',
+          get: 'Open the bank salary file of an approved pay run, with each person\'s bank account number',
         },
         declaration: {
           export: 'Record a download of a declaration list (counts only, no name or amount)',
