@@ -31,6 +31,10 @@ export const zHrWage = z.string().regex(/^\d{1,16}(\.\d{1,2})?$/, 'decimal strin
 // An identity number (CCCD, CMND or passport) as the person writes it, and a bank account number: both go into the sealed columns.
 export const zHrIdentityNumber = z.string().trim().min(6).max(30).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'identity number');
 export const zHrAccountNumber = z.string().trim().min(6).max(34).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'account number');
+// The tax code and the social insurance number (#2533): sealed like the identity number, since the tax code is in most cases that number.
+export const zHrTaxCode = z.string().trim().min(6).max(20).regex(/^[0-9][0-9-]*$/, 'tax code');
+export const zHrInsuranceNumber = z.string().trim().min(6).max(20).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'insurance number');
+export const zHrBirthDate = zLocalDate;
 const zName = z.string().trim().min(1).max(200);
 const zAddress = z.string().trim().min(1).max(500);
 
@@ -50,6 +54,9 @@ export const zHrEmployeeAdd = z.strictObject({
   address: zAddress.optional(),
   identityNumber: zHrIdentityNumber.optional(),
   accountNumber: zHrAccountNumber.optional(),
+  birthDate: zHrBirthDate.optional(),
+  taxCode: zHrTaxCode.optional(),
+  insuranceNumber: zHrInsuranceNumber.optional(),
   legalEntityId: zId.optional(),
   employment: zHrEmploymentTerms,
 });
@@ -63,13 +70,30 @@ export const zHrEmployeeEdit = z
     address: zAddress.nullable().optional(),
     identityNumber: zHrIdentityNumber.nullable().optional(),
     accountNumber: zHrAccountNumber.nullable().optional(),
+    birthDate: zHrBirthDate.nullable().optional(),
+    taxCode: zHrTaxCode.nullable().optional(),
+    insuranceNumber: zHrInsuranceNumber.nullable().optional(),
   })
-  .refine((v) => v.displayName !== undefined || v.address !== undefined || v.identityNumber !== undefined || v.accountNumber !== undefined, 'at least one field');
+  .refine(
+    (v) =>
+      v.displayName !== undefined ||
+      v.address !== undefined ||
+      v.identityNumber !== undefined ||
+      v.accountNumber !== undefined ||
+      v.birthDate !== undefined ||
+      v.taxCode !== undefined ||
+      v.insuranceNumber !== undefined,
+    'at least one field',
+  );
 export type HrEmployeeEdit = z.infer<typeof zHrEmployeeEdit>;
 
 // A raise, a new contract or a change of region: a new row, never an edit of an old one.
 export const zHrEmploymentAdd = zHrEmploymentTerms.extend({ employeeId: zId });
 export type HrEmploymentAdd = z.infer<typeof zHrEmploymentAdd>;
+
+// The person authorized (or no longer authorizes) the payer to finalize their income tax for a tax year (08/UQ-QTT-TNCN); the list of years is kept sorted, one entry per year.
+export const zHrFinalizationSet = z.strictObject({ employeeId: zId, year: z.number().int().min(2026).max(2100), authorized: z.boolean() });
+export type HrFinalizationSet = z.infer<typeof zHrFinalizationSet>;
 
 export const zHrEmployeeEnd = z.strictObject({ employeeId: zId, endedOn: zLocalDate });
 export type HrEmployeeEnd = z.infer<typeof zHrEmployeeEnd>;
@@ -114,6 +138,10 @@ export const zHrEmployee = zHrEmployeeSummary.extend({
   address: z.string().nullable(),
   identityNumber: z.string().nullable(),
   accountNumber: z.string().nullable(),
+  birthDate: z.string().nullable(),
+  taxCode: z.string().nullable(),
+  insuranceNumber: z.string().nullable(),
+  finalizationAuthorizedYears: z.array(z.number().int()),
   erased: z.boolean(),
   employments: z.array(zTerms),
   dependents: z.array(zHrDependentView),

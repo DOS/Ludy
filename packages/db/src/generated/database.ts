@@ -1379,6 +1379,10 @@ export interface HrPayrollEmployeeTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  birth_date: string | null;
+  tax_code_sealed: string | null;
+  insurance_number_sealed: string | null;
+  finalization_authorized_years: Generated<number[]>;
 }
 
 /** crove_hr.payroll_employment */

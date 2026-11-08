@@ -248,6 +248,35 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(detail).toMatchObject({ identityNumber: '012 987 654 321', accountNumber: ACCOUNT });
   });
 
+  it('holds the birth date, the sealed tax code and insurance number, and the finalization authorization of a person (#2533)', async () => {
+    const o = await org();
+    const created = await o.add(o.owner, { birthDate: '1990-05-17', taxCode: '3141592653', insuranceNumber: 'SI-2718281828' });
+    // Both numbers are sealed: neither text is in any column of any crove table, and the stored text is a sealed value that opens at its own place only.
+    expect(await hits(['3141592653', 'SI-2718281828'])).toEqual([]);
+    const row = await withAdmin(async (c) => (await c.query<{ tax_code_sealed: string; insurance_number_sealed: string; birth_date: string }>('SELECT tax_code_sealed, insurance_number_sealed, birth_date::text FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    expect(row?.tax_code_sealed).toMatch(/^crove:s1:/);
+    expect(row?.insurance_number_sealed).toMatch(/^crove:s1:/);
+    await expect(withAdmin((c) => c.query("UPDATE crove_hr.payroll_employee SET tax_code_sealed = '3141592653' WHERE id = $1", [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: '1990-05-17', taxCode: '3141592653', insuranceNumber: 'SI-2718281828', finalizationAuthorizedYears: [] });
+    // The audit row of the add holds flags, never a value.
+    const [added] = await o.audits('hr.payroll.employee.add');
+    expect(added?.detail).toMatchObject({ hasTaxCode: true, hasInsuranceNumber: true, hasBirthDate: true });
+    expect(JSON.stringify(added?.detail)).not.toContain('3141592653');
+    // An edit changes and clears them; the authorization is a list of years, each once, sorted, and an admin may set it, a member may not.
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: 'SI-1732050807' });
+    await o.exec(o.admin, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2027, authorized: true });
+    await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2026, authorized: true });
+    await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2026, authorized: true });
+    await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2027, authorized: false });
+    await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2028, authorized: true });
+    await expect(o.exec(o.member, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2029, authorized: true })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 1999, authorized: true })).rejects.toBeDefined();
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ taxCode: null, insuranceNumber: 'SI-1732050807', finalizationAuthorizedYears: [2026, 2028] });
+    // A former employee's authorization is not changed.
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
+    await expect(o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 2029, authorized: true })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED' });
+  });
+
   it('keeps the terms append-only and orders them: a raise is a new row, an older start is refused, the list shows the one in force', async () => {
     const o = await org();
     const created = await o.add(o.owner);
@@ -299,6 +328,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const created = await o.add(o.owner, { displayName: name, address });
     await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: created.employeeId, displayName: child, relation: 'child', registeredOn: '2026-02-01' });
     const erase = () => o.exec<HrEmployeeErased>(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asMfa(o.owner));
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, birthDate: '1985-03-09', taxCode: '1618033988', insuranceNumber: 'SI-4142135623' });
     // Not ended: refused. An admin is refused for the role.
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_NOT_ENDED' });
     await expect(o.exec(o.admin, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asMfa(o.admin))).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -318,7 +348,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(result.kept.length).toBeGreaterThan(0);
     // The record reads as erased: no name, no address, no dependent's name, no numbers; the terms stay as amounts.
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
-    expect(detail).toMatchObject({ displayName: HR_ERASED_NAME, address: null, identityNumber: null, accountNumber: null, erased: true });
+    expect(detail).toMatchObject({ displayName: HR_ERASED_NAME, address: null, identityNumber: null, accountNumber: null, birthDate: null, taxCode: null, insuranceNumber: null, erased: true });
     expect(detail.dependents.map((d) => d.displayName)).toEqual([HR_ERASED_NAME]);
     expect(detail.employments).toHaveLength(1);
     expect(detail.employments[0]?.baseWage).toBe('15000000.00');

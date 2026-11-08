@@ -262,6 +262,7 @@ import {
   zHrEmployee,
   zHrEmployeeAdd,
   zHrEmployeeEdit,
+  zHrFinalizationSet,
   zHrEmployeeEnd,
   zHrEmployeeErased,
   zHrEmployeeList,
@@ -635,6 +636,7 @@ export const contract = {
         get: oc.input(zHrEmployeeRef).output(zHrEmployee),
         add: oc.input(zHrEmployeeAdd).output(zHrWritten),
         edit: oc.input(zHrEmployeeEdit).output(zHrWritten),
+        finalization: oc.input(zHrFinalizationSet).output(zHrWritten),
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),

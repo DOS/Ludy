@@ -773,6 +773,7 @@ export function createRpcHandler(
           get: os.hr.payroll.employees.get.handler(hrQuery('hr.payroll.employee.get')),
           add: os.hr.payroll.employees.add.handler(hrCommand('hr.payroll.employee.add')),
           edit: os.hr.payroll.employees.edit.handler(hrCommand('hr.payroll.employee.edit')),
+          finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
         },

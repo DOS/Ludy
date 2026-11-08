@@ -26,6 +26,7 @@ import {
   zHrEmployeeList,
   zHrEmployeeRef,
   zHrEmploymentAdd,
+  zHrFinalizationSet,
   type HrDependentView,
   type HrEmployee,
   type HrEmployeeErased,
@@ -45,10 +46,12 @@ const EMPLOYMENT = hrManifest.tables.crove_hr.payroll_employment;
 // Where the sealed values are stored: a value opens only at the place it was sealed for (ctx.open), so a sealed text copied to another column never reads.
 export const IDENTITY_PLACE = 'crove_hr.payroll_employee.national_id_sealed';
 export const ACCOUNT_PLACE = 'crove_hr.payroll_employee.bank_account_sealed';
+export const TAX_CODE_PLACE = 'crove_hr.payroll_employee.tax_code_sealed';
+export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_sealed';
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
-const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'created_by', 'created_at', 'updated_at'] as const;
+const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
 const EMPLOYMENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function', 'created_by', 'created_at'] as const;
 const DEPENDENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'display_name', 'relation', 'registered_on', 'created_by', 'created_at'] as const;
 
@@ -104,7 +107,7 @@ export const employeeAdd = defineCommand({
   name: 'hr.payroll.employee.add',
   input: zHrEmployeeAdd,
   // The identity number and the account number are sealed under the new person's key; the runtime keeps them out of every record the command leaves.
-  sealedInput: ['identityNumber', 'accountNumber'],
+  sealedInput: ['identityNumber', 'accountNumber', 'taxCode', 'insuranceNumber'],
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
@@ -123,6 +126,8 @@ export const employeeAdd = defineCommand({
     const subject = subjectOf(employeeId);
     const identity = input.identityNumber === undefined ? null : await ctx.seal(subject, IDENTITY_PLACE, input.identityNumber);
     const account = input.accountNumber === undefined ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
+    const taxCode = input.taxCode === undefined ? null : await ctx.seal(subject, TAX_CODE_PLACE, input.taxCode);
+    const insurance = input.insuranceNumber === undefined ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
     await ctx.trx
       .insertInto('crove_hr.payroll_employee')
       .values({
@@ -133,6 +138,9 @@ export const employeeAdd = defineCommand({
         address: input.address ?? null,
         national_id_sealed: identity,
         bank_account_sealed: account,
+        birth_date: input.birthDate ?? null,
+        tax_code_sealed: taxCode,
+        insurance_number_sealed: insurance,
         created_by: userId,
         created_at: ctx.now,
         updated_at: ctx.now,
@@ -163,6 +171,9 @@ export const employeeAdd = defineCommand({
       address: auditValue(EMPLOYEE, 'address', input.address ?? null),
       hasIdentityNumber: identity !== null,
       hasAccountNumber: account !== null,
+      hasTaxCode: taxCode !== null,
+      hasInsuranceNumber: insurance !== null,
+      hasBirthDate: input.birthDate !== undefined,
       effectiveFrom: terms.effectiveFrom,
       contractType: terms.contractType,
       region: terms.region,
@@ -176,19 +187,28 @@ export const employeeAdd = defineCommand({
 export const employeeEdit = defineCommand({
   name: 'hr.payroll.employee.edit',
   input: zHrEmployeeEdit,
-  sealedInput: ['identityNumber', 'accountNumber'],
+  sealedInput: ['identityNumber', 'accountNumber', 'taxCode', 'insuranceNumber'],
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address. The owner's erasure is the way out.
     requireActive(await loadEmployee(ctx, input.employeeId));
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
-    const set: { display_name?: string; address?: string | null; national_id_sealed?: string | null; bank_account_sealed?: string | null; updated_at: Date } = { updated_at: ctx.now };
+    const set: {
+      display_name?: string;
+      address?: string | null;
+      national_id_sealed?: string | null;
+      bank_account_sealed?: string | null;
+      birth_date?: string | null;
+      tax_code_sealed?: string | null;
+      insurance_number_sealed?: string | null;
+      updated_at: Date;
+    } = { updated_at: ctx.now };
     if (input.displayName !== undefined) {
       set.display_name = input.displayName;
       changed.push('displayName');
@@ -205,8 +225,48 @@ export const employeeEdit = defineCommand({
       set.bank_account_sealed = input.accountNumber === null ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
       changed.push('accountNumber');
     }
+    if (input.birthDate !== undefined) {
+      set.birth_date = input.birthDate;
+      changed.push('birthDate');
+    }
+    if (input.taxCode !== undefined) {
+      set.tax_code_sealed = input.taxCode === null ? null : await ctx.seal(subject, TAX_CODE_PLACE, input.taxCode);
+      changed.push('taxCode');
+    }
+    if (input.insuranceNumber !== undefined) {
+      set.insurance_number_sealed = input.insuranceNumber === null ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
+      changed.push('insuranceNumber');
+    }
     await ctx.trx.updateTable('crove_hr.payroll_employee').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).execute();
     ctx.audit({ employeeId: input.employeeId, changed });
+    return { employeeId: input.employeeId };
+  },
+});
+
+// The person's authorization for the payer to finalize their income tax for a year (08/UQ-QTT-TNCN, #2533). A fact about the person, not a payroll figure: a former employee's
+// record is not changed (the ended person finalizes alone), and the list holds a year once.
+export const employeeFinalizationSet = defineCommand({
+  name: 'hr.payroll.employee.finalization.set',
+  input: zHrFinalizationSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: targetOf,
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['finalization_authorized_years', 'updated_at'])],
+  handler: async (ctx, input): Promise<HrWritten> => {
+    requireActive(await loadEmployee(ctx, input.employeeId));
+    const row = await ctx.trx.selectFrom('crove_hr.payroll_employee').select('finalization_authorized_years').where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).executeTakeFirstOrThrow();
+    const years = new Set<number>(row.finalization_authorized_years);
+    if (input.authorized) years.add(input.year);
+    else years.delete(input.year);
+    await ctx.trx
+      .updateTable('crove_hr.payroll_employee')
+      .set({ finalization_authorized_years: [...years].sort((a, b) => a - b), updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.employeeId)
+      .execute();
+    ctx.audit({ employeeId: input.employeeId, year: input.year, authorized: input.authorized });
     return { employeeId: input.employeeId };
   },
 });
@@ -381,7 +441,7 @@ export const employeeErase = defineCommand({
   access: OWNERS,
   target: targetOf,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'erased_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     // The person's key, deleted by crove_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
@@ -405,7 +465,7 @@ export const employeeErase = defineCommand({
       .execute();
     await ctx.trx
       .updateTable('crove_hr.payroll_employee')
-      .set({ display_name: HR_ERASED_NAME, address: null, erased_at: ctx.now, updated_at: ctx.now })
+      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, erased_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
@@ -415,9 +475,9 @@ export const employeeErase = defineCommand({
     return {
       employeeId: input.employeeId,
       shreddedKeys,
-      cleared: ['name', 'address', 'dependents names'],
+      cleared: ['name', 'address', 'birth date', 'dependents names'],
       kept: [
-        { what: 'the identity number and the account number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
+        { what: 'the identity number, the account number, the tax code and the insurance number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },
       ],
     };
@@ -499,7 +559,7 @@ export const employeeGet = defineQuery({
   handler: async (ctx, input): Promise<HrEmployee> => {
     const e = await ctx.trx
       .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'national_id_sealed', 'bank_account_sealed'])
+      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'finalization_authorized_years'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .executeTakeFirst();
@@ -531,6 +591,8 @@ export const employeeGet = defineQuery({
     }));
     let identityNumber: string | null = null;
     let accountNumber: string | null = null;
+    let taxCode: string | null = null;
+    let insuranceNumber: string | null = null;
     let erased = e.erased_at !== null;
     if (!erased) {
       // The sealed values opened, here and only here, for this one employee: the audit row of this read is already committed.
@@ -538,6 +600,8 @@ export const employeeGet = defineQuery({
       const items: { sealed: string; place: string; ref: string }[] = [];
       if (e.national_id_sealed !== null) items.push({ sealed: e.national_id_sealed, place: IDENTITY_PLACE, ref: subject });
       if (e.bank_account_sealed !== null) items.push({ sealed: e.bank_account_sealed, place: ACCOUNT_PLACE, ref: subject });
+      if (e.tax_code_sealed !== null) items.push({ sealed: e.tax_code_sealed, place: TAX_CODE_PLACE, ref: subject });
+      if (e.insurance_number_sealed !== null) items.push({ sealed: e.insurance_number_sealed, place: INSURANCE_PLACE, ref: subject });
       const opened = items.length === 0 ? [] : await ctx.openMany(items);
       let next = 0;
       const take = (present: boolean): string | null => {
@@ -549,6 +613,8 @@ export const employeeGet = defineQuery({
       };
       identityNumber = take(e.national_id_sealed !== null);
       accountNumber = take(e.bank_account_sealed !== null);
+      taxCode = take(e.tax_code_sealed !== null);
+      insuranceNumber = take(e.insurance_number_sealed !== null);
     }
     return {
       id: e.id,
@@ -562,6 +628,10 @@ export const employeeGet = defineQuery({
       address: e.address,
       identityNumber,
       accountNumber,
+      birthDate: e.erased_at === null && e.birth_date !== null ? iso(e.birth_date) : null,
+      taxCode,
+      insuranceNumber,
+      finalizationAuthorizedYears: [...e.finalization_authorized_years],
       erased,
       employments: terms,
       dependents,
@@ -569,5 +639,5 @@ export const employeeGet = defineQuery({
   },
 });
 
-export const hrEmployeeCommands = [employeeAdd, employeeEdit, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
+export const hrEmployeeCommands = [employeeAdd, employeeEdit, employeeFinalizationSet, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
 export const hrEmployeeQueries = [employeeList, employeeGet];
