@@ -1043,6 +1043,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           {},
         ],
         [
+          "a rule that is none of the runtime's",
+          { agentRun: run.runId, rule: "goi_anh_nam" },
+          {},
+        ],
+        [
           "an id that is no uuid",
           { agentRun: run.runId, resultId: "khach-hang-Nam" },
           {},
