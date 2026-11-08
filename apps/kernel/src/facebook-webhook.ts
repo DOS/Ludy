@@ -28,6 +28,8 @@ export interface FacebookWebhookConfig {
   appSecret: string;
   // The secret it replaces while a rotation is under way (`CHANNEL_META_APP_SECRET_PREVIOUS`).
   appSecretPrevious?: string | undefined;
+  // The secret of the Instagram app when it is not the app above (`CHANNEL_INSTAGRAM_APP_ID`, #2212): its notices are signed with it.
+  instagramAppSecret?: string | undefined;
   // Shared token configured in Meta App Dashboard -> Webhooks (`CHANNEL_META_WEBHOOK_VERIFY_TOKEN`).
   verifyToken: string;
   // Clock for notice age checks; defaults to `Date.now`.
@@ -110,20 +112,15 @@ function eventReplayKey(accountId: string, event: InboundConversationEvent): str
 
 export async function acceptFacebookWebhook(
   runtime: Runtime,
-  config: Pick<FacebookWebhookConfig, 'appSecret' | 'appSecretPrevious' | 'now'>,
+  config: Pick<FacebookWebhookConfig, 'appSecret' | 'appSecretPrevious' | 'instagramAppSecret' | 'now'>,
   request: { signature: string | undefined; body: Uint8Array },
   replays?: FacebookReplayCache,
 ): Promise<FacebookWebhookOutcome> {
-  if (
-    !metaSignatureOk({
-      body: request.body,
-      header: request.signature,
-      appSecret: config.appSecret,
-      appSecretPrevious: config.appSecretPrevious,
-    })
-  ) {
-    return { status: 401, code: 'WEBHOOK_SIGNATURE' };
-  }
+  // A notice is signed by the app it was subscribed on: the Pages app's secret (or the one it replaces), or the Instagram app's.
+  const signed =
+    metaSignatureOk({ body: request.body, header: request.signature, appSecret: config.appSecret, appSecretPrevious: config.appSecretPrevious }) ||
+    (config.instagramAppSecret !== undefined && metaSignatureOk({ body: request.body, header: request.signature, appSecret: config.instagramAppSecret }));
+  if (!signed) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
   const now = (config.now ?? Date.now)();
   let pageNotices: ReturnType<typeof parseFacebookNotices>;
   let igNotices: ReturnType<typeof parseInstagramNotices>;
