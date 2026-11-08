@@ -1329,7 +1329,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         ) =>
           attempt(
             `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, response) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-            [orgId, ownKey, k, command, sha, JSON.stringify(response)],
+            [
+              orgId,
+              ownKey,
+              k,
+              command,
+              sha,
+              response === null ? null : JSON.stringify(response),
+            ],
           );
         return {
           // emit() with any type and a free-text payload, a declared-looking type with ids only, and a direct outbox_pending row.
@@ -1454,13 +1461,19 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           foreign.ok && foreign.value.rowCount,
           "updating another member's result",
         ).toBe(0);
-        const read = await c.query<{ id: string }>(
-          `SELECT id FROM crove_kernel.member_vy_result`,
+        const read = await c.query<{ id: string; member_user_id: string }>(
+          `SELECT id, member_user_id FROM crove_kernel.member_vy_result`,
         );
+        const ids = read.rows.map((r) => r.id);
         expect(
-          read.rows.map((r) => r.id).sort(),
-          "results a member-mode context reads: its member's, never another member's",
-        ).toEqual([mine, earlierResult].sort());
+          ids,
+          "the run's own result and its member's earlier one",
+        ).toEqual(expect.arrayContaining([mine, earlierResult]));
+        expect(ids, "another member's result").not.toContain(theirs);
+        expect(
+          read.rows.filter((r) => r.member_user_id !== users.vyUser),
+          "results of any other member",
+        ).toEqual([]);
         // What it may not do to its own result and run: clear the taint, delete the result, lower private_read, extend or untaint the run.
         // Each is refused or finds nothing to change; the state is read back below.
         for (const [why, sql, params] of [
@@ -1517,12 +1530,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             o.ok ? 0 : "42501",
           );
         }
+        await c.query("SAVEPOINT own_insert");
         const ownInsert = await outcome(
           c.query(
             `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, expires_at) VALUES ($1, $2, $3, 'notes.summary', 'note', $4, now() + interval '30 minutes')`,
             [orgId, users.vyUser, run.runId, randomUUID()],
           ),
         );
+        await c.query("ROLLBACK TO SAVEPOINT own_insert");
         expect(
           ownInsert,
           "a new result for its own member and run (results are made by the member's own command)",

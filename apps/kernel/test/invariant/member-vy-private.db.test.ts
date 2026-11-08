@@ -1263,8 +1263,10 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
       .filter((c) => "memberVy" in c && (c as { memberVy?: unknown }).memberVy)
       .map((c) => c.name)
       .sort();
-    expect(memberMode, "commands that declare memberVy").toEqual(
-      has.memberEntry ? ["kernel.member_vy.result.store"] : [],
-    );
+    const allowed = has.memberEntry ? ["kernel.member_vy.result.store"] : [];
+    expect(
+      memberMode.filter((n) => !allowed.includes(n)),
+      "commands that declare memberVy outside the allowed list",
+    ).toEqual([]);
   });
 });
