@@ -27,7 +27,9 @@ export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextSte
 
 export { loadQuoteDocument, quoteDocument } from './quote-pdf.ts';
 export { renderQuotePdf, type QuoteDocument, type QuoteParty } from './pdf/quote-document.ts';
-export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, quoteGet, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSettingSet } from './quotes.ts';
+export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, newQuoteToken, quoteGet, quoteLinkCreate, quoteLinkRevoke, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSend, quoteSettingGet, quoteSettingSet, quoteTokenHash } from './quotes.ts';
+
+export { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, renderQuoteMail, zQuoteMail } from './quote-mail.ts';
 
 export { quoteSuggestSource, type QuoteSuggestSource } from './quote-suggest.ts';
 

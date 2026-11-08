@@ -186,6 +186,12 @@ function sample(over: Partial<QuoteDocument['quote']> = {}, lineCount = 3): Quot
       updatedAt: '2026-11-15T02:00:00.000Z',
       notes: 'Giá chưa gồm phí dịch vụ ngân hàng.\nThanh toán trong 7 ngày kể từ ngày nhận hóa đơn.',
       terms: 'Báo giá có hiệu lực trong 14 ngày.',
+      // The send's facts (Q2, #2694): this fixture is a quote that was sent by link and not opened yet.
+      sentAt: '2026-11-15T02:00:00.000Z',
+      sentVia: 'link',
+      firstViewedAt: null,
+      buyer: null,
+      links: [],
       lines,
       ...over,
     },

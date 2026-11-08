@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_DESCRIPTION_MAX, QUOTE_LINES_MAX, QUOTE_TEXT_MAX, QUOTE_UNIT_MAX, zQuoteLineInput, type Deal, type Quote, type QuoteHint, type QuoteLineInput, type QuoteStatus, type QuoteSuggested, type QuoteSummary } from '@crove/kernel-contract';
+import { QUOTE_DESCRIPTION_MAX, QUOTE_LINES_MAX, QUOTE_TEXT_MAX, QUOTE_UNIT_MAX, zQuoteLineInput, type Deal, type Quote, type QuoteHint, type QuoteLineInput, type QuoteLinkCreated, type QuoteStatus, type QuoteSuggested, type QuoteSummary } from '@crove/kernel-contract';
 import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -15,16 +15,13 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
+import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 
-const refreshQuotes = () => {
-  void queryClient.invalidateQueries({ queryKey: orpc.crm.quotes.key() });
-  // A deal with a quote cannot be deleted: its row reads again, as every deal change does.
-  void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.list.key() });
-};
+const refreshQuotes = refreshQuoteQueries;
 
 // The rates a line may carry (the set of @crove/l10n-vn's line rule); the server checks them again.
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
@@ -159,7 +156,7 @@ export function QuoteSuggestions({ dealId, room, vat, onApply }: { dealId: strin
   );
 }
 
-function QuoteEditor({ quote, onClose }: { quote: Quote; onClose: () => void }) {
+function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boolean; onClose: () => void }) {
   const t = useTranslations('quotes');
   const { locale } = useLocaleSetting();
   const readOnly = quote.status !== 'draft';
@@ -170,14 +167,15 @@ function QuoteEditor({ quote, onClose }: { quote: Quote; onClose: () => void }) 
   const [terms, setTerms] = useState(quote.terms ?? '');
   const [lines, setLines] = useState<LineDraft[]>(() => fromQuote(quote));
   const [invalid, setInvalid] = useState<number | null>(null);
+  const [sent, setSent] = useState<{ link: QuoteLinkCreated | null; mailed: string | null } | null>(null);
+  // What the form held when it opened: a send is of what was saved, so it waits while the form differs.
+  const [opened] = useState(() => JSON.stringify([quote.validUntil, (quote.notes ?? '').trim(), (quote.terms ?? '').trim(), fromQuote(quote).map(toInput)]));
   const vat = defaults.data?.defaultVat ?? '10%';
   const hints: readonly QuoteHint[] = defaults.data?.hints ?? [];
   const save = useMutation(
     orpc.crm.quotes.save.mutationOptions({
-      onSuccess: () => {
-        refreshQuotes();
-        onClose();
-      },
+      // The editor stays open, keyed by the quote's version, so it reopens on the saved quote and the send panel can follow.
+      onSuccess: refreshQuotes,
       // A refused save (someone saved first) reads the quote again; the editor is keyed by the quote's version.
       onError: refreshQuotes,
     }),
@@ -213,6 +211,7 @@ function QuoteEditor({ quote, onClose }: { quote: Quote; onClose: () => void }) 
     if (bad >= 0) return;
     save.mutate({ quoteId: quote.id, version: quote.version, validUntil, notes: notes.trim() || null, terms: terms.trim() || null, lines: lines.map(toInput) });
   };
+  const dirty = JSON.stringify([validUntil, notes.trim(), terms.trim(), lines.map(toInput)]) !== opened;
   const others = (earlier.data?.items ?? []).filter((q) => q.id !== quote.id && q.lineCount > 0);
   const money = (value: string) => formatMoney(value, locale, 'VND');
 
@@ -329,6 +328,19 @@ function QuoteEditor({ quote, onClose }: { quote: Quote; onClose: () => void }) 
       <Field label={t('editor.notes')}>{(c) => <Textarea {...c} rows={2} maxLength={QUOTE_TEXT_MAX} disabled={readOnly} value={notes} onChange={(e) => setNotes(e.target.value)} />}</Field>
       <Field label={t('editor.terms')}>{(c) => <Textarea {...c} rows={3} maxLength={QUOTE_TEXT_MAX} disabled={readOnly} value={terms} onChange={(e) => setTerms(e.target.value)} />}</Field>
 
+      {readOnly && quote.buyer && (
+        <p className="text-sm text-muted-foreground" data-testid="quote-buyer">
+          {t('editor.buyer', { name: quote.buyer.name })}
+        </p>
+      )}
+      {sent?.link && <NewLink quote={quote} link={sent.link} />}
+      {sent?.mailed !== undefined && sent.mailed !== null && (
+        <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm text-foreground" data-testid="quote-mailed">
+          {sent.mailed ? t('send.mailedTo', { to: sent.mailed }) : t('send.mailed')}
+        </p>
+      )}
+      {!readOnly && canEdit && !sent && <QuoteSendPanel quote={quote} dirty={dirty} onSent={(done) => setSent({ link: done.link, mailed: done.mailed })} />}
+      {readOnly && <QuoteLinks quote={quote} canEdit={canEdit} />}
       {invalid !== null && <ErrorText>{t('editor.lineInvalid', { n: String(invalid) })}</ErrorText>}
       {(save.error || copy.error) && <ErrorText>{errorMessage(save.error ?? copy.error)}</ErrorText>}
       <div className="flex flex-wrap gap-2">
@@ -350,7 +362,7 @@ function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: bo
   const { locale } = useLocaleSetting();
   const remove = useMutation(orpc.crm.quotes.deleteDraft.mutationOptions({ onSuccess: refreshQuotes }));
   const revise = useMutation(orpc.crm.quotes.revise.mutationOptions({ onSuccess: refreshQuotes }));
-  const label = quote.number ? `${quote.number}${quote.revision > 1 ? `-R${quote.revision}` : ''}` : t('draftLabel');
+  const label = quote.number ? quoteLabel(quote) : t('draftLabel');
   // The quote as a PDF (#2695), for anyone who may read it: the same quote the screen shows, made by the server.
   const pdf = useMutation({
     mutationFn: async () => {
@@ -369,6 +381,11 @@ function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: bo
         <p className="font-medium text-foreground">
           {label} <Badge variant={statusVariant(quote.status, quote.expired)}>{quote.expired ? t('status.expired') : t(`status.${quote.status}`)}</Badge>
         </p>
+        {quote.firstViewedAt && (
+          <p className="text-xs text-muted-foreground" data-testid="quote-viewed">
+            {t('row.viewed', { time: formatDate(quote.firstViewedAt.slice(0, 10), locale) })}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">{t('row.meta', { date: formatDate(quote.validUntil, locale), count: String(quote.lineCount), total: formatMoney(quote.total, locale, 'VND') })}</p>
         {(remove.error || revise.error || pdf.error) && <ErrorText>{errorMessage(remove.error ?? revise.error ?? pdf.error)}</ErrorText>}
       </div>
@@ -410,6 +427,9 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
   const t = useTranslations('quotes');
   const quotes = useQuery(orpc.crm.quotes.byDeal.queryOptions({ input: { dealId: deal.id } }));
   const [openId, setOpenId] = useState<string | null>(null);
+  const [settings, setSettings] = useState(false);
+  const org = useQuery(orpc.org.get.queryOptions());
+  const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
   const opened = useQuery({ ...orpc.crm.quotes.get.queryOptions({ input: { quoteId: openId ?? '' } }), enabled: openId !== null });
   const create = useMutation(
     orpc.crm.quotes.save.mutationOptions({
@@ -423,7 +443,12 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
     <section className="space-y-3 rounded-lg border border-border p-4" aria-label={t('title', { deal: deal.title })} data-testid="deal-quotes">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-medium">{t('title', { deal: deal.title })}</h3>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {canManage && (
+            <Button size="sm" variant="outline" onClick={() => setSettings((v) => !v)} aria-expanded={settings}>
+              {t('settings.open')}
+            </Button>
+          )}
           {canEdit && (
             <Button size="sm" loading={create.isPending} onClick={() => create.mutate({ dealId: deal.id, lines: [] })}>
               {t('create')}
@@ -436,6 +461,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
           )}
         </div>
       </div>
+      {settings && canManage && <QuoteSettingsForm onDone={() => setSettings(false)} />}
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
       {quotes.error ? (
         <ErrorText>{errorMessage(quotes.error)}</ErrorText>
@@ -449,7 +475,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
         </ul>
       )}
       {openId !== null && opened.error && <ErrorText>{errorMessage(opened.error)}</ErrorText>}
-      {openId !== null && opened.data && <QuoteEditor key={`${opened.data.id}:${opened.data.version}`} quote={opened.data} onClose={() => setOpenId(null)} />}
+      {openId !== null && opened.data && <QuoteEditor key={`${opened.data.id}:${opened.data.version}`} quote={opened.data} canEdit={canEdit} onClose={() => setOpenId(null)} />}
     </section>
   );
 }

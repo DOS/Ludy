@@ -143,6 +143,7 @@ import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
+import { quoteView, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
@@ -250,6 +251,8 @@ export interface HttpDeps {
   reviewLimits?: { views: RateLimiter; answers: RateLimiter; files?: RateLimiter };
   // The public report page's budget per client (#643). Unset: REPORT_VIEWS_PER_MINUTE.
   reportLimit?: RateLimiter;
+  // The public quote page's budget per client (#2694). Unset: QUOTE_VIEWS_PER_MINUTE.
+  quoteLimit?: RateLimiter;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -1033,6 +1036,29 @@ export function createHttpApp(deps: HttpDeps) {
         }
         if (ics === null) return c.text('Không tìm thấy lịch này', 404, headers);
         return c.body(ics, 200, { ...headers, 'content-type': 'text/calendar; charset=utf-8' });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // A sent quote's page (#2694, crm module): the same edge as the report page, with its own budget per client. The link's token is the only credential; it comes in the
+  // body, never the URL, and a bad, revoked or expired one gets the one refusal.
+  if (runtime.installed('crm')) {
+    const quoteLimit = deps.quoteLimit ?? new RateLimiter({ perMinute: QUOTE_VIEWS_PER_MINUTE });
+    app.post('/api/quote/view', bodyLimit({ maxSize: 1024 }), async (c) => {
+      const decision = quoteLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        // Behind a proxy that is not trusted, every client shares one budget: say so, as the other public pages do.
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      c.header('cache-control', 'no-store');
+      c.header('referrer-policy', 'no-referrer');
+      try {
+        const view = await quoteView(runtime, await c.req.json().catch(() => null));
+        return view ? c.json(view) : c.json({ code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
       } catch (error) {
         return problem(c, error);
       }

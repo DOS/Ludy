@@ -42,6 +42,12 @@ function document(number: string | null): QuoteDocument {
       updatedAt: '2026-11-15T02:00:00.000Z',
       notes: null,
       terms: null,
+      // The send's facts (Q2, #2694).
+      sentAt: number ? '2026-11-15T02:00:00.000Z' : null,
+      sentVia: number ? 'link' : null,
+      firstViewedAt: null,
+      buyer: null,
+      links: [],
       lines: [{ lineNo: 1, kind: 'item', description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', discountPercent: '0', vatRate: '10%', amount: '3000000', vatAmount: '300000', stockItemId: null }],
     },
     seller: { name: 'Công ty Ánh Dương', taxCode: null, address: null, phone: null, email: null, bankNote: null },
