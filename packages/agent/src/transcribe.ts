@@ -164,7 +164,7 @@ function kindOf(status: number): TranscriptionErrorKind {
 // call of it sits inside metered()). The usage it reports is empty: the meter counts the call; audio seconds come with M4b.
 export async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput): Promise<{ segments: TranscriptSegment[]; usage: { inputTokens: number; outputTokens: number } }> {
   const form = new FormData();
-  form.set('file', new Blob([input.audio as BlobPart], { type: input.mimeType }), input.filename);
+  form.set('file', new Blob([input.audio.slice()], { type: input.mimeType }), input.filename);
   form.set('model', config.model);
   form.set('language', input.language);
   form.set('response_format', 'verbose_json');
