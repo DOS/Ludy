@@ -32,6 +32,8 @@ test('with AI off the pay run and the payslip are complete, and the coworker ans
   });
 
   await test.step('the payslip is complete and asking to explain it answers with a notice', async () => {
+    // The payslip button is in the opened line, as for any person's month.
+    await page.getByTestId('hr-line-open').first().click();
     await page.getByTestId('hr-payslip-open').first().click();
     await expect(page.getByTestId('hr-payslip')).toContainText('Phạm Thị Thử Việc');
     await page.getByTestId('hr-explain').click();
