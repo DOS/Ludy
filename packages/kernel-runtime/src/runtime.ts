@@ -152,8 +152,9 @@ export function agentRuntime(runtime: Runtime, orgId: string, actor: AgentActor)
     orgId,
     agentId: bound.agentId,
     runId: bound.runId,
-    execute: <O = unknown>(name: string, input: unknown, options?: { idempotencyKey?: string }) =>
-      runtime.execute<O>(name, input, { actor: bound, orgId, ...(options?.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}) }),
+    // No idempotency key: the stored response of a command is a value object, which the audit and key rows of member mode never hold (ADR-0049
+    // decision 4). A retried store is safe without one: it rewrites its own result with the same status.
+    execute: <O = unknown>(name: string, input: unknown) => runtime.execute<O>(name, input, { actor: bound, orgId }),
     query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
   });
 }
@@ -169,8 +170,9 @@ export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<Age
     orgId,
     agentId: bound.agentId,
     runId: bound.runId,
-    execute: <O = unknown>(name: string, input: unknown, options?: { idempotencyKey?: string }) =>
-      runtime.execute<O>(name, input, { actor: bound, orgId, ...(options?.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}) }),
+    // No idempotency key: the stored response of a command is a value object, which the audit and key rows of member mode never hold (ADR-0049
+    // decision 4). A retried store is safe without one: it rewrites its own result with the same status.
+    execute: <O = unknown>(name: string, input: unknown) => runtime.execute<O>(name, input, { actor: bound, orgId }),
     query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
   });
 }
@@ -2829,6 +2831,8 @@ export class Runtime {
   ): Promise<boolean> {
     const limits = this.refusalAudit;
     if (limits === 'unbounded') return true;
+    // The tally is a table member mode never writes (a00_member_vy_forbid): its refusals are not counted, and the audit row is written as without a bound.
+    if (actor.type === 'agent' && actor.memberVy === true) return true;
     const code = refusal.code;
     await sql`SAVEPOINT refusal_tally`.execute(trx);
     try {

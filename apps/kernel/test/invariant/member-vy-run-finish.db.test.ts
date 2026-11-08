@@ -360,6 +360,15 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
       });
     }
     expect(await runRow(waiting)).toMatchObject({ status: "running" });
+    // A ready result stays beside a succeeded run only: failed or cancelled would leave the member a body the run says it never made.
+    const shown = await runWith("ready");
+    for (const status of ["failed", "cancelled"]) {
+      expect(
+        await finish(shown, status, "AI_STOPPED"),
+        `${status} beside a ready result`,
+      ).toMatchObject({ ok: false, code: "22023" });
+    }
+    expect(await runRow(shown)).toMatchObject({ status: "running" });
     const done = await runWith("ready");
     expect(await finish(done, "succeeded", null)).toMatchObject({
       ok: true,

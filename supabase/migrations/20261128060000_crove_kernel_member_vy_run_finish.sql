@@ -38,6 +38,10 @@ BEGIN
   IF p_status = 'succeeded' AND v_result_status IS DISTINCT FROM 'ready' THEN
     RAISE EXCEPTION 'MEMBER_VY_RESULT_STATE' USING ERRCODE = '22023';
   END IF;
+  -- A ready result is shown to the member: the run that made it is recorded as succeeded, never as failed or cancelled beside it.
+  IF p_status <> 'succeeded' AND v_result_status = 'ready' THEN
+    RAISE EXCEPTION 'MEMBER_VY_RESULT_STATE' USING ERRCODE = '22023';
+  END IF;
   IF p_status <> 'succeeded' AND v_result_status = 'running' THEN
     UPDATE crove_kernel.member_vy_result SET status = 'failed', error_code = p_error_code WHERE org_id = v_org AND run_id = p_run AND status = 'running';
   END IF;
