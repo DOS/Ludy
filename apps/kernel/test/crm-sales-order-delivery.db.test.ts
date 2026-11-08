@@ -213,22 +213,45 @@ suite('crm sales order delivery on PostgreSQL (#2697)', () => {
       as(o.orgId, user, (c) =>
         c.query('INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, reverses_id, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, order.id, lineNo, kind, on, reverses, user]),
       );
-    // A second delivery of the same line is a unique violation; a delivery of a note line, or by a viewer, or for another person, is refused by the policy.
-    await expect(insert(o.member, 'delivery', 1, null, '2031-01-01')).rejects.toMatchObject({ code: '23505' });
-    await expect(insert(o.member, 'delivery', 3, null, '2031-01-01')).rejects.toMatchObject({ code: '42501' });
-    await expect(insert(o.viewer, 'delivery', 1, null, '2031-01-01')).rejects.toMatchObject({ code: '42501' });
+    const today = vietnamToday();
+    // A second delivery of the same line is a unique violation (it passes the policy: today, a confirmed order, an item line); a delivery of a note line, or by a viewer, or for another
+    // person, is refused by the policy.
+    await expect(insert(o.member, 'delivery', 1, null, today)).rejects.toMatchObject({ code: '23505' });
+    await expect(insert(o.member, 'delivery', 3, null, today)).rejects.toMatchObject({ code: '42501' });
+    await expect(insert(o.viewer, 'delivery', 1, null, today)).rejects.toMatchObject({ code: '42501' });
     await expect(
-      as(o.orgId, o.member, (c) => c.query("INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by) VALUES ($1, $2, 1, 'delivery', '2031-01-01', $3)", [o.orgId, order.id, o.owner])),
+      as(o.orgId, o.member, (c) => c.query("INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by) VALUES ($1, $2, 1, 'delivery', $4, $3)", [o.orgId, order.id, o.owner, today])),
     ).rejects.toMatchObject({ code: '42501' });
-    // The shape: a delivery has a day and no reversed row, a reversal the opposite.
-    await expect(insert(o.member, 'delivery', 1, null, null)).rejects.toMatchObject({ code: '23514' });
-    await expect(insert(o.member, 'reversal', 1, randomUUID(), null)).rejects.toMatchObject({ code: '23503' });
+    // The day (F2): not after today in Vietnam's calendar, not before the order's day, and one is needed. Line 2 is free, so only the policy can refuse these.
+    const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    await expect(insert(o.member, 'delivery', 2, null, tomorrow)).rejects.toMatchObject({ code: '42501' });
+    await expect(insert(o.member, 'delivery', 2, null, '2020-01-01')).rejects.toMatchObject({ code: '42501' });
+    await expect(insert(o.member, 'delivery', 2, null, null)).rejects.toMatchObject({ code: '42501' });
+    // The time (F4): a row is made now, not backdated or later.
+    for (const when of ["now() - interval '1 day'", "now() + interval '1 day'"]) {
+      await expect(
+        as(o.orgId, o.member, (c) =>
+          c.query(`INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, created_by, created_at) VALUES ($1, $2, 2, 'delivery', $4, $3, ${when})`, [o.orgId, order.id, o.member, today]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    }
+    // The shape (the table's own check, which the policy hides from a tenant role): a delivery has a day and no reversed row, a reversal the opposite, never itself.
+    const raw = (values: string) => admin((c) => c.query(`INSERT INTO crove_crm.sales_order_delivery (org_id, order_id, line_no, kind, delivered_on, reverses_id, created_by, id) VALUES ${values}`));
+    const me = randomUUID();
+    await expect(raw(`('${o.orgId}', '${order.id}', 2, 'delivery', NULL, NULL, '${o.member}', '${randomUUID()}')`)).rejects.toMatchObject({ code: '23514' });
+    await expect(raw(`('${o.orgId}', '${order.id}', 2, 'reversal', NULL, '${me}', '${o.member}', '${me}')`)).rejects.toMatchObject({ code: '23514' });
     const id = (await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 AND kind = 'delivery'", [o.orgId, order.id]))).rows[0]!.id;
-    // A reversal names the delivery of its own line: line 2 does not match line 1's delivery.
+    // A reversal names a delivery of its own line (F1): none at all and a delivery of another line are foreign key violations, itself a check violation.
+    await expect(insert(o.member, 'reversal', 1, randomUUID(), null)).rejects.toMatchObject({ code: '23503' });
     await expect(insert(o.member, 'reversal', 2, id, null)).rejects.toMatchObject({ code: '23503' });
-    // One reversal per delivery.
+    await expect(
+      as(o.orgId, o.member, (c) => c.query("INSERT INTO crove_crm.sales_order_delivery (org_id, id, order_id, line_no, kind, reverses_id, created_by) VALUES ($1, $2, $3, 1, 'reversal', $2, $4)", [o.orgId, me, order.id, o.member])),
+    ).rejects.toMatchObject({ code: '23514' });
+    // One reversal per delivery; and a reversal is not reversed in its turn (F1: it names a delivery, never a reversal).
     await undeliver(o, o.member, order.id, 1);
     await expect(insert(o.member, 'reversal', 1, id, null)).rejects.toMatchObject({ code: '23505' });
+    const reversal = (await admin((c) => c.query<{ id: string }>("SELECT id FROM crove_crm.sales_order_delivery WHERE org_id = $1 AND order_id = $2 AND kind = 'reversal'", [o.orgId, order.id]))).rows[0]!.id;
+    await expect(insert(o.member, 'reversal', 1, reversal, null)).rejects.toMatchObject({ code: '23503' });
   });
 
   it('keeps another org out: it cannot deliver or take back, and reads nothing', async () => {

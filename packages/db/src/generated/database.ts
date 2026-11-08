@@ -725,6 +725,7 @@ export interface CrmSalesOrderDeliveryTable {
   kind: ColumnType<string, string, NotGranted>;
   delivered_on: ColumnType<string | null, string | null, NotGranted>;
   reverses_id: ColumnType<string | null, string | null, NotGranted>;
+  reverses_kind: ColumnType<string | null, never, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
