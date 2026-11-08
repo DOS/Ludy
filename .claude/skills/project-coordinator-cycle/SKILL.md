@@ -44,6 +44,7 @@ For each worker that ended a turn, read its report, check it against GitHub (PR 
   4. If both find nothing blocking, message the worker `approved, merge head <sha>`.
   5. Otherwise, send the findings to the worker.
   6. Non-blocking findings become Icebox `priority:P3` `review-followup` issues.
+- **Other lines' PRs (owner decision 2026-11-07, POs are peers).** The coordinator does not review, accept or merge another line PO's PRs, and those POs work with the owner directly. It answers only a `Security review requested (Platform PO)` comment on such a PR: review the shared-core files the comment names (`docs/product-owner-config.md`, "Shared-core review") with a fresh subagent, as in steps 2 to 3 above, and post `## Shared-core review (Platform PO)` on the PR with the head SHA, the verdict and any blocking findings. Search open PRs for that comment each cycle.
 - **Merged:**
   1. Check that the merge commit is on `main` and the issue is closed.
   2. Check that the PR's checks were green on the head that was merged.

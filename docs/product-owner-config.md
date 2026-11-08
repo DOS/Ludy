@@ -47,18 +47,30 @@ turn on `sprint_review` with `line_scopes`.
 | Accounting (Ludy Kế toán: ledger, VAT, invoices, bank feeds, MISA, `modules/finance`) | `line:accounting` | `c6def6cf` | `Accounting Product Owner` |
 | Frontend (UI/UX: the app in `apps/app`, `packages/ui`, the landing page ludy.vn in `apps/web`, the logo) | `line:frontend` | `b395d36d` | `Frontend Product Owner` |
 | Notes & CRM (notes, to-dos, bookings and calendar) | `line:notes-crm` | `b8743ac2` | `Notes & CRM Product Owner` |
-| Marketing (Social Management in `modules/social`, and Ads, #2214; owner request 2026-11-01) | `line:social-management` | `735657ce` | `Social Management Product Owner` (the Marketing PO) |
+| Engage (Ludy Engage: Social in `modules/social`, Ads, Hộp thư/Help Desk and the CRM folded in, DESIGN.md 2026-11-03) | `line:social-management` | `735657ce` | `Ludy Engage Product Owner` |
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
 | Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
 
-- Social was paused under decision D5. On 2026-11-01 JOY reopened it for the
-  Facebook Page and Zalo OA slice only ("Mở lại, làm FB + Zalo", #236). The
-  rest of Social stays paused until JOY reopens it.
+- Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
+  "no for Social" (backlog review, Decision 17), and JOY confirmed on
+  2026-11-08 that no pause was ever decided. The line is now Ludy Engage:
+  Social, Ads, Hộp thư/Help Desk and the CRM folded in on 2026-11-03
+  (DESIGN.md). On 2026-11-01 JOY said "Mở lại, làm FB + Zalo" (#236), which set
+  the order of work, the Facebook Page and Zalo OA channels first.
+- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." The Engage
+  line may run up to 4 sub-sessions at once, an exception to the
+  repository-wide cap of 3 above for this line.
 - Platform owns what every line builds on, not the features: a line's own
   feature stays with that line even when it adds a migration or a kernel
   command. Platform owns the shared core itself, the architecture (ADRs),
-  CI, deploy and operations. Its PO, the coordinator session, also runs the
-  Opus security review of every protected-path PR from any line.
+  CI, deploy and operations. Its PO reviews the shared-core files of any
+  line's PR (below); it does not review or approve the rest of another
+  line's PR.
+- Line POs are peers (JOY, Platform PO chat, 2026-11-07: "Tại sao PO khác
+  lại phải qua mày mà ko làm việc với tao trực tiếp. Mày chỉ ngang hàng thôi
+  mà", then option 1 of the PO's recommendation: "Cách 1 mày đề xuất đi").
+  Each PO works with JOY directly and runs the security review and the
+  acceptance gate of its own line's PRs, protected-path ones included.
 - Each line owns its feature's behavior and data; Frontend owns presentation
   and UX across the apps.
 
@@ -121,14 +133,49 @@ The DOS organization ids are the same in every DOS repository.
 - external_review_app: none
 - local_reviews: `codex review --base origin/main` in the background, then
   a fresh-context subagent given the diff and the issue; docs-only PRs skip
-  both and need `pnpm docs:check`. A protected-path PR also gets the
-  coordinator's independent security review before merge.
+  both and need `pnpm docs:check`. A protected-path PR also gets an
+  independent security review before merge, run by its line's PO with a
+  fresh-context Opus reviewer that did not write the change, and a PR that
+  changes the shared core also gets the Platform PO's review of those files
+  ("Shared-core review").
+- shared_core_review: `line:platform`: the paths in "Shared-core review"
+  below.
 - agent_effort: high. PO sessions run on Opus at effort high. Every sub-session
   runs on Sonnet 5.5 (`claude-sonnet-5-5`) at effort high, and at xhigh only
   for hard work (a protected-path security change, a migration, a root-cause
-  hunt). The coordinator's security review of a protected-path PR runs on
+  hunt). The security review of a protected-path PR runs on
   Opus; Codex reviews at effort high (AGENTS.md, owner decisions 2026-10-27,
   2026-10-30 and 2026-10-31).
+
+## Shared-core review
+
+Every line's PO owns its line's security review. One part of the code is
+shared by every line, so a change there also gets a review by the line that
+owns it, the Platform PO, in the way a code owner reviews a file: it covers
+those files only, it is not an approval of the PR, and the PR's own PO keeps
+its acceptance gate, its merge and its questions to JOY.
+
+The shared core:
+- `packages/kernel-runtime/src/**` (the one write path, the blob cipher);
+- the database context guards and the migration runner (`packages/db`);
+- authentication and the HTTP edge: `auth*.ts`, `sessions*.ts`, `http.ts`,
+  any `auth/` directory, `approval.ts`, `identity.ts`;
+- tenancy and kernel SQL: a migration that creates or replaces a function in
+  `crove_kernel` (`apply_tenant_rls`, `org_purge` and the like), changes
+  grants or roles, or touches another line's tables;
+- the gate: `.github/workflows/**`, `tools/ci/**`, `tools/deploy/**`, git
+  hooks, every `test/invariant/` directory outside the PR's own module,
+  `supabase/tests/database/_*.test.sql`, the pgTAP runner;
+- the agent harness and policy: `AGENTS.md`, `CLAUDE.md`, `.claude/settings*`,
+  hooks, agents, `.mcp.json`.
+
+A line's own migrations, tables, module code and its own invariant tests are
+not shared core, even though they are protected paths: its PO reviews them.
+
+To ask, the PR's PO comments on the PR `Security review requested (Platform
+PO)` with the head SHA and the shared-core files it changes. The Platform PO
+answers on the PR with `## Shared-core review (Platform PO)`, naming the head
+it reviewed, and repeats it if those files change again.
 
 ## Sessions
 

@@ -38,7 +38,7 @@ The defaults are for local use. Before anyone else can reach your instance, copy
 
 Not yet checked on a real company's books by an accountant, nor filed through HTKK or eTax: that is the pilot's job (see the roadmap).
 
-**Social** (module `social`, paused): compose, client review links, queues, exactly-once publishing, AI drafts, metrics, media library. Live connections to Meta and Zalo OA wait for the platforms' developer apps.
+**Social** (module `social`, part of Ludy Engage): compose, client review links, queues, exactly-once publishing, AI drafts, metrics, media library. Live connections to Meta and Zalo OA wait for the platforms' developer apps.
 
 **Bookings** (module `crm`): booking pages, event types, working hours and days off.
 
@@ -53,7 +53,7 @@ Ludy is heading for a first pilot with an accounting firm. Status on 2026-10-30;
 | M2 Monthly close loop (Dec 2026) | A client's month booked end to end | Built; acceptance on real data with the partner's accountant is left |
 | M3 Paid pilot (Jan 2027) | Exports the firm's tools accept, bank matching, terms of service | 40 of 50 done: accountant and legal sign-offs are left |
 | GA gate | The security, privacy (PDPL) and operations bar before general availability | 227 of 244 done |
-| Social | Publishing to social channels | Paused (decision D5): built, live channel connections left |
+| Social | Publishing to social channels | Built, live channel connections left |
 
 Later, not scheduled: two-way external calendars and meeting links for bookings, more notes features (turning a line into a to-do, AI summaries, links to meetings).
 

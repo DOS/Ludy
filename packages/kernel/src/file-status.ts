@@ -152,8 +152,8 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             // What a bank statement read into bank lines recorded as its result (#2142): only the small summary of a run of
             // method 'unsupported' (the guard keeps an invoice's result from being read for every file).
             sql<unknown>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'bank_statement' THEN x.result -> 'summary' END`.as('statement'),
-            // The state of a marketplace order report the same way (#2515): staged, imported or rejected; its details are the finance module's own.
-            sql<string | null>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' THEN x.result -> 'summary' ->> 'state' END`.as('marketplace_state'),
+            // The state of a marketplace order or income report the same way (#2515, #2516): staged, imported or rejected; its details are the finance module's own.
+            sql<string | null>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' IN ('marketplace_orders', 'marketplace_income') THEN x.result -> 'summary' ->> 'state' END`.as('marketplace_state'),
             sql<boolean>`x.status = 'pending' AND x.created_at > pg_catalog.now() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int)`.as(
               'in_flight',
             ),
