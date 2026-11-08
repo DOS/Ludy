@@ -76,16 +76,12 @@ export const recordPayrollPayment = defineCommand({
     if (payload.party !== null || payload.personName !== null) throw new DomainError('VOUCHER_INVALID', 422, 'Chứng từ chi lương không ghi theo đối tượng', { problems: ['PARTY_NOT_ALLOWED'] });
     // The payload names its entity: it is built so, and one without is refused, never read as the default.
     if (!payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất chi lương không nêu pháp nhân', { what: 'legalEntityId' });
-    // The obligation of the run rebuilt now, in the approver's context. The HR module's commands are for owners and admins: a member who holds the approval permission is told so, not refused blindly.
-    let expected: { runId: string; kind: string; month: string; regime: string; legalEntityId: string; approvedBy: string | null; cashLarge: number; lines: ReadonlyArray<{ account: string; amount: string }>; total: string };
-    try {
-      expected = await ctx.run('hr.payroll.payment.verify', { runId, kind });
-    } catch (error) {
-      if (error instanceof DomainError && error.code === 'FORBIDDEN') {
-        throw new DomainError('HR_POSTING_APPROVER_ROLE', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được khoản chi lương, vì cần đối chiếu với bảng lương');
-      }
-      throw error;
-    }
+    // The obligation of the run rebuilt now, in the approver's context, from the run's totals by cost department and never from a person's line (#2751): whoever may approve the payment can check it
+    // (an owner, an admin, or a member holding the approval permission). Anyone else is refused by the approval policy before this runs.
+    const expected = await ctx.run<{ runId: string; kind: string; month: string; regime: string; legalEntityId: string; approvedBy: string | null; cashLarge: number; lines: ReadonlyArray<{ account: string; amount: string }>; total: string }>(
+      'hr.payroll.payment.verify',
+      { runId, kind },
+    );
     if (expected.legalEntityId !== payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chứng từ chi lương không cùng pháp nhân với bảng lương', { what: 'legalEntityId' });
     if (expected.month !== payload.payroll.month || expected.regime !== payload.payroll.regime) {
       throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chứng từ chi lương không khớp tháng hoặc chế độ kế toán của bảng lương; hãy lập lại đề xuất', { what: 'month' });

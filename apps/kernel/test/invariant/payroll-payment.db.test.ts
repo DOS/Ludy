@@ -168,18 +168,28 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
       [o.orgId, runId, kind],
     );
 
-  it('lets only an owner or an admin approve a payment: a member holding the approval permission is told so, and the proposal stays pending with nothing recorded', async () => {
+  it('lets a member holding the approval permission approve a payment from the run\'s totals, and refuses a member without it and a viewer, nothing recorded for them (#2751)', async () => {
     const o = await org('tt133', 'trio');
     const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
+    const viewer = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `viewer-${randomUUID()}`, email: `viewer-${randomUUID().slice(0, 6)}@hr.test`, name: null });
     await withAdmin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [o.orgId, chief, viewer]);
       await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
     });
     const { runId } = await postedRun(o, 'trio');
     const { proposalId } = await pay(o, runId, 'tax', {}, o.admin);
-    await expect(approve(o, proposalId, chief)).rejects.toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403 });
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    // A plain member and a viewer cannot approve, and the verification of the payment refuses them whatever the approval policy says.
+    await expect(approve(o, proposalId, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(approve(o, proposalId, viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(o.exec(o.member, 'hr.payroll.payment.verify', { runId, kind: 'tax' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(o.exec(viewer, 'hr.payroll.payment.verify', { runId, kind: 'tax' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    // The chief holds the approval permission: the verification reads the totals by cost department, no person, and they approve.
+    const verified = await o.exec<{ lines: unknown[]; total: string }>(chief, 'hr.payroll.payment.verify', { runId, kind: 'tax' });
+    expect(Object.keys(verified).sort()).toEqual(['approvedBy', 'cashLarge', 'kind', 'legalEntityId', 'lines', 'month', 'regime', 'runId', 'total']);
+    expect(JSON.stringify(verified)).not.toMatch(/canary/i);
+    await expect(approve(o, proposalId, chief)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(1);
   });
 
   it('holds the approver of the run back as a co-author of its payment, and refuses a stored proposal that lost the co-author', async () => {

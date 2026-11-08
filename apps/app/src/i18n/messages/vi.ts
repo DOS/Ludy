@@ -8537,7 +8537,6 @@ export const vi = {
       HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
       HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
       HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
-      HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương hoặc chi lương, vì người duyệt phải đối chiếu được với bảng lương',
       HR_PAYMENT_NOT_POSTED: 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản',
       HR_PAYMENT_DONE: 'Khoản này của bảng lương đã được chi',
       HR_PAYMENT_OPEN: 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt',

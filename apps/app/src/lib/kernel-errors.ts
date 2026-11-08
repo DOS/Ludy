@@ -232,7 +232,6 @@ export const KERNEL_ERROR_CODES = [
   'HR_POSTING_ADJUSTMENTS',
   'HR_POSTING_MISMATCH',
   'HR_POSTING_MAP_UNCONFIRMED',
-  'HR_POSTING_APPROVER_ROLE',
   // The payment of an approved run's net pay and remittances (#2532).
   'HR_PAYMENT_NOT_POSTED',
   'HR_PAYMENT_DONE',

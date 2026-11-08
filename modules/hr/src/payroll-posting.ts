@@ -54,6 +54,47 @@ export interface BuiltPosting {
   nets: string[];
 }
 
+// What both builds share once the lines are summed: the chart of the entity on the last day of the month (finance alone reads its books; TT133 when none is on record), the account-map gate,
+// the entry, and the check that it equals the run's totals as approved, so what the approver saw is what posts.
+async function finishPosting(
+  ctx: CommandContext,
+  run: { legal_entity_id: string; month: string; approval: unknown },
+  lines: readonly PostingLine[],
+): Promise<{ date: string; regime: PayrollRegime; result: ReturnType<typeof buildPosting> }> {
+  // The chart of the entity on the last day of the month: finance alone reads its books (TT133 when none is on record).
+  const date = monthEnd(run.month);
+  const regime = (await ctx.run<{ regime: PayrollRegime }>('finance.payroll_posting.regime', { legalEntityId: run.legal_entity_id, date })).regime;
+  if (!(PAYROLL_REGIMES as readonly string[]).includes(regime)) throw mismatch('chế độ kế toán');
+  // The gate of the pay run's approval, for the account map: while the accountant has not confirmed the map of this chart (#2535), nothing is posted (finance's record command holds the same gate).
+  if (PAYROLL_POSTING_MAPS[regime].status !== 'confirmed') {
+    throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime });
+  }
+
+  let result;
+  try {
+    result = buildPosting(regime, lines);
+  } catch (error) {
+    if (error instanceof PostingRefusedError) throw mismatch(error.code);
+    throw error;
+  }
+  // The entry equals the run's totals as approved: what the approver saw is what posts.
+  const totals = (run.approval as { totals?: { gross?: string; employeeInsurance?: string; employerInsurance?: string; unionFee?: string; pit?: string; net?: string; employerCost?: string } } | null)?.totals;
+  const same = (a: string | undefined, b: string) => a !== undefined && money(a).equals(money(b));
+  if (
+    !totals ||
+    !same(totals.gross, result.totals.gross) ||
+    !same(totals.employeeInsurance, result.totals.employeeInsurance) ||
+    !same(totals.employerInsurance, result.totals.employerInsurance) ||
+    !same(totals.unionFee, result.totals.unionFee) ||
+    !same(totals.pit, result.totals.pit) ||
+    !same(totals.net, result.totals.net) ||
+    !same(totals.employerCost, result.totals.employerCost)
+  ) {
+    throw mismatch('tổng so với lúc duyệt');
+  }
+  return { date, regime, result };
+}
+
 // The entry of an approved pay run, built from its frozen lines in the caller's context: the same build the proposal rests on and the posting is checked against (hr.payroll.posting.verify),
 // so what is requested and what is recorded are one fact. `lock` holds the run's row to the end of the request, so two requests for the same run take turns.
 export async function buildRunPosting(ctx: CommandContext, runId: string, lock: boolean): Promise<BuiltPosting> {
@@ -108,39 +149,69 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
     };
   });
 
-  // The chart of the entity on the last day of the month: finance alone reads its books (TT133 when none is on record).
-  const date = monthEnd(run.month);
-  const regime = (await ctx.run<{ regime: PayrollRegime }>('finance.payroll_posting.regime', { legalEntityId: run.legal_entity_id, date })).regime;
-  if (!(PAYROLL_REGIMES as readonly string[]).includes(regime)) throw mismatch('chế độ kế toán');
-  // The gate of the pay run's approval, for the account map: while the accountant has not confirmed the map of this chart (#2535), nothing is posted (finance's record command holds the same gate).
-  if (PAYROLL_POSTING_MAPS[regime].status !== 'confirmed') {
-    throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime });
-  }
-
-  let result;
-  try {
-    result = buildPosting(regime, lines);
-  } catch (error) {
-    if (error instanceof PostingRefusedError) throw mismatch(error.code);
-    throw error;
-  }
-  // The entry equals the run's totals as approved: what the approver saw is what posts.
-  const totals = (run.approval as { totals?: { gross?: string; employeeInsurance?: string; employerInsurance?: string; unionFee?: string; pit?: string; net?: string; employerCost?: string } } | null)?.totals;
-  const same = (a: string | undefined, b: string) => a !== undefined && money(a).equals(money(b));
-  if (
-    !totals ||
-    !same(totals.gross, result.totals.gross) ||
-    !same(totals.employeeInsurance, result.totals.employeeInsurance) ||
-    !same(totals.employerInsurance, result.totals.employerInsurance) ||
-    !same(totals.unionFee, result.totals.unionFee) ||
-    !same(totals.pit, result.totals.pit) ||
-    !same(totals.net, result.totals.net) ||
-    !same(totals.employerCost, result.totals.employerCost)
-  ) {
-    throw mismatch('tổng so với lúc duyệt');
-  }
-
+  const { date, regime, result } = await finishPosting(ctx, run, lines);
   return { payrollRun: run, date, regime, result, lines: stored.length, nets: stored.map((l) => String(l.net)) };
+}
+
+// The same entry rebuilt from the run's totals by cost department (crove_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
+// whoever may approve it (an owner, an admin, or a member holding finance.proposal.approve) can check it, and nothing per person is read or returned (#2751). The function checks the caller
+// itself; a run it does not show is a run not found. It refuses what cannot be summed (an adjustment line, a line not calculated, one without its cost department or its per-fund split).
+export interface BuiltTotals {
+  payrollRun: { id: string; legal_entity_id: string; month: string; approved_by: string | null };
+  date: string;
+  regime: PayrollRegime;
+  result: ReturnType<typeof buildPosting>;
+  // How many people's net pay is at the cash limit or above: a number only.
+  cashLarge: number;
+}
+interface StoredGroup {
+  payFunction: string;
+  gross: string;
+  unionFee: string;
+  pit: string;
+  net: string;
+  advance: string;
+  otherDeductions: string;
+  funds: { fund: StoredFund['fund']; employee: string; employer: string }[];
+  employeeInsurance: string;
+  employerInsurance: string;
+}
+export async function buildRunPostingFromTotals(ctx: CommandContext, runId: string): Promise<BuiltTotals> {
+  if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
+  const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
+  const t = rows[0]?.totals as
+    | { runId: string; legalEntityId: string; month: string; status: string; approvedBy: string | null; approvalTotals: unknown; counts: Record<string, number>; groups: StoredGroup[] }
+    | null
+    | undefined;
+  if (!t) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
+  if (t.status !== 'approved') throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới hạch toán được');
+  const c = t.counts;
+  if ((c.lines ?? 0) === 0) throw mismatch('bảng lương không có dòng nào');
+  if ((c.adjustments ?? 0) > 0) throw new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này');
+  if ((c.notCalculated ?? 0) > 0) throw mismatch('dòng chưa tính');
+  if ((c.noFunction ?? 0) > 0) throw mismatch('bộ phận hạch toán');
+  if ((c.noFunds ?? 0) > 0) throw mismatch('thiếu chi tiết bảo hiểm');
+  if ((c.noDeductions ?? 0) > 0) throw mismatch('thiếu các khoản khấu trừ');
+  const lines: PostingLine[] = t.groups.map((g) => {
+    if (!(PAY_FUNCTIONS as readonly string[]).includes(g.payFunction)) throw mismatch('bộ phận hạch toán');
+    // The per-fund sums must add to the insurance the lines carry: the entry rests on one fact, not two.
+    const employee = g.funds.reduce((acc, f) => acc.plus(f.employee), money(0));
+    const employer = g.funds.reduce((acc, f) => acc.plus(f.employer), money(0));
+    if (!employee.equals(money(g.employeeInsurance)) || !employer.equals(money(g.employerInsurance))) throw mismatch('bảo hiểm');
+    return {
+      payFunction: g.payFunction as PayFunction,
+      gross: g.gross,
+      funds: g.funds,
+      unionFee: g.unionFee,
+      pit: g.pit,
+      advance: g.advance,
+      otherDeductions: g.otherDeductions,
+      net: g.net,
+    };
+  });
+  const run = { id: t.runId, legal_entity_id: t.legalEntityId, month: t.month, approved_by: t.approvedBy, approval: { totals: t.approvalTotals } };
+  const { date, regime, result } = await finishPosting(ctx, run, lines);
+  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, result, cashLarge: c.cashLarge ?? 0 };
 }
 
 export const prepareRunPosting = defineCommand({
@@ -191,9 +262,11 @@ export const verifyRunPosting = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  // Whoever may approve the posting reads its totals by cost department (an owner, an admin, or a member holding the approval permission; #2751): never a person's line.
+  permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, { runId }) => {
-    const { payrollRun, date, regime, result } = await buildRunPosting(ctx, runId, false);
+    const { payrollRun, date, regime, result } = await buildRunPostingFromTotals(ctx, runId);
     return {
       runId,
       month: payrollRun.month,
