@@ -241,7 +241,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
-  const review = useMutation({ mutationFn: () => orpc.meetings.results.review.call({ meetingId, confirmed: true }), onSuccess: refresh });
+  const review = useMutation({ mutationFn: (ids: string[]) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids }), onSuccess: refresh });
   const acceptClean = useMutation({ mutationFn: () => orpc.meetings.actionItems.acceptClean.call({ meetingId, confirmed: true }), onSuccess: refresh });
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
@@ -251,7 +251,9 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
   if (!isRecorder && !published && items.length === 0) return null;
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
   // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
-  const unread = (draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted);
+  // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
+  const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
+  const unread = unreadIds.length > 0;
   const cleanCount = items.filter((i) => i.clean).length;
   return (
     <Card data-testid="meeting-results">
@@ -302,7 +304,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
               <div className="space-y-2" data-testid="vy-review">
                 <p className="text-sm">{t('reviewNote')}</p>
                 {review.error && <ErrorText>{errorMessage(review.error)}</ErrorText>}
-                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate()}>
+                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate(unreadIds)}>
                   {t('reviewed')}
                 </Button>
               </div>
