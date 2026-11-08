@@ -254,7 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteSuggestInput, zQuoteSuggested, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -319,8 +319,13 @@ import {
   zMeetingSettingsGet,
   zMeetingSettingsSet,
   zMeetingSummary,
+  zTranscript,
+  zTranscriptCorrect,
+  zTranscriptCorrected,
+  zTranscriptDraftStore,
+  zTranscriptDraftStored,
 } from './meetings.ts';
-import { zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked } from './extension.ts';
+import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -503,6 +508,9 @@ export const contract = {
     tokens: {
       list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
       revoke: oc.input(zExtensionTokenRevoke).output(zExtensionTokenRevoked),
+      // Owners and admins: every member's devices in the org, and a revoke of one (issue #2740).
+      listOrg: oc.input(z.strictObject({})).output(z.array(zExtensionOrgToken)),
+      revokeMember: oc.input(zExtensionTokenRevoke).output(zExtensionTokenRevokedMember),
     },
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
@@ -637,6 +645,8 @@ export const contract = {
       get: oc.input(zQuoteRef).output(zQuote),
       byDeal: oc.input(zDealQuotesQuery).output(z.array(zQuoteSummary)),
       defaults: oc.input(zQuoteDefaultsQuery).output(zQuoteDefaults),
+      // Dy's proposal for the lines (#2698): a read that never stores; a person applies or drops each line, and saves with `save`.
+      suggest: oc.input(zQuoteSuggestInput).output(zQuoteSuggested),
       save: oc.input(zQuoteSave).output(zQuote),
       deleteDraft: oc.input(zQuoteRef).output(zQuoteDeleted),
       revise: oc.input(zQuoteRef).output(zQuote),
@@ -735,6 +745,12 @@ export const contract = {
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
+    // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
+    transcript: {
+      get: oc.input(zMeetingRef).output(zTranscript),
+      draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
+      correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),

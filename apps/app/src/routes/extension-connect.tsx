@@ -19,7 +19,7 @@ export function ExtensionConnectPage() {
   const t = useTranslations('extensionConnect');
   // Read once: the request was moved from the address bar to this tab's storage before sign-in.
   const read = useRef<ConnectRequest | null | undefined>(undefined);
-  if (read.current === undefined) read.current = pendingConnect();
+  if (read.current === undefined) read.current = pendingConnect(getConfig().extensionIds ?? []);
   const request = read.current;
   const me = useQuery(orpc.me.get.queryOptions());
   const [chosen, setChosen] = useState<string | null>(null);
@@ -34,6 +34,7 @@ export function ExtensionConnectPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-crove-org': org.slug },
         body: JSON.stringify({
+          extensionId: request.extensionId,
           codeChallenge: request.codeChallenge,
           codeChallengeMethod: 'S256',
           scopes: request.scopes,
@@ -82,7 +83,7 @@ export function ExtensionConnectPage() {
               ))}
             </fieldset>
             {org && <p className="text-sm font-medium text-foreground">{t('allow', { org: org.name })}</p>}
-            <p className="break-all text-xs text-subtle-foreground">{t('extensionId', { id: new URL(request.redirect).hostname.split('.')[0] ?? '' })}</p>
+            <p className="break-all text-xs text-subtle-foreground">{t('extensionId', { id: request.extensionId })}</p>
             <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
               {request.scopes.map((scope) => (
                 <li key={scope}>{t(`scope.${scope}`)}</li>

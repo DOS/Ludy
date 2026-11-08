@@ -17,6 +17,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@crove/kernel-runtime';
+import { logEvent } from './log.ts';
 
 export const EXTENSION_TOKEN_PREFIX = 'crx_';
 const EXTENSION_CODE_PREFIX = 'crc_';
@@ -113,6 +114,20 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
     token: token.value,
     exchange: { codeId: row.code_id, tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes: row.scopes, expiresAt: new Date(row.expires_at).toISOString() },
   };
+}
+
+// Revokes the token row an exchange just made when the exchange cannot be completed (its audit row failed), so no usable
+// row is left that the client never received. By the token's hash, while it has never been used (last_used_at is null); the definer audits
+// it as a system revoke. true when a row was revoked. Never throws: the caller is already handling a failure.
+export async function voidUndeliveredExtensionToken(db: Db, token: string): Promise<boolean> {
+  try {
+    const { rows } = await sql<{ voided: boolean }>`SELECT crove_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
+    return rows[0]?.voided === true;
+  } catch (error) {
+    // Never the token or its hash: the class of the failure only.
+    logEvent('error', 'extension token void failed', { error: error instanceof Error ? error.name : 'unknown' });
+    return false;
+  }
 }
 
 // One HTTP route a token may reach. `scope` null: any token (the route opens no feature). Everything a route runs

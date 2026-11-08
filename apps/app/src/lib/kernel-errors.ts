@@ -224,6 +224,7 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_TARGET_NOT_FOUND',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
+  'TRANSCRIPT_SEGMENT_NOT_FOUND',
   'FILE_TOO_LARGE',
   'INVALID_READER',
   'INVALID_MEDIA_CONTAINER',
@@ -896,6 +897,7 @@ export const KERNEL_ERROR_RULES = {
   extension_scope: 'FORBIDDEN',
   extension_org: 'FORBIDDEN',
   extension_only: 'FORBIDDEN',
+  extension_id: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;

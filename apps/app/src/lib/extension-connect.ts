@@ -17,6 +17,8 @@ const KEY = 'crove-pending-extension-connect';
 export const PENDING_CONNECT_TTL_MS = 10 * 60 * 1000;
 
 export interface ConnectRequest {
+  // The extension signing in: the host of its redirect address, one of the ids the deployment allows.
+  extensionId: string;
   codeChallenge: string;
   redirect: string;
   state: string;
@@ -27,17 +29,20 @@ export interface ConnectRequest {
 const isScope = (value: string): value is ExtensionScopeId => (EXTENSION_SCOPE_IDS as readonly string[]).includes(value);
 
 // The request an address carries, or null when any part is missing or malformed: the extension's address must be a
-// chromiumapp.org one, the challenge a SHA-256 in base64url, the method S256, every scope a known one.
-export function parseConnectRequest(search: string): ConnectRequest | null {
+// chromiumapp.org one of an extension in `allowedIds` (EXTENSION_IDS, #2740), the challenge a SHA-256 in base64url, the
+// method S256, every scope a known one.
+export function parseConnectRequest(search: string, allowedIds: readonly string[]): ConnectRequest | null {
   const params = new URLSearchParams(search);
   const codeChallenge = params.get('code_challenge') ?? '';
   const redirect = params.get('redirect_uri') ?? '';
   const state = params.get('state') ?? '';
   if (params.get('code_challenge_method') !== 'S256' || !CHALLENGE.test(codeChallenge) || !REDIRECT.test(redirect) || !STATE.test(state)) return null;
+  const extensionId = new URL(redirect).hostname.split('.')[0] ?? '';
+  if (!allowedIds.includes(extensionId)) return null;
   const asked = (params.get('scope') ?? EXTENSION_SCOPE_IDS[0]).split(/[ ,]+/).filter(Boolean);
   if (asked.length === 0 || asked.length > EXTENSION_SCOPE_IDS.length || !asked.every(isScope)) return null;
   const deviceName = (params.get('device') ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
-  return { codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
+  return { extensionId, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
 }
 
 // Where the window goes next: the extension's address with the one-time code, or with the refusal. The state is returned
@@ -69,7 +74,7 @@ export function rememberConnect(request: ConnectRequest, now: number = Date.now(
   }
 }
 
-export function pendingConnect(now: number = Date.now()): ConnectRequest | null {
+export function pendingConnect(allowedIds: readonly string[], now: number = Date.now()): ConnectRequest | null {
   try {
     const raw = sessionStorage.getItem(KEY);
     if (raw === null) return null;
@@ -87,6 +92,7 @@ export function pendingConnect(now: number = Date.now()): ConnectRequest | null 
             scope: request.scopes.join(' '),
             device: request.deviceName,
           }).toString(),
+          allowedIds,
         )
       : null;
     if (checked) return checked;

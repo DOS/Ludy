@@ -11,6 +11,7 @@ import { importCommands, importQueries } from './import.ts';
 import { nextStepCommands, nextStepQueries } from './next-steps.ts';
 import { quoteCommands, quoteQueries } from './quotes.ts';
 import { quotePdfQueries } from './quote-pdf.ts';
+import { quoteSuggestSource } from './quote-suggest.ts';
 import { crmToday } from './today.ts';
 
 export { dealCommands, dealConversations, dealCreate, dealDelete, dealGet, dealList, dealMove, dealQueries, dealUpdate, partyConversations, partyDeals, partySearch, pipelineSetup, pipelineStages } from './deals.ts';
@@ -28,8 +29,10 @@ export { loadQuoteDocument, quoteDocument } from './quote-pdf.ts';
 export { renderQuotePdf, type QuoteDocument, type QuoteParty } from './pdf/quote-document.ts';
 export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, quoteGet, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSettingSet } from './quotes.ts';
 
+export { quoteSuggestSource, type QuoteSuggestSource } from './quote-suggest.ts';
+
 export { crmToday } from './today.ts';
 
 export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, ...quotePdfQueries, crmToday];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, ...quotePdfQueries, crmToday];
 export { crmManifest } from './manifest.ts';

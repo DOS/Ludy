@@ -22,6 +22,7 @@ import {
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
   SOCIAL_IMAGE_TYPES,
+  DEFAULT_EXTENSION_IDS,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -120,7 +121,7 @@ import {
   type SignupRules,
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
-import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
+import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
@@ -576,6 +577,7 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  const allowedExtensionIds = config.EXTENSION_IDS ?? [...DEFAULT_EXTENSION_IDS];
   app.get('/api/config', (c) =>
     c.json({
       authUrl: publicAuthUrl(config),
@@ -594,6 +596,8 @@ export function createHttpApp(deps: HttpDeps) {
       turnstileSiteKey: config.TURNSTILE_SITE_KEY ?? null,
       // The product name users see (BRAND_NAME, #1040); the app fills its messages and the page title with it.
       brandName: config.BRAND_NAME,
+      // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); the connect page refuses any other.
+      extensionIds: allowedExtensionIds,
       // The terms and privacy notice linked at sign-up and invite acceptance (#688); null hides each link.
       termsUrl: config.TERMS_URL ?? null,
       privacyUrl: config.PRIVACY_URL ?? null,
@@ -1353,11 +1357,21 @@ export function createHttpApp(deps: HttpDeps) {
       if (!done) return refused();
       // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
       const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
-      await runtime.execute(
-        'kernel.extension.token.exchanged',
-        { codeId: done.exchange.codeId },
-        { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
-      );
+      // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
+      // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
+      try {
+        await runtime.execute(
+          'kernel.extension.token.exchanged',
+          { codeId: done.exchange.codeId },
+          { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
+        );
+      } catch (error) {
+        const voided = await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
+        // The clean-up did not void the row: it was already revoked (a demotion raced the exchange) or the clean-up itself failed, in which
+        // case a live row nobody holds is left behind and expires on its own. Ids only.
+        if (!voided) logEvent('error', 'extension exchange failed and its clean-up did not void the token row', { tokenId: done.exchange.tokenId, orgId: done.exchange.orgId });
+        throw error;
+      }
       return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });
     } catch (error) {
       return problem(c, error);
@@ -1450,6 +1464,8 @@ export function createHttpApp(deps: HttpDeps) {
       const parsed = zExtensionAuthorize.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
       const input = parsed.data;
+      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list.
+      if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
@@ -1713,12 +1729,13 @@ export function createHttpApp(deps: HttpDeps) {
           { uploadId: c.req.param('id') },
           { actor: actorOf(user), orgId },
         );
-        // Staged meeting media is sealed only by POST /api/meetings/:id/media: completing it here would store plaintext.
-        // (Other purposes keep their old, lenient pairing of begin and complete.)
-        if (claim.purpose === 'meeting_audio' || claim.purpose === 'meeting_video') {
-          throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
-        }
         try {
+          // Staged meeting media is sealed only by POST /api/meetings/:id/media: completing it here would store plaintext.
+          // (Other purposes keep their old, lenient pairing of begin and complete.) The grant is used up by the claim, so
+          // the refusal drops the staged object with the other refusals below (#2780).
+          if (claim.purpose === 'meeting_audio' || claim.purpose === 'meeting_video') {
+            throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+          }
           // A document is read up to 25 MB whatever its grant allowed.
           const staged = await direct.readStaged(claim.stagingKey, Math.min(claim.maxBytes, purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : MAX_UPLOAD_BYTES)).catch((error: unknown) => {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
