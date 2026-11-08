@@ -45,6 +45,7 @@ import {
   decryptBlobChunks,
   encryptBlobBuffer,
   generateMediaDataKey,
+  hasFreshMfa,
   mapPlaintextRangeToChunks,
   plaintextLengthFromCiphertextLength,
   unwrapMediaKeyWithSubkey,
@@ -2661,34 +2662,43 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
-  // The payroll declaration exports (#2533, payroll plan 6.5): GET /api/payroll-export/<kind>.xlsx?period=...&legalEntityId=..., kind d02lt (period 2026-09), kk (2026-Q3), qtt or certificate (2026).
+  // The payroll declaration exports (#2533, payroll plan 6.5): GET /api/payroll-export/<kind>.xlsx (or .json for the screen's view and print)?period=...&legalEntityId=..., kind d02lt (period 2026-09), kk (2026-Q3), qtt or certificate (2026).
   // Built only in the requesting owner's or admin's own context: the sensitive query hr.payroll.declaration.get (its audit row is committed before the sealed identity numbers, tax codes and
   // insurance numbers are opened; nothing decrypted reaches an audit fact or a log), never a worker, a stored job or a stored blob, and no email. Figures come only from approved runs. It takes a
-  // slot of the export limiter, like the books' exports; a document is bounded (more people than the cap is refused, never cut short) and is built whole after the audit row of the download is
-  // written: no row, no download. `private, no-store`: the file holds identity numbers and tax codes. Nothing is sent to any agency.
+  // slot of the export limiter, like the books' exports; a document is bounded (more people than the cap is refused, never cut short) and is built whole, then the audit row of the download is
+  // written before the bytes are sent: no row, no download. The slot is held until the bytes are taken. Opening the sealed numbers needs a second factor used in the last 5 minutes (STEP_UP_REQUIRED). `private, no-store`: the file holds identity numbers and tax codes. Nothing is sent to any agency.
   if (runtime.installed('hr')) {
     app.get('/api/payroll-export/:file', async (c) => {
       try {
         const file = c.req.param('file');
-        const kind = file.endsWith('.xlsx') ? file.slice(0, -'.xlsx'.length) : '';
+        // .xlsx is the file; .json is the same document for the screen's view and print, recorded by the same audit row (so no print leaves the server unrecorded).
+        const asView = file.endsWith('.json');
+        const kind = file.endsWith('.xlsx') ? file.slice(0, -'.xlsx'.length) : asView ? file.slice(0, -'.json'.length) : '';
         if (!(HR_DECLARATION_KINDS as readonly string[]).includes(kind)) throw new DomainError('NOT_FOUND', 404, 'Không có bảng kê này');
         const user = c.get('user');
         const orgSlug = c.req.header(ORG_HEADER) ?? null;
         const orgId = await resolveOrg(runtime, user, orgSlug);
+        // Refused before a slot or an audit row: the query checks it again for every caller.
+        if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
         const release = exportSlots.tryAcquire(user.userId);
         if (!release) {
           c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
           throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất; hãy thử lại sau vài giây');
         }
+        // The slot is held until the bytes are taken (held below); any failure before that lets it go.
         try {
           const period = c.req.query('period') ?? '';
           const legalEntityId = c.req.query('legalEntityId') || undefined;
           const query = { kind, period, ...(legalEntityId ? { legalEntityId } : {}) };
           const document = await runtime.query<HrDeclarationDocument>('hr.payroll.declaration.get', query, { actor: actorOf(user), orgId });
-          const bytes = await buildDeclarationWorkbook(document, config.BRAND_NAME);
+          const bytes = asView ? null : await buildDeclarationWorkbook(document, config.BRAND_NAME);
           const rows = document.sheets.reduce((n, sheet) => n + sheet.rows.length, 0);
-          await runtime.execute('hr.payroll.declaration.export', { ...query, rows, months: document.used.months, ...document.used.authorizedYear === undefined ? {} : { authorizedYear: document.used.authorizedYear, authorizedPeople: document.used.authorizedPeople } }, { actor: actorOf(user), orgId });
-          return new Response(body(bytes), {
+          await runtime.execute('hr.payroll.declaration.export', { ...query, rows, via: asView ? 'view' : 'xlsx', months: document.used.months, ...document.used.authorizedYear === undefined ? {} : { authorizedYear: document.used.authorizedYear, authorizedPeople: document.used.authorizedPeople } }, { actor: actorOf(user), orgId });
+          if (bytes === null) {
+            release();
+            return c.json(document, 200, { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' });
+          }
+          return new Response(held(new Uint8Array(bytes), release), {
             headers: {
               'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
               'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), `bang-ke-${kind}`, period, ORG_SLUG], 'xlsx'),
@@ -2696,8 +2706,9 @@ export function createHttpApp(deps: HttpDeps) {
               'cache-control': 'private, no-store',
             },
           });
-        } finally {
+        } catch (error) {
           release();
+          throw error;
         }
       } catch (error) {
         return problem(c, error);

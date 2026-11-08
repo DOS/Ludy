@@ -56,6 +56,8 @@ export const zHrDeclarationExport = z.strictObject({
   authorizedYear: z.number().int().optional(),
   authorizedPeople: z.number().int().optional(),
   legalEntityId: zId.optional(),
+  // How it left the server: as a file, or as the document for the screen's view and print (the same row, so a print is recorded like a download).
+  via: z.enum(['xlsx', 'view']).default('xlsx'),
 });
 export type HrDeclarationExport = z.infer<typeof zHrDeclarationExport>;
 
