@@ -69,6 +69,7 @@ export const EXCEPTIONS = [
       'apps/kernel/test/bank-statement-file.test.ts',
       'apps/kernel/test/finance-late-invoice.db.test.ts',
       'apps/kernel/test/finance-marketplace-income.db.test.ts',
+      'apps/kernel/test/finance-marketplace-retention.db.test.ts',
       'apps/kernel/test/finance-marketplace.db.test.ts',
       'apps/kernel/test/finance-missing-invoices.db.test.ts',
       'apps/kernel/test/finance-portal-list.db.test.ts',
@@ -82,6 +83,13 @@ export const EXCEPTIONS = [
     to: '^(apps/extract/test/(zip|xlsx)-fixture\\.ts|e2e/fake-tax-portal/server\\.ts)$',
     reason:
       'Test fixtures shared by the tests of several packages: the zip and xlsx builders of apps/extract and the fake tax portal of e2e. Test code that never ships; copies would drift.',
+  },
+  {
+    rule: 'no-deep-import',
+    from: ['apps/extract/test/quote-pdf.test.ts'],
+    to: '^modules/crm/src/pdf/(fonts|writer|quote-document)\\.ts$',
+    reason:
+      '#2695: the quote PDF writer only writes and reads no PDF, so the test that reads its output back with an independent reader (unpdf) lives in crove-extract, the one place a PDF reader may run (gate T12). It loads the writer by path; the writer imports nothing from crove-extract. Test code that never ships.',
   },
   {
     rule: 'no-deep-import',

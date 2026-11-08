@@ -289,7 +289,7 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
       // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-      // 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; the allowance of 8 or 9 that step one gave is gone).
+      // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532; the allowance of 9 or 10 that step one gave is gone).
       policy_version: 10,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',

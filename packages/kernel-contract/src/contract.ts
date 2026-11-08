@@ -254,7 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteSuggestInput, zQuoteSuggested, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -272,7 +272,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -649,6 +649,10 @@ export const contract = {
       suggest: oc.input(zQuoteSuggestInput).output(zQuoteSuggested),
       save: oc.input(zQuoteSave).output(zQuote),
       deleteDraft: oc.input(zQuoteRef).output(zQuoteDeleted),
+      send: oc.input(zQuoteSend).output(zQuoteSent),
+      createLink: oc.input(zQuoteRef).output(zQuoteLinkCreated),
+      revokeLink: oc.input(zQuoteLinkRevoke).output(zQuoteLinkRevoked),
+      setting: oc.input(z.strictObject({})).output(zQuoteSetting),
       revise: oc.input(zQuoteRef).output(zQuote),
       setSetting: oc.input(zQuoteSettingSet).output(zQuoteSetting),
     },
@@ -689,6 +693,12 @@ export const contract = {
         setInputs: oc.input(zHrLineInputsSet).output(zHrRunWritten),
         adjust: oc.input(zHrLineAdjust).output(zHrRunWritten),
         payslip: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
+      // The finance coworker's part (#2534): prepare the month, flag anomalies, explain a payslip, on a pseudonymized sheet. Read-only, owners and admins, AI off or spent: `ai` says so.
+      coworker: {
+        prepare: oc.input(zHrCoworkerAsk).output(zHrCoworkerPrepared),
+        flag: oc.input(zHrCoworkerAsk).output(zHrCoworkerFlagged),
+        explain: oc.input(zHrCoworkerPayslipAsk).output(zHrCoworkerExplained),
       },
     },
   },

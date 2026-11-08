@@ -22,6 +22,7 @@ import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, q
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
+import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
 
 export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
@@ -676,6 +677,17 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   // edit are kept, never the text) and the saved reply is counted. Typing everything away forgets it.
   const [from, setFrom] = useState<{ draftId?: string; savedReplyId?: string }>({});
   const id = detail.conversation.id;
+  // A quote link the contact panel offers (#2694): its message lands in this box for the person to read, edit and send. Nothing is sent from there.
+  useEffect(() => {
+    const onInsert = (event: Event) => {
+      const { conversationId, text: inserted } = (event as CustomEvent<ReplyInsert>).detail;
+      if (conversationId !== id) return;
+      setText((current) => (current.trim() === '' ? inserted : `${current.trimEnd()}\n\n${inserted}`));
+      setFrom({});
+    };
+    window.addEventListener(REPLY_INSERT_EVENT, onInsert);
+    return () => window.removeEventListener(REPLY_INSERT_EVENT, onInsert);
+  }, [id]);
   const send = useMutation({
     mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen, ...from }),
     onSuccess: (done) => {

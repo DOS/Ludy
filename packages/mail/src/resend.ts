@@ -154,7 +154,7 @@ export function createResendProvider(options: ResendOptions): MailProvider {
             html: mail.html,
             ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
             ...(mail.attachments?.length
-              ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, content_type: a.contentType, content: Buffer.from(a.content, 'utf8').toString('base64') })) }
+              ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, content_type: a.contentType, content: (typeof a.content === 'string' ? Buffer.from(a.content, 'utf8') : Buffer.from(a.content)).toString('base64') })) }
               : {}),
             ...(mail.messageId || mail.inReplyTo || mail.references?.length
               ? {

@@ -50,6 +50,7 @@ import { mayResubmit, resubmitSource } from './proposal-resubmit.ts';
 import { taxCalendarQueries } from './tax-calendar.ts';
 import { legalEntityQueries } from './legal-entities.ts';
 import { numberingQueries } from './numbering.ts';
+import { memberVyQueries } from './member-vy.ts';
 import { myPermissions, roleQueries } from './roles.ts';
 import { calendarQueries } from './calendar.ts';
 import { partyQueries } from './parties.ts';
@@ -575,12 +576,15 @@ export const fileGet = defineQuery({
   handler: async (ctx, input) => {
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'size_bytes', 'source'])
+      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'size_bytes', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
-    return file;
+    // The original of a marketplace report is deleted 90 days after the decision (#2516, ADR-0045 point 8): the row and its hash stay, the bytes do not.
+    if (file.original_deleted_at) throw new DomainError('FILE_ORIGINAL_DELETED', 409, 'Tệp gốc của báo cáo này đã được xóa sau 90 ngày kể từ khi bạn quyết định; chỉ còn bản tóm tắt');
+    const { original_deleted_at: _deleted, ...rest } = file;
+    return rest;
   },
 });
 
@@ -641,5 +645,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries];
+  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }

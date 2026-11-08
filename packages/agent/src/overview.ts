@@ -40,7 +40,7 @@ function grouped(value: DecimalValue, language: 'vi' | 'en'): string {
   const digits = whole.replace(/\B(?=(\d{3})+(?!\d))/g, language === 'vi' ? '.' : ',');
   return fraction ? `${digits}${language === 'vi' ? ',' : '.'}${fraction}` : digits;
 }
-const amountText = (amount: string, language: 'vi' | 'en') => `${new Decimal(amount).isNegative() ? (language === 'vi' ? 'âm ' : 'minus ') : ''}${grouped(new Decimal(amount).abs(), language)}`;
+export const amountText = (amount: string, language: 'vi' | 'en') => `${new Decimal(amount).isNegative() ? (language === 'vi' ? 'âm ' : 'minus ') : ''}${grouped(new Decimal(amount).abs(), language)}`;
 
 // The change of a figure in words the model copies: its direction and the size in percent of the earlier figure (none when the earlier figure was 0).
 function change(amount: string, previous: string, language: 'vi' | 'en'): { direction: 'up' | 'down' | 'flat'; percent: string | null } {
@@ -113,10 +113,18 @@ export function checkOverviewSentence(facts: OverviewFacts, output: { sentence?:
   const text = (output?.sentence ?? '').replace(/\s+/g, ' ').trim();
   if (text === '') return { kind: 'none', code: 'EMPTY' };
   if (Array.from(text).length > OVERVIEW_SENTENCE_MAX || sentencesIn(text) > OVERVIEW_SENTENCES_MAX) return { kind: 'none', code: 'TOO_LONG' };
-  // Invisible format characters (a zero-width space inside a number word) could split a word the checks look for, so a text holding one is no sentence.
-  const read = text.normalize('NFKC');
-  if (/\p{Cf}/u.test(read)) return { kind: 'none', code: 'FIGURES' };
-  if (draftFiguresOutside(text, [overviewFactsText(facts)]).length > 0 || SCALED.test(read) || NUMBER_IN_WORDS.some((word) => word.test(read))) return { kind: 'none', code: 'FIGURES' };
-  if (draftLinksOutside(text, []).length > 0) return { kind: 'none', code: 'LINK' };
+  const problem = statedFiguresProblem(text, [overviewFactsText(facts)]);
+  if (problem) return { kind: 'none', code: problem };
   return { kind: 'sentence', text };
+}
+
+/** Whether a text states a number the given facts do not hold, or a link: a digit, an amount with its unit, a number scaled to thousands or said in words, an invisible format
+ * character that could hide one, or a link. The other texts a model writes from a list of figures (the payroll coworker's) use the same rule. */
+export function statedFiguresProblem(text: string, facts: readonly string[]): 'FIGURES' | 'LINK' | null {
+  // Invisible format characters (a zero-width space inside a number word) could split a word the checks look for, so a text holding one is refused.
+  const read = text.normalize('NFKC');
+  if (/\p{Cf}/u.test(read)) return 'FIGURES';
+  if (draftFiguresOutside(text, facts).length > 0 || SCALED.test(read) || NUMBER_IN_WORDS.some((word) => word.test(read))) return 'FIGURES';
+  if (draftLinksOutside(text, []).length > 0) return 'LINK';
+  return null;
 }
