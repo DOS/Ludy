@@ -75,6 +75,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.retention.shred',
       'meetings.shred.replay',
       'meetings.media.discard',
+      'meetings.transcript.draft_store',
+      'meetings.transcript.correct',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -94,6 +96,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.media_meta',
       'meetings.settings.get',
       'meetings.media.orphan_keys',
+      'meetings.transcript.get',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

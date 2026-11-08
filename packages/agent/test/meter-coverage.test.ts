@@ -25,8 +25,10 @@ function sources(dir: string, skipTests = false): string[] {
 }
 
 // The AI SDK functions that reach a model; a call to any of them is a model call.
-const CALL = '(?:generateText|generateObject|streamText|streamObject|embed|embedMany|generateImage|generateSpeech|transcribe)';
-const MODEL_CALL = new RegExp(`\\b${CALL}\\s*\\(`, 'g');
+// transcribeAudio is the adapter's own HTTP call to the transcription endpoint (transcribe.ts): it is a model call too. A
+// definition (`function transcribeAudio(`) is not a call.
+const CALL = '(?:generateText|generateObject|streamText|streamObject|embed|embedMany|generateImage|generateSpeech|transcribe|transcribeAudio)';
+const MODEL_CALL = new RegExp(`(?<!function )\\b${CALL}\\s*\\(`, 'g');
 const METERED_CALL = new RegExp(`\\bmetered\\(\\s*'([a-z][a-z0-9_.]*)',\\s*\\(\\)\\s*=>\\s*${CALL}\\(`, 'g');
 const squash = (text: string) => text.replace(/\s+/g, ' ');
 
