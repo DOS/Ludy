@@ -187,20 +187,22 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
   });
 
   it('keeps every member-mode function pinned and out of PUBLIC reach', async () => {
+    // Every function named for member Vy, and every SECURITY DEFINER anywhere whose body reads the member-keyed tables.
     const { rows } = await admin((c) =>
       c.query<{ fn: string; definer: boolean; config: string[] | null; public_exec: boolean; tenant_exec: boolean }>(
         `SELECT p.oid::regprocedure::text AS fn, p.prosecdef AS definer, p.proconfig AS config,
                 has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
                 has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant_exec
          FROM pg_proc p
-         WHERE p.pronamespace = 'crove_kernel'::regnamespace AND (p.proname LIKE 'member\\_vy\\_%' OR p.proname LIKE 'enter\\_member\\_vy%')`,
+         WHERE p.proname LIKE '%member\\_vy%' OR p.proname = 'member_has_permission'
+            OR (p.prosecdef AND p.prosrc ~ 'member_vy_(result|memory)')`,
       ),
     );
     for (const f of rows) {
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
-      // The definers that touch member text (expire, purge) are never callable by the tenant role: only the worker login, in the system context, reaches them.
-      if (f.definer && /results_expire|data_purge|enter_member_vy/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the permission reader.
+      if (f.definer && f.fn !== 'crove_kernel.member_has_permission(uuid,uuid,text)') expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
@@ -392,11 +394,12 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
           );
           expect(forged.ok, `${actor.name} writing a run for the member's Vy`).toBe(false);
         }
-        // position refuses a member_vy agent as its holder.
+        // position refuses a member_vy agent as its holder (an org-chart agent holds one seat, position_agent_uq, so the refusal must be named by the kind guard, not that index).
         const seat = await outcome(
           admin((c) => c.query(`INSERT INTO crove_kernel."position" (org_id, id, title, module, role_key, holder_agent_id) VALUES ($1, $2, 'Ghế thử', 'finance', 'finance.chief_accountant', $3)`, [orgId, randomUUID(), agentId])),
         );
         expect(seat.ok, 'a member_vy agent holding a seat').toBe(false);
+        expect(seat.ok ? '' : seat.message, 'refused by the kind guard, not by a unique index').not.toMatch(/position_agent_uq|duplicate key/);
       } finally {
         await admin(async (c) => {
           await c.query('SET session_replication_role = replica');

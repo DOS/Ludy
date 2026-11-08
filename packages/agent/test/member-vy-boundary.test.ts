@@ -34,7 +34,7 @@ const specifiers = (text: string): string[] =>
   );
 
 // What a member-Vy feature module must never import: the command runtime and the kernel, the database, and the vendors behind the ports.
-const BANNED_IMPORT = /^(?:@crove\/(?:kernel|kernel-runtime|kernel-contract|db|mod-[a-z-]+)(?:\/|$)|kysely$|pg$|ai$|@ai-sdk\/|openai$|@anthropic-ai\/|mem0|@mem0\/|zep|@getzep\/|langchain|@langchain\/)/;
+const BANNED_IMPORT = /^(?:node:(?:https?|http2|net|tls|dgram)$|https?$|undici$|axios$|@crove\/(?:kernel|kernel-runtime|kernel-contract|db|mod-[a-z-]+)(?:\/|$)|kysely$|pg$|ai$|@ai-sdk\/|openai$|@anthropic-ai\/|mem0|@mem0\/|zep|@getzep\/|langchain|@langchain\/)/;
 
 // The violations of one member-Vy feature module's source, as short reasons.
 export function memberVyViolations(text: string): string[] {
@@ -43,8 +43,10 @@ export function memberVyViolations(text: string): string[] {
   // A command name: a module namespace and two or more further segments in a string (kernel.member_vy.result.store, notes.todo.create). A feature key has two (notes.summary).
   for (const m of text.matchAll(/['"`]((?:kernel|notes|meetings|finance|crm|hr|social|projects|calendar|desk)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)['"`]/g)) out.push(`names the command or path ${m[1]}`);
   // A table name, and a call that runs a command.
-  if (/['"`][^'"`\n]*\bcrove_[a-z]+\b/.test(text)) out.push('names a crove_ table');
-  if (/\.\s*execute\s*\(/.test(text)) out.push('calls execute()');
+  if (/\bcrove_[a-z]+\./.test(text)) out.push('names a crove_ table');
+  if (/\bexecute\s*\(/.test(text)) out.push('calls execute()');
+  // A direct network call: the provider interface (decision 9) is the only way out.
+  if (/\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b/.test(text)) out.push('calls the network directly');
   return out;
 }
 
@@ -64,6 +66,10 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(memberVyViolations(`const c = 'notes.todo.create';`)).toEqual(['names the command or path notes.todo.create']);
     expect(memberVyViolations('await runtime.execute(cmd, input, ctx);')).toEqual(['calls execute()']);
     expect(memberVyViolations(`const t = 'crove_kernel.member_vy_result';`)).toContain('names a crove_ table');
+    expect(memberVyViolations('const q = `\nINSERT INTO crove_kernel.member_vy_memory\n`;')).toContain('names a crove_ table');
+    expect(memberVyViolations('const { execute } = rt; await execute(c);')).toContain('calls execute()');
+    expect(memberVyViolations(`await fetch('https://x.test');`)).toEqual(['calls the network directly']);
+    expect(memberVyViolations(`import https from 'node:https';`)).toEqual(['imports node:https']);
     // What is allowed: zod, a relative module, a two-segment feature key, plain text.
     expect(memberVyViolations(`import { z } from 'zod';\nimport { metered } from '../meter.ts';\nconst f = 'notes.summary';`)).toEqual([]);
     expect(orgFeatureViolations(`import { x } from './member-vy/summary.ts';`)).toEqual(['imports ./member-vy/summary.ts']);
