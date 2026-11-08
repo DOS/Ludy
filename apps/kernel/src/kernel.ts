@@ -661,8 +661,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           workerBuildCheck: role === 'api',
         });
         const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST });
-        // A 2 GB meeting upload needs more than Node's default 300 s to arrive (#2780); a stalled one is cancelled by the route.
-        configureUploadTimeouts(server as unknown as Server);
+        // A 2 GB meeting upload needs more than Node's default 300 s to arrive (#2780); every request body is guarded against a stall.
+        configureUploadTimeouts(server as unknown as Server, { requestTimeoutSeconds: config.MEDIA_UPLOAD_REQUEST_TIMEOUT_S });
         console.log(`[api] listening on ${config.HOST}:${config.PORT}`);
         stops.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
         // Stopped before the server (stops run in reverse): open streams would keep server.close() waiting.

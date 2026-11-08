@@ -120,7 +120,7 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
-import { MEDIA_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
+import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
 import { corsMiddleware } from './cors.ts';
@@ -1559,7 +1559,7 @@ export function createHttpApp(deps: HttpDeps) {
   const large = deps.largeUploads ?? new ConcurrencyLimiter({ total: 2, perKey: 1 });
   // A meeting video upload is held whole in memory several times over (body, copy, ciphertext), so the process takes one at a time.
   const videoTransfers = deps.videoUploads ?? new ConcurrencyLimiter({ total: 1, perKey: 1 });
-  const mediaStallMs = deps.mediaStallMs ?? MEDIA_STALL_TIMEOUT_MS;
+  const mediaStallMs = deps.mediaStallMs ?? BODY_STALL_TIMEOUT_MS;
   const busy = (c: Context) => {
     c.header('retry-after', String(UPLOAD_BUSY_RETRY_SECONDS));
     return new DomainError('UPLOAD_BUSY', 503, 'Máy chủ đang xử lý nhiều tệp; hãy thử lại sau vài giây');
