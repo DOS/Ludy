@@ -25,13 +25,15 @@ export const archiveSource = defineQuery({
   handler: async (ctx, input) => {
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'source'])
+      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
       .executeTakeFirst();
-    if (!file || !isArchiveType(file.content_type)) return null;
+    // An .xlsx report arrives as a ZIP: one whose original was deleted (#2516) is never opened again, whatever a versioned bucket still holds.
+    if (!file || !isArchiveType(file.content_type) || file.original_deleted_at) return null;
     const run = await ctx.trx.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', file.id).limit(1).executeTakeFirst();
-    return { ...file, expanded: Boolean(run) };
+    const { original_deleted_at: _deleted, ...rest } = file;
+    return { ...rest, expanded: Boolean(run) };
   },
 });
 

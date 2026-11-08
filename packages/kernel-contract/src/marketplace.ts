@@ -195,3 +195,7 @@ export type MarketplaceIncomePreview = z.infer<typeof zMarketplaceIncomePreview>
 
 export const zMarketplaceIncomeConfirmResult = z.object({ settlementId: zId, lines: z.number().int().nonnegative(), reportNet: zDecimal, other: zDecimal });
 export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeConfirmResult>;
+
+// Days after a member's decision (import or skip) when the original file and the per-order amounts of a marketplace report are deleted (ADR-0045 point 8, #2516). The database
+// (crove_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
+export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
