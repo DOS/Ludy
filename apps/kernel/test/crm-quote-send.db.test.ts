@@ -432,6 +432,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
       phone: '028 3829 1234',
       email: 'ban-hang@congty.test',
       bankNote: 'Vietcombank 0071000123456\nCông ty ABC',
+      logoFileId: null,
     });
     expect(await o.query(o.viewer, 'crm.quote_setting.get', {})).toMatchObject({ phone: '028 3829 1234', email: 'ban-hang@congty.test' });
     const { quote } = await o.send(o.member, draft, 'link');
