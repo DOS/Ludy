@@ -95,6 +95,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.stock.close_period',
   // The confirmation of a count of stock (#2513): writes the adjustment moves and posts their difference as a general journal voucher.
   'finance.stock.count_confirm',
+  // The posting of an approved pay run (#2532): posts the month's pay, the funds and the PIT as a general journal voucher that names the run.
+  'finance.payroll_posting.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',

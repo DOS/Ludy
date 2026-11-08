@@ -78,6 +78,8 @@ const POLICIES: Record<string, CommandPolicy> = {
   'finance.stock.close_period': LEDGER,
   // The confirmation of a count of stock (#2513) posts the adjustment moves and a general journal voucher built from the books (a shortage to 632 or 1381, a surplus to 3381): the same rule.
   'finance.stock.count_confirm': LEDGER,
+  // The posting of an approved pay run (#2532) is a general journal voucher built from the frozen run (gross by function, the funds, the PIT): the same rule.
+  'finance.payroll_posting.record': LEDGER,
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): a plain base-role policy, no approval
   // permission and no ledger. Owners and admins approve (Q2), with four-eyes and the one-person path (P10): an owner alone
   // approves their own request, flagged self_approved; with two eligible approvers someone other than an author approves.
@@ -109,7 +111,7 @@ export function liveApprovalCommands(): string[] {
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build.
-export const APPROVAL_POLICY_VERSION = 7;
+export const APPROVAL_POLICY_VERSION = 8;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
