@@ -57,7 +57,8 @@ DECLARE
   -- The columns an edit, a send and a revision's own save are allowed to change as bookkeeping.
   v_keep text[] := ARRAY['version', 'updated_by', 'updated_at'];
 BEGIN
-  IF v_actor IS DISTINCT FROM 'user' THEN
+  -- Only the system context and a statement with no context at all are not held: any other actor (a person, an agent) is.
+  IF v_actor IS NULL OR v_actor = 'system' THEN
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
   END IF;
@@ -132,11 +133,11 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'QUOTE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a draft is sent and nothing else';
     END IF;
-  ELSIF OLD.status = 'sent' AND NEW.status = 'superseded' THEN
-    -- Replaced by the revision that was sent in this transaction: nothing but the status changes.
+  ELSIF OLD.status IN ('sent', 'declined') AND NEW.status = 'superseded' THEN
+    -- Replaced by the revision that was sent in this transaction (a declined quote is revised too): nothing but the status changes.
     IF (pg_catalog.to_jsonb(NEW) - v_keep - 'status') IS DISTINCT FROM (pg_catalog.to_jsonb(OLD) - v_keep - 'status')
        OR NOT EXISTS (SELECT 1 FROM crove_crm.quote r WHERE r.org_id = OLD.org_id AND r.revises_id = OLD.id AND r.status = 'sent') THEN
-      RAISE EXCEPTION 'QUOTE_FROZEN' USING ERRCODE = '42501', DETAIL = 'a sent quote is only replaced by its sent revision';
+      RAISE EXCEPTION 'QUOTE_FROZEN' USING ERRCODE = '42501', DETAIL = 'a sent or declined quote is only replaced by its sent revision';
     END IF;
   ELSE
     RAISE EXCEPTION 'QUOTE_FROZEN' USING ERRCODE = '42501', DETAIL = 'a quote that has left draft does not change';
@@ -159,7 +160,7 @@ DECLARE
   v_quote uuid;
   v_status text;
 BEGIN
-  IF crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' THEN
+  IF crove_kernel.ctx_actor_type() IS NULL OR crove_kernel.ctx_actor_type() = 'system' THEN
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
   END IF;
@@ -234,7 +235,7 @@ CREATE POLICY quote_link_update ON crove_crm.quote_link AS RESTRICTIVE FOR UPDAT
 CREATE OR REPLACE FUNCTION crove_crm.quote_link_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NEW IS NOT DISTINCT FROM OLD THEN
+  IF crove_kernel.ctx_actor_type() IS NULL OR crove_kernel.ctx_actor_type() = 'system' OR NEW IS NOT DISTINCT FROM OLD THEN
     RETURN NEW;
   END IF;
   IF OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL OR NEW.revoked_by IS DISTINCT FROM crove_kernel.ctx_user_id() THEN
@@ -283,10 +284,11 @@ BEGIN
   IF v_quote.id IS NULL OR v_quote.status NOT IN ('sent', 'accepted', 'declined') THEN
     RETURN NULL;
   END IF;
-  UPDATE crove_crm.quote_link SET views = views + 1, first_viewed_at = coalesce(first_viewed_at, pg_catalog.now()) WHERE org_id = v_link.org_id AND id = v_link.id;
+  -- The quote row first, then the link: the send of a revision locks them in that order too, so the two cannot deadlock.
   IF v_quote.first_viewed_at IS NULL THEN
     UPDATE crove_crm.quote SET first_viewed_at = pg_catalog.now() WHERE org_id = v_quote.org_id AND id = v_quote.id;
   END IF;
+  UPDATE crove_crm.quote_link SET views = views + 1, first_viewed_at = coalesce(first_viewed_at, pg_catalog.now()) WHERE org_id = v_link.org_id AND id = v_link.id;
   RETURN (
     SELECT pg_catalog.jsonb_build_object(
       'number', v_quote.number,
