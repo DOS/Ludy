@@ -11,10 +11,18 @@
 // Audit rows, activity and events carry ids, an enum and numbers, never text (decision 4): no body, title or subject text reaches them.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { tableWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { kernelManifest } from './manifest.ts';
 
 const MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
+
+// What the store command writes, declared (P04, #1710): the result's text and state, and in the member's own session the run it closes. In the
+// background (Vy in member mode) it writes the result alone; the worker closes the run afterwards (crove_kernel.member_vy_run_finish).
+const STORE_WRITES = [
+  tableWrite(kernelManifest.tables, 'crove_kernel', 'member_vy_result', ['status', 'body', 'error_code', 'source_revision', 'private_read']),
+  tableWrite(kernelManifest.tables, 'crove_kernel', 'ai_run', ['status', 'finished_at', 'error', 'private_read']),
+];
 
 // What a member may ask Vy for in stage A, with the module whose budget and kill switch it counts against and how long a run may live
 // (the kernel caps it at 4 hours). A feature is added here with the AI_FEATURES key it meters under.
@@ -143,10 +151,18 @@ export const memberVyResultStore = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBER_ROLES,
+  writes: STORE_WRITES,
+  // Also the background run of the member's Vy (ADR-0049 stage B): the worker enters the member's context, and the runtime ran the entry's checks
+  // (the member active, vy.use held, no kill switch, no spent budget) before this handler.
+  memberVy: { taint: 'propagate' },
   target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
   handler: async (ctx, input): Promise<{ stored: boolean; status: 'ready' | 'failed' }> => {
-    const userId = requireUser(ctx);
-    if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    // In member mode the member is the one the context was sealed for; in the member's own session it is the user, who must still hold vy.use.
+    const background = ctx.memberVy !== null;
+    const userId = ctx.memberVy ? ctx.memberVy.memberUserId : requireUser(ctx);
+    // A background run stores into the one run its context was sealed for, never another run of the same member.
+    if (ctx.memberVy && input.runId !== ctx.memberVy.runId) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không phải của ngữ cảnh hiện tại', { rule: 'member_vy_context' });
+    if (!background && !(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     // The run must be this member's own Vy run, still running and not expired, and have its result row waiting.
     const run = await ctx.trx
       .selectFrom('crove_kernel.ai_run as r')
@@ -190,17 +206,22 @@ export const memberVyResultStore = defineCommand({
       .where('id', '=', result.id)
       .where('status', '=', 'running')
       .executeTakeFirst();
-    const closed = await ctx.trx
-      .updateTable('crove_kernel.ai_run')
-      .set({ status: outcome.status === 'ready' ? 'succeeded' : 'failed', finished_at: ctx.now, error: outcome.status === 'failed' ? outcome.errorCode : null, private_read: privateRead })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', run.id)
-      .where('status', '=', 'running')
-      .executeTakeFirst();
-    if (wrote.numUpdatedRows !== 1n || closed.numUpdatedRows !== 1n) {
+    // In the background the run is closed by the worker afterwards, never here: a member-mode context writes no ai_run row.
+    const closed = background
+      ? null
+      : await ctx.trx
+          .updateTable('crove_kernel.ai_run')
+          .set({ status: outcome.status === 'ready' ? 'succeeded' : 'failed', finished_at: ctx.now, error: outcome.status === 'failed' ? outcome.errorCode : null, private_read: privateRead })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', run.id)
+          .where('status', '=', 'running')
+          .executeTakeFirst();
+    if (wrote.numUpdatedRows !== 1n || (closed !== null && closed.numUpdatedRows !== 1n)) {
       throw new DomainError('VY_RUN_NOT_LIVE', 409, 'Lượt làm việc này của Vy đã kết thúc hoặc không còn hiệu lực');
     }
-    ctx.audit({ run_id: run.id, result_id: result.id, status: outcome.status, private_read: privateRead, body_length: outcome.status === 'ready' ? outcome.body.length : 0 });
+    // Ids, an enum and numbers only. The background context's audit rows are checked by the write guard against exactly these shapes (camel-case keys).
+    if (background) ctx.audit({ runId: run.id, resultId: result.id, status: outcome.status, bodyLength: outcome.status === 'ready' ? outcome.body.length : 0 });
+    else ctx.audit({ run_id: run.id, result_id: result.id, status: outcome.status, private_read: privateRead, body_length: outcome.status === 'ready' ? outcome.body.length : 0 });
     return { stored: outcome.status === 'ready', status: outcome.status };
   },
 });
