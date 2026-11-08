@@ -308,6 +308,25 @@ suite('marketplace income reports (#2516)', () => {
     }
   });
 
+  it("lets another org's owner neither confirm nor reject this org's staged report, and settles two confirmations of the same file at once with one settlement", async () => {
+    const o = await org();
+    const stranger = await org();
+    const { fileId } = await read(o, workbook(lines(o.a, o.b)));
+    // The report belongs to its org: the stranger's owner sees no such staged read, whatever the file id, and nothing is stored anywhere.
+    await expect(execute(stranger, 'finance.marketplace_income.confirm', { fileId })).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_NOT_STAGED' });
+    await expect(execute(stranger, 'finance.marketplace_income.reject', { fileId })).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_NOT_STAGED' });
+    expect(await settlements(stranger)).toEqual([]);
+    expect(await settlements(o)).toEqual([]);
+    // The report is still staged for its own org after the refused attempts.
+    expect(await query<unknown[]>(o, 'finance.marketplace_income.staged', {})).toHaveLength(1);
+    // Two members confirming the same file at once: one settlement, the other told it was already decided.
+    const results = await Promise.allSettled([confirm(o, fileId, o.member), confirm(o, fileId, o.owner)]);
+    const outcomes = results.map((r) => (r.status === 'fulfilled' ? 'ok' : (r.reason as { code?: string }).code)).sort();
+    expect(outcomes).toEqual(['MARKETPLACE_INCOME_NOT_STAGED', 'ok']);
+    expect(await settlements(o)).toHaveLength(1);
+    expect(await settlementLines(o)).toHaveLength(2);
+  });
+
   it('is read and decided by owners, admins and members only; a viewer sees and decides nothing', async () => {
     const o = await org();
     const { fileId } = await read(o, workbook(lines(o.a, o.b)));
