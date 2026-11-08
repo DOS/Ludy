@@ -14,7 +14,7 @@ import {
   startBlocker,
   type ChunkStore,
   type RecordingMeta,
-} from '../src/lib/meeting-recorder.ts';
+} from '../src/index.ts';
 
 function memoryStore(): ChunkStore & { failAfter: number | null } {
   const metas = new Map<string, RecordingMeta>();

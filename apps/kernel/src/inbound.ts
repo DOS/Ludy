@@ -21,9 +21,10 @@ import {
   type ConversationIngested,
 } from '@crove/kernel-contract';
 import type { UsageLimits, UsageOver } from '@crove/kernel';
-import { DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { BlobConflictError, DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import { readLookupHints, type LookupHint } from '@crove/l10n-vn';
 import { isCsvName, safeFilename, sniffType } from './sniff.ts';
+import { mailFilesNote, readMailFiles, type MailImage } from './conversation-mail-files.ts';
 
 export const MAX_EMAIL_BYTES = 40 * 1024 * 1024;
 const TOKEN = /^[0-9a-f]{24}$/;
@@ -268,16 +269,18 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
 const CLOCK_SKEW_MS = 5 * 60_000;
 const MESSAGE_ID = /^<[^<>\s]{1,298}>$/;
 const NO_TEXT = '[Thư không có nội dung chữ]';
+const NO_TEXT_IMAGES = '[Thư không có chữ, chỉ có ảnh đính kèm]';
 // A mail dated further ahead than this is dated now: a clock set wrong must not put a thread's newest message in the future.
 
-export type ConversationMail = { event: ConversationEvent } | { ignored: 'automated' | 'own_address' | 'no_sender' };
+export type ConversationMail = { event: ConversationEvent; images: MailImage[] } | { ignored: 'automated' | 'own_address' | 'no_sender' };
 
 // The event a customer's mail is in the conversation core's words (#2439), or why it opens none. A bulk, list or auto-generated mail opens no
 // conversation, and neither does one sent from this deployment's own mail domain (the system's mail, or the org writing to itself): a
 // conversation never replies by itself, so no loop can start. The thread is not decided here: the core finds it from the Message-IDs named in
 // `refs`, within the org, and never by subject. Text from the mail is tainted external text and stays text: the extract sandbox reduced any HTML to
-// text already, and attachments are only counted in this slice.
-export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date, authservId?: string): ConversationMail {
+// text already. Its attachments are read by readMailFiles (#2758): images are kept (the event says how many, the bytes go to the store, never in the
+// event) and every other file is listed by name, size and type at the end of the text.
+export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date, authservId?: string, storeImages = true): ConversationMail {
   if (email.automated === true) return { ignored: 'automated' };
   if (email.multipleFrom === true) return { ignored: 'no_sender' };
   const sender = (email.from ?? '').trim().toLowerCase();
@@ -290,8 +293,10 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   // In-Reply-To comes last, the nearest ancestor, so the cut to the last ones never drops it.
   const refs = [...new Set([...(email.references ?? []), email.inReplyTo ?? ''].map((r) => r.trim()).filter((r) => MESSAGE_ID.test(r) && r !== messageId))].slice(-EMAIL_REFS_MAX);
   const written = (email.text ?? '').trim();
-  const attachments = email.attachments.length > 0 ? `\n\n[Thư có ${email.attachments.length} tệp đính kèm, chưa hiển thị]` : '';
-  const text = `${written === '' ? NO_TEXT : written.slice(0, CONVERSATION_BODY_MAX - 80)}${attachments}`.slice(0, CONVERSATION_BODY_MAX);
+  const files = readMailFiles(email.attachments, storeImages);
+  const note = mailFilesNote(files.lines);
+  const body = written === '' ? (files.images.length > 0 ? NO_TEXT_IMAGES : NO_TEXT) : written;
+  const text = `${body.slice(0, CONVERSATION_BODY_MAX - note.length - 2)}${note === '' ? '' : `\n\n${note}`}`;
   const sent = email.sentAt ? Date.parse(email.sentAt) : Number.NaN;
   // The sender's clock is trusted a few minutes ahead at most; backdated mail keeps its date (the core dates the thread's activity itself).
   const at = new Date(Number.isNaN(sent) || sent > now.getTime() + CLOCK_SKEW_MS ? now.getTime() : sent).toISOString();
@@ -301,6 +306,7 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   // oxlint-disable-next-line no-control-regex
   const name = (email.fromName ?? '').replace(/[\u0000\r\n\t]+/g, ' ').trim().slice(0, 200);
   return {
+    images: files.images,
     event: {
       kind: 'email',
       threadId: messageId,
@@ -312,6 +318,7 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
       ...(subject ? { subject } : {}),
       ...(refs.length > 0 ? { refs } : {}),
       verified: senderVerified(email.authResults ?? [], authservId, sender.slice(sender.lastIndexOf('@') + 1)),
+      ...(files.images.length > 0 ? { mailImages: files.images.length, mailImageBytes: files.images.reduce((sum, i) => sum + i.bytes.byteLength, 0) } : {}),
     },
   };
 }
@@ -416,10 +423,49 @@ export interface ConversationMailResult {
 // A customer's mail to the org's conversation address: the intake of the Inbox, in the org the address names, as the system. Idempotent: a redelivery
 // of the same Message-ID is a duplicate and changes nothing.
 async function processConversationEmail(deps: InboundProcessDeps, orgId: string, email: ExtractedEmail, rawSha256: string, domain: string): Promise<ConversationMailResult> {
-  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId ?? configuredAuthservId);
+  const options = { actor: { type: 'system' as const, component: 'inbound.conversation' }, orgId };
+  // Mailed images count in the org's day of attachment bytes, but conversation spam may use a quarter of it at most, so a flood on the published address
+  // never defers the invoice reader. Over that, the mail's text still arrives and its images are listed like any other file.
+  let storeImages = true;
+  if (deps.limits && email.attachments.length > 0) {
+    const quarter = String(Math.floor(Number(deps.limits.attachment_bytes) / 4));
+    storeImages = (await deps.runtime.query<UsageOver | null>('kernel.usage.over', { metrics: ['attachment_bytes'], limits: { attachment_bytes: quarter } }, options)) === null;
+  }
+  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId ?? configuredAuthservId, storeImages);
   if ('ignored' in made) return { conversation: 'ignored', reason: made.ignored };
-  const out = await deps.runtime.execute<ConversationIngested>('kernel.conversation.email_ingest', { events: [made.event] }, { actor: { type: 'system', component: 'inbound.conversation' }, orgId });
+  const out = await deps.runtime.execute<ConversationIngested>('kernel.conversation.email_ingest', { events: [made.event] }, options);
+  await storeMailImages(deps, made.images, out.images ?? [], options);
   return { conversation: out.stored > 0 ? 'stored' : out.duplicates > 0 ? 'duplicate' : 'ignored' };
+}
+
+// Writes the bytes of a mail's images under the keys the core reserved and records them (#2758). The reserved rows are the mail's last ones: a redelivery
+// after a worker died hands out only the rows still waiting, which are the images not yet written (they are written in order), so the images are
+// paired from the end. A store that fails throws, so the job is tried again (the rows stay reserved, and an hour later a row nobody wrote is dropped);
+// bytes that meet other bytes under their key drop that image alone. Nothing of the image or its name is logged.
+async function storeMailImages(
+  deps: InboundProcessDeps,
+  images: readonly MailImage[],
+  slots: ReadonlyArray<{ attachmentId: string; storageKey: string }>,
+  options: { actor: { type: 'system'; component: string }; orgId: string },
+): Promise<void> {
+  const mine = images.slice(Math.max(0, images.length - slots.length));
+  for (const [i, slot] of slots.entries()) {
+    const image = mine[i];
+    if (!image) break;
+    let generation: string;
+    try {
+      generation = await putFile(deps.store, slot.storageKey, image.bytes, image.contentType, image.sha256);
+    } catch (error) {
+      if (!(error instanceof BlobConflictError)) throw error;
+      await deps.runtime.execute('kernel.conversation.attachment_record', { outcome: 'failed', attachmentId: slot.attachmentId, retry: false, code: 'STORE_CONFLICT' }, options);
+      continue;
+    }
+    await deps.runtime.execute(
+      'kernel.conversation.attachment_record',
+      { outcome: 'stored', attachmentId: slot.attachmentId, sha256: image.sha256, sizeBytes: image.bytes.byteLength, contentType: image.contentType, generation, width: image.width, height: image.height },
+      options,
+    );
+  }
 }
 
 function safeLookupHints(text: string): LookupHint[] {

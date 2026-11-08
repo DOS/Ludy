@@ -117,3 +117,81 @@ export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;
 // taught for its SKU when it is the one that put the line on this item, at this factor.
 export const zMarketplaceUnassign = z.strictObject({ lineId: zId, forget: z.boolean().default(false) });
 export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Income reports (#2516, ADR-0045 points 5 and 7): what a platform paid for the orders of a period, read from the platform's income file and staged until a member confirms. Like the
+// order report, no buyer data of any kind appears here: the reader has no field for it.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// The platforms whose income files are read (Lazada has no profile until a real file decides its layout, #2521).
+export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop'] as const;
+export const zMarketplaceIncomePlatform = z.enum(MARKETPLACE_INCOME_PLATFORM_KEYS);
+const zDecimal = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/, 'decimal string');
+
+// What a staged income read keeps next to its lines: the platform the headers say, the profile that read it (never confirmed against a real file until #2521), the period of the payments,
+// the totals of every amount column of the lines, the net the file states for the whole report (null when it states none), and the rows that were no order's income (a totals row).
+// After the decision the same summary says what was stored.
+export const zMarketplaceIncomeSummary = z.object({
+  state: z.enum(['staged', 'imported', 'rejected']),
+  platform: zMarketplaceIncomePlatform,
+  profileVersion: z.string(),
+  profileConfirmed: z.boolean(),
+  filename: z.string(),
+  sheet: z.string().nullable(),
+  orders: z.number().int().nonnegative(),
+  lines: z.number().int().nonnegative(),
+  // The first and last payment date of the lines; null when a line has no payment date (the report cannot be confirmed then).
+  periodStart: zLocalDate.nullable(),
+  periodEnd: zLocalDate.nullable(),
+  totals: z.object({
+    sales: zDecimal,
+    sellerDiscount: zDecimal,
+    commission: zDecimal,
+    serviceFee: zDecimal,
+    paymentFee: zDecimal,
+    shipping: zDecimal,
+    taxWithheld: zDecimal,
+    refund: zDecimal,
+    // What no named column explains (the net the file states less what the columns say): shown so a person sees it.
+    other: zDecimal,
+    net: zDecimal,
+  }),
+  // The net the file states for the whole report, when it has exactly one totals row.
+  statedNet: zDecimal.nullable(),
+  ignoredRows: z.number().int().nonnegative(),
+  // After the decision: the settlement that was stored (the kernel's statement_state keeps it as importId).
+  importId: zId.optional(),
+});
+export type MarketplaceIncomeSummary = z.infer<typeof zMarketplaceIncomeSummary>;
+
+export const zMarketplaceIncomeStaged = z.object({
+  fileId: zId,
+  filename: z.string(),
+  createdAt: z.string(),
+  summary: zMarketplaceIncomeSummary,
+  // The legal entity the settlement would go to: the one the file was uploaded for (or the default), with its name as it is now.
+  entity: z.object({ id: zId, name: z.string() }).nullable(),
+});
+export type MarketplaceIncomeStaged = z.infer<typeof zMarketplaceIncomeStaged>;
+
+// Why a staged income report cannot be confirmed now, each a stable code the screen words:
+// PERIOD_UNKNOWN (a line has no payment date), TOTAL_MISMATCH (the lines do not add up to the net the file states), UNKNOWN_ORDERS (an order the report names is not known: import the order
+// report first), OVERLAP (a settlement of this platform already covers part of the period), REPEATED_LINES (a sale line is already stored in another settlement that stands).
+export const MARKETPLACE_INCOME_BLOCKERS = ['PERIOD_UNKNOWN', 'TOTAL_MISMATCH', 'UNKNOWN_ORDERS', 'OVERLAP', 'REPEATED_LINES'] as const;
+export const zMarketplaceIncomePreview = z.object({
+  // The net the settlement would state: the file's own figure, or the sum of the lines when the file states none (then fileStatesNet is false, and the screen says so).
+  reportNet: zDecimal,
+  fileStatesNet: z.boolean(),
+  linesNet: zDecimal,
+  // Orders the report names that the org does not know yet (the first ten), and how many in all.
+  unknownOrders: z.number().int().nonnegative(),
+  unknownOrderNos: z.array(z.string()).max(10),
+  // The standing settlement of this platform that overlaps the period, when there is one.
+  overlap: z.object({ periodStart: zLocalDate, periodEnd: zLocalDate }).nullable(),
+  repeatedLines: z.number().int().nonnegative(),
+  blockers: z.array(z.enum(MARKETPLACE_INCOME_BLOCKERS)),
+});
+export type MarketplaceIncomePreview = z.infer<typeof zMarketplaceIncomePreview>;
+
+export const zMarketplaceIncomeConfirmResult = z.object({ settlementId: zId, lines: z.number().int().nonnegative(), reportNet: zDecimal, other: zDecimal });
+export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeConfirmResult>;

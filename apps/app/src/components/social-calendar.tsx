@@ -38,6 +38,7 @@ import { ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { providerName, VARIANT_TONE, variantStatusKey, variantTone } from '../lib/social.ts';
+import { BEST_TIME_DAYS, bestSlotSearch, channelBestTimes, knownZone, listedPosts, takenTimes, weekBestSlots, type BestTimeSuggestion } from '../lib/social-best-time.ts';
 import {
   addDays,
   calendarGroups,
@@ -273,6 +274,27 @@ function SlotChip({ slot, paused, over, onDragOver, onDragLeave, onDrop }: { slo
       {slot.label && <span> · {slot.label}</span>}
       {paused && <span className="sr-only"> · {t('slotPaused')}</span>}
     </div>
+  );
+}
+
+// A best posting time of the filtered channel in the week view (#2221), as Hootsuite's "Recommended time": a click
+// starts a post for that channel planned then. Worked out in the browser from the channel's own published numbers.
+function BestSlotChip({ slot, onStart }: { slot: BestTimeSuggestion; onStart: (slot: BestTimeSuggestion) => void }) {
+  const t = useTranslations('social.calendar');
+  const f = useFormat();
+  const iso = new Date(slot.at).toISOString();
+  return (
+    <button
+      type="button"
+      data-testid="best-slot"
+      data-slot={iso}
+      title={t('bestSlotHint', { engagement: f.number(Math.round(slot.engagement)), posts: String(slot.posts) })}
+      aria-label={t('bestSlotStart', { time: f.time(iso) })}
+      onClick={() => onStart(slot)}
+      className="block w-full truncate rounded-md border border-dashed border-primary/50 bg-primary/5 px-1.5 py-0.5 text-left text-xs text-primary hover:bg-primary/10 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      <span className="font-mono tabular-nums">{f.time(iso)}</span> {t('bestSlot')}
+    </button>
   );
 }
 
@@ -659,6 +681,24 @@ export function SocialCalendar({
   const openSlots = useMemo(() => (connectionId && slotWindow ? (slots.data?.slots ?? []) : []), [connectionId, slotWindow, slots.data]);
   const slotsOn = useMemo(() => slotsByDay(openSlots), [openSlots]);
   const queuePaused = slots.data?.paused ?? false;
+  // Under a channel filter in the week view, the channel's best posting times of the days shown (#2221): the channel's
+  // published numbers of the last 90 days, the same ranking as the "Giờ đẹp" button (#980) and with its 5-post rule, so
+  // a channel with too little history shows none. Those who may write only: a click starts a post.
+  const bestWanted = canWrite && view === 'week' && connectionId !== undefined;
+  const history = useQuery({ ...orpc.social.metrics.summary.queryOptions({ input: { days: BEST_TIME_DAYS } }), staleTime: 10 * 60_000, enabled: bestWanted });
+  const bestOn = useMemo(() => {
+    const byDay = new Map<string, BestTimeSuggestion[]>();
+    if (!bestWanted || !connectionId || !history.data) return byDay;
+    const zone = knownZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const ranked = channelBestTimes(history.data, connectionId, zone);
+    if (ranked.state !== 'ready') return byDay;
+    const taken = takenTimes(listedPosts([posts.data]), connectionId);
+    for (const s of weekBestSlots(ranked.slots, days, { timeZone: zone, nowMs: Date.now(), taken })) {
+      const id = dayId(new Date(s.at));
+      byDay.set(id, [...(byDay.get(id) ?? []), s]);
+    }
+    return byDay;
+  }, [bestWanted, connectionId, history.data, days, posts.data]);
   // The drafts with no time yet, under the same filters (#1145), for those who may plan them.
   const undated = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { undated: true, ...filters, limit: UNDATED_LIMIT } }), enabled: canWrite });
   const notes = useQuery(orpc.social.calendarNotes.list.queryOptions({ input: { from: dayId(days[0] as Date), to: dayId(days.at(-1) as Date) } }));
@@ -860,6 +900,10 @@ export function SocialCalendar({
   const start = (day: Date) => {
     const at = plannedAt(day, new Date());
     if (at) void navigate({ to: '/o/$slug/social/new', params: { slug }, search: { at: at.toISOString() } });
+  };
+  // A best time clicked: a new post for the filtered channel, planned then.
+  const startBest = (slot: BestTimeSuggestion) => {
+    if (connectionId) void navigate({ to: '/o/$slug/social/new', params: { slug }, search: bestSlotSearch(slot, connectionId) });
   };
   const [showOccasions, setShowOccasions] = useState(() => occasionsShown(slug));
   const occasions = useMemo(() => (showOccasions ? occasionsBetween(dayId(days[0] as Date), dayId(days.at(-1) as Date)) : []), [days, showOccasions]);
@@ -1134,6 +1178,9 @@ export function SocialCalendar({
                       {(slotsOn.get(id)?.length ?? 0) > shown && (
                         <span className="text-xs text-subtle-foreground">{t('calendar.moreSlots', { count: (slotsOn.get(id)?.length ?? 0) - shown })}</span>
                       )}
+                      {(bestOn.get(id) ?? []).map((slot) => (
+                        <BestSlotChip key={slot.at} slot={slot} onStart={startBest} />
+                      ))}
                       {hours.length > 0 && (
                         <div className="mt-1 hidden flex-col gap-px sm:flex" aria-hidden="true">
                           {hours.map((h) => {
