@@ -494,6 +494,34 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect(await orderMoves(o, handoff.orderId)).toHaveLength(1);
     });
 
+    it('refuses with a bare 409 a delivery of a line whose move sits in an entity the caller cannot see, instead of a 500', async () => {
+      const o = await org();
+      const branch = (
+        await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
+      )[0]?.id as string;
+      const limited = await identity('limited');
+      await admin(async (c) => {
+        await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+        await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+      });
+      const mainItem = await makeItem(o);
+      await teach(o, mainItem, LINE_TWO);
+      const branchItem = await makeItem(o, { legalEntityId: branch, code: 'QC-HUE' });
+      await teach(o, branchItem, LINE_TWO);
+      const real = handoffOf(o.entity, [{ description: LINE_TWO }]);
+      expect((await move(o, real, 1)).status).toBe('moved');
+      // The same order id forged into the branch's hand-off: the first move is hidden from this caller, and the unique index answers.
+      const forged = { ...handoffOf(branch, [{ description: LINE_TWO }]), orderId: real.orderId };
+      const error = await move(o, forged, 1, {}, limited).then(
+        () => null,
+        (e: unknown) => e as { code?: string; status?: number; message?: string; details?: unknown },
+      );
+      expect(error?.code).toBe('ORDER_LINE_ALREADY_DELIVERED');
+      expect(error?.status).toBe(409);
+      expect(JSON.stringify(error)).not.toContain(real.orderId);
+      expect(await orderMoves(o, real.orderId)).toHaveLength(1);
+    });
+
     it('is for owners, admins and members, not a viewer, and the database itself allows one forward move per order line', async () => {
       const o = await org();
       const item = await makeItem(o);

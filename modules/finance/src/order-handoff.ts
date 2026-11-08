@@ -74,8 +74,6 @@ export const einvoiceDraftFromOrder = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
-  // A new draft has no id yet: its audit row carries it in the facts.
-  target: () => null,
   handler: async (ctx, input): Promise<EInvoiceDraft> => {
     const { handoff } = input;
     verifyHandoff(handoff);
@@ -206,7 +204,6 @@ export const stockMoveFromOrderLine = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
-  target: () => null,
   handler: async (ctx, input): Promise<StockMoveFromOrderLineResult> => {
     const { handoff, lineNo, action } = input;
     verifyHandoff(handoff);
@@ -261,7 +258,14 @@ export const stockMoveFromOrderLine = defineCommand({
     if (!target) throw new DomainError('STOCK_ORDER_LINE_NO_ITEM', 422, 'Chưa biết dòng này là mặt hàng kho nào, hãy gán tên hàng này cho một mặt hàng rồi thử lại', { lineNo });
     const signed = moveQuantity('sale', quantity, target.factor);
     if (signed === null) throw new DomainError('STOCK_LINE_NO_QUANTITY', 422, 'Dòng này không có số lượng để xuất kho');
-    const id = await writeStockMove(ctx, { itemId: target.itemId, date: input.date, quantity: signed, source: { type: 'crm_order_line', orderId: handoff.orderId, lineNo } });
+    let id: string;
+    try {
+      id = await writeStockMove(ctx, { itemId: target.itemId, date: input.date, quantity: signed, source: { type: 'crm_order_line', orderId: handoff.orderId, lineNo } });
+    } catch (error) {
+      // A move of this line that the lookup above could not see (it sits in a legal entity the caller may not read): refused with no data about it.
+      if (pgCode(error) === '23505') throw new DomainError('ORDER_LINE_ALREADY_DELIVERED', 409, 'Dòng này đã được xuất kho');
+      throw error;
+    }
     ctx.audit({ orderId: handoff.orderId, lineNo, action, moveId: id });
     return { status: 'moved', moveId: id };
   },
