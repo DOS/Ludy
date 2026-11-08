@@ -229,6 +229,12 @@ const sameWages = (a: DeclarationLine, b: DeclarationLine): boolean => INSURANCE
  * before, or newly insured, is an adjustment effective on the first of the month. A person not insured that month is not listed. Persons who left in an earlier month are not in the run.
  */
 export function buildD02Lt(input: D02LtInput): DeclarationDocument {
+  return buildD02LtListing(input).document;
+}
+
+/** The D02-LT and the people it lists (the ones with a change that month), so a caller can open the identifiers of those people only. */
+export function buildD02LtListing(input: D02LtInput): { document: DeclarationDocument; listed: ReadonlySet<string> } {
+  const listed = new Set<string>();
   const lineOf = (lines: readonly DeclarationLine[] | null, id: string) => lines?.find((l) => l.employeeId === id && l.kind === 'pay');
   assertKnown(input.persons, [...input.lines, ...(input.previousLines ?? [])]);
   const rows: (Record<string, string> & { _order: string; _name: string; _id: string })[] = [];
@@ -262,6 +268,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
       continue;
     }
     for (const { movement, effective, source } of movements) {
+      listed.add(person.employeeId);
       rows.push({
         _order: String(MOVEMENT_ORDER[movement]),
         _name: person.name,
@@ -308,7 +315,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
   if (skipped > 0) notes.push(`${skipped} người không đóng bảo hiểm trong tháng nên không có trong danh sách.`);
   if (suspended > 0) notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (nghỉ không lương từ 14 ngày): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
   if (unexplained > 0) notes.push(`${unexplained} người có mức đóng tháng trước nhưng tháng này không có mức đóng (không rõ lý do): kiểm tra xem có phải báo giảm hay điều chỉnh không.`);
-  return documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes);
+  return { document: documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes), listed };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -400,6 +407,11 @@ export interface QuarterlyInput {
  * mid-quarter stays on the schedule for the months they were paid and the note says the day they left.
  */
 export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
+  return buildQuarterlyListing(input).document;
+}
+
+/** The quarter's document and the people its schedules print (not those counted in the headcount only), so a caller opens the identifiers of those people only. */
+export function buildQuarterlyListing(input: QuarterlyInput): { document: DeclarationDocument; printed: ReadonlySet<string> } {
   const months = new Set(quarterMonths(input.quarter));
   assertKnown(input.persons, input.lines.filter((l) => months.has(l.month)));
   const people = new Map(input.persons.map((p) => [p.employeeId, p]));
@@ -467,7 +479,7 @@ export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của quý chưa đủ.`);
   const qNote = assessableNote(input.lines.filter((l) => months.has(l.month)));
   if (qNote) notes.push(qNote);
-  return documentOf(
+  const document = documentOf(
     'kk',
     `${DECLARATION_NOTICE} 05/KK-TNCN quý ${input.quarter}`,
     header(input.employer, [{ label: 'Quý', value: input.quarter }, { label: 'Tháng chưa có bảng lương đã duyệt', value: missing.join(', ') || 'không có' }]),
@@ -478,6 +490,7 @@ export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
     ],
     notes,
   );
+  return { document, printed: new Set([...progressive.keys(), ...flat.keys()]) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -518,6 +531,11 @@ export function annualExclusion(person: DeclarationPerson, year: number, lines: 
  * brackets and the deadlines of tax year 2026 are not confirmed (plan row 14), so the cell is left for the person.
  */
 export function buildAnnual(input: AnnualInput): DeclarationDocument {
+  return buildAnnualListing(input).document;
+}
+
+/** The annual document and the people it schedules (the list of everyone else shows a name and a reason only). */
+export function buildAnnualListing(input: AnnualInput): { document: DeclarationDocument; printed: ReadonlySet<string> } {
   const prefix = `${input.year}-`;
   assertKnown(input.persons, input.lines.filter((l) => l.month.startsWith(prefix)));
   const scheduled: PersonTotals[] = [];
@@ -564,10 +582,9 @@ export function buildAnnual(input: AnnualInput): DeclarationDocument {
     columns: [
       { key: 'seq', header: 'STT', kind: 'count' },
       { key: 'name', header: 'Họ và tên', kind: 'text' },
-      { key: 'taxCode', header: 'Mã số thuế', kind: 'text' },
       { key: 'reason', header: 'Lý do', kind: 'text' },
     ],
-    rows: [...excluded].sort((a, b) => byName({ name: a.person.name, employeeId: a.person.employeeId }, { name: b.person.name, employeeId: b.person.employeeId })).map((e, i) => ({ seq: String(i + 1), name: e.person.name, taxCode: text(e.person.taxCode), reason: EXCLUSION_LABEL[e.reason] })),
+    rows: [...excluded].sort((a, b) => byName({ name: a.person.name, employeeId: a.person.employeeId }, { name: b.person.name, employeeId: b.person.employeeId })).map((e, i) => ({ seq: String(i + 1), name: e.person.name, reason: EXCLUSION_LABEL[e.reason] })),
   };
   const monthsDone = input.approvedMonths.filter((m) => m.startsWith(prefix)).sort();
   const missing = Array.from({ length: 12 }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`).filter((m) => !monthsDone.includes(m));
@@ -578,7 +595,8 @@ export function buildAnnual(input: AnnualInput): DeclarationDocument {
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của năm chưa đủ.`);
   const aNote = assessableNote(input.lines.filter((l) => l.month.startsWith(prefix)));
   if (aNote) notes.push(aNote);
-  return documentOf('qtt', `${DECLARATION_NOTICE} 05/QTT-TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm tính thuế', value: String(input.year) }]), [summary, schedule, notExcluded], notes);
+  const document = documentOf('qtt', `${DECLARATION_NOTICE} 05/QTT-TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm tính thuế', value: String(input.year) }]), [summary, schedule, notExcluded], notes);
+  return { document, printed: new Set(scheduled.map((t) => t.person.employeeId)) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -597,9 +615,15 @@ export interface CertificateInput {
  * withheld at the flat rate; none for a person who authorized the payer to finalize, who is listed with that reason; a person with no tax withheld has nothing to certify.
  */
 export function buildCertificates(input: CertificateInput): DeclarationDocument {
+  return buildCertificatesListing(input).document;
+}
+
+/** The certificates' document and who it prints: `certified` (a row with the tax code and the identity number) and `authorizers` (the second sheet, a name and a tax code). */
+export function buildCertificatesListing(input: CertificateInput): { document: DeclarationDocument; certified: ReadonlySet<string>; authorizers: ReadonlySet<string> } {
   const prefix = `${input.year}-`;
   const rows: Record<string, string>[] = [];
   const authorized: DeclarationPerson[] = [];
+  const certified = new Set<string>();
   const refunds: string[] = [];
   const mk = (p: DeclarationPerson, period: string, lines: DeclarationLine[], note: string): Record<string, string> => {
     const t = newTotals(p);
@@ -636,6 +660,7 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
     const flatLines = mine.filter((l) => modeOfLine(l, yearLines) === 'flat');
     if (progressiveLines.length > 0 && progressiveLines.reduce((acc, l) => acc.plus(l.pit), zero()).gt(0)) {
       const months = progressiveLines.map((l) => l.month).sort();
+      certified.add(person.employeeId);
       rows.push(mk(person, `${months[0]} đến ${months.at(-1)}`, progressiveLines, person.taxCode ? '' : 'Thiếu mã số thuế'));
     }
     const byMonth = new Map<string, DeclarationLine[]>();
@@ -643,7 +668,10 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
     for (const month of [...byMonth.keys()].sort()) {
       const group = byMonth.get(month) as DeclarationLine[];
       const net = group.reduce((acc, l) => acc.plus(l.pit), zero());
-      if (net.gt(0)) rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+      if (net.gt(0)) {
+        certified.add(person.employeeId);
+        rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+      }
       // A correction carried in a later month refunds tax withheld earlier; the certificate already issued is not changed here, so the refund is named for the person to reconcile.
       else if (net.lt(0)) refunds.push(`${person.name}: tháng ${month} có điều chỉnh hoàn thuế ${fixed(net.abs())}`);
     }
@@ -689,5 +717,6 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
   const cNote = assessableNote(yearLines);
   if (cNote) notes.push(cNote);
   if (refunds.length > 0) notes.push(`Có điều chỉnh hoàn thuế cần đối chiếu với chứng từ đã cấp: ${refunds.join('; ')}.`);
-  return documentOf('certificate', `${DECLARATION_NOTICE} dữ liệu chứng từ 03/TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm', value: String(input.year) }]), [certificates, skipped], notes);
+  const document = documentOf('certificate', `${DECLARATION_NOTICE} dữ liệu chứng từ 03/TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm', value: String(input.year) }]), [certificates, skipped], notes);
+  return { document, certified, authorizers: new Set(authorized.map((p) => p.employeeId)) };
 }

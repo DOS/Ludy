@@ -4,11 +4,13 @@
 
 export const DEFAULT_ADDRESS = 'https://app.ludy.vn';
 
-const isLoopback = (hostname: string) => hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+// The only plain-http address: `localhost`, which is the one http host the manifest lists as an optional host permission
+// (127.0.0.1 and [::1] would need their own entries; the `docker compose up` stack answers on localhost).
+export const isLocalhost = (hostname: string) => hostname === 'localhost';
 
 export type AddressProblem = 'empty' | 'invalid' | 'insecure' | 'credentials';
 
-// The origin a member typed, or why it is refused. https only, except a loopback address; no user info; any path, query
+// The origin a member typed, or why it is refused. https only, except localhost; no user info; any path, query
 // or fragment is dropped (the app and the API share one origin).
 export function parseAddress(input: string): { origin: string } | { problem: AddressProblem } {
   const text = input.trim();
@@ -20,7 +22,7 @@ export function parseAddress(input: string): { origin: string } | { problem: Add
     return { problem: 'invalid' };
   }
   if (url.username !== '' || url.password !== '') return { problem: 'credentials' };
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopback(url.hostname))) return { problem: url.protocol === 'http:' ? 'insecure' : 'invalid' };
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocalhost(url.hostname))) return { problem: url.protocol === 'http:' ? 'insecure' : 'invalid' };
   if (url.hostname === '') return { problem: 'invalid' };
   return { origin: url.origin };
 }
@@ -29,6 +31,14 @@ export function parseAddress(input: string): { origin: string } | { problem: Add
 export function originPattern(origin: string): string {
   const url = new URL(origin);
   return `${url.protocol}//${url.hostname}/*`;
+}
+
+// The host permission to give back when the address moves from `previous` to `next`: the previous self-hosted address's,
+// unless it is the default (in the install), or the new address needs the same pattern (same host, another port).
+export function stalePattern(previous: string, next: string): string | null {
+  if (previous === next || isDefaultAddress(previous)) return null;
+  const old = originPattern(previous);
+  return isDefaultAddress(next) || old !== originPattern(next) ? old : null;
 }
 
 // True when the pattern is already in the install (the default address), so no request is needed.
