@@ -5,11 +5,12 @@
 //
 // It draws what it is given and works out nothing about money: every amount is a string the quote already holds (the shared line-totals rule of
 // @crove/l10n-vn made them), written with dots between thousands and a comma for decimals. The words come from the quote and the seller's and buyer's
-// own records, never from a customer's message. The logo is not drawn: placing an image would mean reading the file's header, and this writer reads
-// no file (the printable page of the link shows it).
+// own records, never from a customer's message. The letterhead's logo (#2814) is drawn when the caller hands in one already read and checked by ./image.ts; the
+// document itself reads no file.
 import type { Quote, QuoteLine } from '@crove/kernel-contract';
 import { writtenVatRate } from '@crove/l10n-vn';
 import { quoteFonts, type FontSet, type FontWeight } from './fonts.ts';
+import type { PdfImage } from './image.ts';
 import { A4_HEIGHT, A4_WIDTH, PdfDocument, type PdfPage, type Rgb } from './writer.ts';
 
 export interface QuoteParty {
@@ -27,6 +28,8 @@ export interface QuoteDocument {
   seller: QuoteParty & { bankNote: string | null };
   buyer: QuoteParty;
   issuedOn: string | null;
+  // The letterhead's logo, already read and checked (./image.ts); none, or one that could not be read, leaves the page as it was.
+  logo?: PdfImage | null;
 }
 
 const MARGIN = 40;
@@ -41,6 +44,9 @@ const HEADER_FILL: Rgb = [0.93, 0.93, 0.96];
 const SIZE = 9;
 const LEADING = 12;
 const PADDING = 4;
+// The box the logo fits in, in points.
+const LOGO_MAX_WIDTH = 150;
+const LOGO_MAX_HEIGHT = 54;
 
 // A number as Vietnamese writes it: a dot between thousands, a comma before the decimals, no trailing zeros.
 export function vnNumber(value: string | null | undefined): string {
@@ -226,6 +232,14 @@ function header(w: Writer, doc: QuoteDocument): void {
   const leftWidth = 300;
   const rightEdge = MARGIN + WIDTH;
   const start = w.y;
+  // The logo at the top left, as large as the box allows with its own proportions; the seller follows under it.
+  if (doc.logo) {
+    const scale = Math.min(LOGO_MAX_WIDTH / doc.logo.width, LOGO_MAX_HEIGHT / doc.logo.height);
+    const width = doc.logo.width * scale;
+    const height = doc.logo.height * scale;
+    w.page.image(doc.logo, MARGIN, w.y - height, width, height);
+    w.y -= height + 8;
+  }
   // The seller on the left.
   for (const line of wrap(w.fonts, seller.name, 'bold', 12, leftWidth)) {
     w.text(MARGIN, line, 'bold', 12);

@@ -14,6 +14,10 @@ import { z } from 'zod';
 import {
   QUOTE_DEFAULT_VAT,
   QUOTE_HINTS_MAX,
+  QUOTE_LOGO_MAX_BYTES,
+  QUOTE_LOGO_MAX_PIXELS,
+  QUOTE_LOGO_MAX_SIDE,
+  QUOTE_LOGO_TYPES,
   QUOTE_LINKS_MAX,
   QUOTE_LINK_DAYS_AFTER_VALID,
   QUOTE_PAGE_PATH,
@@ -24,6 +28,7 @@ import {
   zDealQuotesQuery,
   zQuoteDefaultsQuery,
   zQuoteLinkRevoke,
+  zQuoteLogoSet,
   zQuoteListQuery,
   zQuoteRef,
   zQuoteSave,
@@ -81,10 +86,14 @@ const MAX_AMOUNT_DIGITS = 15;
 // ---------------------------------------------------------------------------------------------------------------
 
 async function loadSetting(ctx: Reader): Promise<QuoteSetting> {
-  const row = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['valid_days', 'default_vat', 'default_terms', 'phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const row = await ctx.trx
+    .selectFrom('crove_crm.quote_setting')
+    .select(['valid_days', 'default_vat', 'default_terms', 'phone', 'email', 'bank_note', 'logo_file_id'])
+    .where('org_id', '=', ctx.orgId)
+    .executeTakeFirst();
   return row
-    ? { validDays: row.valid_days, defaultVat: row.default_vat, defaultTerms: row.default_terms, phone: row.phone, email: row.email, bankNote: row.bank_note }
-    : { validDays: QUOTE_VALID_DAYS_DEFAULT, defaultVat: QUOTE_DEFAULT_VAT, defaultTerms: null, phone: null, email: null, bankNote: null };
+    ? { validDays: row.valid_days, defaultVat: row.default_vat, defaultTerms: row.default_terms, phone: row.phone, email: row.email, bankNote: row.bank_note, logoFileId: row.logo_file_id }
+    : { validDays: QUOTE_VALID_DAYS_DEFAULT, defaultVat: QUOTE_DEFAULT_VAT, defaultTerms: null, phone: null, email: null, bankNote: null, logoFileId: null };
 }
 
 function addDays(date: string, days: number): string {
@@ -120,7 +129,79 @@ export const quoteSettingSet = defineCommand({
       .onConflict((oc) => oc.column('org_id').doUpdateSet(values))
       .execute();
     ctx.audit({ validDays: input.validDays });
-    return { validDays: input.validDays, defaultVat: vat, defaultTerms: terms, phone, email, bankNote };
+    return loadSetting(ctx);
+  },
+});
+
+// The logo of the letterhead (#2814). It is an image of the org's own library (a file uploaded for a Social post, as the watermark's and the report brand's logos are, so it is never
+// sent to extraction), a PNG or a JPEG, small. The settings row may not exist yet (every default applies): setting a logo makes it with those defaults. The audit holds the file id only.
+export const quoteLogoSet = defineCommand({
+  name: 'crm.quote_setting.logo_set',
+  input: zQuoteLogoSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<QuoteSetting> => {
+    const userId = userOf(ctx.actor);
+    const file = await ctx.trx
+      .selectFrom('crove_kernel.file')
+      .select(['content_type', 'size_bytes', 'source', 'image_width', 'image_height'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.fileId)
+      .executeTakeFirst();
+    if (!file || file.source !== 'social') throw new DomainError('QUOTE_LOGO_NOT_FOUND', 404, 'Không tìm thấy ảnh này');
+    if (!(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type)) throw new DomainError('QUOTE_LOGO_TYPE', 422, 'Logo chỉ nhận ảnh PNG hoặc JPEG');
+    if (Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) throw new DomainError('QUOTE_LOGO_TOO_LARGE', 422, `Logo lớn hơn ${QUOTE_LOGO_MAX_BYTES / 1024} KB; hãy thu nhỏ ảnh rồi chọn lại`);
+    // The picture's size as the upload recorded it from the file's own header: a logo is decoded for the PDF, so its size is bounded here, and one whose size is not known is refused.
+    if (file.image_width === null || file.image_height === null) throw new DomainError('QUOTE_LOGO_DIMENSIONS', 422, 'Không đọc được kích thước ảnh; hãy chọn ảnh PNG hoặc JPEG khác');
+    if (file.image_width > QUOTE_LOGO_MAX_SIDE || file.image_height > QUOTE_LOGO_MAX_SIDE || file.image_width * file.image_height > QUOTE_LOGO_MAX_PIXELS) {
+      throw new DomainError('QUOTE_LOGO_DIMENSIONS', 422, `Logo lớn hơn ${QUOTE_LOGO_MAX_SIDE} x ${QUOTE_LOGO_MAX_SIDE} điểm ảnh; hãy thu nhỏ ảnh rồi chọn lại`);
+    }
+    const values = { logo_file_id: input.fileId, set_by: userId, updated_at: ctx.now };
+    await ctx.trx
+      .insertInto('crove_crm.quote_setting')
+      .values({ org_id: ctx.orgId, created_at: ctx.now, ...values })
+      .onConflict((oc) => oc.column('org_id').doUpdateSet(values))
+      .execute();
+    ctx.audit({ fileId: input.fileId });
+    return loadSetting(ctx);
+  },
+});
+
+// Where a logo is stored, for the HTTP route to read the bytes with (the PDF's): the document itself holds no file. Only a PNG or a JPEG within the size the upload allows.
+export interface QuoteLogoFile {
+  id: string;
+  storageKey: string;
+  generation: string | null;
+  sha256: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+// The logo a file id names, if it is still a file of this org that the upload checks let in (from the photo library, a PNG or a JPEG, small); else none. Used at the send, to freeze it, and by the PDF.
+export async function logoFileOf(ctx: Pick<Reader, 'trx' | 'orgId'>, fileId: string | null): Promise<QuoteLogoFile | null> {
+  if (fileId === null) return null;
+  const file = await ctx.trx
+    .selectFrom('crove_kernel.file')
+    .select(['id', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'source'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', fileId)
+    .executeTakeFirst();
+  if (!file || file.source !== 'social' || !(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type) || Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) return null;
+  return { id: file.id, storageKey: file.storage_key, generation: file.generation, sha256: file.sha256, contentType: file.content_type, sizeBytes: Number(file.size_bytes) };
+}
+
+export const quoteLogoRemove = defineCommand({
+  name: 'crm.quote_setting.logo_remove',
+  input: z.strictObject({}),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx): Promise<QuoteSetting> => {
+    const userId = userOf(ctx.actor);
+    await ctx.trx.updateTable('crove_crm.quote_setting').set({ logo_file_id: null, set_by: userId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).execute();
+    ctx.audit({ removed: true });
+    return loadSetting(ctx);
   },
 });
 
@@ -690,11 +771,14 @@ export const quoteSend = defineCommand({
     }
     // The seller as the document will show it, frozen with the quote (#2826): a change to the letterhead later does not change a quote that was sent.
     const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note', 'logo_file_id']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     const text = (value: string | null | undefined, max: number): string | null => {
       const trimmed = value?.trim() ?? '';
       return trimmed === '' ? null : trimmed.slice(0, max);
     };
+    // The logo goes with them (#2814): the id of the org's logo as it is now if it is still an image the upload checks let in, else none. The marker says the snapshot was taken, so a quote
+    // sent without a logo stays without one when the org adds one later.
+    const logo = await logoFileOf(ctx, letterhead?.logo_file_id ?? null);
     await ctx.trx
       .updateTable('crove_crm.quote')
       .set({
@@ -704,6 +788,8 @@ export const quoteSend = defineCommand({
         seller_phone: text(letterhead?.phone, 40),
         seller_email: text(letterhead?.email, 254),
         seller_bank_note: text(letterhead?.bank_note, 500),
+        seller_logo_file_id: logo?.id ?? null,
+        seller_logo_frozen: true,
         status: 'sent',
         number,
         sent_at: ctx.now,
@@ -845,5 +931,5 @@ export async function dealHasQuotes(ctx: Pick<CommandContext, 'trx' | 'orgId'>, 
   return row !== undefined;
 }
 
-export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteMailData, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet];
+export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteMailData, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet, quoteLogoSet, quoteLogoRemove];
 export const quoteQueries = [quoteGet, quoteList, dealQuotes, quoteDefaults, quoteSettingGet];
