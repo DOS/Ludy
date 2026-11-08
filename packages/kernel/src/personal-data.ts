@@ -178,6 +178,14 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
+  // it goes with the org. The seller's own letterhead on the org's quote settings is the business's, not a person's.
+  'crove_crm.quote.buyer_name': { kind: 'name', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'crove_crm.quote.buyer_tax_code': { kind: 'tax_code', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'crove_crm.quote.buyer_address': { kind: 'address', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'crove_crm.quote.buyer_email': { kind: 'email', handling: 'keep_record', reason: 'Where the buyer was written to on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'crove_crm.quote_setting.phone': { kind: 'phone', handling: 'keep_org', reason: "The business's own phone number, printed on its quotes" },
+  'crove_crm.quote_setting.email': { kind: 'email', handling: 'keep_org', reason: "The business's own email address, printed on its quotes" },
   'crove_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
