@@ -23,8 +23,9 @@ export { importCancel, importCommands, importCommit, importExpire, importPreview
 
 export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextStepList, nextStepQueries, nextStepRaise, nextStepSnooze, staleDays } from './next-steps.ts';
 
-export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, quoteGet, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSettingSet } from './quotes.ts';
+export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, newQuoteToken, quoteGet, quoteLinkCreate, quoteLinkRevoke, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSend, quoteSettingGet, quoteSettingSet, quoteTokenHash } from './quotes.ts';
 
+export { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, renderQuoteMail } from './quote-mail.ts';
 export { crmToday } from './today.ts';
 
 export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands];

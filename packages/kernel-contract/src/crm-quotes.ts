@@ -26,6 +26,12 @@ export const QUOTE_VALID_DAYS_MIN = 7;
 export const QUOTE_VALID_DAYS_MAX = 60;
 // The VAT rate of a new line when the org has set none and no earlier quote to the customer names one.
 export const QUOTE_DEFAULT_VAT = '10%';
+// A link to a sent quote lives until the quote's validity plus these days (the table's CHECK allows 120 days from the link's making), and a quote keeps at most
+// this many links at once.
+export const QUOTE_LINK_DAYS_AFTER_VALID = 30;
+export const QUOTE_LINKS_MAX = 20;
+export const QUOTE_BANK_NOTE_MAX = 500;
+export const QUOTE_PHONE_MAX = 40;
 // Earlier lines offered as price hints for a customer.
 export const QUOTE_HINTS_MAX = 50;
 
@@ -81,11 +87,23 @@ export const zQuoteListQuery = z.strictObject({
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.strictObject({ createdAt: z.iso.datetime(), id: zId }).optional(),
 });
+// The org's defaults and the letterhead its quotes print (phone, email, a free bank note); an empty letterhead field prints nothing.
 export const zQuoteSettingSet = z.strictObject({
   validDays: z.number().int().min(QUOTE_VALID_DAYS_MIN).max(QUOTE_VALID_DAYS_MAX),
   defaultVat: z.string().trim().min(1).max(QUOTE_VAT_RATE_INPUT_MAX),
   defaultTerms: zText.nullable(),
+  phone: z.string().trim().max(QUOTE_PHONE_MAX).nullable().optional(),
+  email: z.string().trim().max(254).nullable().optional(),
+  bankNote: z.string().trim().max(QUOTE_BANK_NOTE_MAX).nullable().optional(),
 });
+// A person sends a draft, by a link they copy or by an email the system queues (to the given address, else the customer's); the version is the one they read.
+export const zQuoteSend = z.strictObject({
+  quoteId: zId,
+  version: z.number().int().min(1),
+  via: z.enum(QUOTE_SENT_VIA),
+  to: z.string().trim().max(254).optional(),
+});
+export const zQuoteLinkRevoke = z.strictObject({ linkId: zId });
 
 export const zQuoteLine = z.strictObject({
   lineNo: z.number().int(),
@@ -120,6 +138,10 @@ export const zQuoteSummary = z.strictObject({
   vatAmount: z.string(),
   total: z.string(),
   lineCount: z.number().int(),
+  // When and how the quote was sent, and the first time the customer opened a link (null until then).
+  sentAt: z.string().nullable(),
+  sentVia: z.enum(QUOTE_SENT_VIA).nullable(),
+  firstViewedAt: z.string().nullable(),
   version: z.number().int(),
   createdBy: z.string(),
   createdAt: z.string(),
@@ -127,7 +149,26 @@ export const zQuoteSummary = z.strictObject({
 });
 export type QuoteSummary = z.infer<typeof zQuoteSummary>;
 
-export const zQuote = zQuoteSummary.extend({ notes: z.string().nullable(), terms: z.string().nullable(), lines: z.array(zQuoteLine) });
+// A link to a sent quote: no token (the database keeps only its hash), how often it was opened, and whether it still opens.
+export const zQuoteLinkSummary = z.strictObject({
+  id: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  revokedAt: z.string().nullable(),
+  firstViewedAt: z.string().nullable(),
+  views: z.number().int(),
+  live: z.boolean(),
+});
+export type QuoteLinkSummary = z.infer<typeof zQuoteLinkSummary>;
+// The buyer as it was when the quote was sent (null on a draft): editing the contact later does not rewrite it.
+export const zQuoteBuyer = z.strictObject({ name: z.string(), taxCode: z.string().nullable(), address: z.string().nullable(), email: z.string().nullable() });
+export const zQuote = zQuoteSummary.extend({
+  notes: z.string().nullable(),
+  terms: z.string().nullable(),
+  buyer: zQuoteBuyer.nullable(),
+  lines: z.array(zQuoteLine),
+  links: z.array(zQuoteLinkSummary),
+});
 export type Quote = z.infer<typeof zQuote>;
 
 export const zQuotePage = z.strictObject({ items: z.array(zQuoteSummary), next: z.strictObject({ createdAt: z.string(), id: z.string() }).nullable() });
@@ -146,5 +187,43 @@ export const zQuoteDefaults = z.strictObject({
   hints: z.array(zQuoteHint),
 });
 export type QuoteDefaults = z.infer<typeof zQuoteDefaults>;
-export const zQuoteSetting = z.strictObject({ validDays: z.number().int(), defaultVat: z.string(), defaultTerms: z.string().nullable() });
+export const zQuoteSetting = z.strictObject({
+  validDays: z.number().int(),
+  defaultVat: z.string(),
+  defaultTerms: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  bankNote: z.string().nullable(),
+});
 export type QuoteSetting = z.infer<typeof zQuoteSetting>;
+
+// What a send answers: the quote as it now stands, and whether a mail was queued (by email only; a suppressed address refuses the whole send).
+export const zQuoteSent = z.strictObject({ quote: zQuote, mail: z.literal('queued').nullable() });
+export type QuoteSent = z.infer<typeof zQuoteSent>;
+// A link just made: the token is in this answer and nowhere else (the person copies it); `path` is the page it opens on this deployment.
+export const zQuoteLinkCreated = z.strictObject({ linkId: z.string(), token: z.string(), expiresAt: z.string(), path: z.string() });
+export type QuoteLinkCreated = z.infer<typeof zQuoteLinkCreated>;
+export const zQuoteLinkRevoked = z.strictObject({ linkId: z.string(), revoked: z.literal(true) });
+export type QuoteLinkRevoked = z.infer<typeof zQuoteLinkRevoked>;
+
+// The public document of a quote (crm.quote_link_view): one quote and the seller's letterhead, nothing else of the org. Amounts are decimal strings.
+export interface QuoteDocument {
+  number: string;
+  revision: number;
+  status: QuoteStatus;
+  expired: boolean;
+  validUntil: string;
+  sentAt: string;
+  notes: string | null;
+  terms: string | null;
+  subtotal: string;
+  vatAmount: string;
+  total: string;
+  seller: { name: string; taxCode: string | null; address: string | null; phone: string | null; email: string | null; bankNote: string | null };
+  buyer: { name: string; taxCode: string | null; address: string | null };
+  lines: { lineNo: number; kind: QuoteLineKind; description: string; unit: string | null; quantity: string | null; unitPrice: string | null; discountPercent: string; vatRate: string | null; amount: string; vatAmount: string }[];
+}
+// The token of a public link: 32 random bytes in base64url, 43 characters.
+export const QUOTE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+// Where the page of a link is: the token stays after the # and goes to the API in a POST body only.
+export const QUOTE_PAGE_PATH = '/-/quote';

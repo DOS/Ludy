@@ -146,8 +146,8 @@ const CRM_SCREENS = {
     { path: 'crm/contacts' },
     { path: 'crm/contacts/import' },
   ],
-  // The public booking page (#1318), no account.
-  outside: [{ path: '/-/b/$org/$type', public: true }],
+  // The public booking page (#1318) and a sent quote's page (#2694), no account.
+  outside: [{ path: '/-/b/$org/$type', public: true }, { path: '/-/quote', public: true }],
   nav: [
     // The contacts: the org's parties with search, filters and saved views (K4, #2228).
     { app: 'social', group: 'sales', path: 'contacts', label: 'contacts' },

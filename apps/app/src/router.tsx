@@ -47,6 +47,7 @@ import { SocialBioPage } from './routes/social-bio.tsx';
 import { SocialFeedsPage } from './routes/social-feeds.tsx';
 import { OCCASION_IDS } from './lib/social-occasions.ts';
 import { SocialReviewPage } from './routes/social-review.tsx';
+import { QuoteDocumentPage } from './routes/quote-document.tsx';
 import { SocialReportPage } from './routes/social-report.tsx';
 import { BookingPage } from './routes/booking-page.tsx';
 import { SocialPlanPrintPage } from './routes/social-plan-print.tsx';
@@ -238,6 +239,14 @@ const bookingRoute = createRoute({
     const { org, type } = bookingRoute.useParams();
     return <BookingPage org={org} type={type} />;
   },
+});
+
+// A sent quote's page of the crm module (#2694): /-/quote#<token>, no account. The API answers 404 without crm.
+const quoteDocumentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/-/quote',
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: QuoteDocumentPage,
 });
 
 // Accept links are /-/invite#<token>. The token is moved from the address bar to storage before the sign-in
@@ -563,6 +572,7 @@ const routeTree = rootRoute.addChildren([
   reviewRoute,
   bookingRoute,
   reportRoute,
+  quoteDocumentRoute,
   shareRoute,
   socialPlanPrintRoute,
   inviteRoute,
