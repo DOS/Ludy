@@ -100,6 +100,69 @@ const SYSTEM_READS = new Map<string, string>([
   // A run of a member's own Vy (ADR-0049 decision 3) is read by that member alone; every other run is read as before.
   ['crove_kernel.ai_run', `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy')`],
 ]);
+// The Vy of a member in member mode (ADR-0049 stage B, decision 2). It is an agent context with the member's rights, so the guard
+// agent_write_guard refuses its write to every table outside crove_kernel.member_vy_table's 'write' rows with AGENT_FORBIDDEN (42501)
+// before row-level security answers, and on those rows too unless the row is its own run or result, which the factories' rows never are
+// (member-vy-background.db.test.ts holds the cases of its own rows): the matrix expects exactly that denial for every write of it, and
+// a table that stops being refused fails. The catalog itself is read from the database and compared to this list in the first test, so
+// a new write table is a reviewed change here.
+const MEMBER_VY_WRITES = ['crove_kernel.ai_run', 'crove_kernel.member_vy_result'];
+const AGENT_FORBIDDEN = /^AGENT_FORBIDDEN$/;
+// What the member-mode actor reads of org A's seeded rows, where that is not every row (the other actors read all of them). The value is
+// the SQL over alias t, schema-qualified operators, that picks the rows, given the member's user id. Each entry is pinned: the actor must
+// read exactly those rows (by id where the table has one), and an entry that selects every row fails as stale. A table not listed here is
+// read in full, as the member reads it. Sorted after ai_run, one table per line, a reason on each.
+const MEMBER_VY_READS = new Map<string, (member: string) => string>([
+  // A member's Vy runs are the member's alone (policy member_vy_read); every other run is read as by any member.
+  [
+    'crove_kernel.ai_run',
+    (m) =>
+      `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
+  ],
+  // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_employment', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_line', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_run', () => 'false'], // HR, as above.
+  ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
+  ['crove_kernel.calendar_event_link', () => 'false'], // Reads through the member's own connection.
+  ['crove_kernel.conversation', () => 'false'], // The inbox is read per member.
+  ['crove_kernel.conversation_attachment', () => 'false'], // Reads through its conversation.
+  ['crove_kernel.conversation_composing', () => 'false'], // Per member.
+  ['crove_kernel.conversation_draft', () => 'false'], // Per member.
+  ['crove_kernel.conversation_identity', () => 'false'], // Reads through its conversation.
+  ['crove_kernel.conversation_message', () => 'false'], // Reads through its conversation.
+  ['crove_kernel.conversation_note', () => 'false'], // Reads through its conversation.
+  ['crove_kernel.conversation_read', () => 'false'], // Per member.
+  ['crove_kernel.inbox_item', () => 'false'], // Per member.
+  ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
+  ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
+  ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
+  ['crove_kernel.notification', () => 'false'], // Per member.
+  ['crove_kernel.notification_mute', () => 'false'], // Per member.
+  ['crove_kernel.saved_view', () => 'false'], // Per member.
+  ['crove_kernel.today_mail', () => 'false'], // Per member.
+  ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
+  ['crove_meetings.meeting', () => 'false'], // As above.
+  ['crove_meetings.meeting_reader', () => 'false'], // As above.
+  ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
+  // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
+  [
+    'crove_notes.link',
+    (m) =>
+      `EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND (n.visibility OPERATOR(pg_catalog.=) 'org'::text OR n.author_user_id OPERATOR(pg_catalog.=) '${m}'::uuid))`,
+  ],
+  ['crove_notes.note', (m) => `(t.visibility OPERATOR(pg_catalog.=) 'org'::text OR t.author_user_id OPERATOR(pg_catalog.=) '${m}'::uuid)`],
+  ['crove_notes.todo', () => 'false'], // A to-do is its owner's alone.
+  ['crove_social.notification', () => 'false'], // Per member.
+  ['crove_social.notification_mail_off', () => 'false'], // Per member.
+  ['crove_social.notification_mute', () => 'false'], // Per member.
+  ['crove_social.push_subscription', () => 'false'], // Per member.
+  ['crove_social.saved_view', () => 'false'], // Per member.
+]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
@@ -2675,11 +2738,19 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     org: 'A' | null;
     // The system context of its org (no user, no agent), to which AUTHOR_ONLY's exceptions apply.
     system?: true;
+    // The Vy of a member in member mode (ADR-0049): an agent context with the member's rights, for which every write is refused by
+    // agent_write_guard (AGENT_FORBIDDEN, 42501) before row-level security answers.
+    memberMode?: true;
     enter: (c: pg.Client) => Promise<void>;
   }
   const actors: Actor[] = [];
   // The member of org A, whose own-org controls stand in for the system context's on AUTHOR_ONLY tables.
   let member: Actor;
+  // The Vy of a second owner of org A in member mode, and that owner's user id.
+  let memberVy: Actor;
+  let memberVyUser = '';
+  let memberVyAgent = '';
+  let memberVyRun = '';
   // A member of org A limited by its external_accountant assignment to one legal entity, a branch with no rows: it
   // must see, write and change none of the rows the factories seed (all in org A's default entity).
   let scoped: Actor;
@@ -2769,6 +2840,33 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   function expectRows(outcome: Outcome, where: string): { rows: Array<{ org: string }>; rowCount: number } {
     if (!outcome.ok) throw new Error(`${where}: expected the statement to run, got ${outcome.code} ${outcome.message}`);
     return outcome;
+  }
+
+  // The org A rows the member-mode actor reads of a table: how many, which (by id, where the table has one) and how many rows org A has.
+  async function memberVyVisible(table: string) {
+    const rule = MEMBER_VY_READS.get(table);
+    const where = `t.org_id OPERATOR(pg_catalog.=) $1::uuid AND (${rule ? rule(memberVyUser) : 'true'})`;
+    const { rows: counted } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} t WHERE ${where}`, [orgs.A.id]);
+    const { rows: total } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [orgs.A.id]);
+    const ids = await admin.query<{ id: string }>(`SELECT t.id::text AS id FROM ${table} t WHERE ${where}`, [orgs.A.id]).then(
+      (r) => r.rows.map((x) => x.id).sort(),
+      () => undefined,
+    );
+    return { rule, count: counted[0]?.n ?? 0, total: total[0]?.n ?? 0, ids };
+  }
+  // The denial the matrix expects of an actor's insert: for the Vy in member mode, the guard's AGENT_FORBIDDEN; for everyone else the case's own pattern.
+  const guardedWrite = (actor: Actor) => actor.memberMode === true;
+  const denialPattern = (actor: Actor, normal: RegExp) => (guardedWrite(actor) ? AGENT_FORBIDDEN : normal);
+  // An UPDATE or DELETE of the member-mode actor changes no row. The guard is a row trigger, so it refuses (AGENT_FORBIDDEN) a row the
+  // statement reaches; where the table's own update or delete policy reaches none of the rows it reads, the statement is a no-op. Either
+  // way no row changes, and a table whose policy starts admitting the actor must start being refused.
+  function expectGuarded(outcome: Outcome, where: string) {
+    if (outcome.ok) expect(outcome.rowCount, `${where}: rows changed by member mode`).toBe(0);
+    else expectDenied(outcome, AGENT_FORBIDDEN, where);
+  }
+  // The same for a statement run as a sweep (null: the statement failed, so nothing changed).
+  function expectGuardedSweep(swept: { visible: number; changed: number } | null, where: string) {
+    expect(swept?.changed ?? 0, `${where}: rows changed by member mode`).toBe(0);
   }
 
   function factoryFor(table: string): RowFactory {
@@ -2947,6 +3045,50 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     adminPerson = await person('admin', 'an admin');
     plainMember = await person('member', 'a plain member (no assigned role, no branch scope)');
     viewerPerson = await person('viewer', 'a viewer');
+
+    // The Vy of a second owner of org A, in member mode (ADR-0049 stage B): the worker login enters an agent context that carries
+    // the member's rights. The owner role keeps the org-wide reads of `member`, and a user of its own keeps the permission override
+    // the matrix seeds (a vy.use denial for org A's first owner) off it. The member_vy agent and its live run are committed setup
+    // rows made as the superuser (the run's binding guards need a member's own context, which the UNGUARDED_TABLES exception sets
+    // aside), with an expiry relative to now so a long run of the file never outlives it.
+    const vyUser = freshUser();
+    memberVyUser = vyUser;
+    const vyAgent = randomUUID();
+    const vyRun = randomUUID();
+    memberVyAgent = vyAgent;
+    memberVyRun = vyRun;
+    await adminTx([
+      { table: 'crove_kernel.tenant_member', values: { org_id: orgs.A.id, user_id: vyUser, role: 'owner' } },
+      {
+        table: 'crove_kernel.agent',
+        unguarded: true,
+        values: { ...agentRow(orgs.A), id: vyAgent, template_key: 'kernel.member_vy', display_name: 'Vy', kind: 'member_vy', member_user_id: vyUser, created_by: vyUser },
+      },
+      {
+        table: 'crove_kernel.ai_run',
+        unguarded: true,
+        values: {
+          org_id: orgs.A.id,
+          id: vyRun,
+          agent_id: vyAgent,
+          module: 'notes',
+          status: 'running',
+          started_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        },
+      },
+    ]);
+    memberVy = {
+      name: 'crove_worker as the Vy of a member of org A in member mode',
+      role: 'crove_worker',
+      client: worker,
+      org: 'A',
+      memberMode: true,
+      enter: async (c) => {
+        await c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgs.A.id, vyAgent, vyRun]);
+      },
+    };
+    actors.push(memberVy);
   });
 
   afterAll(async () => {
@@ -2983,6 +3125,47 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
   });
 
+  it('runs the member-mode actor as an agent context of its member, and pins the catalog it is judged by', async () => {
+    const sealed = expectRows(await probe(memberVy, (c) => c.query(`SELECT current_setting('crove.ctx') AS org`)), memberVy.name);
+    const seal = JSON.parse(sealed.rows[0]?.org ?? '{}') as Record<string, unknown>;
+    expect(Object.keys(seal).sort(), `${memberVy.name}: the seal's keys`).toEqual(
+      ['actor', 'agent', 'flags', 'kind', 'le_scope', 'max_risk', 'member', 'module', 'org', 'position', 'role', 'run', 'tainted', 'user', 'v'].sort(),
+    );
+    expect(seal, `${memberVy.name}: the seal`).toMatchObject({
+      v: 1,
+      actor: 'agent',
+      kind: 'member_vy',
+      member: memberVyUser,
+      user: null,
+      org: orgs.A.id,
+      role: 'owner',
+      agent: memberVyAgent,
+      run: memberVyRun,
+      position: null,
+      module: 'notes',
+      tainted: true,
+      le_scope: ['*'],
+      flags: [],
+    });
+    expect(['R0', 'R1'], `${memberVy.name}: max_risk is R1 at most`).toContain(seal.max_risk);
+    // ctx_acting_user_id answers the member only to this context: the tables that read it are the catalog's.
+    const acting = expectRows(await probe(memberVy, (c) => c.query('SELECT crove_kernel.ctx_acting_user_id()::text AS org')), memberVy.name);
+    expect(acting.rows, 'the acting user of the member-mode actor').toEqual([{ org: memberVyUser }]);
+    const { rows: catalog } = await admin.query<{ table_name: string; mode: string }>('SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1');
+    expect(
+      catalog.filter((r) => r.mode === 'write').map((r) => r.table_name),
+      "member_vy_table write rows: the matrix expects AGENT_FORBIDDEN for the factories' rows of each (MEMBER_VY_WRITES)",
+    ).toEqual([...MEMBER_VY_WRITES].sort());
+    expect(
+      catalog.filter((r) => r.mode === 'read').map((r) => r.table_name),
+      'member_vy_table read rows: each read as its member (MEMBER_VY_READS)',
+    ).toEqual(['crove_kernel.member_vy_memory', 'crove_notes.note']);
+    const names = relations.map((r) => r.name);
+    const listed = [...MEMBER_VY_READS.keys()];
+    expect(listed.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'MEMBER_VY_READS lists tables that no longer have org_id').toEqual([]);
+    expect(listed, 'MEMBER_VY_READS is kept sorted, one table per line (ai_run first, then the rest)').toEqual([listed[0], ...listed.slice(1).sort()]);
+  });
+
   it('limits the scoped member to its branch', async () => {
     const outcome = expectRows(await probe(scoped, (c) => c.query('SELECT crove_kernel.ctx_le_scope() AS scope')), 'the scoped member');
     expect(outcome.rows).toEqual([{ scope: [branch] }]);
@@ -3010,6 +3193,23 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(rows.map((r) => r.rolname)).toEqual([...RUNTIME_ROLES].sort());
     expect(rows.filter((r) => r.rolsuper || r.rolbypassrls)).toEqual([]);
   });
+
+  // The primary key columns of a table, from the catalog, for removing a seeded row by its own key.
+  const pkCache = new Map<string, string[]>();
+  async function primaryKeyOf(table: string): Promise<string[]> {
+    const cached = pkCache.get(table);
+    if (cached) return cached;
+    const { rows } = await admin.query<{ col: string }>(
+      `SELECT a.attname AS col FROM pg_catalog.pg_index i
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+       WHERE i.indrelid = $1::regclass AND i.indisprimary ORDER BY array_position(i.indkey::int2[], a.attnum)`,
+      [table],
+    );
+    expect(rows.length, `${table} has a primary key`).toBeGreaterThan(0);
+    const cols = rows.map((r) => r.col);
+    pkCache.set(table, cols);
+    return cols;
+  }
 
   for (const relation of relations) {
     const table = relation.name;
@@ -3080,6 +3280,19 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         const count = (org: OrgFixture) => seeded.find((s) => s.org === org.id)?.n ?? 0;
         expect(count(orgs.B), `${table} has no org B rows to probe`).toBeGreaterThan(0);
         expect(count(orgs.A), `${table} has no org A rows to probe`).toBeGreaterThan(0);
+        // The rows member mode reads, and (ai_run) the rows of the member's Vy that nobody else reads: the other actors' own-org count leaves them out.
+        const memberVyReads = await memberVyVisible(table);
+        const hiddenFromOthers =
+          table === 'crove_kernel.ai_run'
+            ? ((
+                await admin.query<{ n: number }>(
+                  `SELECT count(*)::int AS n FROM ${table} t WHERE t.org_id = $1 AND EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id = t.org_id AND a.id = t.agent_id AND a.kind = 'member_vy' AND a.member_user_id = $2)`,
+                  [orgs.A.id, memberVyUser],
+                )
+              ).rows[0]?.n ?? 0)
+            : 0;
+        if (table === 'crove_kernel.ai_run') expect(hiddenFromOthers, `${table}: the matrix seeds a run of the member's Vy that no other actor reads`).toBeGreaterThan(0);
+        if (memberVyReads.rule) expect(memberVyReads.count, `${table}: MEMBER_VY_READS lists a table the member-mode actor reads in full: remove the entry`).toBeLessThan(memberVyReads.total);
         // On an AUTHOR_ONLY table, the ids of the org A rows the system context reads.
         const systemReads = AUTHOR_ONLY.get(table) ?? SYSTEM_READS.get(table);
         const systemIds = systemReads === undefined
@@ -3105,8 +3318,15 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
               // the wrong ones fails here.
               const read = expectRows(await probe(actor, (c) => c.query(`SELECT id::text AS org FROM ${table}`)), where);
               expect(read.rows.map((r) => r.org).sort(), `${where}: its own org's rows that the system context reads, by id (AUTHOR_ONLY)`).toEqual(systemIds);
+            } else if (actor.memberMode) {
+              // Member mode reads like its member, in the tables that admit it: MEMBER_VY_READS lists where that is fewer rows.
+              expect(rows.length, `${where}: its own org's rows that member mode reads (MEMBER_VY_READS)`).toBe(memberVyReads.count);
+              if (memberVyReads.ids) {
+                const read = expectRows(await probe(actor, (c) => c.query(`SELECT id::text AS org FROM ${table}`)), where);
+                expect(read.rows.map((r) => r.org).sort(), `${where}: its own org's rows that member mode reads, by id`).toEqual(memberVyReads.ids);
+              }
             } else {
-              expect(rows.length, `${where}: its own org's rows`).toBe(count(orgs.A));
+              expect(rows.length, `${where}: its own org's rows`).toBe(count(orgs.A) - hiddenFromOthers);
             }
           }
           // Asking for org B by name changes nothing.
@@ -3127,7 +3347,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             expectDenied(outcome, PRIVILEGE_DENIED, where);
             continue;
           }
-          expectDenied(outcome, factory.insertDenied ?? RLS_DENIED, where);
+          expectDenied(outcome, denialPattern(actor, factory.insertDenied ?? RLS_DENIED), where);
           if (actor.org === null || factory.noInsertControl) continue;
           const insertOwn = async (c: pg.Client) => {
             const built = factory.make(orgs.A);
@@ -3138,6 +3358,41 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             const q = insertSql({ table, values: built.row });
             return c.query(q.text, q.values);
           };
+          if (actor.memberMode) {
+            // Member mode: even its own org's row is refused by the guard (AGENT_FORBIDDEN, for a catalog table too, since the factory's
+            // row is not its own run or result). The parents are committed first as the database owner, so the refusal is the target
+            // row's, and removed afterwards where they can be. No own-org control: the member actor's own case runs the same row, so it is well formed.
+            const built = factory.make(orgs.A);
+            const setupRows = built.setup ?? [];
+            await adminTx([...setupRows, ...(built.complete ?? [])]).catch(() => adminTx(setupRows));
+            const own = await probe(actor, (c) => {
+              const q = insertSql({ table, values: built.row });
+              return c.query(q.text, q.values);
+            }).finally(async () => {
+              // Removed as the database owner with the guards off (replica mode), each row asserted gone: a leaked setup row would skew later cases.
+              await admin.query('BEGIN');
+              try {
+                await admin.query('SET LOCAL session_replication_role = replica');
+                // The completing rows were committed only when they applied (the fallback above), so they may be absent; the setup rows never.
+                for (const [rows, exact] of [[built.complete ?? [], false], [setupRows, true]] as const) {
+                  for (const row of [...rows].reverse()) {
+                    // By the table's own primary key (several finance tables have no id column).
+                    const key = await primaryKeyOf(row.table);
+                    const del = await admin.query(`DELETE FROM ${row.table} WHERE ${key.map((k, i) => `${k} = $${i + 1}`).join(' AND ')}`, key.map((k) => row.values[k]));
+                    const which = key.map((k) => `${k}=${String(row.values[k])}`).join(', ');
+                    if (exact) expect(del.rowCount, `${row.table} setup row ${which} removed after ${actor.name}'s case on ${table}`).toBe(1);
+                    else expect(del.rowCount ?? 0, `${row.table} completing row ${which}`).toBeLessThanOrEqual(1);
+                  }
+                }
+                await admin.query('COMMIT');
+              } catch (e) {
+                await admin.query('ROLLBACK').catch(() => {});
+                throw e;
+              }
+            });
+            expectDenied(own, AGENT_FORBIDDEN, `${actor.name} inserting into ${table} for its own org: refused by the member-mode guard`);
+            continue;
+          }
           if (factory.systemWritesOnly && !actor.system) {
             // Written by the system context alone: the member's own-org insert is refused by the row policy.
             expect(await probe(actor, insertOwn), `${actor.name} inserting into ${table} for its own org: ${factory.systemWritesOnly}`).toMatchObject({ ok: false, code: '42501' });
@@ -3199,6 +3454,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           const pulled = byOrg
             ? await sweep(actor, table, `UPDATE ${table} SET org_id = $1`, [orgs.A.id])
             : await sweep(actor, table, `UPDATE ${table} SET ${set}`, []);
+          // Member mode: the guard refuses the sweep, or the table's own policy reaches no row; no row changes either way.
+          if (guardedWrite(actor)) expectGuardedSweep(pulled, `${where} (no WHERE clause)`);
           if (pulled) expect(pulled.changed, `${where}: rows updated without a WHERE clause`).toBeLessThanOrEqual(pulled.visible);
           // AUTHOR_ONLY: the sweep reads no column, so no SELECT policy hides private rows from it; the system changes none.
           if (pulled && actor.system && AUTHOR_ONLY.has(table)) expect(pulled.changed, `${where}: rows updated without a WHERE clause (AUTHOR_ONLY)`).toBe(0);
@@ -3214,6 +3471,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             else expect(moved.rowCount, `${where}: rows moved to org B`).toBe(0);
             const memberMoved = await probe(member, (c) => c.query(`UPDATE ${table} SET org_id = $1 WHERE org_id = $2`, [orgs.B.id, orgs.A.id]));
             expectDenied(memberMoved, RLS_DENIED, `${member.name} updating ${table} (moving org A rows to org B, for ${actor.name})`);
+          } else if (guardedWrite(actor)) {
+            expectGuarded(moved, `${where} (moving org A rows to org B)`);
           } else {
             expectDenied(moved, RLS_DENIED, `${where} (moving org A rows to org B)`);
           }
@@ -3227,6 +3486,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             else expect(mine.rowCount, `${where}: own rows updated (AUTHOR_ONLY)`).toBe(0);
             const control = await probe(member, updateOwn);
             expect(expectRows(control, `${member.name} updating ${table} (own rows, control for ${actor.name})`).rowCount, `${where}: own rows updated by the member`).toBeGreaterThan(0);
+            continue;
+          }
+          if (guardedWrite(actor)) {
+            // Member mode: its own org's rows are refused by the guard, or none of them changes.
+            expectGuarded(await probe(actor, updateOwn), `${where} (own rows)`);
             continue;
           }
           if (factory.systemWritesOnly && !actor.system) {
@@ -3257,6 +3521,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             // Delete every row without reading a column: only rows the actor already sees may go.
             const swept = await sweep(actor, table, `DELETE FROM ${table}`, []);
             if (swept) expect(swept.changed, `${where}: rows deleted without a WHERE clause`).toBeLessThanOrEqual(swept.visible);
+            if (guardedWrite(actor)) {
+              // Member mode: the guard refuses the delete of a row, or the table's own policy reaches none; no row is deleted either way.
+              expectGuardedSweep(swept, `${where} (no WHERE clause)`);
+              expectGuarded(await probe(actor, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id])), `${where} (own rows)`);
+            }
             // AUTHOR_ONLY: as for updates, the system deletes none, private rows included.
             if (swept && actor.system && AUTHOR_ONLY.has(table)) expect(swept.changed, `${where}: rows deleted without a WHERE clause (AUTHOR_ONLY)`).toBe(0);
           }
