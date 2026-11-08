@@ -207,6 +207,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
         {isRecorder && (
           <section className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">{t('draftTitle')}</h3>
+            {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
             <SummaryEditor key={draft?.id ?? 'new'} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} />
           </section>
         )}

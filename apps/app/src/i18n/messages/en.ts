@@ -1709,6 +1709,7 @@ export const en = {
       recorderNote: 'Your summary and items are a draft only you see. Share them with the attendees when they are right.',
       readerNote: 'What the recorder shared with the meeting. Make a team task from an item to follow it up.',
       draftTitle: 'Your draft',
+      draftExpiry: 'A draft is deleted after 30 days if it is not shared.',
       publishedTitle: 'Shared with the attendees',
       summary: 'Summary',
       decisions: 'Decisions',

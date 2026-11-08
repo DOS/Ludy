@@ -1707,6 +1707,7 @@ export const vi = {
       recorderNote: 'Bản tóm tắt và các việc là bản nháp, chỉ bạn thấy. Khi đã đúng, hãy chia sẻ cho người dự họp.',
       readerNote: 'Phần người ghi đã chia sẻ cho cuộc họp. Tạo việc cho nhóm từ một mục để theo dõi.',
       draftTitle: 'Bản nháp của bạn',
+      draftExpiry: 'Bản nháp tự xóa sau 30 ngày nếu chưa chia sẻ.',
       publishedTitle: 'Đã chia sẻ cho người dự họp',
       summary: 'Tóm tắt',
       decisions: 'Quyết định',
