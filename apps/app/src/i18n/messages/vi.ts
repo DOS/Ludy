@@ -2075,6 +2075,7 @@ export const vi = {
       meta: 'Hiệu lực đến {date} · {count} dòng · {total}',
       edit: 'Sửa',
       view: 'Xem',
+      pdf: 'Tải PDF',
       delete: 'Xóa nháp',
       deleteTitle: 'Xóa báo giá nháp này?',
       deleteDescription: 'Bản nháp và các dòng của nó sẽ bị xóa. Lịch sử thao tác vẫn được lưu trong nhật ký.',
@@ -9033,6 +9034,7 @@ export const vi = {
       quote: {
         defaults: 'Xem giá trị mặc định và giá cũ của khách khi lập báo giá',
         delete_draft: 'Xóa báo giá nháp',
+        document: 'Đọc báo giá cùng thông tin bên bán và bên mua để làm PDF',
         get: 'Xem một báo giá',
         list: 'Xem danh sách báo giá',
         revise: 'Tạo bản sửa đổi của báo giá đã gửi',

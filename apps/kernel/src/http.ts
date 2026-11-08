@@ -97,6 +97,7 @@ import {
   type VatDeclaration,
   type VatReport,
 } from '@crove/mod-finance';
+import { renderQuotePdf, type QuoteDocument } from '@crove/mod-crm';
 import { buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
@@ -443,6 +444,8 @@ const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
+// Quote PDFs one member may take a minute (#2695).
+const QUOTE_PDFS_PER_MINUTE = 30;
 const MAX_FILES_PER_UPLOAD = 5;
 // A Social video (#409) is one file of up to 100 MB; a batch of documents stays under 60 MB.
 const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
@@ -2337,6 +2340,40 @@ export function createHttpApp(deps: HttpDeps) {
   // is held until the handler is done, the audit row included.
   const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
   // The org export's owner-run tables (#2676) take a slot too, held until their response has ended.
+
+  // A quote as a PDF (issue #2695, plan docs/plan/crm-quotes.md step Q3): the same quote a member reads on screen, in the org's own words and the
+  // seller's and buyer's own records, for anyone who may read quotes. It is read only (no row is audited, as for `crm.quote.get`), and the bytes are the
+  // same every time for the same quote on the same day (an expired quote says so). A bad or another org's id answers as a missing quote. Each member may take 30 a minute: the writer is
+  // quick, but it runs on the API's own thread.
+  if (runtime.installed('crm')) {
+    const quotePdfLimit = new RateLimiter({ perMinute: QUOTE_PDFS_PER_MINUTE });
+    app.get('/api/crm/quotes/:id/pdf', async (c) => {
+      try {
+        const user = c.get('user');
+        const decision = quotePdfLimit.take(user.userId);
+        if (!decision.allowed) {
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          throw new DomainError('RATE_LIMITED', 429, 'Bạn tải quá nhiều bản PDF; hãy thử lại sau ít phút');
+        }
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const document = await runtime.query<QuoteDocument>('crm.quote.document', { quoteId: c.req.param('id') }, { actor: actorOf(user), orgId });
+        const bytes = renderQuotePdf(document);
+        // The number is the org's own text: only what a filename can safely hold goes into it.
+        const named = (document.quote.number ?? '').replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/pdf',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'bao-gia', named || 'nhap', ORG_SLUG], 'pdf'),
+            'cache-control': 'private, no-store',
+            'x-content-type-options': 'nosniff',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
 
   // Finance routes exist only when the finance module is installed (CROVE_MODULES); otherwise they are 404 below.
   if (runtime.installed('finance')) {
