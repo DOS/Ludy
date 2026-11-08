@@ -8733,6 +8733,7 @@ export const vi = {
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
+      SUMMARY_BUSY: 'Vy đang bận tóm tắt. Hãy thử lại sau vài phút.',
       SUMMARY_ALREADY_COPIED: 'Bản tóm tắt này đã được chép vào bản nháp của bạn.',
       SUMMARY_OFF: 'Hệ thống này chưa bật tính năng Vy tóm tắt. Hãy tự viết bản tóm tắt.',
       SUMMARY_RESULT_INVALID: 'Không đọc được kết quả tóm tắt. Hãy nhờ Vy tóm tắt lại.',
@@ -10358,6 +10359,8 @@ export const vi = {
       summary: {
         save: 'Lưu tóm tắt và các quyết định của cuộc họp',
         copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
+        start: 'Nhờ Vy tóm tắt một cuộc họp',
+        status: 'Xem Vy có tóm tắt được cuộc họp không',
       },
       reader: {
         add: 'Thêm người đọc cuộc họp',

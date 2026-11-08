@@ -349,6 +349,9 @@ import {
   zResultPublished,
   zDraftReview,
   zDraftReviewed,
+  zSummarized,
+  zSummaryRef,
+  zSummaryStatus,
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
@@ -826,6 +829,8 @@ export const contract = {
       publish: oc.input(zResultPublish).output(zResultPublished),
       copySummary: oc.input(zSummaryCopy).output(zSummaryCopied),
       review: oc.input(zDraftReview).output(zDraftReviewed),
+      summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
+      summarize: oc.input(zSummaryRef).output(zSummarized),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),
