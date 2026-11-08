@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS crove_kernel.member_permission_override (
   permission text NOT NULL CHECK (permission = 'vy.use'),
   allowed boolean NOT NULL,
   set_by uuid NOT NULL,
+  -- Whether the setter was an owner when they wrote it: the protection from an admin outlives a later demotion or removal of that owner.
+  set_by_owner boolean NOT NULL DEFAULT false,
   set_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (org_id, id),
   CONSTRAINT member_permission_override_uq UNIQUE (org_id, user_id, permission),
@@ -196,6 +198,7 @@ DECLARE
   v_target_role text;
   v_old boolean;
   v_set_by uuid;
+  v_set_by_owner boolean;
   v_n integer;
 BEGIN
   IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' THEN
@@ -204,12 +207,21 @@ BEGIN
   IF p_permission IS DISTINCT FROM 'vy.use' THEN
     RAISE EXCEPTION 'PERMISSION_UNKNOWN';
   END IF;
+  -- Refused before any lock when the actor is no manager, so a plain member cannot hold locks on others' rows even for a moment.
   SELECT m.role INTO v_actor_role FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = v_actor;
   IF v_actor_role IS NULL OR v_actor_role NOT IN ('owner', 'admin') THEN
     RAISE EXCEPTION 'PERMISSION_MANAGE_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
-  -- The member's row first, as every membership change locks it.
-  SELECT m.role INTO v_target_role FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = p_user FOR SHARE;
+  -- Both rows are locked in one statement, in user id order, FOR NO KEY UPDATE: a demotion of the actor that runs meanwhile waits (so
+  -- the role read below is the role at commit), and two setters of one person's exception run one after the other (an admin's
+  -- write never replaces an owner's deny it did not see) without deadlocking on each other's rows. The foreign key's own share lock
+  -- of the target's row stays compatible.
+  PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id IN (v_actor, p_user) ORDER BY m.user_id FOR NO KEY UPDATE;
+  SELECT m.role INTO v_target_role FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = p_user;
+  SELECT m.role INTO v_actor_role FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = v_actor;
+  IF v_actor_role IS NULL OR v_actor_role NOT IN ('owner', 'admin') THEN
+    RAISE EXCEPTION 'PERMISSION_MANAGE_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
   IF v_target_role IS NULL THEN
     RAISE EXCEPTION 'PERMISSION_MEMBER_NOT_FOUND';
   END IF;
@@ -217,9 +229,8 @@ BEGIN
   IF v_actor_role = 'admin' AND (v_target_role = 'owner' OR p_user = v_actor) THEN
     RAISE EXCEPTION 'PERMISSION_MANAGE_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
-  SELECT o.allowed, o.set_by INTO v_old, v_set_by FROM crove_kernel.member_permission_override o WHERE o.org_id = v_org AND o.user_id = p_user AND o.permission = p_permission;
-  IF v_actor_role = 'admin' AND v_set_by IS NOT NULL AND EXISTS (
-    SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = v_set_by AND m.role = 'owner') THEN
+  SELECT o.allowed, o.set_by, o.set_by_owner INTO v_old, v_set_by, v_set_by_owner FROM crove_kernel.member_permission_override o WHERE o.org_id = v_org AND o.user_id = p_user AND o.permission = p_permission;
+  IF v_actor_role = 'admin' AND COALESCE(v_set_by_owner, false) THEN
     RAISE EXCEPTION 'PERMISSION_MANAGE_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
   IF p_allowed IS NULL THEN
@@ -227,10 +238,12 @@ BEGIN
     GET DIAGNOSTICS v_n = ROW_COUNT;
     RETURN v_n > 0;
   END IF;
-  INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by)
-  VALUES (v_org, p_user, p_permission, p_allowed, v_actor)
-  ON CONFLICT ON CONSTRAINT member_permission_override_uq DO UPDATE SET allowed = EXCLUDED.allowed, set_by = EXCLUDED.set_by, set_at = pg_catalog.now();
-  RETURN v_old IS DISTINCT FROM p_allowed;
+  INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by, set_by_owner)
+  VALUES (v_org, p_user, p_permission, p_allowed, v_actor, v_actor_role = 'owner')
+  ON CONFLICT ON CONSTRAINT member_permission_override_uq DO UPDATE
+    SET allowed = EXCLUDED.allowed, set_by = EXCLUDED.set_by, set_by_owner = EXCLUDED.set_by_owner, set_at = pg_catalog.now();
+  -- A change is the value, or whose exception it is (an owner repeating an admin's grant takes it over).
+  RETURN v_old IS DISTINCT FROM p_allowed OR v_set_by IS DISTINCT FROM v_actor;
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_permission_set(uuid, text, boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.member_permission_set(uuid, text, boolean) TO crove_tenant;
