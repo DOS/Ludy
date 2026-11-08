@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -1247,6 +1248,7 @@ export function SettingsPage() {
         {getConfig().modules.includes('finance') && org.data && <BankPartyRulesCard key={`bank-party-rules:${org.data.slug}`} canManage={canManage} />}
         <TwoFactorCard />
         {me.data && <MySessions userId={me.data.userId} />}
+        {getConfig().modules.includes('meetings') && <ExtensionDevices />}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}
       </div>
     </>
