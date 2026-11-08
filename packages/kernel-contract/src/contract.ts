@@ -347,6 +347,10 @@ import {
   zMeetingResults,
   zResultPublish,
   zResultPublished,
+  zDraftReview,
+  zDraftReviewed,
+  zSummaryCopied,
+  zSummaryCopy,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -820,6 +824,8 @@ export const contract = {
       get: oc.input(zMeetingRef).output(zMeetingResults),
       saveSummary: oc.input(zMeetingResultSave).output(zMeetingResultSaved),
       publish: oc.input(zResultPublish).output(zResultPublished),
+      copySummary: oc.input(zSummaryCopy).output(zSummaryCopied),
+      review: oc.input(zDraftReview).output(zDraftReviewed),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),
