@@ -87,6 +87,9 @@ function AddForm({ onClose }: { onClose: () => void }) {
   const [address, setAddress] = useState('');
   const [identity, setIdentity] = useState('');
   const [account, setAccount] = useState('');
+  const [birth, setBirth] = useState('');
+  const [tax, setTax] = useState('');
+  const [insurance, setInsurance] = useState('');
   const [terms, setTerms] = useState(blankTerms);
   const save = useMutation({
     mutationFn: () =>
@@ -95,6 +98,9 @@ function AddForm({ onClose }: { onClose: () => void }) {
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(identity.trim() ? { identityNumber: identity.trim() } : {}),
         ...(account.trim() ? { accountNumber: account.trim() } : {}),
+        ...(birth ? { birthDate: birth } : {}),
+        ...(tax.trim() ? { taxCode: tax.trim() } : {}),
+        ...(insurance.trim() ? { insuranceNumber: insurance.trim() } : {}),
         employment: terms,
       }),
     onSuccess: async () => {
@@ -123,6 +129,18 @@ function AddForm({ onClose }: { onClose: () => void }) {
           <Label htmlFor={`${id}-account`}>{t('accountNumber')}</Label>
           <Input id={`${id}-account`} value={account} maxLength={34} autoComplete="off" onChange={(e) => setAccount(e.target.value)} />
         </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
+          <Input id={`${id}-birth`} type="date" value={birth} onChange={(e) => setBirth(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-tax`}>{t('taxCode')}</Label>
+          <Input id={`${id}-tax`} value={tax} maxLength={20} autoComplete="off" onChange={(e) => setTax(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-insurance`}>{t('insuranceNumber')}</Label>
+          <Input id={`${id}-insurance`} value={insurance} maxLength={20} autoComplete="off" onChange={(e) => setInsurance(e.target.value)} />
+        </div>
         <TermsFields id={id} value={terms} onChange={(patch) => setTerms((s) => ({ ...s, ...patch }))} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">{t('sealedHint')}</p>
@@ -148,7 +166,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
-  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; clear: { address: boolean; identity: boolean; account: boolean } } | null>(null);
+  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; tax: boolean; insurance: boolean } } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
@@ -176,10 +194,15 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
           ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
           ...(edit && (edit.clear.account ? { accountNumber: null } : edit.account.trim() ? { accountNumber: edit.account.trim() } : {})),
+          ...(edit && edit.birth ? { birthDate: edit.birth } : {}),
+          ...(edit && (edit.clear.tax ? { taxCode: null } : edit.tax.trim() ? { taxCode: edit.tax.trim() } : {})),
+          ...(edit && (edit.clear.insurance ? { insuranceNumber: null } : edit.insurance.trim() ? { insuranceNumber: edit.insurance.trim() } : {})),
         }),
       () => setEdit(null),
     ),
   );
+  const year = Number(vietnamToday().slice(0, 4));
+  const authorize = useMutation(run((authorized: boolean) => client.hr.payroll.employees.finalization({ employeeId, year, authorized })));
   const erase = useMutation(run(() => client.hr.payroll.employees.erase({ employeeId }), () => setConfirmErase(false)));
   if (q.isPending) return <TableSkeleton columns={3} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
@@ -211,11 +234,23 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           <div>
             <dt className="text-subtle-foreground">{t('accountNumber')}</dt>
             <dd data-testid="hr-employee-account">{e.accountNumber === null ? none : shown ? e.accountNumber : '••••••••'}</dd>
-            {(e.identityNumber !== null || e.accountNumber !== null) && (
+            {(e.identityNumber !== null || e.accountNumber !== null || e.taxCode !== null || e.insuranceNumber !== null) && (
               <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShown((v) => !v)} data-testid="hr-employee-reveal">
                 {shown ? t('hideNumbers') : t('showNumbers')}
               </Button>
             )}
+          </div>
+          <div>
+            <dt className="text-subtle-foreground">{t('birthDate')}</dt>
+            <dd data-testid="hr-employee-birth">{e.birthDate === null ? none : f.date(e.birthDate)}</dd>
+          </div>
+          <div>
+            <dt className="text-subtle-foreground">{t('taxCode')}</dt>
+            <dd data-testid="hr-employee-tax">{e.taxCode === null ? none : shown ? e.taxCode : '••••••••'}</dd>
+          </div>
+          <div>
+            <dt className="text-subtle-foreground">{t('insuranceNumber')}</dt>
+            <dd data-testid="hr-employee-insurance">{e.insuranceNumber === null ? none : shown ? e.insuranceNumber : '••••••••'}</dd>
           </div>
           {e.endedOn && (
             <div>
@@ -227,9 +262,17 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       )}
 
       {active && (
+        <label className="mt-3 flex items-center gap-2 text-sm" data-testid="hr-employee-authorized">
+          <input type="checkbox" checked={e.finalizationAuthorizedYears.includes(year)} disabled={authorize.isPending} onChange={(ev) => authorize.mutate(ev.target.checked)} />
+          {t('authorizedYear', { year: String(year) })}
+        </label>
+      )}
+      {authorize.error && <ErrorText>{errorMessage(authorize.error)}</ErrorText>}
+
+      {active && (
         <div className="mt-3">
           {edit === null ? (
-            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', clear: { address: false, identity: false, account: false } })}>
+            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, tax: false, insurance: false } })}>
               {t('edit')}
             </Button>
           ) : (
@@ -268,11 +311,35 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                   </label>
                 )}
               </div>
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-birth">{t('birthDate')}</Label>
+                <Input id="hr-edit-birth" type="date" value={edit.birth} onChange={(ev) => setEdit({ ...edit, birth: ev.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-tax">{t('taxCode')}</Label>
+                <Input id="hr-edit-tax" value={edit.tax} maxLength={20} autoComplete="off" disabled={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, tax: ev.target.value })} />
+                {e.taxCode !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, tax: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-insurance">{t('insuranceNumber')}</Label>
+                <Input id="hr-edit-insurance" value={edit.insurance} maxLength={20} autoComplete="off" disabled={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, insurance: ev.target.value })} />
+                {e.insuranceNumber !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, insurance: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
+              </div>
               <p className="text-xs text-subtle-foreground sm:col-span-2">{t('editHint')}</p>
               <div className="flex gap-2 sm:col-span-2">
                 <Button
                   loading={saveEdit.isPending}
-                  disabled={!(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.clear.address || edit.clear.identity || edit.clear.account)}
+                  disabled={!(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.tax || edit.clear.insurance)}
                   onClick={() => saveEdit.mutate()}
                 >
                   {t('save')}
