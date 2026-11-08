@@ -38,7 +38,7 @@ import { ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { providerName, VARIANT_TONE, variantStatusKey, variantTone } from '../lib/social.ts';
-import { BEST_TIME_DAYS, channelBestTimes, knownZone, listedPosts, takenTimes, weekBestSlots, type BestTimeSuggestion } from '../lib/social-best-time.ts';
+import { BEST_TIME_DAYS, bestSlotSearch, channelBestTimes, knownZone, listedPosts, takenTimes, weekBestSlots, type BestTimeSuggestion } from '../lib/social-best-time.ts';
 import {
   addDays,
   calendarGroups,
@@ -903,7 +903,7 @@ export function SocialCalendar({
   };
   // A best time clicked: a new post for the filtered channel, planned then.
   const startBest = (slot: BestTimeSuggestion) => {
-    if (connectionId) void navigate({ to: '/o/$slug/social/new', params: { slug }, search: { at: new Date(slot.at).toISOString(), channel: connectionId } });
+    if (connectionId) void navigate({ to: '/o/$slug/social/new', params: { slug }, search: bestSlotSearch(slot, connectionId) });
   };
   const [showOccasions, setShowOccasions] = useState(() => occasionsShown(slug));
   const occasions = useMemo(() => (showOccasions ? occasionsBetween(dayId(days[0] as Date), dayId(days.at(-1) as Date)) : []), [days, showOccasions]);

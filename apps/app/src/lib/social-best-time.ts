@@ -100,6 +100,11 @@ export function weekBestSlots(slots: readonly BestTime[], days: readonly Date[],
   return out.sort((a, b) => a.at - b.at);
 }
 
+// The composer's address for a best-time chip (#2221): a new post for the channel, planned at the slot.
+export function bestSlotSearch(slot: { at: number }, connectionId: string): { at: string; channel: string } {
+  return { at: new Date(slot.at).toISOString(), channel: connectionId };
+}
+
 export type ChannelBestTimes = { state: 'few'; posts: number } | { state: 'none' } | { state: 'ready'; slots: BestTime[] };
 
 // One channel's ranked slots from the org's published samples, or why there are none: too few posts with metrics

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublishedSample } from '@crove/mod-social/contract';
-import { BEST_TIME_MIN_POSTS, QUEUE_SUGGEST_MAX, channelBestTimes, knownZone, listedPosts, nextOccurrence, queueSuggestions, suggestBestTimes, takenTimes, weekBestSlots } from '../src/lib/social-best-time.ts';
+import { BEST_TIME_MIN_POSTS, QUEUE_SUGGEST_MAX, channelBestTimes, knownZone, listedPosts, nextOccurrence, queueSuggestions, suggestBestTimes, takenTimes, weekBestSlots, bestSlotSearch } from '../src/lib/social-best-time.ts';
 
 const HCM = 'Asia/Ho_Chi_Minh';
 const NY = 'America/New_York';
@@ -218,5 +218,10 @@ describe('best times on the days a calendar shows (#2221)', () => {
     expect(weekBestSlots([slot(7, 9)], week.slice(0, 5), { timeZone: HCM, nowMs: now })).toEqual([]);
     expect(weekBestSlots([slot(7, 9)], week, { timeZone: HCM, nowMs: now }).map((s) => iso(s.at))).toEqual(['2026-10-25T02:00:00.000Z']);
     expect(weekBestSlots([slot(7, 9)], week, { timeZone: NY, nowMs: now }).map((s) => iso(s.at))).toEqual(['2026-10-25T13:00:00.000Z']);
+  });
+
+  it('opens the composer for the channel at the slot', () => {
+    const [first] = weekBestSlots(slots, week, { timeZone: HCM, nowMs: now });
+    expect(bestSlotSearch(first as { at: number }, 'conn-1')).toEqual({ at: '2026-10-21T13:00:00.000Z', channel: 'conn-1' });
   });
 });

@@ -195,7 +195,7 @@ describe('best posting times on the week view (#2221)', () => {
     expect(shown.getDay()).toBe(3);
     expect(shown.getHours()).toBe(10);
     expect(text(html)).toContain('10:00 Giờ đẹp');
-    expect(html).toContain('Soạn bài vào giờ đẹp 10:00');
+    expect(html).toContain('10:00 Giờ đẹp: soạn bài cho kênh này');
     expect(html).toContain('trung bình 50 lượt tương tác mỗi bài');
   });
 

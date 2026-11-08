@@ -6814,7 +6814,7 @@ export const vi = {
       slotHintMember: 'Ô Trống là khung giờ chưa có bài trong hàng đợi của kênh. Kéo bản nháp vào đó để lấy giờ ấy làm giờ dự kiến.',
       bestSlot: 'Giờ đẹp',
       bestSlotHint: 'Gợi ý từ chính các bài của bạn: trung bình {engagement} lượt tương tác mỗi bài vào giờ này, từ {posts} bài. Bấm để soạn bài cho kênh này vào giờ đó.',
-      bestSlotStart: 'Soạn bài vào giờ đẹp {time}',
+      bestSlotStart: '{time} Giờ đẹp: soạn bài cho kênh này vào giờ đó',
       slotOpen: 'Trống',
       slotKept: 'dành cho nhãn {label}',
       slotPaused: 'hàng đợi đang tạm dừng',

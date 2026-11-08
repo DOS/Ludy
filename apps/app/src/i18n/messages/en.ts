@@ -6789,7 +6789,7 @@ export const en = {
       slotHintMember: 'An Open chip is a time slot of the channel\'s queue with no post yet. Drag a draft onto it to take that time as its planned time.',
       bestSlot: 'Best time',
       bestSlotHint: 'Suggested from your own posts: on average {engagement} engagements per post at this hour, from {posts} posts. Click to start a post for this channel then.',
-      bestSlotStart: 'Start a post at the best time, {time}',
+      bestSlotStart: '{time} Best time: start a post for this channel then',
       slotOpen: 'Open',
       slotKept: 'kept for the label {label}',
       slotPaused: 'queue paused',
