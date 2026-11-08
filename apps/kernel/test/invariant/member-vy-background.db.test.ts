@@ -582,6 +582,25 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       le_scope: user.le_scope,
       flags: [],
     });
+    // The exact key set: a new field in the seal is a decision to review. The run starts tainted (nothing a model produced is trusted).
+    expect(Object.keys(seal).sort(), "the seal's keys").toEqual([
+      "actor",
+      "agent",
+      "flags",
+      "kind",
+      "le_scope",
+      "max_risk",
+      "member",
+      "module",
+      "org",
+      "position",
+      "role",
+      "run",
+      "tainted",
+      "user",
+      "v",
+    ]);
+    expect(seal.tainted, "a member-mode run is tainted").toBe(true);
     expect(seal.position ?? null, "a member's Vy holds no seat").toBeNull();
     expect(["R0", "R1"], "max_risk is R1 at most").toContain(seal.max_risk);
     const whole = await asVy("vyUser", (c) => sealOf(c));
@@ -811,30 +830,44 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     } finally {
       await set(false);
     }
-    const budget = await admin(
-      async (c) =>
-        (
-          await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2) RETURNING id`,
-            [orgId, users.owner],
-          )
-        ).rows[0]?.id as string,
-    );
-    try {
-      const refused = await entry("vyUser");
-      expect(refused, "a spent hard-stop budget").toMatchObject({
-        ok: false,
-        code: "42501",
-      });
-      expect(refused.ok ? "" : refused.message).toMatch(/BUDGET_EXHAUSTED/);
-    } finally {
-      await admin((c) =>
-        c.query(
-          `DELETE FROM crove_kernel.budget_policy WHERE org_id = $1 AND id = $2`,
-          [orgId, budget],
-        ),
+    // A spent hard-stop budget at each scope refuses the entry (decision 6: per org, per module, per agent), and one for another module stops nothing.
+    const withBudget = async (scope: string, target: string) => {
+      const id = await admin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, $2, $3, 0, $4) RETURNING id`,
+              [orgId, scope, target, users.owner],
+            )
+          ).rows[0]?.id as string,
       );
+      try {
+        return await entry("vyUser");
+      } finally {
+        await admin((c) =>
+          c.query(
+            `DELETE FROM crove_kernel.budget_policy WHERE org_id = $1 AND id = $2`,
+            [orgId, id],
+          ),
+        );
+      }
+    };
+    for (const [scope, target] of [
+      ["org", "*"],
+      ["module", "notes"],
+      ["agent", agentId],
+    ] as const) {
+      const refused = await withBudget(scope, target);
+      expect(
+        refused,
+        `a spent hard-stop budget for the ${scope}`,
+      ).toMatchObject({ ok: false, code: "42501" });
+      expect(refused.ok ? "" : refused.message).toMatch(/BUDGET_EXHAUSTED/);
     }
+    expect(
+      (await withBudget("module", "finance")).ok,
+      "a spent budget for another module stops nothing",
+    ).toBe(true);
     expect(
       (await entry("vyUser")).ok,
       "the member's live run once the budget is cleared",
@@ -849,25 +882,34 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     try {
       await holder.query("BEGIN");
       await memberEnter(run.agentId, run.runId)(holder);
-      // The entering transaction is still open: a second connection's DELETE of the membership cannot take its row lock.
-      const removal = await outcome(
-        admin(async (c) => {
-          await c.query("BEGIN");
-          await c.query("SET LOCAL lock_timeout = '400ms'");
-          try {
-            return await c.query(
-              `DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`,
-              [orgId, users.vyUser],
-            );
-          } finally {
-            await c.query("ROLLBACK");
-          }
-        }),
-      );
-      expect(removal, "a removal while an entry is open").toMatchObject({
-        ok: false,
-        code: "55P03",
-      });
+      // The entering transaction is still open: a second connection cannot take a row lock on the membership. A DELETE and a role change
+      // (a demotion to a viewer) both wait, so the lock is FOR SHARE and not merely FOR KEY SHARE, which a role change would not meet.
+      for (const [why, sql] of [
+        [
+          "a removal",
+          `DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`,
+        ],
+        [
+          "a demotion to a viewer",
+          `UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`,
+        ],
+      ] as const) {
+        const blocked = await outcome(
+          admin(async (c) => {
+            await c.query("BEGIN");
+            await c.query("SET LOCAL lock_timeout = '400ms'");
+            try {
+              return await c.query(sql, [orgId, users.vyUser]);
+            } finally {
+              await c.query("ROLLBACK");
+            }
+          }),
+        );
+        expect(blocked, `${why} while an entry is open`).toMatchObject({
+          ok: false,
+          code: "55P03",
+        });
+      }
     } finally {
       await holder.query("ROLLBACK").catch(() => {});
       await holder.end();
@@ -1268,6 +1310,47 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           read.rows.map((r) => r.id),
           "results a member-mode context reads",
         ).toEqual([mine]);
+        // What it may not do to its own result and run: clear the taint, delete the result, lower private_read, extend or untaint the run.
+        // Each is refused or finds nothing to change; the state is read back below.
+        for (const [why, sql, params] of [
+          [
+            "clearing the taint of its own result",
+            `UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`,
+            [mine],
+          ],
+          [
+            "lowering private_read of its own result",
+            `UPDATE crove_kernel.member_vy_result SET private_read = false WHERE id = $1`,
+            [mine],
+          ],
+          [
+            "deleting its own result",
+            `DELETE FROM crove_kernel.member_vy_result WHERE id = $1`,
+            [mine],
+          ],
+          [
+            "clearing the taint of its own run",
+            `UPDATE crove_kernel.ai_run SET tainted = false WHERE id = $1`,
+            [run.runId],
+          ],
+          [
+            "extending its own run",
+            `UPDATE crove_kernel.ai_run SET expires_at = expires_at + interval '1 day' WHERE id = $1`,
+            [run.runId],
+          ],
+          [
+            "moving its own run to another status",
+            `UPDATE crove_kernel.ai_run SET status = 'succeeded' WHERE id = $1`,
+            [run.runId],
+          ],
+        ] as const) {
+          await c.query("SAVEPOINT pin");
+          const o = await outcome(c.query(sql, [...params]));
+          await c.query("ROLLBACK TO SAVEPOINT pin");
+          expect(o.ok ? o.value.rowCount : o.code, why).toBe(
+            o.ok ? 0 : "42501",
+          );
+        }
         const cross = await outcome(
           c.query(
             `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, expires_at) VALUES ($1, $2, $3, 'notes.summary', 'note', $4, now() + interval '30 minutes')`,
