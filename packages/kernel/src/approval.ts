@@ -25,6 +25,13 @@ export function parseAuthors(raw: unknown): ActorRef[] | null {
   return result.success ? result.data : null;
 }
 
+// The commands whose preparer may declare co-authors (people the proposal rests on besides its requester, such as the approver of the pay run a posting is built from). The database lists the
+// same ones (proposal_co_authors_guard, 20261126170000), and the invariant proposal-co-authors keeps the two equal, and decideApproval equal to proposal_approval_decide case by case.
+// Co-authors only restrict, never grant: a co-author who wrote nothing is held back while another eligible approver exists who is neither an author nor a co-author, and always under the
+// accountant preset (if the only holder of the approval permission froze the run, nobody can approve its posting: reject it, add a second approver and ask again). The owner override and the
+// sole-approver exception are judged on the written authors alone, so a forged co-author list cannot let a requester approve their own posting.
+export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record'];
+
 const refKey = (a: ActorRef) => (a.type === 'system' ? `system:${a.component}` : `${a.type}:${a.id}`);
 
 // Authors only accumulate: an edit adds the editor, and nobody who wrote part of the content is removed.
@@ -110,8 +117,8 @@ export function liveApprovalCommands(): string[] {
 
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
-// version and the build.
-export const APPROVAL_POLICY_VERSION = 8;
+// version and the build. 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; decideApproval and proposal_approval_decide).
+export const APPROVAL_POLICY_VERSION = 9;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
@@ -236,6 +243,8 @@ export interface ProposalPolicyInput {
   status: string;
   eligible_approvers: string[] | null;
   authors: unknown;
+  // The people the proposal rests on besides its requester (the preparer declared them): held back in four-eyes like an author, but they never grant anything (see decideApproval).
+  co_authors: string[] | null;
 }
 
 // Decides whether `actor` may approve the proposal's current revision.
@@ -291,7 +300,17 @@ export async function decideApproval(
   if (!eligible.has(actor.userId)) return deny('not_eligible', eligible.size);
 
   const userAuthors = new Set(authors.flatMap((a) => (a.type === 'user' ? [a.id] : [])));
-  if (!userAuthors.has(actor.userId)) return { reason: 'ok', eligibleCount: eligible.size, selfApproved: false, fourEyes: 'pass', orgPolicy };
+  if (!userAuthors.has(actor.userId)) {
+    // Co-authors (#2736) only restrict, never grant: a co-author who wrote nothing is held back while another eligible approver exists who is neither an author nor a co-author, and always
+    // under a preset that reserves the ledger to the chief accountant (as an author is). The owner override and the sole-approver exception below are judged on the written authors alone, so a
+    // co-author list, declared or forged in raw SQL, can make approval harder for the people on it and easier for nobody else.
+    const coAuthors = new Set(proposal.co_authors ?? []);
+    if (coAuthors.has(actor.userId)) {
+      if (org.ledgerChiefAccountantOnly && POLICIES[proposal.command] === LEDGER) return deny('four_eyes', eligible.size);
+      if (policy.fourEyes && [...eligible].some((id) => !userAuthors.has(id) && !coAuthors.has(id))) return deny('four_eyes', eligible.size);
+    }
+    return { reason: 'ok', eligibleCount: eligible.size, selfApproved: false, fourEyes: 'pass', orgPolicy };
+  }
   // P09 with P10: under a preset that reserves the ledger to the chief accountant, an author never approves a ledger
   // proposal, however few eligible approvers there are; neither the sole-approver exception nor owner_override applies.
   // The proposal waits for another holder, or is rejected and raised again (#1402 review).

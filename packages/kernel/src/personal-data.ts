@@ -274,6 +274,7 @@ export const PERSONAL_DATA_COLUMNS = {
   // (hr.payroll.employee.erase), which also deletes the person's key; the finder does not match them by an email, a phone or a number (their numbers are sealed, below).
   'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
 } as const satisfies Record<string, PersonalDataColumn>;
 
@@ -293,6 +294,14 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
   'crove_hr.payroll_employee.national_id_sealed': {
     handling: 'shred',
     reason: "An employee's identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.tax_code_sealed': {
+    handling: 'shred',
+    reason: "An employee's tax code (in most cases the identity number), sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.insurance_number_sealed': {
+    handling: 'shred',
+    reason: "An employee's social insurance number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
   'crove_hr.payroll_employee.bank_account_sealed': {
     handling: 'shred',

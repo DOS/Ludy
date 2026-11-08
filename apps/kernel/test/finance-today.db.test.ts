@@ -359,6 +359,28 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect((await today(users.admin)).some((i) => i.title.params?.party === 'Four Eyes Co')).toBe(false);
   });
 
+  it('holds a co-author back while another approver may decide, and shows it to the writers as before (#2736)', async () => {
+    // A posting asked for by the admin; the owner approved the pay run (a co-author); a third person may approve too.
+    const waiting = async (user: string) => (await today(user)).filter((i) => i.kind === 'proposal').reduce((n, i) => n + (i.count ?? 0), 0);
+    const before = { owner: await waiting(users.owner), admin: await waiting(users.admin), approver: await waiting(users.approver) };
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, co_authors, legal_entity_id)
+         VALUES ($1, 'finance.journal_voucher', 'finance.payroll_posting.record', 'pending', 'Hạch toán lương', '{}', 1, $2::uuid[], $3, $4::uuid[], $5)`,
+        [orgId, [users.owner, users.admin, users.approver], JSON.stringify([{ type: 'user', id: users.admin }]), [users.owner], defaultEntity],
+      ),
+    );
+    // The owner (co-author) and the admin (writer) do not see it as waiting for them; the third approver does.
+    expect(await waiting(users.owner)).toBe(before.owner);
+    expect(await waiting(users.admin)).toBe(before.admin);
+    expect(await waiting(users.approver)).toBe(before.approver + 1);
+    // With no one else left who may decide, the co-author sees it.
+    await admin((c) => c.query(`UPDATE crove_kernel.proposal SET eligible_approvers = $2::uuid[] WHERE org_id = $1 AND command = 'finance.payroll_posting.record' AND status = 'pending'`, [orgId, [users.owner, users.admin]]));
+    expect(await waiting(users.owner)).toBe(before.owner + 1);
+    expect(await waiting(users.admin)).toBe(before.admin);
+    await admin((c) => c.query(`DELETE FROM crove_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record'`, [orgId]));
+  });
+
   it('reads 1,000 pending proposals in one grouped pass', async () => {
     await admin((c) =>
       c.query(
