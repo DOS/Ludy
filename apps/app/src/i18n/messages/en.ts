@@ -9975,7 +9975,12 @@ export const en = {
           get: 'See a result Vy made for you',
           store: 'Store the result Vy made for you (only you can see it)',
         },
+        meeting_audio: {
+          open: "Let Vy read your own recording of a meeting to transcribe it (you started the run)",
+        },
         run: {
+          check: 'Check that a run of Vy working for you may go on',
+          finish: 'Close a run of Vy working for you',
           start: 'Start a run of Vy working for you',
         },
       },

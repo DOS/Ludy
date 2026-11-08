@@ -9972,7 +9972,12 @@ export const vi = {
           get: 'Xem kết quả Vy làm cho bạn',
           store: 'Lưu kết quả Vy làm cho bạn (chỉ mình bạn xem được)',
         },
+        meeting_audio: {
+          open: 'Cho Vy đọc bản ghi âm cuộc họp của chính bạn để ghi lời (bạn đã bắt đầu lượt này)',
+        },
         run: {
+          check: 'Kiểm tra lượt Vy làm việc cho bạn có được tiếp tục không',
+          finish: 'Đóng một lượt Vy làm việc cho bạn',
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
       },
