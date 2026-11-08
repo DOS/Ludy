@@ -16,8 +16,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
+import { EXTENSION_ID_FORMAT } from '@crove/kernel-contract';
 import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@crove/kernel-runtime';
 import { logEvent } from './log.ts';
+
+// The extension id an `Origin` header names: chrome-extension://<32 letters a to p>, nothing else (no path, port, userinfo or other
+// scheme). Chrome and Edge send it on the extension's own requests and a web page cannot forge it (#2850). null for anything else.
+const EXTENSION_ORIGIN = /^chrome-extension:\/\/([a-p]{32})$/;
+export function extensionIdOfOrigin(origin: string | null | undefined): string | null {
+  return EXTENSION_ORIGIN.exec(origin ?? '')?.[1] ?? null;
+}
 
 export const EXTENSION_TOKEN_PREFIX = 'crx_';
 const EXTENSION_CODE_PREFIX = 'crc_';
@@ -95,16 +103,18 @@ export interface ExtensionExchange {
 
 // Trades a one-time code and its PKCE verifier for a new token, once. Null for every refusal alike (an unknown, used,
 // expired or wrong code; a member who left). The raw code and token never reach SQL: only their hashes do, and the
-// verifier, which is worthless without the code. The caller audits the exchange (kernel.extension.token.exchanged), which
+// verifier, which is worthless without the code. The code is bound to the extension it was issued for (#2850): `extensionId`, read by the
+// caller from the Origin header, must be that one, or the answer is null and the code is not spent. That is defence in depth against
+// an exchange by another extension in the browser: a client outside the browser that holds the code and the verifier can set any Origin. The caller audits the exchange (kernel.extension.token.exchanged), which
 // needs the new token's actor: the exchange itself runs with no member context and so cannot write an audit row.
-export async function exchangeExtensionCode(db: Db, code: string, verifier: string): Promise<{ exchange: ExtensionExchange; token: string } | null> {
-  if (!CODE_FORMAT.test(code) || !VERIFIER_FORMAT.test(verifier)) return null;
+export async function exchangeExtensionCode(db: Db, code: string, verifier: string, extensionId: string): Promise<{ exchange: ExtensionExchange; token: string } | null> {
+  if (!CODE_FORMAT.test(code) || !VERIFIER_FORMAT.test(verifier) || !EXTENSION_ID_FORMAT.test(extensionId)) return null;
   const token = newExtensionToken();
   let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; code_id: string }>;
   try {
     ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; code_id: string }>`
       SELECT token_id, org_id, user_id, scopes, expires_at, code_id
-      FROM crove_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea)`.execute(db));
+      FROM crove_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea, ${extensionId}::text)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
   }

@@ -8,6 +8,7 @@ import { KERNEL_NOTIFYING_EVENTS, kernelCommands } from '@crove/kernel';
 import { deriveRisk, type CommandDef } from '@crove/kernel-runtime';
 import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
+import { meetingsCommands } from '@crove/mod-meetings';
 import { FINANCE_NOTIFYING_EVENTS, financeCommands } from '@crove/mod-finance';
 import { CHAT_ALERTING_EVENTS, CHAT_ALERT_TEST_EVENT, NOTIFYING_EVENTS, socialCommands } from '@crove/mod-social';
 import { MAIL_QUEUES, QUEUES, SOCIAL_PUBLISH_QUEUES, TENANT_HOSTED_PROVIDERS, queueEgress, socialPublishQueue, type JobEgress } from '../../src/jobs-schema.ts';
@@ -60,7 +61,7 @@ function workProblems(sites: readonly WorkSite[]): string[] {
 
 const RANK = { R0: 0, R1: 1, R2: 2, R3: 3 } as const;
 const all = (): Array<CommandDef<unknown, unknown>> =>
-  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands] as Array<CommandDef<unknown, unknown>>;
+  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands, ...meetingsCommands] as Array<CommandDef<unknown, unknown>>;
 
 // Commands below R2 whose handlers emit an event that feeds a queue with egress, themselves or through a nested
 // command they run (ctx.run or ctx.tryRun, followed transitively). None since #1662 and #1698 (coordinator decision):

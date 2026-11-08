@@ -41,7 +41,7 @@ const GLOBAL_OBJECTS: ReadonlySet<string> = new Set(['globalThis', 'global', 'wi
 // Node's own network modules: a job reaches the network only through the guard or an adapter.
 const NETWORK_MODULES = /^(node:)?(http|https|http2|net|tls|dgram|dns)$|^undici$/;
 // What calls the AI endpoint in @crove/agent: its model and the readers and writers built on it.
-const AI_EXPORT = /^chatModel$|^[A-Z]\w*(Extractor|Reader|Writer)$/;
+const AI_EXPORT = /^chatModel$|^transcribeChunks$|^[A-Z]\w*(Extractor|Reader|Writer)$/;
 
 // Every field of WorkerDeps (a dotted path for a field inside one) and what using it reaches. A field the test does
 // not know fails it, so a new network dependency of the worker is classified before it is used. Empty: a service of the
@@ -53,6 +53,8 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   store: [],
   // The invoice reader of packages/agent.
   extractor: ['provider:ai'],
+  // The speech to text endpoint of packages/agent (#2578, M4b): the recorder's audio goes to the provider the deployment names, in the recorder's own Vy run.
+  meetingsTranscribe: ['provider:ai'],
   // The reply drafter of packages/agent (CV8, #2310): the model reads a conversation's text and writes a draft.
   conversationWriter: ['provider:ai'],
   // The campaign drafter of packages/agent (ads W1b, #2295): the model reads a Social post and the account's caps and writes
@@ -122,7 +124,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // directory runs from the base branch on a protected-path PR, so a new field lands in two steps (#1663): its
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
-export const PENDING_DEPS: Readonly<Record<string, string>> = {};
+export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  meetingsTranscribe: '#2578',
+};
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not
 // classify fails (the safety direction: a new dependency is classified before it is used), and so does an entry for a

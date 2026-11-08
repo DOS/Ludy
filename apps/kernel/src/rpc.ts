@@ -946,6 +946,8 @@ export function createRpcHandler(
         byDeal: os.crm.salesOrders.byDeal.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.sales_orders', input, { actor, orgId }))),
         handoff: os.crm.salesOrders.handoff.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.sales_order.handoff', input, { actor, orgId }))),
         cancel: os.crm.salesOrders.cancel.handler(crmCommand('crm.sales_order.cancel')),
+        deliver: os.crm.salesOrders.deliver.handler(crmCommand('crm.sales_order.deliver')),
+        undeliver: os.crm.salesOrders.undeliver.handler(crmCommand('crm.sales_order.undeliver')),
       },
       eventTypes: {
         list: os.crm.eventTypes.list.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.event_type.list', {}, { actor, orgId }))),

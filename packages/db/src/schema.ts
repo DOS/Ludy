@@ -811,6 +811,9 @@ export type CrmSalesOrderTable = Refine<
   G.CrmSalesOrderTable,
   { status: Generated<(typeof SALES_ORDER_STATUSES)[number]>; accepted_via: (typeof QUOTE_ACCEPTED_VIA)[number] | null }
 >;
+// The delivery of a sales order line (Q4b, #2697): a delivery or the reversal of one (the same set as the CHECK constraint, compared by check-unions.db.test.ts).
+export const SALES_ORDER_DELIVERY_KINDS = ['delivery', 'reversal'] as const;
+export type CrmSalesOrderDeliveryTable = Refine<G.CrmSalesOrderDeliveryTable, { kind: (typeof SALES_ORDER_DELIVERY_KINDS)[number] }>;
 export type CrmSalesOrderLineTable = Refine<G.CrmSalesOrderLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
@@ -1079,6 +1082,7 @@ type Refined = Tables<{
   'crove_crm.quote': CrmQuoteTable;
   'crove_crm.quote_line': CrmQuoteLineTable;
   'crove_crm.sales_order': CrmSalesOrderTable;
+  'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
