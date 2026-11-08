@@ -40,7 +40,7 @@ describe('metered', () => {
       metered('finance.invoice_extract', async () => answer, (u) => seen.push(u)),
     );
     expect(result).toBe(answer);
-    expect(admitted).toEqual([{ feature: 'finance.invoice_extract', module: 'finance', orgId: 'org-1', agentId: 'agent-1' }]);
+    expect(admitted).toEqual([{ feature: 'finance.invoice_extract', module: 'finance', orgId: 'org-1', agentId: 'agent-1', memberRunId: null }]);
     expect(recorded).toEqual([{ call: admitted[0], usage: { inputTokens: 120, outputTokens: 30 } }]);
     expect(seen).toEqual([{ inputTokens: 120, outputTokens: 30 }]);
   });
