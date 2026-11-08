@@ -227,3 +227,23 @@ export interface QuoteDocument {
 export const QUOTE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 // Where the page of a link is: the token stays after the # and goes to the API in a POST body only.
 export const QUOTE_PAGE_PATH = '/-/quote';
+
+// Dy's proposal for the lines of a quote (#2698, plan docs/plan/crm-quotes.md section 7): a read, never stored. ai: used (a proposal came), off (the deployment has no model), busy (too many
+// asks at once), budget (the org's AI budget of the month is spent), failed (the call failed), refused (the answer held a figure, link or VAT rate no source holds, or nothing usable),
+// words_off (the org's switch for AI on customers' words is off, so nothing was sent to the model), no_text (the customer has written nothing that may be read). Without a proposal the editor works as
+// it does with AI off. A line's price is empty when no source holds one; priceFrom says where a price came from.
+export const QUOTE_SUGGEST_STATES = ['used', 'off', 'busy', 'budget', 'failed', 'refused', 'words_off', 'no_text'] as const;
+export type QuoteSuggestState = (typeof QUOTE_SUGGEST_STATES)[number];
+export const QUOTE_PRICE_FROM = ['earlier', 'message', 'deal'] as const;
+export const zQuoteSuggestInput = z.strictObject({ dealId: zId });
+export type QuoteSuggestInput = z.infer<typeof zQuoteSuggestInput>;
+export const zQuoteSuggestedLine = z.strictObject({
+  description: z.string().min(1).max(QUOTE_DESCRIPTION_MAX),
+  unit: z.string().max(QUOTE_UNIT_MAX).nullable(),
+  quantity: z.string(),
+  unitPrice: z.string().nullable(),
+  priceFrom: z.enum(QUOTE_PRICE_FROM).nullable(),
+  vatRate: z.string().max(QUOTE_VAT_RATE_MAX).nullable(),
+});
+export const zQuoteSuggested = z.strictObject({ ai: z.enum(QUOTE_SUGGEST_STATES), lines: z.array(zQuoteSuggestedLine) });
+export type QuoteSuggested = z.infer<typeof zQuoteSuggested>;

@@ -64,8 +64,13 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  // Q4 of the CRM quotes (#2696, ADR-0050): the sales order of an accepted quote, its frozen lines and the org's per-year number counter.
+  'crove_crm.sales_order',
+  'crove_crm.sales_order_counter',
+  'crove_crm.sales_order_line',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.marketplace_connection',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -73,6 +78,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_kernel.member_permission_override',
+  'crove_kernel.member_vy_memory',
+  'crove_kernel.member_vy_result',
   'crove_meetings.action_item',
   'crove_meetings.meeting_result',
   'crove_notes.link',
@@ -98,6 +106,10 @@ const AUTHOR_ONLY = new Map<string, string>([
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
+  // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
+  ['crove_kernel.member_vy_memory', 'false'],
+  // One run's result for one member (ADR-0049 decision 3): the member's alone, the system context's included; only named definers expire or purge it.
+  ['crove_kernel.member_vy_result', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -155,6 +167,8 @@ const leScopeOrOrgPredicate = (c: string) =>
 // listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
 // listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
 const APPEND_ONLY = new Set<string>([
+  // The lines of a sales order (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): a frozen copy made with the order; a correction is a cancelled order and a new quote.
+  'crove_crm.sales_order_line',
   'crove_finance.channel_settlement',
   'crove_finance.channel_settlement_line',
 ]);
@@ -203,6 +217,8 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// A marketplace connection is unique per entity, provider and platform, so each seeded one names a provider of its own.
+let marketplaceSeq = 0;
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
@@ -351,6 +367,8 @@ let calendarHour = 0;
 let bankAccountNumber = 0;
 // A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
 let stagePosition = 1;
+// A sales order number counter (Q4, #2696) is unique per org and year: each seeded one takes the next year from 2000.
+let salesOrderYear = 2000;
 // A staged import row's number is unique per batch (#2229): each factory row takes the next one.
 let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
@@ -777,6 +795,80 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (crm-quotes.db.test.ts tests it)',
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
+  // The sales order of an accepted quote (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): one per quote, in the quote's issuing entity (named by issuer_entity_id, so it
+  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names only has to exist (the accept
+  // command takes it to `accepted` and makes the order in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
+  // assign the cancel reason to itself.
+  'crove_crm.sales_order': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      const entity = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          quote_id: quote,
+          deal_id: deal,
+          party_id: o.party,
+          issuer_entity_id: entity,
+          number: `DH-RLS-${tag()}`,
+          order_date: '2031-02-01',
+          buyer_name: 'RLS matrix buyer',
+          created_by: o.owner,
+        },
+      };
+    },
+    update: { set: 'cancel_reason = cancel_reason' },
+  },
+  // The org's number counter for sales orders (Q4): one row per org and year, taken by the accept command in its own transaction. Tenant roles update the last number
+  // only (a column grant), so the update probes assign it to itself.
+  'crove_crm.sales_order_counter': {
+    update: { set: 'last_no = last_no' },
+    noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
+  },
+  // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
+  'crove_crm.sales_order_line': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      const entity = randomUUID();
+      const order = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.sales_order',
+            values: {
+              org_id: o.id,
+              id: order,
+              quote_id: quote,
+              deal_id: deal,
+              party_id: o.party,
+              issuer_entity_id: entity,
+              number: `DH-RLS-${tag()}`,
+              order_date: '2031-02-01',
+              buyer_name: 'RLS matrix buyer',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
+      };
+    },
+  },
   // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
   // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
   // row gets its own. Written and removed whole by owners' and admins' commands: tenant roles read, insert and delete.
@@ -1015,6 +1107,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // default entity), so each row gets its own year.
   'crove_finance.legal_entity_books': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), regime: 'tt133', chart_version: '2026.1', effective_from: `${legalEntityBooksYear++}-01-01`, created_by: o.owner } }),
+  },
+  // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
+  // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
+  'crove_finance.marketplace_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      // An account is one per entity, provider and platform, so each row names a provider of its own.
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const connection = { ...channelConnectionRow(o), provider };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
+      };
+    },
   },
   // #1398: an org's MISA SME item and warehouse codes (Mã hàng, Mã kho) for purchase lines on a stock account (152, 153,
   // 156 or a sub-account of one), one row per (org, account). Owners and admins set and clear them.
@@ -1703,6 +1809,44 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // on a pending invite.
   'crove_kernel.member_invite': {
     make: (o) => ({ row: { org_id: o.id, email: `invite-${tag()}@rls.test`, role: 'member', invited_by: o.owner } }),
+  },
+  // A permission one member holds or lacks beyond their role presets (ADR-0049 decision 10): written only by the audited command kernel.member.permission.set, so tenant roles write it through that command, not directly.
+  'crove_kernel.member_permission_override': {
+    make: (o) => ({ row: { org_id: o.id, user_id: o.owner, permission: 'vy.use', allowed: 'false', set_by: o.owner } }),
+  },
+  // What Vy keeps about one member (ADR-0049 decision 3): an entry the member made or confirmed, sealed to that member by a restrictive policy.
+  'crove_kernel.member_vy_memory': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), member_user_id: o.owner, body: 'RLS matrix memory' } }),
+  },
+  // One Vy run's result for one member (ADR-0049 decision 3), with the run it came from. The run is an ordinary agent run as the matrix seeds it (as the superuser, the binding policies of a member's own agent do not apply); the result is the owner's, the user every member-context actor enters as.
+  'crove_kernel.member_vy_result': {
+    make: (o) => {
+      const agent = agentRow(o);
+      const run = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.agent', values: agent },
+          {
+            table: 'crove_kernel.ai_run',
+            values: { org_id: o.id, id: run, agent_id: agent.id, module: 'notes', status: 'succeeded', started_at: '2026-10-01T00:00:00Z', expires_at: '2026-10-01T00:15:00Z', finished_at: '2026-10-01T00:10:00Z' },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          member_user_id: o.owner,
+          run_id: run,
+          feature: 'notes.summary',
+          subject_type: 'note',
+          subject_id: randomUUID(),
+          status: 'ready',
+          body: 'RLS matrix result',
+          tainted: 'true',
+          private_read: 'true',
+          expires_at: '2036-10-01T00:00:00Z',
+        },
+      };
+    },
   },
   // A notification for one member (#671), the kernel's own for every module (a finance proposal to approve, a file
   // that failed to read). A restrictive policy shows each member only their own; the factory's rows belong to the

@@ -2,11 +2,12 @@
 // The quotes of a deal and the quote editor (#2693, docs/plan/crm-quotes.md step Q1). "Tạo báo giá" makes a draft for the deal's customer in one click;
 // the editor adds lines (typed, copied from an earlier quote to the customer, or started from the price the customer paid last time), shows the totals
 // the way the server computes them, and saves. Nothing here sends a quote: sending is a later step, and a person always does it. The core works with AI
-// off; the sales coworker's suggested lines come in a later step and will be applied by a person line by line.
+// off. The sales coworker's suggested lines (#2698) are a read the person asks for: each comes marked as the coworker's, with its price empty when no source
+// holds one, and a person uses or drops it; a used line is only a line in this editor until the person saves.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_DESCRIPTION_MAX, QUOTE_LINES_MAX, QUOTE_TEXT_MAX, QUOTE_UNIT_MAX, zQuoteLineInput, type Deal, type Quote, type QuoteHint, type QuoteLineInput, type QuoteLinkCreated, type QuoteStatus, type QuoteSummary } from '@crove/kernel-contract';
+import { QUOTE_DESCRIPTION_MAX, QUOTE_LINES_MAX, QUOTE_TEXT_MAX, QUOTE_UNIT_MAX, zQuoteLineInput, type Deal, type Quote, type QuoteHint, type QuoteLineInput, type QuoteLinkCreated, type QuoteStatus, type QuoteSuggested, type QuoteSummary } from '@crove/kernel-contract';
 import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -17,7 +18,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 
 const refreshQuotes = refreshQuoteQueries;
@@ -35,6 +36,8 @@ interface LineDraft {
   discount: string;
   vatRate: string;
   stockItemId: string | null;
+  // Taken from the sales coworker's suggestion in this editor and not saved yet: marked until the person saves.
+  suggested?: boolean;
 }
 
 let nextKey = 1;
@@ -71,6 +74,87 @@ function toInput(line: LineDraft): QuoteLineInput {
 
 const statusVariant = (status: QuoteStatus, expired: boolean): 'outline' | 'warning' | 'success' | 'destructive' | 'secondary' =>
   expired ? 'warning' : status === 'accepted' ? 'success' : status === 'declined' ? 'destructive' : status === 'draft' ? 'outline' : 'secondary';
+
+type SuggestedLine = QuoteSuggested['lines'][number];
+
+// The sales coworker's suggestions for the lines (#2698). A read the person asks for: nothing runs by itself, nothing is stored, and a line becomes a quote line only through the person's save.
+// Each suggestion is marked as the coworker's, says where its price came from (a price no source holds is empty), and is used or dropped one by one. With no model, a spent budget, the org's
+// switch for AI on customers' words off or a refused answer, one line says so and the editor works as it does without AI.
+export function QuoteSuggestions({ dealId, room, vat, onApply }: { dealId: string; room: number; vat: string; onApply: (lines: LineDraft[]) => void }) {
+  const t = useTranslations('quotes.suggest');
+  const { locale } = useLocaleSetting();
+  const [answer, setAnswer] = useState<QuoteSuggested | null>(null);
+  const [shown, setShown] = useState<SuggestedLine[]>([]);
+  const [applied, setApplied] = useState(false);
+  const ask = useMutation({
+    mutationFn: () => client.crm.quotes.suggest({ dealId }),
+    onSuccess: (next) => {
+      setAnswer(next);
+      setShown(next.lines);
+      setApplied(false);
+    },
+  });
+  const use = (lines: SuggestedLine[]) => {
+    const take = lines.slice(0, Math.max(0, room));
+    if (take.length === 0) return;
+    onApply(take.map((l) => ({ key: nextKey++, kind: 'item', description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice ?? '', discount: '', vatRate: l.vatRate ?? vat, stockItemId: null, suggested: true })));
+    setShown((current) => current.filter((l) => !take.includes(l)));
+    setApplied(true);
+  };
+  const price = (l: SuggestedLine) => (l.unitPrice === null ? t('priceEmpty') : `${formatMoney(l.unitPrice, locale, 'VND')}${l.priceFrom ? ` (${t(`priceFrom.${l.priceFrom}`)})` : ''}`);
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed border-proposal/60 p-3" data-testid="quote-suggest">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={ask.isPending || room <= 0} onClick={() => ask.mutate()} data-testid="quote-suggest-ask">
+          {t('button')}
+        </Button>
+        <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+      </div>
+      {answer !== null && (
+        <p className="text-xs text-foreground" role="status" data-testid="quote-suggest-state" data-state={answer.ai}>
+          {t(`state.${answer.ai}`)}
+        </p>
+      )}
+      {answer !== null && answer.ai === 'used' && shown.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium">{t('title')}</h4>
+          <ol className="space-y-2" aria-label={t('title')}>
+            {shown.map((l, i) => (
+              <li key={`${l.description}-${i}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" data-testid="quote-suggest-line">
+                <div className="min-w-0">
+                  <p className="break-words font-medium">{l.description}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">{l.unit ? t('line', { quantity: l.quantity, unit: l.unit, price: price(l) }) : t('lineNoUnit', { quantity: l.quantity, price: price(l) })}</p>
+                  <Badge variant="outline">{t('badge')}</Badge>
+                </div>
+                <div className="flex gap-1">
+                  <Button type="button" size="sm" variant="outline" disabled={room <= 0} onClick={() => use([l])} aria-label={t('applyLine', { n: String(i + 1) })}>
+                    {t('apply')}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setShown((current) => current.filter((x) => x !== l))} aria-label={t('dropLine', { n: String(i + 1) })}>
+                    {t('drop')}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <div className="flex flex-wrap gap-2">
+            {shown.length > 1 && (
+              <Button type="button" size="sm" variant="outline" disabled={room <= 0} onClick={() => use(shown)}>
+                {t('applyAll')}
+              </Button>
+            )}
+            <Button type="button" size="sm" variant="ghost" onClick={() => setShown([])}>
+              {t('close')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {room <= 0 && <p className="text-xs text-muted-foreground">{t('full')}</p>}
+      {applied && <p className="text-xs text-foreground" role="status" data-testid="quote-suggest-applied">{t('applied')}</p>}
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+    </div>
+  );
+}
 
 function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boolean; onClose: () => void }) {
   const t = useTranslations('quotes');
@@ -157,6 +241,8 @@ function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boole
         )}
       </div>
 
+      {!readOnly && <QuoteSuggestions dealId={quote.dealId} room={QUOTE_LINES_MAX - lines.length} vat={vat} onApply={(added) => setLines((current) => [...current, ...added].slice(0, QUOTE_LINES_MAX))} />}
+
       <datalist id="quote-hints">
         {hints.map((h) => (
           <option key={h.description} value={h.description} />
@@ -199,6 +285,7 @@ function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boole
               </>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-6">
+              {line.suggested && <Badge variant="outline">{t('suggest.badge')}</Badge>}
               <span className="text-sm tabular-nums text-muted-foreground">{line.kind === 'item' ? t('editor.lineAmount', { amount: money(computed[i]?.amount ?? '0') }) : t('editor.textLine')}</span>
               {!readOnly && (
                 <div className="flex gap-1">
