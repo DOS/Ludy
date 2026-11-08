@@ -793,6 +793,14 @@ export type CrmQuoteTable = Refine<
   { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null }
 >;
 export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
+// The sales order of an accepted quote (#2696, ADR-0050): confirmed until a person cancels it; a person records how the customer's yes arrived.
+export const SALES_ORDER_STATUSES = ['confirmed', 'cancelled'] as const;
+export const QUOTE_ACCEPTED_VIA = ['chat', 'email', 'phone', 'in_person', 'other'] as const;
+export type CrmSalesOrderTable = Refine<
+  G.CrmSalesOrderTable,
+  { status: Generated<(typeof SALES_ORDER_STATUSES)[number]>; accepted_via: (typeof QUOTE_ACCEPTED_VIA)[number] | null }
+>;
+export type CrmSalesOrderLineTable = Refine<G.CrmSalesOrderLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
 export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
@@ -1058,6 +1066,8 @@ type Refined = Tables<{
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
   'crove_crm.quote': CrmQuoteTable;
   'crove_crm.quote_line': CrmQuoteLineTable;
+  'crove_crm.sales_order': CrmSalesOrderTable;
+  'crove_crm.sales_order_line': CrmSalesOrderLineTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
