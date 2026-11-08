@@ -53,7 +53,7 @@ CREATE POLICY sales_order_delivery_insert ON crove_crm.sales_order_delivery AS R
 -- ---------------------------------------------------------------------------
 -- 2. The order's guard: no cancellation of an order that was delivered
 -- ---------------------------------------------------------------------------
--- The guard of Q4 (20261128150000) with one refusal added to the cancellation branch: a delivery nobody reversed. Every other rule is as it was.
+-- The guard of Q4 (20261128170000) with one refusal added to the cancellation branch: a delivery nobody reversed. Every other rule is as it was.
 CREATE OR REPLACE FUNCTION crove_crm.sales_order_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE

@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2697): the org purge deletes the org's sales order deliveries with the org (crove_crm.sales_order_delivery), ahead of the order lines they name. Idempotent;
--- applied files stay untouched. This is the body of 20261128160000 (the newest, with the sales orders) with the one table added to the first list, before crove_crm.sales_order_line;
+-- applied files stay untouched. This is the body of 20261128180000 (the newest, with the sales orders) with the one table added to the first list, before crove_crm.sales_order_line;
 -- its signature, owner, grants and every other list and step are as they were.
 SET LOCAL lock_timeout = '2s';
 
