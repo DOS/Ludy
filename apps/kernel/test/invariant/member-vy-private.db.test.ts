@@ -36,7 +36,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
   const pools: pg.Pool[] = [];
   let orgId = '';
   let branch = '';
-  const users = { owner: '', admin: '', author: '', member: '', viewer: '', limited: '' };
+  const users = { owner: '', admin: '', author: '', vyUser: '', member: '', viewer: '', limited: '' };
   let agent = { agentId: '', runId: '' };
   // What the database has of stage A, looked up once in beforeAll.
   const has = { results: false, memory: false, override: false, kind: false, permission: false, memberEntry: false };
@@ -85,6 +85,8 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     enter: (c) => c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agent.agentId, agent.runId]),
   };
   const author = member('the member', () => users.author);
+  // The member whose own Vy agent the agent cases create, so they never meet the agent seeded for `author` with their result.
+  const vyUser = member('the Vy member', () => users.vyUser);
   // Everyone but the member whose Vy it is.
   const others: Actor[] = [
     member('another member', () => users.member),
@@ -134,8 +136,8 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner]))
         .rows[0]?.id as string;
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer'), ($1, $6, 'member')`,
-        [orgId, users.admin, users.author, users.member, users.viewer, users.limited],
+        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer'), ($1, $6, 'member'), ($1, $7, 'member')`,
+        [orgId, users.admin, users.author, users.member, users.viewer, users.limited, users.vyUser],
       );
       await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
@@ -368,41 +370,41 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
 
     it('inserts a member_vy agent only for the member in their own context, with the fixed template', async () => {
       if (!has.kind) return;
-      expect((await insertAgent(author, users.author)).ok, 'the member for themselves').toBe(true);
+      expect((await insertAgent(vyUser, users.vyUser)).ok, 'the member for themselves').toBe(true);
       for (const actor of [member('another member', () => users.member), member('an owner', () => users.owner), member('an admin', () => users.admin)]) {
-        expect((await insertAgent(actor, users.author)).ok, `${actor.name} making the member's Vy`).toBe(false);
+        expect((await insertAgent(actor, users.vyUser)).ok, `${actor.name} making the member's Vy`).toBe(false);
       }
-      expect((await insertAgent(author, users.member)).ok, 'the member naming another member').toBe(false);
-      expect((await insertAgent(author, users.author, 'finance.chief_accountant')).ok, 'an org-chart template').toBe(false);
+      expect((await insertAgent(vyUser, users.member)).ok, 'the member naming another member').toBe(false);
+      expect((await insertAgent(vyUser, users.vyUser, 'finance.chief_accountant')).ok, 'an org-chart template').toBe(false);
       for (const actor of [agentActor, system]) {
-        expect((await insertAgent(actor, users.author)).ok, `${actor.name} making a member's Vy`).toBe(false);
+        expect((await insertAgent(actor, users.vyUser)).ok, `${actor.name} making a member's Vy`).toBe(false);
       }
     });
 
     it('never turns an org-chart agent into a member_vy one, or the reverse, and keeps one per member', async () => {
       if (!has.kind) return;
-      const retag = await outcome(admin((c) => c.query(`UPDATE crove_kernel.agent SET kind = 'member_vy', member_user_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, agent.agentId, users.author])));
+      const retag = await outcome(admin((c) => c.query(`UPDATE crove_kernel.agent SET kind = 'member_vy', member_user_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, agent.agentId, users.vyUser])));
       expect(retag.ok, 'an org-chart agent turned into a member_vy one').toBe(false);
       // kind and member_user_id never change after insert; one agent per (org, member): committed in the member's own context.
       const committed = await outcome(
         inContext(
-          author.url(),
-          author.enter,
+          vyUser.url(),
+          vyUser.enter,
           async (c) => {
             const id = randomUUID();
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.vyUser]);
             const second = await outcome(
-              c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy hai', 'member_vy', $3, $3)`, [orgId, randomUUID(), users.author]),
+              c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy hai', 'member_vy', $3, $3)`, [orgId, randomUUID(), users.vyUser]),
             );
             await c.query('ROLLBACK');
             await c.query('BEGIN');
-            await author.enter(c);
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
+            await vyUser.enter(c);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.vyUser]);
             const flip = await outcome(c.query(`UPDATE crove_kernel.agent SET kind = 'org_chart' WHERE org_id = $1 AND id = $2`, [orgId, id]));
             await c.query('ROLLBACK');
             await c.query('BEGIN');
-            await author.enter(c);
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
+            await vyUser.enter(c);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.vyUser]);
             const move = await outcome(c.query(`UPDATE crove_kernel.agent SET member_user_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, id, users.member]));
             return { second, flip, move };
           },
@@ -421,12 +423,12 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       // Committed, so the worker login can be asked to enter the agent and the readers can look for its run.
       const made = await outcome(
         inContext(
-          author.url(),
-          author.enter,
+          vyUser.url(),
+          vyUser.enter,
           async (c) => {
             const agentId = randomUUID();
             const runId = randomUUID();
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, users.author]);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, users.vyUser]);
             await c.query(
               `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
               [orgId, runId, agentId],
@@ -446,7 +448,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
         // Not merely "no seat": a member_vy agent has none by design, so the refusal must come from its kind.
         expect(entered.ok ? '' : entered.message, 'refused for its kind, not for lacking a position').not.toMatch(/AGENT_NO_POSITION/);
         // A run of the member's Vy is read by that member alone: no owner, admin, member, viewer, agent or system.
-        const mine = await run(author, async (c) => (await c.query('SELECT id FROM crove_kernel.ai_run WHERE id = $1', [runId])).rowCount);
+        const mine = await run(vyUser, async (c) => (await c.query('SELECT id FROM crove_kernel.ai_run WHERE id = $1', [runId])).rowCount);
         expect(mine, 'the member reading their run').toBe(1);
         for (const actor of others) {
           const seen = await run(actor, async (c) => (await c.query('SELECT id FROM crove_kernel.ai_run WHERE id = $1', [runId])).rowCount);
