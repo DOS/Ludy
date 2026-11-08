@@ -95,6 +95,12 @@ const PENDING_TABLES = new Set<string>([
 // none of its org's rows either, and its no-WHERE update and delete sweeps change nothing. Every cross-org case stays as it is for every actor. The rest of the
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
+// Tables the system context reads in part only, and writes as any other table (so not AUTHOR_ONLY): the SQL, over alias t, that
+// picks the rows it reads. Sorted, one table per line.
+const SYSTEM_READS = new Map<string, string>([
+  // A run of a member's own Vy (ADR-0049 decision 3) is read by that member alone; every other run is read as before.
+  ['crove_kernel.ai_run', `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy')`],
+]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
@@ -175,6 +181,8 @@ type Values = Record<string, string | number>;
 interface Row {
   table: string;
   values: Values;
+  // Insert with the table's triggers set aside, for a row whose guards need a member's own context (the matrix seeds as the owner).
+  unguarded?: boolean;
 }
 interface OrgFixture {
   id: string;
@@ -248,6 +256,7 @@ const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit'
   table: 'crove_finance.journal_line',
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
 });
+const vyAgentOf = new Map<string, Record<string, string>>();
 const agentRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -1705,13 +1714,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // One Vy run's result for one member (ADR-0049 decision 3), with the run it came from. The run is an ordinary agent run as the matrix seeds it (as the superuser, the binding policies of a member's own agent do not apply); the result is the owner's, the user every member-context actor enters as.
   'crove_kernel.member_vy_result': {
     make: (o) => {
-      const agent = agentRow(o);
+      // The run is the owner's own Vy run: a result is bound to a member_vy agent of the same member (trigger member_vy_result_bind).
+      // One agent per member, so the control insert that builds the row again reuses the first agent of the org.
+      const first = !vyAgentOf.has(o.id);
+      const agent = vyAgentOf.get(o.id) ?? { ...agentRow(o), template_key: 'kernel.member_vy', display_name: 'Vy', kind: 'member_vy', member_user_id: o.owner };
+      vyAgentOf.set(o.id, agent);
       const run = randomUUID();
       return {
         setup: [
-          { table: 'crove_kernel.agent', values: agent },
+          ...(first ? [{ table: 'crove_kernel.agent', values: agent, unguarded: true }] : []),
           {
             table: 'crove_kernel.ai_run',
+            unguarded: true,
             values: { org_id: o.id, id: run, agent_id: agent.id, module: 'notes', status: 'succeeded', started_at: '2026-10-01T00:00:00Z', expires_at: '2026-10-01T00:15:00Z', finished_at: '2026-10-01T00:10:00Z' },
           },
         ],
@@ -1727,6 +1741,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           body: 'RLS matrix result',
           tainted: 'true',
           private_read: 'true',
+          created_at: '2036-09-20T00:00:00Z',
           expires_at: '2036-10-01T00:00:00Z',
         },
       };
@@ -2542,7 +2557,9 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     try {
       for (const row of rows) {
         const q = insertSql(row);
+        if (row.unguarded) await admin.query('SET LOCAL session_replication_role = replica');
         await admin.query(q.text, q.values);
+        if (row.unguarded) await admin.query('SET LOCAL session_replication_role = DEFAULT');
       }
       await admin.query('COMMIT');
     } catch (error) {
@@ -2914,7 +2931,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         expect(count(orgs.B), `${table} has no org B rows to probe`).toBeGreaterThan(0);
         expect(count(orgs.A), `${table} has no org A rows to probe`).toBeGreaterThan(0);
         // On an AUTHOR_ONLY table, the ids of the org A rows the system context reads.
-        const systemReads = AUTHOR_ONLY.get(table);
+        const systemReads = AUTHOR_ONLY.get(table) ?? SYSTEM_READS.get(table);
         const systemIds = systemReads === undefined
           ? undefined
           : (await admin.query<{ id: string }>(`SELECT t.id::text AS id FROM ${table} t WHERE t.org_id OPERATOR(pg_catalog.=) $1::uuid AND (${systemReads})`, [orgs.A.id])).rows
