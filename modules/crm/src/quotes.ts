@@ -161,6 +161,29 @@ export const quoteLogoSet = defineCommand({
   },
 });
 
+// Where a logo is stored, for the HTTP route to read the bytes with (the PDF's): the document itself holds no file. Only a PNG or a JPEG within the size the upload allows.
+export interface QuoteLogoFile {
+  id: string;
+  storageKey: string;
+  generation: string | null;
+  sha256: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+// The logo a file id names, if it is still a file of this org that the upload checks let in (a PNG or a JPEG, small); else none. Used at the send, to freeze it, and by the PDF.
+export async function logoFileOf(ctx: Pick<Reader, 'trx' | 'orgId'>, fileId: string | null): Promise<QuoteLogoFile | null> {
+  if (fileId === null) return null;
+  const file = await ctx.trx
+    .selectFrom('crove_kernel.file')
+    .select(['id', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', fileId)
+    .executeTakeFirst();
+  if (!file || !(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type) || Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) return null;
+  return { id: file.id, storageKey: file.storage_key, generation: file.generation, sha256: file.sha256, contentType: file.content_type, sizeBytes: Number(file.size_bytes) };
+}
+
 export const quoteLogoRemove = defineCommand({
   name: 'crm.quote_setting.logo_remove',
   input: z.strictObject({}),
@@ -741,11 +764,14 @@ export const quoteSend = defineCommand({
     }
     // The seller as the document will show it, frozen with the quote (#2826): a change to the letterhead later does not change a quote that was sent.
     const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note', 'logo_file_id']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     const text = (value: string | null | undefined, max: number): string | null => {
       const trimmed = value?.trim() ?? '';
       return trimmed === '' ? null : trimmed.slice(0, max);
     };
+    // The logo goes with them (#2814): the id of the org's logo as it is now if it is still an image the upload checks let in, else none. The marker says the snapshot was taken, so a quote
+    // sent without a logo stays without one when the org adds one later.
+    const logo = await logoFileOf(ctx, letterhead?.logo_file_id ?? null);
     await ctx.trx
       .updateTable('crove_crm.quote')
       .set({
@@ -755,6 +781,8 @@ export const quoteSend = defineCommand({
         seller_phone: text(letterhead?.phone, 40),
         seller_email: text(letterhead?.email, 254),
         seller_bank_note: text(letterhead?.bank_note, 500),
+        seller_logo_file_id: logo?.id ?? null,
+        seller_logo_frozen: true,
         status: 'sent',
         number,
         sent_at: ctx.now,

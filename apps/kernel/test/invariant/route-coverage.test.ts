@@ -63,7 +63,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/quote/logo': "the logo of a sent quote's letterhead (#2814): the quote link's token is the credential, as for /api/quote/view; rate limited per client, it answers that one quote's seller logo and nothing else",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

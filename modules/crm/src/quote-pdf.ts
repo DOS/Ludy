@@ -6,35 +6,15 @@
 // `loadQuoteDocument(ctx, quoteId)` gives a `QuoteDocument`; `renderQuotePdf(document)` is a pure function of its input.
 import { defineQuery } from '@crove/kernel-runtime';
 import { vietnamToday, zQuoteRef } from '@crove/kernel-contract';
-import { loadQuote, type Reader } from './quotes.ts';
-import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES } from '@crove/kernel-contract';
+import { loadQuote, logoFileOf, type QuoteLogoFile, type Reader } from './quotes.ts';
 import type { QuoteDocument, QuoteParty } from './pdf/quote-document.ts';
 
 const ALL = ['owner', 'admin', 'member', 'viewer'] as const;
 
-// Where the letterhead's logo is stored (#2814), for the HTTP route to read the bytes with: the document itself holds no file. Only a PNG or JPEG within the size the upload allows.
-export interface QuoteLogoFile {
-  storageKey: string;
-  generation: string | null;
-  sha256: string;
-  contentType: string;
-  sizeBytes: number;
-}
-// What `crm.quote.document` answers: the document and the logo's reference. The logo is live, for a draft and for a sent quote alike.
+// What `crm.quote.document` answers: the document and the logo's reference. A draft shows the org's logo as it is; a sent quote the one frozen at the send (quotes.ts), or the org's
+// own when it was sent before the freeze existed.
 export type QuoteDocumentData = QuoteDocument & { logoFile: QuoteLogoFile | null };
-
-async function logoFileOf(ctx: Reader): Promise<QuoteLogoFile | null> {
-  const setting = await ctx.trx.selectFrom('crove_crm.quote_setting').select('logo_file_id').where('org_id', '=', ctx.orgId).executeTakeFirst();
-  if (!setting?.logo_file_id) return null;
-  const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
-    .select(['storage_key', 'generation', 'sha256', 'content_type', 'size_bytes'])
-    .where('org_id', '=', ctx.orgId)
-    .where('id', '=', setting.logo_file_id)
-    .executeTakeFirst();
-  if (!file || !(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type) || Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) return null;
-  return { storageKey: file.storage_key, generation: file.generation, sha256: file.sha256, contentType: file.content_type, sizeBytes: Number(file.size_bytes) };
-}
+export type { QuoteLogoFile };
 
 type Frozen = { sent: boolean; issuerEntityId: string | null; snapshot: QuoteDocument['seller'] | null };
 type Org = { name: string; tax_code: string | null; address: string | null; contact_email: string | null };
@@ -63,7 +43,7 @@ export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<Q
   const quote = await loadQuote(ctx, quoteId);
   const row = await ctx.trx
     .selectFrom('crove_crm.quote')
-    .select(['sent_at', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email', 'seller_name', 'seller_tax_code', 'seller_address', 'seller_phone', 'seller_email', 'seller_bank_note'])
+    .select(['sent_at', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email', 'seller_name', 'seller_tax_code', 'seller_address', 'seller_phone', 'seller_email', 'seller_bank_note', 'seller_logo_file_id', 'seller_logo_frozen'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', quoteId)
     .executeTakeFirstOrThrow();
@@ -75,7 +55,9 @@ export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<Q
       ? null
       : { name: row.seller_name, taxCode: row.seller_tax_code, address: row.seller_address, phone: row.seller_phone, email: row.seller_email, bankNote: row.seller_bank_note };
   const seller = await sellerOf(ctx, org, { sent, issuerEntityId: row.issuer_entity_id, snapshot });
-  const logoFile = await logoFileOf(ctx);
+  // A quote that was sent after the freeze existed has the logo it was sent with (or none); a draft, and a quote sent before, show the org's logo as it is.
+  const liveLogo = async () => (await ctx.trx.selectFrom('crove_crm.quote_setting').select('logo_file_id').where('org_id', '=', ctx.orgId).executeTakeFirst())?.logo_file_id ?? null;
+  const logoFile = await logoFileOf(ctx, sent && row.seller_logo_frozen ? row.seller_logo_file_id : await liveLogo());
   if (!sent) {
     const party = await ctx.trx
       .selectFrom('crove_kernel.party')

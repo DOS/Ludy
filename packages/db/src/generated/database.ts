@@ -721,6 +721,8 @@ export interface CrmQuoteTable {
   seller_phone: string | null;
   seller_email: string | null;
   seller_bank_note: string | null;
+  seller_logo_file_id: string | null;
+  seller_logo_frozen: Generated<boolean>;
 }
 
 /** crove_crm.sales_order_line */
