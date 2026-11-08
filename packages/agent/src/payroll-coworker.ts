@@ -168,11 +168,16 @@ export function restoreAliases(text: string, names: ReadonlyMap<string, string>)
   return text.replace(/(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/gu, (alias) => names.get(alias) ?? alias);
 }
 
-const ALIAS = /(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/gu;
-const aliasesIn = (text: string): string[] => [...text.matchAll(ALIAS)].map((m) => m[0]);
+const ALIAS = /(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/giu;
+const aliasesIn = (text: string): string[] => [...text.normalize('NFKC').matchAll(ALIAS)].map((m) => m[0].toUpperCase());
 
 // The figures rule of the overview, and no address on any domain either: nothing a payroll text says is a place to go.
-const statedFiguresProblem = (text: string, facts: readonly string[]): 'FIGURES' | 'LINK' | null => figuresProblem(text, facts) ?? (hasAddress(text) ? 'LINK' : null);
+// The alias carries digits ("E25"), so aliases are cut out of the text and the facts first: the digits of an alias never count as a figure the model was given (the alias itself is checked apart).
+const withoutAliases = (value: string): string => value.normalize('NFKC').replace(ALIAS, ' ');
+const statedFiguresProblem = (text: string, facts: readonly string[]): 'FIGURES' | 'LINK' | null => {
+  const bare = withoutAliases(text);
+  return figuresProblem(bare, facts.map(withoutAliases)) ?? (hasAddress(bare) ? 'LINK' : null);
+};
 
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -215,7 +220,8 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
           : `${who}: net pay ${amountOf(line.figures.net, language)}, last month ${amountOf(line.previous.net, language)}; ${dir} ${pct}%`);
       }
     }
-    if (line.checks.netBelowMinimum || line.checks.minimumWageFailed) add('net_below_minimum', who, vi ? `${who}: thực nhận ${amountOf(line.figures.net, language)}, thấp hơn mức lương tối thiểu của tháng` : `${who}: net pay ${amountOf(line.figures.net, language)}, below the month's minimum wage`);
+    if (line.checks.netBelowMinimum) add('net_below_minimum', who, vi ? `${who}: thực nhận ${amountOf(line.figures.net, language)}, thấp hơn mức lương tối thiểu của tháng` : `${who}: net pay ${amountOf(line.figures.net, language)}, below the month's minimum wage`);
+    else if (line.checks.minimumWageFailed) add('net_below_minimum', who, vi ? `${who}: lương cơ bản ${amountOf(line.figures.base_wage, language)}, không đạt kiểm tra lương tối thiểu của tháng` : `${who}: base wage ${amountOf(line.figures.base_wage, language)} fails the month's minimum wage check`);
     if (line.checks.deductionCapFailed) add('deduction_over_cap', who, vi ? `${who}: các khoản khấu trừ ${amountOf(line.figures.deductions, language)} vượt mức 30% theo Điều 129 Bộ luật Lao động` : `${who}: deductions of ${amountOf(line.figures.deductions, language)} are over the 30% cap of Article 129 of the Labor Code`);
     if (line.dependentsWithoutRegistration > 0) add('dependent_unregistered', who, vi ? `${who}: ${line.dependentsWithoutRegistration} người phụ thuộc chưa đăng ký` : `${who}: ${line.dependentsWithoutRegistration} dependent(s) without a registration`);
     if (line.checks.insuredAboveCap) add('insured_above_cap', who, vi ? `${who}: mức đóng bảo hiểm vượt mức trần` : `${who}: the insured wage is above the cap`);

@@ -136,6 +136,18 @@ describe('checkFlagSentences', () => {
     expect(r).toMatchObject({ kind: 'flags', refused: 2, items: [{ id: 'A2' }] });
   });
 
+  it('does not count the digits of an alias as a figure the model was given', () => {
+    const sheet25 = pseudonymizeSheet(Array.from({ length: 25 }, (_, i) => line(String(i + 100).padStart(3, '0'), i === 24 ? { dependentsWithoutRegistration: 1 } : {})), { language: 'vi', blockingRules: 0 }).sheet;
+    const a = findAnomalies(sheet25);
+    expect(a).toHaveLength(1);
+    expect(a[0]?.alias).toBe('E25');
+    expect(checkFlagSentences(a, { items: [{ id: 'A1', sentence: 'E25 có 25 người phụ thuộc chưa đăng ký.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+    expect(checkFlagSentences(a, { items: [{ id: 'A1', sentence: 'e25 có 1 người phụ thuộc chưa đăng ký.' }] }).kind).toBe('flags');
+    expect(checkFlagSentences(a, { items: [{ id: 'A1', sentence: 'E25 có 1 người phụ thuộc, còn e2 thì không.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+    const e1 = findAnomalies(pseudonymizeSheet([line('1', { figures: figures({ net: '500000' }), previous: figures({ net: '2000000' }) })], { language: 'vi', blockingRules: 0 }).sheet);
+    expect(checkFlagSentences(e1, { items: [{ id: 'A1', sentence: 'E1 thực nhận 1 đồng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+  });
+
   it('refuses a link, an empty sentence and a null answer', () => {
     expect(checkFlagSentences(anomalies, { items: [{ id: 'A2', sentence: 'E2 có 2 người phụ thuộc, xem pay.example.cn' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkFlagSentences(anomalies, { items: [{ id: 'A2', sentence: '  ' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
