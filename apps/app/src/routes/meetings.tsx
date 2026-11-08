@@ -15,7 +15,7 @@ import {
 } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Button } from '@crove/ui/components/button';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Input } from '@crove/ui/components/input';
@@ -240,9 +240,14 @@ export function MeetingsPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button onClick={() => setModalOpen(true)}>
-            {t('new')}
-          </Button>
+          <div className="flex gap-2">
+            <Link to="/o/$slug/meetings/record" params={{ slug }} className={buttonVariants({ variant: 'outline' })}>
+              {t('record.open')}
+            </Link>
+            <Button onClick={() => setModalOpen(true)}>
+              {t('new')}
+            </Button>
+          </div>
         }
       />
       <NotesSubnav slug={slug} active="meetings" />

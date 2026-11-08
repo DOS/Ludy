@@ -30,9 +30,10 @@ describe('meetings manifest and constants', () => {
     expect(meetingsManifest.tables.crove_meetings.audio_segment).toBeDefined();
     expect(meetingsManifest.tables.crove_meetings.meeting_video).toBeDefined();
     expect(meetingsManifest.tables.crove_meetings.media_key).toBeDefined();
-    expect(meetingsManifest.routes).toHaveLength(2);
+    expect(meetingsManifest.routes).toHaveLength(3);
     expect(meetingsManifest.routes[0].path).toBe('meetings');
-    expect(meetingsManifest.routes[1].path).toBe('meetings/$id');
+    expect(meetingsManifest.routes[1].path).toBe('meetings/record');
+    expect(meetingsManifest.routes[2].path).toBe('meetings/$id');
     expect(meetingsManifest.nav).toEqual([]);
   });
 

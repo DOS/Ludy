@@ -161,6 +161,26 @@ check(
   badConcat,
 );
 
+// AI Meeting Notes M7 (#2581): what each browser's MediaRecorder writes normalizes in the real container, and a recording cut off
+// mid-write (the recovered one) still yields the part that was saved. The files are synthesized in the shapes those recorders write.
+const FRAG = ['-movflags', 'frag_keyframe+empty_moov+default_base_moof'];
+const audioSrc = ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=12'];
+const videoSrc = ['-f', 'lavfi', '-i', 'testsrc=duration=6:size=1280x720:rate=15', '-f', 'lavfi', '-i', 'sine=duration=6'];
+const browserFiles = {
+  'Chrome/Edge/Firefox audio webm-opus': genMedia([...audioSrc, '-ac', '1', '-c:a', 'libopus', '-b:a', '64k', '-f', 'webm'], 'rec-audio.webm'),
+  'Firefox audio ogg-opus': genMedia([...audioSrc, '-ac', '1', '-c:a', 'libopus', '-b:a', '64k', '-f', 'ogg'], 'rec-audio.ogg'),
+  'Safari audio mp4-aac (fragmented)': genMedia([...audioSrc, '-ac', '1', '-c:a', 'aac', '-b:a', '64k', '-f', 'mp4', ...FRAG], 'rec-audio.mp4'),
+  'Chrome/Edge/Firefox video webm-vp8-opus': genMedia([...videoSrc, '-c:v', 'libvpx', '-b:v', '1M', '-c:a', 'libopus', '-f', 'webm'], 'rec-video.webm'),
+  'Safari video mp4-h264-aac (fragmented)': genMedia([...videoSrc, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mp4', ...FRAG], 'rec-video.mp4'),
+};
+for (const [name, bytes] of Object.entries(browserFiles)) {
+  const res = await callEndpoint('/normalize', bytes);
+  check(`browser recording normalizes to mono Opus: ${name}`, res.status === 200 && res.json.ok && res.json.result.format === 'opus' && res.json.result.channels === 1 && res.json.result.audioBase64.length > 0, res);
+}
+const cutWebm = browserFiles['Chrome/Edge/Firefox audio webm-opus'].subarray(0, Math.floor(browserFiles['Chrome/Edge/Firefox audio webm-opus'].byteLength * 0.6));
+const cutRes = await callEndpoint('/normalize', cutWebm);
+check('a webm cut off mid-recording still normalizes the saved part', cutRes.status === 200 && cutRes.json.ok && cutRes.json.result.format === 'opus', cutRes);
+
 // Service remains responsive and healthy after all operations
 const postHealth = await fetch(`${base}/healthz`);
 check('service remains healthy after heavy 2hr and hostile inputs', postHealth.ok, postHealth.status);
