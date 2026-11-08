@@ -71,7 +71,7 @@ One row per version of a quote (a revision is a new row).
 |---|---|
 | `deal_id` | composite FK `(org_id, deal_id)` to `crove_crm.deal`, `ON DELETE RESTRICT`: `crm.deal.delete` refuses a deal that has a quote (`DEAL_HAS_QUOTES`), because a quote the customer holds is a document |
 | `party_id` | the customer, copied from the deal when the quote is made; composite FK to `crove_kernel.party`, `ON DELETE RESTRICT` |
-| `number`, `revision` | `BG-2026-0007` from a per-org per-year counter, taken when the quote is first sent (a draft has none, so a deleted draft leaves no gap); `revision` is 1 upward; `UNIQUE (org_id, number, revision)`. A revision keeps the number and shows `BG-2026-0007-R2` |
+| `number`, `revision` | `BG-2026-0007` from a per-org per-year counter, taken when the quote is first sent (a draft has none, so a deleted draft leaves no gap); `revision` is 1 upward; `UNIQUE (org_id, issuer_entity_id, number, revision)` (amended in #2832: the kernel's series is per legal entity, so the number is unique within the issuing entity, not the org). A revision keeps the number, and the entity whose series gave it, and shows `BG-2026-0007-R2` |
 | `status` | `draft`, `sent`, `accepted`, `declined`, `superseded` (a newer revision was sent). **Expired is not stored**: a sent quote whose `valid_until` is before today in Vietnam's calendar is shown as expired and refuses acceptance until a revision is sent; no job is needed |
 | `valid_until` | `date`, default today plus 14 days (the org's `quote_setting.valid_days`, 7 to 60) |
 | `legal_entity_id` | the issuer, as above |

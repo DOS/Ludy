@@ -627,8 +627,8 @@ async function makeLink(ctx: CommandContext, quote: { id: string; valid_until: D
 const NOT_SENDABLE = 'Báo giá cần ít nhất một dòng hàng có giá và tổng tiền lớn hơn 0 trước khi gửi';
 
 // A person sends a draft: it needs a priced line, a total above zero and a validity date that has not passed. The quote takes its number (a revision keeps the
-// number of the quote it revises, which it replaces and whose links it revokes), the buyer is copied from the customer as they are now, and the issuing entity is the
-// org's default. By email it also queues one mail, whose link is made when the mail is sent (a suppressed address refuses the whole send); by link the person makes the link next
+// number of the quote it revises, which it replaces and whose links it revokes, and so the entity that issued that one), the buyer is copied from the customer as they are now,
+// and the issuing entity of a new quote is the org's default (a number is unique within its entity, #2832). By email it also queues one mail, whose link is made when the mail is sent (a suppressed address refuses the whole send); by link the person makes the link next
 // (crm.quote.create_link) and sends it in the chat. Nothing leaves without this click, and no agent can run it.
 export const quoteSend = defineCommand({
   name: 'crm.quote.send',
@@ -667,15 +667,21 @@ export const quoteSend = defineCommand({
     if (input.via === 'email' && !PLAIN_ADDRESS.test(recipient)) {
       throw new DomainError('QUOTE_EMAIL_REQUIRED', 422, 'Khách hàng này chưa có email hợp lệ; hãy nhập email người nhận hoặc cập nhật hồ sơ khách hàng');
     }
-    const issuer =
+    let issuer =
       (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst()) ??
       (await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst());
     if (!issuer) throw new DomainError('QUOTE_ISSUER_MISSING', 422, 'Tổ chức chưa có pháp nhân để phát hành báo giá');
     let number: string;
     if (quote.revises_id) {
-      const source = await ctx.trx.selectFrom('crove_crm.quote').select(['number', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', quote.revises_id).executeTakeFirst();
+      const source = await ctx.trx.selectFrom('crove_crm.quote').select(['number', 'status', 'issuer_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', quote.revises_id).executeTakeFirst();
       if (!source?.number || (source.status !== 'sent' && source.status !== 'declined')) throw new DomainError('QUOTE_NOT_REVISABLE', 409, 'Báo giá gốc của bản sửa đổi này không còn gửi lại được');
       number = source.number;
+      // The revision keeps the number, so it keeps the entity whose series gave it: with the default entity changed in between, the number would otherwise sit in another
+      // entity's key and collide with a quote of that entity's own series.
+      if (source.issuer_entity_id && source.issuer_entity_id !== issuer.id) {
+        const sourceIssuer = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', source.issuer_entity_id).executeTakeFirst();
+        if (sourceIssuer) issuer = sourceIssuer;
+      }
     } else {
       // The kernel's gapless yearly series of this entity: one number for this quote, given back if the command fails.
       const allocated = await ctx.numbering.allocate({ legalEntityId: issuer.id, docType: 'crm.quote', documentDate: today, targetType: 'crm.quote', targetId: quote.id });
@@ -714,7 +720,13 @@ export const quoteSend = defineCommand({
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', quote.id)
-      .execute();
+      .execute()
+      // A number already taken in this entity (a reseeded series, say) is told apart from any other violation by the constraint's name.
+      .catch((error: unknown) => {
+        const { code, constraint } = error as { code?: string; constraint?: string };
+        if (code === '23505' && constraint === 'quote_number_entity_uq') throw new DomainError('QUOTE_NUMBER_TAKEN', 409, 'Số báo giá này đã có trong pháp nhân; hãy thử lại');
+        throw error;
+      });
     let revoked = 0;
     if (quote.revises_id) {
       // The older quote is replaced, and no link of it opens any more.
