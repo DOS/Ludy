@@ -14,7 +14,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove
 import { vietnamToday, type Deal, type PipelineStage, type Quote, type QuoteDefaults, type QuotePage, type QuoteSummary } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument } from '@crove/mod-crm';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -281,7 +281,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const party = await o.party('Công ty ABC');
     const stranger = await o.party('Công ty khác');
     expect(await o.query<QuoteDefaults>(o.viewer, 'crm.quote.defaults', { partyId: party })).toEqual({ validDays: 14, defaultVat: '10%', defaultTerms: null, hints: [] });
-    expect(await o.exec(o.adminUser, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: 'Thanh toán trong 7 ngày' })).toEqual({ validDays: 30, defaultVat: '8%', defaultTerms: 'Thanh toán trong 7 ngày' });
+    expect(await o.exec(o.adminUser, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: 'Thanh toán trong 7 ngày' })).toEqual({ validDays: 30, defaultVat: '8%', defaultTerms: 'Thanh toán trong 7 ngày', phone: null, email: null, bankNote: null });
     await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 6, defaultVat: '10%', defaultTerms: null })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 30, defaultVat: '77%', defaultTerms: null })).rejects.toMatchObject({ code: 'QUOTE_VAT_RATE_INVALID' });
     const deal = await o.newDeal(party);
@@ -311,6 +311,31 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await expect(b.exec(b.owner, 'crm.quote.revise', { quoteId: quoteA.id })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND' });
     expect((await b.query<QuotePage>(b.owner, 'crm.quote.list', {})).items).toEqual([]);
     expect((await b.query<QuoteDefaults>(b.owner, 'crm.quote.defaults', { partyId: await b.party('X') })).hints).toEqual([]);
+  });
+
+  // The document the PDF is made from (#2695): the quote, the org as the seller, the customer as the buyer; read only, for anyone who reads quotes.
+  it('gives the quote document to a viewer: the quote, the org as seller, the customer as buyer, and another org\'s quote as missing', async () => {
+    const o = await org();
+    await admin((c) => c.query('UPDATE crove_kernel.tenant SET address = $2, contact_email = $3 WHERE org_id = $1', [o.orgId, '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', 'ketoan@bao-gia.test']));
+    const party = await o.party('Công ty TNHH Đặng Thị Hằng');
+    await admin((c) => c.query('UPDATE crove_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, party, '5 Lê Lợi, Đà Nẵng', 'mua@bao-gia.test']));
+    const deal = await o.newDeal(party);
+    const quote = await o.exec<Quote>(o.member, 'crm.quote.save', {
+      dealId: deal.id,
+      lines: [item({ description: 'Dịch vụ kế toán trọn gói tháng 11' })],
+    });
+    const document = await o.query<QuoteDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(document.quote).toEqual(quote);
+    expect(document.buyer).toEqual({ name: 'Công ty TNHH Đặng Thị Hằng', taxCode: null, address: '5 Lê Lợi, Đà Nẵng', phone: null, email: 'mua@bao-gia.test' });
+    expect(document.seller).toMatchObject({ address: '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', email: 'ketoan@bao-gia.test', bankNote: null });
+    expect(document.seller.name).toMatch(/^Công ty /);
+    expect(document.issuedOn).toBe(vietnamToday(new Date(quote.createdAt)));
+    // The same document gives the same bytes, and they are a PDF.
+    const bytes = renderQuotePdf(document);
+    expect(Buffer.from(bytes).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(Buffer.from(renderQuotePdf(document)).equals(Buffer.from(bytes))).toBe(true);
+    const other = await org();
+    await expect(other.query(other.viewer, 'crm.quote.document', { quoteId: quote.id })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND', status: 404 });
   });
 
   it('holds the draft rule in SQL as the runtime\'s own login: only a fresh draft is inserted, the status and number are never set, a sent quote is read-only', async () => {
@@ -353,14 +378,19 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     }
     // The editable columns of a draft change; the status, the number, the sent and decided facts, the deal and the customer never do.
     expect(await as(o.member, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x', terms = 'y', valid_until = '2031-02-01' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(1);
-    for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", 'first_viewed_at = now()', 'decided_at = now()', "decline_reason = 'x'", `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
+    // The status, the number and the sent columns are granted to the send command's transition, which the guard trigger holds: a draft is not edited into a sent quote.
+    for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", `issuer_entity_id = '${randomUUID()}'`, "buyer_name = 'x'"]) {
+      await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501' });
+    }
+    // The rest is never granted to a tenant role.
+    for (const set of ['first_viewed_at = now()', 'decided_at = now()', "decline_reason = 'x'", `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
       await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     }
     // A viewer changes and deletes nothing; a sent quote is read-only to every tenant role, and its lines too.
     expect(await as(o.viewer, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(0);
     expect(await as(o.viewer, async (c) => (await c.query('DELETE FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, draft.id])).rowCount)).toBe(0);
     for (const who of [o.member, o.owner]) {
-      expect(await as(who, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id])).rowCount)).toBe(0);
+      await expect(as(who, (c) => c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FROZEN') });
       expect(await as(who, async (c) => (await c.query('DELETE FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, quote.id])).rowCount)).toBe(0);
     }
     const lineSql = (quoteId: string) => ({

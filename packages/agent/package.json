@@ -6,7 +6,8 @@
   "license": "AGPL-3.0-only",
   "description": "The only package that talks to an AI model (any OpenAI-compatible endpoint)",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./member-vy": "./src/member-vy/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

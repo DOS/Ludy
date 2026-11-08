@@ -50,7 +50,7 @@ Rút ra:
 |---|---|---|
 | Q1 | Dữ liệu báo giá và trình soạn: tạo từ cơ hội, dòng hàng, chép từ báo giá cũ, giá bán gần nhất, hàm tính tổng dùng chung | có (migration) |
 | Q2 | Gửi bằng đường dẫn trong cuộc trò chuyện và bằng email; trang công khai in được; theo dõi lần mở đầu tiên | có (migration, trang công khai) |
-| Q3 | PDF phía máy chủ, phông tiếng Việt, đính kèm email | có (thêm thư viện, đường gửi thư). Nếu không thư viện nào đạt thì bỏ bước này, vẫn còn in từ trình duyệt |
+| Q3 | PDF phía máy chủ, phông tiếng Việt, đính kèm email | có (đường gửi thư). PO Engage chọn tự viết bộ ghi PDF nhỏ, không thêm thư viện; phông Be Vietnam Pro (giấy phép OFL) nằm trong repo kèm nguồn |
 | Q4 | Ghi nhận đồng ý hoặc từ chối, tạo đơn, nút "Lập hóa đơn" trên đơn đã xác nhận (kèm phần Kế toán, do dòng Kế toán làm) | có |
 | Q4b | Đánh dấu dòng đã giao và ghi kho (kèm lệnh kho của Kế toán) | có |
 | Q5 | Dy gợi ý dòng hàng | không |

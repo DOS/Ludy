@@ -134,7 +134,7 @@ describe('brand name (#1040)', () => {
     // Where each coworker is named: the messages of the screens its app owns. The general manager names the work across apps
     // (the AI budget); the system coworker is reserved and hidden, with no message.
     const APP_OF: Record<string, RegExp> = {
-      finance: /^(auth\.|financeOverview\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|inbox\.(?!socialMails))/,
+      finance: /^(auth\.|financeOverview\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|inbox\.(?!socialMails))/,
       sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.|quotes\.suggest\.)/,
       marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
       gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
