@@ -266,6 +266,7 @@ export type AgentStatus = (typeof AGENT_STATUSES)[number];
 export const AGENT_KINDS = ['org_chart', 'member_vy'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
+export const MEMBER_VY_TABLE_MODES = ['read', 'write'] as const;
 export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
 export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
@@ -813,9 +814,9 @@ export type CrmSalesOrderTable = Refine<
 export type CrmSalesOrderLineTable = Refine<G.CrmSalesOrderLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
-export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
+export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close', 'quote_unanswered', 'quote_expiring'] as const;
 export const DEAL_NEXT_STEP_STATUSES = ['open', 'done', 'closed'] as const;
-export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed'] as const;
+export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed', 'quote_decided'] as const;
 export type CrmDealNextStepTable = Refine<
   G.CrmDealNextStepTable,
   {
@@ -877,6 +878,7 @@ export type ConversationDraftTable = Refine<
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
+export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
 export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
 export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
@@ -1128,6 +1130,7 @@ type Refined = Tables<{
   'crove_kernel.member_availability': MemberAvailabilityTable;
   'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
   'crove_kernel.member_vy_result': MemberVyResultTable;
+  'crove_kernel.member_vy_table': MemberVyTableTable;
   'crove_kernel.permission_default': PermissionDefaultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;

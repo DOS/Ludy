@@ -7,9 +7,10 @@ import { Decimal } from '@crove/l10n-vn';
 // The areas in the order the tabs show, each with the module whose reads its panel makes: the conversations and the posts are the
 // social module's, the sales the crm module's, the ads the ads module's. The route declares the same modules in MODULE_SCREENS
 // (apps/app/test/reports.test.ts holds the two to each other).
-export const REPORT_TABS = ['conversations', 'sales', 'posts', 'ads'] as const;
+export const REPORT_TABS = ['conversations', 'sales', 'quotes', 'posts', 'ads'] as const;
 export type ReportTab = (typeof REPORT_TABS)[number];
-export const REPORT_TAB_MODULE: Record<ReportTab, string> = { conversations: 'social', sales: 'crm', posts: 'social', ads: 'ads' };
+// The quotes tab (#2699) is the crm module's too: with crm off the app shows none of it.
+export const REPORT_TAB_MODULE: Record<ReportTab, string> = { conversations: 'social', sales: 'crm', quotes: 'crm', posts: 'social', ads: 'ads' };
 
 // The tabs this deployment shows: those whose module is installed, in order.
 export function reportTabs(modules: readonly string[]): ReportTab[] {

@@ -922,6 +922,7 @@ export function createRpcHandler(
         get: os.crm.quotes.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.get', input, { actor, orgId }))),
         byDeal: os.crm.quotes.byDeal.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.quotes', input, { actor, orgId }))),
         defaults: os.crm.quotes.defaults.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.defaults', input, { actor, orgId }))),
+        report: os.crm.quotes.report.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.report', input, { actor, orgId }))),
         suggest: os.crm.quotes.suggest.handler(({ context, input }) =>
           inCrm(context, async (orgId, actor) => {
             const source = await runtime.query<QuoteSuggestSource>('crm.quote.suggest_source', input, { actor, orgId });

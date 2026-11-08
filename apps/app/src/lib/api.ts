@@ -199,14 +199,15 @@ export async function uploadMeetingMedia(
     return (await response.json()) as { fileId: string };
   }
 
-  const form = new FormData();
-  form.append('kind', kind);
-  form.append('file', file);
-  if (lengthSeconds !== undefined) form.append('lengthSeconds', String(lengthSeconds));
+  // The file itself as the request body (#2780): the server seals it as it arrives, so a large recording is never held whole
+  // there (a multipart form is parsed whole). The kind and the length go in the query, because the body is only the file.
+  const query = new URLSearchParams({ kind });
+  if (lengthSeconds !== undefined) query.set('lengthSeconds', String(lengthSeconds));
   const response = await retryWhileBusy(() =>
-    apiFetch(`/api/meetings/${meetingId}/media?kind=${kind}`, {
+    apiFetch(`/api/meetings/${meetingId}/media?${query.toString()}`, {
       method: 'POST',
-      body: form,
+      headers: { 'content-type': /^(?:audio|video)\/[\w.+-]+$/.test(file.type) ? file.type : 'application/octet-stream' },
+      body: file,
     }),
   );
   return (await response.json()) as { fileId: string };

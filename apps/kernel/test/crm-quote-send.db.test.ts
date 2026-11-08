@@ -127,7 +127,8 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const party = await o.party('Công ty ABC');
     const deal = await o.newDeal(party);
     const draft = await o.readyDraft(deal.id, [item(), { kind: 'text', description: 'Giao trong 3 ngày' }]);
-    const year = new Date().getUTCFullYear();
+    // The number's year is the Vietnam year, not the UTC one (they differ from 17:00 UTC on 31 December).
+    const year = Number(vietnamToday().slice(0, 4));
     const { quote, mail } = await o.send(o.member, draft, 'link');
     expect(mail).toBeNull();
     expect(quote).toMatchObject({ status: 'sent', sentVia: 'link', revision: 1, version: draft.version + 1, total: draft.total, buyer: { name: 'Công ty ABC', taxCode: '0312345678', address: '12 Lê Lợi, Quận 1', email: null }, links: [] });
@@ -344,8 +345,18 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(await as(o.orgId, o.viewer, async (c) => (await c.query(forgedSend(complete), [o.orgId, draft.id, entity])).rowCount)).toBe(0);
     // A well-formed send of a quote with its total changed in the same statement is refused (a quote is sent as it was saved).
     await expect(as(o.orgId, o.member, (c) => c.query(forgedSend(`${complete}, total = 1, subtotal = 1, vat_amount = 0`), [o.orgId, draft.id, entity]))).rejects.toMatchObject({ code: '42501' });
+    // The seller's letterhead is frozen into the quote by the send (#2826): a send without it is refused, one with it passes, and nothing else writes it.
+    const spare = await o.readyDraft(deal.id);
+    await expect(as(o.orgId, o.member, (c) => c.query(forgedSend(complete), [o.orgId, spare.id, entity]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
+    await expect(as(o.orgId, o.member, (c) => c.query(forgedSend("seller_bank_note = 'Tài khoản khác'"), [o.orgId, draft.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
+    await expect(
+      as(o.orgId, o.member, (c) =>
+        c.query(`INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, seller_name) VALUES ($1, '${deal.id}', '${party}', '2031-01-31', $2, 'Bên bán')`, [o.orgId, o.member]),
+      ),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
+    expect(await as(o.orgId, o.member, async (c) => (await c.query(forgedSend(`${complete}, seller_name = 'Bên bán'`), [o.orgId, spare.id, entity])).rowCount)).toBe(1);
     // A sent quote does not change, whoever asks and whatever the column.
-    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1']) {
+    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1', "seller_bank_note = 'Tài khoản khác'", "seller_name = 'Giả mạo'", "seller_phone = '0123'"]) {
       await expect(as(o.orgId, o.owner, (c) => c.query(forgedSend(set), [o.orgId, sent.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // A sent quote's lines do not change: the share lock and the status check (the line policies also hide the row).
@@ -399,6 +410,22 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const made = await o.link(o.member, quote.id);
     const doc = (await quoteView(rt, { token: made.token })) as QuoteDocument;
     expect(doc.seller).toMatchObject({ phone: '028 3829 1234', email: 'ban-hang@congty.test', bankNote: 'Vietcombank 0071000123456\nCông ty ABC' });
+    // The seller is frozen with the quote (#2826): a later change of the bank note, the contacts, the entity's name or the address changes no quote that was sent.
+    const before = doc.seller;
+    await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 21, defaultVat: '8', defaultTerms: null, phone: '028 3829 0007', email: 'moi@congty.test', bankNote: 'Tài khoản MỚI 999' });
+    await admin((c) => c.query("UPDATE crove_kernel.legal_entity SET name = 'Tên pháp nhân mới' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET address = 'Địa chỉ mới' WHERE org_id = $1", [o.orgId]));
+    expect(((await quoteView(rt, { token: made.token })) as QuoteDocument).seller).toEqual(before);
+    // A quote sent before the snapshot existed (no seller_name) shows the live letterhead.
+    await admin((c) => c.query('UPDATE crove_crm.quote SET seller_name = NULL, seller_tax_code = NULL, seller_address = NULL, seller_phone = NULL, seller_email = NULL, seller_bank_note = NULL WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    expect(((await quoteView(rt, { token: made.token })) as QuoteDocument).seller).toMatchObject({ name: 'Tên pháp nhân mới', address: 'Địa chỉ mới', phone: '028 3829 0007', email: 'moi@congty.test', bankNote: 'Tài khoản MỚI 999' });
+    // A revision takes a fresh snapshot when it is sent.
+    const revision = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: quote.id });
+    const resent = (await o.send(o.member, await o.exec<Quote>(o.member, 'crm.quote.save', { quoteId: revision.id, version: revision.version, lines: [item({ quantity: '3' })] }), 'link')).quote;
+    const next = await o.link(o.member, resent.id);
+    expect(((await quoteView(rt, { token: next.token })) as QuoteDocument).seller).toMatchObject({ name: 'Tên pháp nhân mới', phone: '028 3829 0007', bankNote: 'Tài khoản MỚI 999' });
+    await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 21, defaultVat: '8', defaultTerms: null, phone: '0123 456 789', email: null, bankNote: 'Lại đổi' });
+    expect(((await quoteView(rt, { token: next.token })) as QuoteDocument).seller).toMatchObject({ phone: '028 3829 0007', bankNote: 'Tài khoản MỚI 999' });
     // The letterhead can be cleared.
     expect(await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 21, defaultVat: '8', defaultTerms: null, phone: '', email: null, bankNote: null })).toMatchObject({ phone: null, email: null, bankNote: null });
   });
@@ -434,9 +461,18 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const after = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
     expect(after.buyer).toEqual(before.buyer);
     expect(Buffer.from(renderQuotePdf(after)).equals(Buffer.from(renderQuotePdf(before)))).toBe(true);
-    // A new draft for the same customer reads the new record.
+    // The letterhead changes later too: the sent quote's file keeps the seller frozen at sending (#2826), and still shows what the customer's page shows.
+    await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 14, defaultVat: '10%', defaultTerms: null, phone: '028 3829 0007', email: 'moi@congty.test', bankNote: 'Tài khoản khác' });
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET address = 'Địa chỉ mới' WHERE org_id = $1", [o.orgId]));
+    const afterLetterhead = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(afterLetterhead.seller).toEqual(before.seller);
+    expect(Buffer.from(renderQuotePdf(afterLetterhead)).equals(Buffer.from(renderQuotePdf(before)))).toBe(true);
+    expect(((await quoteView(rt, { token: made.token })) as QuoteDocument).seller).toMatchObject({ phone: before.seller.phone, bankNote: before.seller.bankNote, address: before.seller.address });
+    // A new draft for the same customer reads the new record and the live letterhead.
     const next = await o.readyDraft((await o.newDeal(party)).id);
-    expect((await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: next.id })).buyer).toMatchObject({ name: 'Tên mới', address: 'Nơi khác' });
+    const nextDocument = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: next.id });
+    expect(nextDocument.buyer).toMatchObject({ name: 'Tên mới', address: 'Nơi khác' });
+    expect(nextDocument.seller).toMatchObject({ phone: '028 3829 0007', bankNote: 'Tài khoản khác', address: 'Địa chỉ mới' });
   });
 
   it('writes audit rows with ids only, never the buyer, the token or a price', async () => {

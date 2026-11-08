@@ -145,6 +145,7 @@ export interface CroveKernelSchema {
   'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
   'crove_kernel.member_vy_memory': KernelMemberVyMemoryTable;
   'crove_kernel.member_vy_result': KernelMemberVyResultTable;
+  'crove_kernel.member_vy_table': KernelMemberVyTableTable;
   'crove_kernel.notification': KernelNotificationTable;
   'crove_kernel.notification_mute': KernelNotificationMuteTable;
   'crove_kernel.number_allocation': KernelNumberAllocationTable;
@@ -714,6 +715,12 @@ export interface CrmQuoteTable {
   buyer_tax_code: string | null;
   buyer_address: string | null;
   buyer_email: string | null;
+  seller_name: string | null;
+  seller_tax_code: string | null;
+  seller_address: string | null;
+  seller_phone: string | null;
+  seller_email: string | null;
+  seller_bank_note: string | null;
 }
 
 /** crove_crm.sales_order_line */
@@ -2246,6 +2253,13 @@ export interface KernelMemberVyResultTable {
   private_read: Generated<boolean>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   expires_at: ColumnType<Date, Date | string, NotGranted>;
+}
+
+/** crove_kernel.member_vy_table */
+export interface KernelMemberVyTableTable {
+  table_name: ColumnType<string, NotGranted, NotGranted>;
+  mode: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
 /** crove_kernel.notification_mute */
