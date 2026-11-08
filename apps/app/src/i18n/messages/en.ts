@@ -2067,6 +2067,7 @@ export const en = {
     unverified: 'Sender not verified',
     unverifiedHint: 'The receiving mail server could not confirm the sender owns this address. The name and address in the mail may belong to someone else, so check before acting on it.',
     replyPlaceholder: 'Write a reply…',
+    quoteTooLong: 'The quote was not added: the message would be longer than the {max} characters this channel takes. Shorten what you wrote, then add it again.',
     send: 'Send',
     movedAfterSend: 'The conversation has a new message, so nothing was sent. Read it and press Send again.',
     notes: 'Internal notes',
