@@ -172,6 +172,8 @@ export const portalListSource = defineQuery({
       .select(['l.id', 'l.status', 'l.period', 'l.direction', 'f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 't.tax_code'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.listId)
+      // A file whose original was deleted (#2516) is never read again.
+      .where('f.original_deleted_at', 'is', null)
       .executeTakeFirst();
     if (!row) return null;
     return {

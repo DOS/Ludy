@@ -11,8 +11,9 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { Deal, PipelineStage, Quote, QuoteDocument, QuoteLinkCreated, QuoteSent } from '@crove/kernel-contract';
+import { vietnamToday } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument as QuotePdfDocument } from '@crove/mod-crm';
 import { quoteMailTemplate } from '../src/quote-mail.ts';
 import { quoteView } from '../src/quote-link.ts';
 import { enterUser } from './context-token.ts';
@@ -400,6 +401,42 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(doc.seller).toMatchObject({ phone: '028 3829 1234', email: 'ban-hang@congty.test', bankNote: 'Vietcombank 0071000123456\nCông ty ABC' });
     // The letterhead can be cleared.
     expect(await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 21, defaultVat: '8', defaultTerms: null, phone: '', email: null, bankNote: null })).toMatchObject({ phone: null, email: null, bankNote: null });
+  });
+
+  // The seam between the PDF (#2695) and sending (#2694): a sent quote's file says what the customer's page says, and does not move when the records behind it do.
+  it('makes the PDF document of a sent quote from what was frozen at sending: the buyer snapshot, the day sent and the letterhead', async () => {
+    const o = await org();
+    const party = await o.party('Công ty ABC', 'mua@khach.test');
+    const deal = await o.newDeal(party);
+    const draft = await o.readyDraft(deal.id);
+    await o.exec(o.owner, 'crm.quote_setting.set', { validDays: 14, defaultVat: '10%', defaultTerms: null, phone: '028 3829 1234', email: 'ban-hang@congty.test', bankNote: 'Vietcombank 0071000123456' });
+    // A draft is read live: the customer's record as it is now, with the letterhead the owner set.
+    const live = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: draft.id });
+    expect(live.buyer).toMatchObject({ name: 'Công ty ABC', address: '12 Lê Lợi, Quận 1', email: 'mua@khach.test' });
+    expect(live.seller).toMatchObject({ phone: '028 3829 1234', email: 'ban-hang@congty.test', bankNote: 'Vietcombank 0071000123456' });
+    expect(live.issuedOn).toBe(vietnamToday(new Date(draft.createdAt)));
+
+    const { quote } = await o.send(o.member, draft, 'email', 'khac@khach.test');
+    const before = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(before.quote.number).toBe(quote.number);
+    expect(before.issuedOn).toBe(vietnamToday(new Date(quote.sentAt!)));
+    expect(before.buyer).toEqual({ name: 'Công ty ABC', taxCode: '0312345678', address: '12 Lê Lợi, Quận 1', phone: null, email: 'khac@khach.test' });
+    const entity = await admin((c) => c.query<{ name: string; tax_code: string | null }>('SELECT e.name, e.tax_code FROM crove_crm.quote q JOIN crove_kernel.legal_entity e ON e.org_id = q.org_id AND e.id = q.issuer_entity_id WHERE q.org_id = $1 AND q.id = $2', [o.orgId, quote.id]));
+    expect(before.seller).toMatchObject({ name: entity.rows[0]!.name, taxCode: entity.rows[0]!.tax_code, phone: '028 3829 1234', email: 'ban-hang@congty.test', bankNote: 'Vietcombank 0071000123456' });
+    // It is the seller the customer's page shows.
+    const made = await o.link(o.member, quote.id);
+    const page = (await quoteView(rt, { token: made.token })) as QuoteDocument;
+    expect(page.seller).toMatchObject({ name: before.seller.name, taxCode: before.seller.taxCode, address: before.seller.address, phone: before.seller.phone, email: before.seller.email, bankNote: before.seller.bankNote });
+    expect(page.buyer).toMatchObject({ name: before.buyer.name, taxCode: before.buyer.taxCode, address: before.buyer.address });
+
+    // The customer's record changes later: the file of the sent quote does not (its bytes are the same).
+    await admin((c) => c.query("UPDATE crove_kernel.party SET name = 'Tên mới', address = 'Nơi khác', email = 'moi@khach.test' WHERE org_id = $1 AND id = $2", [o.orgId, party]));
+    const after = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(after.buyer).toEqual(before.buyer);
+    expect(Buffer.from(renderQuotePdf(after)).equals(Buffer.from(renderQuotePdf(before)))).toBe(true);
+    // A new draft for the same customer reads the new record.
+    const next = await o.readyDraft((await o.newDeal(party)).id);
+    expect((await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: next.id })).buyer).toMatchObject({ name: 'Tên mới', address: 'Nơi khác' });
   });
 
   it('writes audit rows with ids only, never the buyer, the token or a price', async () => {
