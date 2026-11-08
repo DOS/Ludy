@@ -2477,6 +2477,7 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
+        previousInvoice: os.einvoice.drafts.previousInvoice.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.previous_invoice', input, { actor, orgId }))),
         suggest: os.einvoice.drafts.suggest.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             const source = await runtime.query<EInvoiceSuggestSource>('finance.einvoice_draft.suggest_source', input, { actor, orgId });
