@@ -391,9 +391,14 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     }
     for (const actor of [member('another member', () => users.member), member('the member', () => users.author), member('a viewer', () => users.viewer), agentActor]) {
       // The refusal is the definer's own (MEMBER_VY_FORBIDDEN), not an entry refusal that also carries 42501, whichever filter the call names.
-      for (const filter of ['NULL, $1::uuid, NULL', `ARRAY[$1::uuid], NULL, NULL`, `NULL, NULL, 'notes'`]) {
-        const refused = await outcome(run(actor, (c) => c.query(`SELECT crove_kernel.member_vy_runs_cancel(${filter.replace('$1::uuid', '$1::uuid')}, $2::text)`, [users.author, 'TEST'])));
-        expect(refused, `${actor.name} ending runs with the filter ${filter}`).toMatchObject({ ok: false, code: '42501', message: expect.stringContaining('MEMBER_VY_FORBIDDEN') });
+      const filters: Array<[string, unknown[]]> = [
+        ['NULL::uuid[], $1::uuid, NULL::text, $2::text', [users.author, 'TEST']],
+        ['ARRAY[$1::uuid], NULL::uuid, NULL::text, $2::text', [users.author, 'TEST']],
+        ['NULL::uuid[], NULL::uuid, $1::text, $2::text', ['notes', 'TEST']],
+      ];
+      for (const [args, values] of filters) {
+        const refused = await outcome(run(actor, (c) => c.query(`SELECT crove_kernel.member_vy_runs_cancel(${args})`, values)));
+        expect(refused, `${actor.name} ending runs with the arguments ${args}`).toMatchObject({ ok: false, code: '42501', message: expect.stringContaining('MEMBER_VY_FORBIDDEN') });
       }
     }
     // The reason is a fixed code, never text.
