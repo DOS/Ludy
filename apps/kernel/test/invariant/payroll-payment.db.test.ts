@@ -344,7 +344,7 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
       { how: 'fund', sql: `UPDATE crove_hr.payroll_line SET breakdown = breakdown #- '{insurance,funds,0,employee}' WHERE org_id = $1 AND id = $2`, what: 'thiếu chi tiết bảo hiểm' },
     ] as const;
     for (const c of cases) {
-      const o = await org('tt134', 'solo');
+      const o = await org('tt133', 'solo');
       const { runId } = await postedRun(o);
       const { proposalId } = await pay(o, runId, 'tax');
       await withAdmin(async (db) => {
