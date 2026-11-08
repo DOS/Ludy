@@ -14,7 +14,7 @@
     "dev:web": "pnpm --filter @crove/web dev",
     "build": "pnpm -r --filter=!@crove/web build",
     "typecheck": "pnpm -r typecheck && tsc --noEmit -p tools/tsconfig.json",
-    "lint": "oxlint --deny-warnings apps/kernel apps/extract apps/media apps/app packages modules e2e && node tools/ui-colors.mjs",
+    "lint": "oxlint --deny-warnings apps/kernel apps/extract apps/media apps/app apps/extension packages modules e2e && node tools/ui-colors.mjs",
     "knip": "knip --no-progress",
     "depcruise": "depcruise --config .dependency-cruiser.mjs --output-type err-long apps packages modules e2e",
     "test": "vitest run --project unit",
