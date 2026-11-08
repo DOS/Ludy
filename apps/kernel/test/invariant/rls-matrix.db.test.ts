@@ -69,6 +69,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_crm.quote_setting',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.marketplace_connection',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -918,6 +919,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'einvoice_sandbox', seller_tax_code: einvoiceTaxCode() },
+      };
+    },
+  },
+  // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
+  // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
+  'crove_finance.marketplace_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'marketplace_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'marketplace_sandbox', platform: 'shopee' },
       };
     },
   },
