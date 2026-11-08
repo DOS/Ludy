@@ -238,3 +238,31 @@ export const zTranscript = z.strictObject({
   segments: z.array(zTranscriptSegment),
 });
 export type Transcript = z.infer<typeof zTranscript>;
+
+// The recorder's transcription run (#2578, M4b, ADR-0049 decision 8). The recorder's own Vy transcribes in the background and writes only its own
+// result (member_vy_result); the recorder's own action then copies that result into the draft transcript.
+export const TRANSCRIBE_STATES = ['none', 'running', 'ready', 'failed'] as const;
+export type TranscribeState = (typeof TRANSCRIBE_STATES)[number];
+export const zTranscribeStart = z.strictObject({ meetingId: zId });
+export const zTranscribeStarted = z.strictObject({ meetingId: zId, runId: zId });
+// What the recorder's screen shows: whether transcription is switched on in this deployment at all, the state of the latest run, and the fixed
+// code of a failed one (AI_OFF, AI_BUDGET_EXHAUSTED, TRANSCRIBE_FAILED, ...). Never text.
+export const zTranscribeStatus = z.strictObject({
+  meetingId: zId,
+  enabled: z.boolean(),
+  state: z.enum(TRANSCRIBE_STATES),
+  runId: zId.nullable(),
+  errorCode: z.string().nullable(),
+});
+export type TranscribeStatus = z.infer<typeof zTranscribeStatus>;
+// The recorder copies a finished run's result into the draft transcript (replacing the earlier draft, as draft_store does).
+export const zTranscriptCopy = z.strictObject({ meetingId: zId, runId: zId });
+// The bytes a run needs, as a declared member-Vy query: ids only (the ciphertext is fetched and decrypted by the worker).
+export const zTranscribeRunRef = z.strictObject({ meetingId: zId });
+// What a transcription run stores in its result row: a compact JSON, `{"v":1,"p":[speakers],"s":[[start,end,speaker index,text],...]}`. A result row holds at
+// most 100000 characters (a database check), which is about an hour and a half of speech; a longer meeting fails with TRANSCRIPT_TOO_LONG, never a cut transcript.
+export const zTranscriptResult = z.strictObject({
+  v: z.literal(1),
+  p: z.array(z.string()).max(200),
+  s: z.array(z.tuple([z.number(), z.number(), z.number().int().min(0), z.string()])).max(TRANSCRIPT_SEGMENTS_MAX),
+});

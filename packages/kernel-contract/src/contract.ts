@@ -325,6 +325,11 @@ import {
   zTranscriptCorrected,
   zTranscriptDraftStore,
   zTranscriptDraftStored,
+  zTranscribeRunRef,
+  zTranscribeStart,
+  zTranscribeStarted,
+  zTranscribeStatus,
+  zTranscriptCopy,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -779,6 +784,10 @@ export const contract = {
       get: oc.input(zMeetingRef).output(zTranscript),
       draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
+      // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
+      start: oc.input(zTranscribeStart).output(zTranscribeStarted),
+      status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
+      copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),

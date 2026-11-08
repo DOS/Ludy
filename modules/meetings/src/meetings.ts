@@ -4,6 +4,7 @@ import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
+import { transcribeCommandList, transcribeQueryList } from './transcribe.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -876,6 +877,7 @@ export const meetingsCommands = [
   meetingMediaDiscard,
   transcriptDraftStore,
   transcriptCorrect,
+  ...transcribeCommandList,
 ];
 
 export const meetingsQueries = [
@@ -888,4 +890,5 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingMediaOrphanKeys,
   transcriptGet,
+  ...transcribeQueryList,
 ];

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The transcript of a meeting on its page (#2578, M4a). The recorder sees their draft, line by line with the time and the
 // speaker, and corrects a line by hand; every other reader of the meeting sees only what was published. Vy's transcription (M4b)
-// lands in the recorder's own Vy result and the recorder's own action copies it here as the draft; without AI there is simply
-// no transcript, and the recording and its playback work as before.
+// is the recorder's own Vy run in the background: the recorder starts it, it lands in the recorder's own Vy result, and the
+// recorder's own click copies it here as the draft. Without AI (or with transcription off) there is no button and no
+// transcript, and the recording and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -94,6 +95,82 @@ function Line({ segment, editable }: { segment: TranscriptSegment; editable: boo
   );
 }
 
+// A fixed code the kernel sent, in words; null for a code this screen does not know.
+function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
+  switch (code) {
+    case 'AI_BUDGET_EXHAUSTED':
+      return t('vy.codes.AI_BUDGET_EXHAUSTED');
+    case 'AI_STOPPED':
+      return t('vy.codes.AI_STOPPED');
+    case 'TRANSCRIBE_OFF':
+      return t('vy.codes.TRANSCRIBE_OFF');
+    case 'MEETING_NO_AUDIO':
+      return t('vy.codes.MEETING_NO_AUDIO');
+    case 'TRANSCRIPT_EMPTY':
+      return t('vy.codes.TRANSCRIPT_EMPTY');
+    case 'TRANSCRIPT_TOO_LONG':
+      return t('vy.codes.TRANSCRIPT_TOO_LONG');
+    case 'RUN_ENDED':
+      return t('vy.codes.RUN_ENDED');
+    default:
+      return null;
+  }
+}
+
+// A refusal as the recorder reads it: the words for its code, else the generic message.
+function refusalText(t: ReturnType<typeof useTranslations>, error: unknown): string {
+  return codeText(t, (error as { code?: unknown } | null)?.code) ?? errorMessage(error);
+}
+
+// The recorder's own Vy transcribing this meeting: start it, see how it goes, copy the result into the draft. Shown to the recorder only, and only when this
+// system transcribes at all (the status says so); nothing is shared with anyone from here.
+function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: boolean }) {
+  const t = useTranslations('meetings.transcript');
+  const status = useQuery({
+    ...orpc.meetings.transcript.status.queryOptions({ input: { meetingId } }),
+    refetchInterval: (q) => (q.state.data?.state === 'running' ? 5000 : false),
+  });
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+  };
+  const start = useMutation({ mutationFn: () => orpc.meetings.transcript.start.call({ meetingId }), onSuccess: refresh });
+  const copy = useMutation({
+    mutationFn: (runId: string) => orpc.meetings.transcript.copyResult.call({ meetingId, runId }),
+    onSuccess: refresh,
+  });
+  const data = status.data;
+  if (!data || !data.enabled) return null;
+  const running = data.state === 'running';
+  return (
+    <Card data-testid="vy-transcribe">
+      <CardHeader>
+        <CardTitle className="text-base font-medium">{t('vy.title')}</CardTitle>
+        <CardDescription className="text-xs text-muted-foreground">{t('vy.desc')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {running && <p role="status">{t('vy.running')}</p>}
+        {data.state === 'ready' && data.runId && (
+          <div className="space-y-2">
+            <p>{t('vy.ready')}</p>
+            {hasDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
+            <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(data.runId as string)}>
+              {t('vy.copy')}
+            </Button>
+            {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
+          </div>
+        )}
+        {data.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${codeText(t, data.errorCode) ?? t('vy.codes.default')}`}</ErrorText>}
+        {(start.error || copy.error) && <ErrorText>{refusalText(t, start.error ?? copy.error)}</ErrorText>}
+        {!running && (
+          <Button size="sm" variant={data.state === 'none' ? 'default' : 'outline'} loading={start.isPending} onClick={() => start.mutate()}>
+            {data.state === 'none' ? t('vy.start') : t('vy.restart')}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function MeetingTranscript({ meetingId }: { meetingId: string }) {
   const t = useTranslations('meetings.transcript');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -102,11 +179,18 @@ export function MeetingTranscript({ meetingId }: { meetingId: string }) {
   const transcript = query.data;
   if (!transcript || transcript.segments.length === 0) {
     // Only the recorder is told there is none; to another reader a meeting with nothing shared simply shows no transcript.
-    return transcript?.isRecorder ? <Empty title={t('emptyRecorder')} /> : null;
+    return transcript?.isRecorder ? (
+      <div className="space-y-3">
+        <VyTranscribe meetingId={meetingId} hasDraft={false} />
+        <Empty title={t('emptyRecorder')} />
+      </div>
+    ) : null;
   }
   const draft = transcript.stage === 'draft';
   return (
-    <Card>
+    <div className="space-y-3">
+      {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
+      <Card>
       <CardHeader>
         <CardTitle className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">{draft ? t('draftNote') : t('publishedNote')}</CardDescription>
@@ -119,5 +203,6 @@ export function MeetingTranscript({ meetingId }: { meetingId: string }) {
         </ul>
       </CardContent>
     </Card>
+    </div>
   );
 }
