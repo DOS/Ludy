@@ -275,6 +275,7 @@ import {
   zHrWritten,
 } from './hr.ts';
 import { zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zNote,
   zNoteCreate,
@@ -718,6 +719,13 @@ export const contract = {
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+      },
+      // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
+      bankTemplates: {
+        list: oc.input(zHrBankTemplateList).output(z.array(zHrBankTemplate)),
+        create: oc.input(zHrBankTemplateCreate).output(zHrBankTemplateWritten),
+        edit: oc.input(zHrBankTemplateEdit).output(zHrBankTemplateWritten),
+        delete: oc.input(zHrBankTemplateRef).output(zHrBankTemplateWritten),
       },
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
