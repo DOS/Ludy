@@ -77,7 +77,7 @@ export const recordPayrollPayment = defineCommand({
     // The payload names its entity: it is built so, and one without is refused, never read as the default.
     if (!payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất chi lương không nêu pháp nhân', { what: 'legalEntityId' });
     // The obligation of the run rebuilt now, in the approver's context. The HR module's commands are for owners and admins: a member who holds the approval permission is told so, not refused blindly.
-    let expected: { runId: string; kind: string; month: string; regime: string; legalEntityId: string; lines: ReadonlyArray<{ account: string; amount: string }>; total: string };
+    let expected: { runId: string; kind: string; month: string; regime: string; legalEntityId: string; approvedBy: string | null; lines: ReadonlyArray<{ account: string; amount: string }>; total: string };
     try {
       expected = await ctx.run('hr.payroll.payment.verify', { runId, kind });
     } catch (error) {
@@ -96,6 +96,13 @@ export const recordPayrollPayment = defineCommand({
     const want = expected.lines.map(key).sort();
     if (have.length !== want.length || have.some((k, i) => k !== want[i]) || !money(payload.total).equals(money(expected.total))) {
       throw new DomainError('HR_POSTING_MISMATCH', 422, 'Số tiền của chứng từ chi không khớp bảng lương; hãy lập lại đề xuất', { what: 'lines' });
+    }
+    // The person who approved the run is listed on the proposal as a co-author (the preparer writes it; a proposal row written some other way must too).
+    if (expected.approvedBy) {
+      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
+        throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất chi lương không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
+      }
     }
     await checkPayable(ctx, runId, kind);
     return recordVoucherPayload(ctx, payload, { runId, kind });

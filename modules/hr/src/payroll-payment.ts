@@ -75,7 +75,8 @@ export const preparePayrollPayment = defineCommand({
       },
     });
     ctx.audit({ runId: input.runId, month: payrollRun.month, paymentKind: input.kind, regime, accounts: obligation.debits.length });
-    return draft;
+    // The person who approved and froze the run's figures is a co-author of its payments, as of its posting (#2736): they do not approve the payment while another eligible approver exists.
+    return { ...draft, ...(payrollRun.approved_by ? { coAuthors: [payrollRun.approved_by] } : {}) };
   },
 });
 
@@ -95,8 +96,9 @@ export const verifyPayrollPayment = defineCommand({
       kind,
       month: payrollRun.month,
       regime,
-      // The run's entity: the voucher must name it (finance's record checks it).
+      // The run's entity and the person who approved it: the voucher must name this entity, and its proposal must list this person as a co-author (finance's record checks both).
       legalEntityId: payrollRun.legal_entity_id,
+      approvedBy: payrollRun.approved_by,
       lines: obligation.debits.map((d) => ({ account: d.account, amount: d.amount })),
       total: obligation.amount,
     };

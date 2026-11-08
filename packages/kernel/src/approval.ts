@@ -30,7 +30,7 @@ export function parseAuthors(raw: unknown): ActorRef[] | null {
 // Co-authors only restrict, never grant: a co-author who wrote nothing is held back while another eligible approver exists who is neither an author nor a co-author, and always under the
 // accountant preset (if the only holder of the approval permission froze the run, nobody can approve its posting: reject it, add a second approver and ask again). The owner override and the
 // sole-approver exception are judged on the written authors alone, so a forged co-author list cannot let a requester approve their own posting.
-export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record'];
+export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record', 'finance.payroll_payment.record'];
 
 const refKey = (a: ActorRef) => (a.type === 'system' ? `system:${a.component}` : `${a.type}:${a.id}`);
 

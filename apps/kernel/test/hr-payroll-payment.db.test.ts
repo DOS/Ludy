@@ -296,6 +296,21 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await pay(o, approved.runId, 'tax', {}, o.admin);
     await expect(approve(o, proposalId, chief)).rejects.toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403 });
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(0);
-    await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    // The owner froze the run, so they are a co-author of its payment and held back while another may approve (the chief counts as eligible); the other admin approves.
+    await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
+    await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+  });
+
+  it('counts the person who approved the run as a co-author of its payment, and refuses a stored proposal that lost it', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await postedRun(o, 'trio');
+    const { proposalId } = await pay(o, runId, 'union', {}, o.admin);
+    const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    expect(stored?.co_authors).toEqual([o.owner]);
+    await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
+    // A proposal row written some other way without the co-author (raw SQL, staff here) is refused when it records, even by the other admin.
+    await rows('UPDATE crove_kernel.proposal SET co_authors = NULL WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    await expect(approve(o, proposalId, o.admin2)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'coAuthors' } });
+    expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
   });
 });
