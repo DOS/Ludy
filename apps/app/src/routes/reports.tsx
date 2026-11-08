@@ -5,7 +5,7 @@
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { AdsPanel, ConversationsPanel, PostsPanel, SalesPanel } from '../components/report-panels.tsx';
+import { AdsPanel, ConversationsPanel, PostsPanel, QuotesPanel, SalesPanel } from '../components/report-panels.tsx';
 import { Empty, PageHeader } from '../components/ui.tsx';
 import { getConfig } from '../lib/auth.ts';
 import { reportTabs, shownTab, type ReportsSearch, type ReportTab } from '../lib/reports.ts';
@@ -35,6 +35,7 @@ export function ReportsPage() {
           </Tabs>
           {tab === 'conversations' && <ConversationsPanel slug={slug} />}
           {tab === 'sales' && <SalesPanel slug={slug} />}
+          {tab === 'quotes' && <QuotesPanel slug={slug} />}
           {tab === 'posts' && <PostsPanel slug={slug} />}
           {tab === 'ads' && <AdsPanel slug={slug} />}
         </div>

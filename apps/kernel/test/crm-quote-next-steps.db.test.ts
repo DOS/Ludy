@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The follow-up of a sent quote as a next step of its deal, on PostgreSQL 17 (#2699, docs/plan/crm-quotes.md section 7): a quote sent 5 days ago with no answer
+// The follow-up of a sent quote as a next step of its deal and the "Báo giá" report, on PostgreSQL 17 (#2699, docs/plan/crm-quotes.md section 7): a quote sent 5 days ago with no answer
 // raises quote_unanswered, one valid for 3 more days or fewer raises quote_expiring, both for the deal's owner, one step per deal; running the rule again raises
 // nothing and "done" is not raised again at once; a quote that was decided closes its step; a draft, a quote of a closed deal and a fresh quote raise nothing; the
-// Home read and the audit row hold no quote number, amount or text. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Home read and the audit row hold no quote number, amount or text; crm.quote.report counts the quotes by status with decimal-string totals, over a period, for every role. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -35,7 +35,7 @@ interface StepRow {
   closed_reason: string | null;
 }
 
-suite('quote follow-up next steps on PostgreSQL (#2699)', () => {
+suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', () => {
   const dbName = `crove_test_crm_quote_steps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
@@ -224,5 +224,42 @@ suite('quote follow-up next steps on PostgreSQL (#2699)', () => {
     // An org whose follow-ups are all raised drops out of the list.
     const { rows: after } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs(NULL, 1000)');
     expect(after.map((r) => r.org_id)).not.toContain(o.orgId);
+  });
+
+  it('reports the quotes by status with decimal totals over a period, for every role, counting a revised quote once', async () => {
+    const o = await org();
+    const p = await o.party('Công ty G');
+    const deal = async () => o.newDeal(o.member, p);
+    const [d1, d2, d3, d4] = [await deal(), await deal(), await deal(), await deal()];
+    const waiting = await o.sentQuote(d1.id, 1, 14);
+    const accepted = await o.sentQuote(d2.id, 3, 14);
+    const declined = await o.sentQuote(d3.id, 3, 14);
+    const replaced = await o.sentQuote(d4.id, 3, 14);
+    const d5 = await deal();
+    await o.exec(o.member, 'crm.quote.save', { dealId: d5.id, lines: [{ kind: 'item', description: 'Nháp', quantity: '1', unitPrice: '1000', vatRate: '10%' }] });
+    await o.setStatus(accepted.id, 'accepted');
+    await o.setStatus(declined.id, 'declined');
+    await o.setStatus(replaced.id, 'superseded');
+    // One quote made 100 days ago: in the whole history, not in the last 90 days.
+    await rows('UPDATE crove_crm.quote SET created_at = now() - interval \'100 days\' WHERE org_id = $1 AND id = $2', [o.orgId, waiting.id]);
+    type Report = { days: number | null; sent: { count: number; total: string }; byStatus: Array<{ status: string; count: number; total: string }> };
+    const report = (user: string, input: Record<string, unknown>) => o.query<Report>(user, 'crm.quote.report', input);
+    const ninety = await report(o.viewer, {});
+    expect(ninety.days).toBe(90);
+    expect(ninety.byStatus.map((s) => s.status)).toEqual(['draft', 'sent', 'accepted', 'declined', 'superseded']);
+    const by = (r: Report, status: string) => r.byStatus.find((s) => s.status === status);
+    expect([by(ninety, 'sent')?.count, by(ninety, 'accepted')?.count, by(ninety, 'declined')?.count, by(ninety, 'superseded')?.count, by(ninety, 'draft')?.count]).toEqual([0, 1, 1, 1, 1]);
+    // 2 x 123456 = 246912, VAT 10% = 24691 (rounded): 271603 for each saved line set; totals are decimal strings.
+    expect(by(ninety, 'accepted')?.total).toBe('271603');
+    expect(ninety.sent).toEqual({ count: 2, total: '543206' });
+    const ever = await report(o.owner, { days: null });
+    expect(ever.days).toBeNull();
+    expect(by(ever, 'sent')).toEqual({ status: 'sent', count: 1, total: '271603' });
+    expect(ever.sent).toEqual({ count: 3, total: '814809' });
+    expect((await report(o.member, { days: 30 })).sent.count).toBe(2);
+    await expect(report(o.member, { days: 7 })).rejects.toBeDefined();
+    // Another org's quotes are not counted.
+    const other = await org();
+    expect((await other.query<Report>(other.owner, 'crm.quote.report', {})).sent).toEqual({ count: 0, total: '0' });
   });
 });

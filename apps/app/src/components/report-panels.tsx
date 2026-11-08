@@ -4,10 +4,11 @@
 // screen for the detail. Nothing is written here. Amounts are decimal strings, shown as the reader's language groups them.
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { AdAccountView } from '@crove/kernel-contract';
 import { Card } from '@crove/ui/components/card';
+import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsRange, hasFigures } from '../lib/ads.ts';
@@ -128,6 +129,80 @@ export function SalesPanel({ slug }: { slug: string }) {
             ))}
           </DataTable>
           <p className="text-xs text-subtle-foreground">{t('closedNote')}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// The quotes by status (#2699): how many were sent, accepted and declined, what each is worth, and how many still wait for an answer, over a period the person picks.
+// The server summed every amount as a decimal string; nothing is added here.
+const QUOTE_PERIODS = ['30', '90', '365', 'all'] as const;
+export function QuotesPanel({ slug }: { slug: string }) {
+  const t = useTranslations('reports.quotes');
+  const f = useFormat();
+  const [period, setPeriod] = useState<(typeof QUOTE_PERIODS)[number]>('90');
+  const days = period === 'all' ? null : (Number(period) as 30 | 90 | 365);
+  const report = useQuery(orpc.crm.quotes.report.queryOptions({ input: { days } }));
+  const link = (
+    <Link to="/o/$slug/deals" params={{ slug }} className={linkClass}>
+      {t('open')}
+    </Link>
+  );
+  const of = (status: string) => report.data?.byStatus.find((s) => s.status === status);
+  const total = report.data ? report.data.byStatus.reduce((n, s) => n + s.count, 0) : 0;
+  return (
+    <section aria-label={t('title')}>
+      <Heading title={t('title')} hint={t('hint')} link={link} />
+      <div className="mb-3 max-w-xs">
+        <label htmlFor="quote-report-period" className="mb-1 block text-xs text-subtle-foreground">
+          {t('period')}
+        </label>
+        <NativeSelect id="quote-report-period" className="w-full" value={period} onChange={(e) => setPeriod(e.target.value as (typeof QUOTE_PERIODS)[number])}>
+          {QUOTE_PERIODS.map((p) => (
+            <option key={p} value={p}>
+              {t(`periods.${p}`)}
+            </option>
+          ))}
+        </NativeSelect>
+      </div>
+      {report.error ? (
+        <ErrorText>{errorMessage(report.error)}</ErrorText>
+      ) : !report.data ? (
+        <div className="space-y-4">
+          <CardSkeleton />
+          <TableSkeleton columns={3} />
+        </div>
+      ) : total === 0 ? (
+        <Empty title={t('empty')} hint={t('emptyHint')} />
+      ) : (
+        <div className="space-y-4">
+          <Card className="block p-4">
+            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Stat label={t('sent')} note={t('count', { count: report.data.sent.count })}>
+                {f.money(report.data.sent.total)}
+              </Stat>
+              <Stat label={t('waiting')} note={t('count', { count: of('sent')?.count ?? 0 })}>
+                {f.money(of('sent')?.total ?? '0')}
+              </Stat>
+              <Stat label={t('accepted')} note={t('count', { count: of('accepted')?.count ?? 0 })}>
+                {f.money(of('accepted')?.total ?? '0')}
+              </Stat>
+              <Stat label={t('declined')} note={t('count', { count: of('declined')?.count ?? 0 })}>
+                {f.money(of('declined')?.total ?? '0')}
+              </Stat>
+            </dl>
+          </Card>
+          <DataTable head={[t('status'), t('quotes'), t('amount')]} numeric={[1, 2]}>
+            {report.data.byStatus.map((s) => (
+              <TableRow key={s.status}>
+                <TableCell className="px-4 text-sm">{t(`statuses.${s.status}`)}</TableCell>
+                <TableCell className="px-4 text-right text-sm tabular-nums">{f.number(s.count)}</TableCell>
+                <TableCell className="px-4 text-right text-sm tabular-nums">{f.money(s.total)}</TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+          <p className="text-xs text-subtle-foreground">{t('note')}</p>
         </div>
       )}
     </section>

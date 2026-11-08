@@ -8,12 +8,12 @@ import { REPORTS_ROUTE_MODULES, REPORT_TABS, REPORT_TAB_MODULE, parseReportsSear
 
 describe('the tabs of the reports', () => {
   it('shows a tab for each area whose module runs, in the order of the design', () => {
-    expect(reportTabs(['kernel', 'social', 'crm', 'ads'])).toEqual(['conversations', 'sales', 'posts', 'ads']);
+    expect(reportTabs(['kernel', 'social', 'crm', 'ads'])).toEqual(['conversations', 'sales', 'quotes', 'posts', 'ads']);
     // Only crm: the sales tab alone. Only social: the conversations and the posts. Only ads: the ads.
-    expect(reportTabs(['kernel', 'crm'])).toEqual(['sales']);
+    expect(reportTabs(['kernel', 'crm'])).toEqual(['sales', 'quotes']);
     expect(reportTabs(['kernel', 'social'])).toEqual(['conversations', 'posts']);
     expect(reportTabs(['kernel', 'ads'])).toEqual(['ads']);
-    expect(reportTabs(['kernel', 'social', 'crm'])).toEqual(['conversations', 'sales', 'posts']);
+    expect(reportTabs(['kernel', 'social', 'crm'])).toEqual(['conversations', 'sales', 'quotes', 'posts']);
     expect(reportTabs(['kernel', 'finance', 'notes'])).toEqual([]);
   });
 

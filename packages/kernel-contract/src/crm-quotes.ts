@@ -168,3 +168,17 @@ export const zQuoteSuggestedLine = z.strictObject({
 });
 export const zQuoteSuggested = z.strictObject({ ai: z.enum(QUOTE_SUGGEST_STATES), lines: z.array(zQuoteSuggestedLine) });
 export type QuoteSuggested = z.infer<typeof zQuoteSuggested>;
+
+// The "Báo giá" tab of the Reports screen (#2699): how many quotes are in each status and what they are worth, over the last 30, 90 or 365 days (by the day each was
+// made) or ever (null). Every amount is a decimal string the server summed; the app never adds numbers. `sent` is the quotes that left `draft` and were not replaced by a
+// revision (sent, accepted and declined): a revised quote counts once.
+export const QUOTE_REPORT_DAYS = [30, 90, 365] as const;
+export const zQuoteReportQuery = z.strictObject({ days: z.union([z.literal(30), z.literal(90), z.literal(365), z.null()]).optional() });
+export type QuoteReportQuery = z.infer<typeof zQuoteReportQuery>;
+export const zQuoteReportFigure = z.strictObject({ count: z.number().int(), total: z.string() });
+export const zQuoteReport = z.strictObject({
+  days: z.number().int().nullable(),
+  sent: zQuoteReportFigure,
+  byStatus: z.array(zQuoteReportFigure.extend({ status: z.enum(QUOTE_STATUSES) })),
+});
+export type QuoteReport = z.infer<typeof zQuoteReport>;

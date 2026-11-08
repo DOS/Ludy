@@ -254,7 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteSuggestInput, zQuoteSuggested, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteReport, zQuoteReportQuery, zQuoteSuggestInput, zQuoteSuggested, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -644,6 +644,8 @@ export const contract = {
       defaults: oc.input(zQuoteDefaultsQuery).output(zQuoteDefaults),
       // Dy's proposal for the lines (#2698): a read that never stores; a person applies or drops each line, and saves with `save`.
       suggest: oc.input(zQuoteSuggestInput).output(zQuoteSuggested),
+      // The "Báo giá" tab of the Reports screen (#2699): counts and totals by status.
+      report: oc.input(zQuoteReportQuery).output(zQuoteReport),
       save: oc.input(zQuoteSave).output(zQuote),
       deleteDraft: oc.input(zQuoteRef).output(zQuoteDeleted),
       revise: oc.input(zQuoteRef).output(zQuote),
