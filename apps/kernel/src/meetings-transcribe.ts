@@ -2,8 +2,9 @@
 // The worker's side of transcription as the recorder's own Vy (issue #2578, M4b, ADR-0049 stage B). One job per run the recorder started:
 //   1. the run is the recorder's member-scoped agent context (memberVyRuntime): each call below enters it afresh, so the member being active, vy.use, the
 //      org, module and agent kill switches, the global `ai` switch, a spent hard-stop budget and the run being live are re-checked at every step;
-//   2. kernel.member_vy.meeting_audio.open answers the audio's ids and the wrapped key (never plaintext); the worker fetches each ciphertext object, checks its
-//      hash and decrypts it with the meeting's key, which it wipes when done;
+//   2. kernel.member_vy.meeting_audio.open answers the audio's ids and the wrapped key (never plaintext), and it is called again before EACH chunk, so a meeting
+//      deleted, shredded or taken from the recorder mid-run stops the run before the next chunk; the worker fetches that chunk's ciphertext, checks its hash and
+//      decrypts it with the meeting's key, which it wipes at once. (A deleted meeting also cancels its live run and deletes its result: a database trigger.)
 //   3. transcribeChunks sends the chunks to the provider, each admitted first by RunMeter.admit, which enters the member context again (the admit of
 //      ADR-0049 decision 6) and refuses on a switch or a spent budget; the call is recorded by its measured audio seconds;
 //   4. kernel.member_vy.result.store writes the transcript as the run's own result (the only thing a member-scoped context writes);
@@ -11,7 +12,7 @@
 // The job writes no meeting table: the recorder's own action copies the result into the draft (meetings.transcript.copy_result). A failed run stores a fixed
 // code, never a message. Logs carry ids and codes. A job is never retried by the queue: another try would send the audio to the provider again; the recorder
 // starts it again if they want to.
-import { AiBudgetExhaustedError, aiCost, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput } from '@crove/agent';
+import { AiBudgetExhaustedError, aiCost, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@crove/agent';
 import {
   DomainError,
   decryptBlobBuffer,
@@ -24,7 +25,7 @@ import {
   type Runtime,
   type SystemActor,
 } from '@crove/kernel-runtime';
-import { encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
+import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
 
 export interface MeetingsTranscribeJob {
   orgId: string;
@@ -99,25 +100,26 @@ export function failureCode(error: unknown): string {
   return 'TRANSCRIBE_FAILED';
 }
 
-async function openAudio(deps: MeetingsTranscribeDeps, job: MeetingsTranscribeJob, audio: RunAudio): Promise<TranscribeInput[]> {
+// One chunk of the recording, fetched and decrypted. The audio door is opened again for every chunk: it re-checks the whole gate (the meeting still exists, its key is
+// not shredded, the recorder still reads it, the run is live), so a meeting deleted, shredded or taken from the recorder mid-run stops the run before the next chunk
+// is read, let alone sent. The key and the plaintext live only as long as this call.
+async function openChunk(deps: MeetingsTranscribeDeps, job: MeetingsTranscribeJob, vy: MemberVyRuntime, order: number): Promise<{ input: TranscribeInput; chunks: number }> {
+  const audio = await vy.execute<RunAudio>('kernel.member_vy.meeting_audio.open', { meetingId: job.meetingId });
+  const segment = audio.segments.find((s) => s.order === order);
+  if (!segment) throw new DomainError('AUDIO_NOT_FOUND', 404, 'Meeting audio not found');
   const info = 'crove.meetings.v1|wrap';
   const { broker } = deps;
   const subkey = broker.deriveKey ? broker.deriveKey(audio.keyId, info) : broker.derive && broker.keyId === audio.keyId ? broker.derive(info) : null;
   if (!subkey) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
   const binding = { orgId: job.orgId, meetingId: job.meetingId, kind: 'audio' as const };
-  const language = audio.language === 'en' ? 'en' : 'vi';
   let dataKey: Buffer | null = null;
   try {
     dataKey = unwrapMediaKeyWithSubkey(Buffer.from(audio.wrappedKey), { ...binding, keyId: audio.keyId }, subkey);
-    const inputs: TranscribeInput[] = [];
-    for (const segment of audio.segments) {
-      const ciphertext = await readVerified(deps.store, { key: segment.storageKey, generation: segment.generation, sha256: segment.sha256 }, SEGMENT_CIPHERTEXT_MAX);
-      const plain = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, binding);
-      const copy = new Uint8Array(plain);
-      plain.fill(0);
-      inputs.push({ audio: copy, mimeType: segment.contentType, language, lengthSeconds: segment.lengthSeconds, offsetSeconds: segment.startOffsetSeconds });
-    }
-    return inputs;
+    const ciphertext = await readVerified(deps.store, { key: segment.storageKey, generation: segment.generation, sha256: segment.sha256 }, SEGMENT_CIPHERTEXT_MAX);
+    const plain = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, binding);
+    const copy = new Uint8Array(plain);
+    plain.fill(0);
+    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: segment.lengthSeconds, offsetSeconds: segment.startOffsetSeconds }, chunks: audio.segments.length };
   } finally {
     dataKey?.fill(0);
     subkey.fill(0);
@@ -132,11 +134,19 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     const audio = await vy.execute<RunAudio>('kernel.member_vy.meeting_audio.open', { meetingId: job.meetingId });
     // A transcript past what one result row holds fails whatever is done, so it is refused before any chunk is sent and charged.
     if (audio.segments.reduce((n, seg) => n + seg.lengthSeconds, 0) > TRANSCRIPT_MAX_SECONDS) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The meeting is too long to transcribe in one go');
-    const inputs = await openAudio(deps, job, audio);
-    const segments = await withAiScope({ orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new RunMeter(deps, vy, job) }, () => transcribeChunks(deps.provider, inputs));
+    const scope = { orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new RunMeter(deps, vy, job) };
+    // One chunk at a time, the gate of the audio door passed again before each one (openChunk), then the chunk behind the meter (its admit enters the context once more).
+    const done: TranscriptSegment[][] = [];
+    for (const { order } of [...audio.segments].sort((a, b) => a.order - b.order)) {
+      const { input } = await openChunk(deps, job, vy, order);
+      done.push(await withAiScope(scope, () => transcribeChunks(deps.provider, [input])));
+    }
+    const segments = mergeChunkTranscripts(done);
     const body = encodeTranscriptResult(segments);
     if (segments.length === 0) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'The recording holds no speech');
     if (body.length > TRANSCRIPT_RESULT_MAX) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The transcript is longer than a result holds');
+    // What is stored is exactly what the recorder's copy accepts: a result that would fail the copy fails the run here, with a fixed code.
+    decodeTranscriptResult(body);
     const stored = await vy.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'ready', body } });
     // A kill switch or a spent budget that appeared since the last admit makes the store keep a failed result, not the text: the run is failed too.
     if (!stored.stored) code = 'AI_STOPPED';

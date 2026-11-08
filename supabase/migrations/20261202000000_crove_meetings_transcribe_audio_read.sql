@@ -100,3 +100,25 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.audio_for_member_vy(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.audio_for_member_vy(uuid, uuid) TO crove_worker;
+
+-- A meeting's removal reaches the transcription that was made from it (ADR-0047 point 7: erasure reaches every copy the org controls).
+--   crove_meetings.meeting_discard_transcribe()   BEFORE DELETE on a meeting, whatever deletes it (the recorder, an owner's compliance delete, the text
+--                                                 purge, a shred replay): the live meetings.transcribe runs for that meeting are cancelled (MEETING_REMOVED,
+--                                                 so the worker's next entry is refused) and their member_vy_result rows are deleted, a finished result that was
+--                                                 never copied included. The run is locked first and then its result, the order the cancel definer takes.
+CREATE OR REPLACE FUNCTION crove_meetings.meeting_discard_transcribe() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  UPDATE crove_kernel.ai_run r SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'MEETING_REMOVED'
+  WHERE r.org_id = OLD.org_id AND r.status = 'running'
+    AND r.id IN (SELECT v.run_id FROM crove_kernel.member_vy_result v
+                 WHERE v.org_id = OLD.org_id AND v.feature = 'meetings.transcribe' AND v.subject_type = 'meeting' AND v.subject_id = OLD.id);
+  DELETE FROM crove_kernel.member_vy_result v
+  WHERE v.org_id = OLD.org_id AND v.feature = 'meetings.transcribe' AND v.subject_type = 'meeting' AND v.subject_id = OLD.id;
+  RETURN OLD;
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.meeting_discard_transcribe() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DROP TRIGGER IF EXISTS meeting_discard_transcribe ON crove_meetings.meeting;
+CREATE TRIGGER meeting_discard_transcribe BEFORE DELETE ON crove_meetings.meeting
+  FOR EACH ROW EXECUTE FUNCTION crove_meetings.meeting_discard_transcribe();

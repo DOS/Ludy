@@ -280,4 +280,40 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(run.rows[0]?.status).toBe('failed');
     await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]));
   });
+
+  const resultRows = (runId: string) => admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+
+  it('a meeting deleted while it is transcribed stops the run before the next chunk and leaves no result row', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const before = providerCalls;
+    // The owner's compliance delete (here by SQL: the database trigger is what every path of deleting a meeting goes through) while chunk 1 is at the provider.
+    afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])));
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls - before).toBe(1);
+    expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+    const run = await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    expect(run.rows[0]).toEqual({ status: 'cancelled', error: 'MEETING_REMOVED' });
+  });
+
+  it('a recorder demoted to viewer mid-run stops the run before the next chunk', async () => {
+    const meetingId = await seedMeeting('other');
+    const { runId } = await start('other', meetingId);
+    const before = providerCalls;
+    afterFirstCall = async () => void (await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, users.other])));
+    expect(await runJob('other', meetingId, runId)).toBe('failed');
+    expect(providerCalls - before).toBe(1);
+    const row = await admin((c) => c.query<{ status: string }>(`SELECT status FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(row.rows[0]?.status).not.toBe('ready');
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.other]));
+  });
+
+  it('a finished result that was never copied goes with its meeting', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    expect(await runJob('recorder', meetingId, runId)).toBe('succeeded');
+    expect((await resultRows(runId)).rows[0]?.n).toBe('1');
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+  });
 });
