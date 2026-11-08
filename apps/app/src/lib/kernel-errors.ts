@@ -240,6 +240,10 @@ export const KERNEL_ERROR_CODES = [
   'HR_POSTING_ADJUSTMENTS',
   'HR_POSTING_MISMATCH',
   'HR_POSTING_MAP_UNCONFIRMED',
+  // The account map of a marketplace's money waits for the accountant (#2516).
+  'MARKETPLACE_POSTING_MAP_UNCONFIRMED',
+  'MARKETPLACE_POSTING_REGIME_UNKNOWN',
+  'MARKETPLACE_SETTLEMENT_NOT_POSTABLE',
   'HR_POSTING_APPROVER_ROLE',
   // The payment of an approved run's net pay and remittances (#2532).
   'HR_PAYMENT_NOT_POSTED',
@@ -289,6 +293,7 @@ export const KERNEL_ERROR_CODES = [
   // The recorder's Vy summarizing a meeting (#2580, M6 part B).
   'DRAFT_NOT_REVIEWED',
   'DRAFT_SUMMARY_EXISTS',
+  'SUMMARY_BUSY',
   'SUMMARY_ALREADY_COPIED',
   'SUMMARY_OFF',
   'SUMMARY_RESULT_INVALID',

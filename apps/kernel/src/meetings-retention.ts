@@ -44,14 +44,14 @@ const BLOB_DELETES_IN_FLIGHT = 5;
 type Log = Pick<Console, 'log' | 'error'>;
 
 export interface RetentionRun {
-  shredded: { audio: number; video: number; text: number };
+  shredded: { audio: number; video: number; text: number; draft: number };
   failed: number;
 }
 
 /** One nightly pass: every meeting whose period has ended, in its own org. A failing meeting is left for the next run and never holds the others behind it. */
 export async function runMeetingsRetention(deps: { runtime: Runtime; workerDb: Db; log?: Log; batch?: number }): Promise<RetentionRun> {
   const log = deps.log ?? console;
-  const run: RetentionRun = { shredded: { audio: 0, video: 0, text: 0 }, failed: 0 };
+  const run: RetentionRun = { shredded: { audio: 0, video: 0, text: 0, draft: 0 }, failed: 0 };
   // Meetings that failed in this run: asked for again past them, so a few failing rows never stall the others (the next run tries them again).
   const failedNow = new Set<string>();
   for (let pass = 0; pass < MAX_BATCHES; pass++) {
@@ -77,7 +77,28 @@ export async function runMeetingsRetention(deps: { runtime: Runtime; workerDb: D
     // A batch that shredded nothing would list the same meetings again.
     if (listed.length < Math.min(size + failedNow.size, 1000) || applied === 0) break;
   }
-  log.log(`[meetings-retention] audio=${run.shredded.audio} video=${run.shredded.video} text=${run.shredded.text} failed=${run.failed}`);
+  // Drafts the recorder never published, past their 30 days: after the media and text periods, in the same bounded passes.
+  for (let pass = 0; pass < MAX_BATCHES; pass++) {
+    const size = Math.min((deps.batch ?? DUE_BATCH) + failedNow.size, 1000);
+    const { rows: listed } = await sql<{ org_id: string; meeting_id: string }>`SELECT org_id, meeting_id FROM crove_meetings.meeting_drafts_due(${size}::int)`.execute(deps.workerDb);
+    const rows = listed.filter((r) => !failedNow.has(`${r.meeting_id}:draft`));
+    let applied = 0;
+    for (const row of rows) {
+      try {
+        const out = await deps.runtime.execute<{ applied: boolean }>('meetings.retention.shred', { meetingId: row.meeting_id, kind: 'draft' }, { actor: ACTOR, orgId: row.org_id });
+        if (out.applied) {
+          run.shredded.draft += 1;
+          applied += 1;
+        }
+      } catch (error) {
+        run.failed += 1;
+        failedNow.add(`${row.meeting_id}:draft`);
+        log.error(`[meetings-retention] draft of meeting ${row.meeting_id.slice(0, 8)} in org ${row.org_id.slice(0, 8)} failed`, error instanceof Error ? error.name : typeof error);
+      }
+    }
+    if (listed.length < size || applied === 0) break;
+  }
+  log.log(`[meetings-retention] audio=${run.shredded.audio} video=${run.shredded.video} text=${run.shredded.text} draft=${run.shredded.draft} failed=${run.failed}`);
   if (run.failed > 0) opsAlert(`[meetings-retention] ALERT ${run.failed} meeting(s) could not be shredded; the next run tries again`);
   return run;
 }
