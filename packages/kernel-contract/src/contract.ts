@@ -319,6 +319,11 @@ import {
   zMeetingSettingsGet,
   zMeetingSettingsSet,
   zMeetingSummary,
+  zTranscript,
+  zTranscriptCorrect,
+  zTranscriptCorrected,
+  zTranscriptDraftStore,
+  zTranscriptDraftStored,
 } from './meetings.ts';
 import { zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -739,6 +744,12 @@ export const contract = {
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
+    // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
+    transcript: {
+      get: oc.input(zMeetingRef).output(zTranscript),
+      draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
+      correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),

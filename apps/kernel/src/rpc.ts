@@ -848,6 +848,11 @@ export function createRpcHandler(
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      transcript: {
+        get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
+        draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
+        correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
+      },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
         remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),

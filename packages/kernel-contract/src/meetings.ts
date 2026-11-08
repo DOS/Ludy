@@ -184,3 +184,57 @@ export type MeetingMediaDiscard = z.infer<typeof zMeetingMediaDiscard>;
 
 export const zMeetingOrphanKeys = z.strictObject({ fileIds: z.array(zId).min(1).max(200) });
 export type MeetingOrphanKeys = z.infer<typeof zMeetingOrphanKeys>;
+
+// The transcript of a meeting (#2578, M4a): timestamped segments with a speaker label. A segment is a draft, the recorder's
+// own working copy, until the recorder publishes it (the summary step, M6).
+export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
+export type TranscriptStage = (typeof TRANSCRIPT_STAGES)[number];
+export const TRANSCRIPT_TEXT_MAX = 4000;
+export const TRANSCRIPT_SPEAKER_MAX = 80;
+export const TRANSCRIPT_SEGMENTS_MAX = 5000;
+
+export const zTranscriptSegmentInput = z.strictObject({
+  startSeconds: z.number().min(0).max(86_400),
+  endSeconds: z.number().min(0).max(86_400),
+  speakerLabel: z.string().trim().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  text: z.string().trim().min(1).max(TRANSCRIPT_TEXT_MAX),
+});
+export type TranscriptSegmentInput = z.infer<typeof zTranscriptSegmentInput>;
+
+// Replaces the meeting's draft transcript with these segments: the recorder's transcription run, or a re-run.
+export const zTranscriptDraftStore = z.strictObject({
+  meetingId: zId,
+  segments: z.array(zTranscriptSegmentInput).max(TRANSCRIPT_SEGMENTS_MAX),
+});
+export const zTranscriptDraftStored = z.strictObject({ meetingId: zId, stored: z.number().int().min(0) });
+
+// The recorder's correction of one draft segment: its text, its speaker label, or both.
+export const zTranscriptCorrect = z
+  .strictObject({
+    segmentId: zId,
+    text: z.string().trim().min(1).max(TRANSCRIPT_TEXT_MAX).optional(),
+    speakerLabel: z.string().trim().min(1).max(TRANSCRIPT_SPEAKER_MAX).optional(),
+  })
+  .refine((v) => v.text !== undefined || v.speakerLabel !== undefined, { message: 'name a text or a speaker label to correct' });
+export const zTranscriptCorrected = z.strictObject({ segmentId: zId, corrected: z.literal(true) });
+
+export const zTranscriptSegment = z.strictObject({
+  id: zId,
+  startSeconds: z.number(),
+  endSeconds: z.number(),
+  speakerLabel: z.string(),
+  text: z.string(),
+  stage: z.enum(TRANSCRIPT_STAGES),
+  corrected: z.boolean(),
+});
+export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
+
+// What the caller may read of a meeting's transcript: the recorder reads their draft (and anything published); every other
+// reader of the meeting reads published segments only. `stage` is the stage the caller sees.
+export const zTranscript = z.strictObject({
+  meetingId: zId,
+  isRecorder: z.boolean(),
+  stage: z.enum(['none', ...TRANSCRIPT_STAGES]),
+  segments: z.array(zTranscriptSegment),
+});
+export type Transcript = z.infer<typeof zTranscript>;
