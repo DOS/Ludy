@@ -32,8 +32,19 @@ export function OrgExtensionDevices({ members, viewerRole, me }: { members: read
         setConfirm(null);
         void queryClient.invalidateQueries({ queryKey: orpc.extension.key() });
       },
+      // A refusal can mean the member list on screen is out of date (a member who was just made an owner still showed as one the
+      // admin may disconnect): read the org and the devices again, so the next render offers what the server will allow.
+      onError: () => {
+        void queryClient.invalidateQueries({ queryKey: orpc.org.key() });
+        void queryClient.invalidateQueries({ queryKey: orpc.extension.key() });
+      },
     }),
   );
+  const ask = (id: string | null) => {
+    // A new confirmation, or a cancel, starts clean: an error from an earlier attempt does not stay on screen.
+    revoke.reset();
+    setConfirm(id);
+  };
   const now = Date.now();
   // The other members' devices: yours are in the card above.
   const rows = (tokens.data ?? []).filter((r) => r.userId !== me);
@@ -70,6 +81,8 @@ export function OrgExtensionDevices({ members, viewerRole, me }: { members: read
                   {r.lastUsedAt ? t('lastUsed', { at: f.dateTime(r.lastUsedAt) }) : t('neverUsed')}
                   {` · ${t('connectedAt', { at: f.dateTime(r.createdAt) })} · ${t('expiresAt', { at: f.dateTime(r.expiresAt) })}`}
                 </p>
+                {/* The refusal is shown on the row it came from. */}
+                {revoke.error && revoke.variables?.tokenId === r.id && <ErrorText>{errorMessage(revoke.error)}</ErrorText>}
               </div>
               {!mayDisconnect ? (
                 <span className="shrink-0 text-xs text-subtle-foreground">{t('ownerOnly')}</span>
@@ -78,12 +91,12 @@ export function OrgExtensionDevices({ members, viewerRole, me }: { members: read
                   <Button size="sm" variant="destructive" disabled={revoke.isPending} onClick={() => revoke.mutate({ tokenId: r.id })}>
                     {t('revoke')}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => setConfirm(null)}>
+                  <Button size="sm" variant="outline" onClick={() => ask(null)}>
                     {t('cancel')}
                   </Button>
                 </div>
               ) : (
-                <Button size="sm" variant="outline" className="shrink-0" aria-label={t('disconnectOf', { name, device: r.deviceName })} onClick={() => setConfirm(r.id)}>
+                <Button size="sm" variant="outline" className="shrink-0" aria-label={t('disconnectOf', { name, device: r.deviceName })} onClick={() => ask(r.id)}>
                   {t('disconnect')}
                 </Button>
               )}
@@ -91,7 +104,6 @@ export function OrgExtensionDevices({ members, viewerRole, me }: { members: read
           );
         })}
       </ul>
-      {revoke.error && <ErrorText>{errorMessage(revoke.error)}</ErrorText>}
       {ended.length > 0 && (
         <details className="text-sm">
           <summary className="cursor-pointer text-xs text-subtle-foreground">{t('ended', { count: ended.length })}</summary>
