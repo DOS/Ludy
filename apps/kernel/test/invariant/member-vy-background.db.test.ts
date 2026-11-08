@@ -1010,6 +1010,9 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         status: "ready",
         bodyLength: 120,
       };
+      // The runtime stores a keyed input hash ("k1:" and 64 hex) unless it runs in plain sha256 mode: both are hashes.
+      const keyed = await audit(goodDetail, { sha: `k1:${HASH}` });
+      expect(keyed.ok || keyed.message, "a keyed input hash").toBe(true);
       const clean = await audit(goodDetail);
       expect(
         clean.ok || clean.message,
