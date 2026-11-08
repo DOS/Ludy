@@ -84,6 +84,9 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     .returning('id')
     .executeTakeFirst();
   if (!inserted) {
+    // The row that blocked the insert is read back under row-level security. A meeting media row (source meeting_audio, meeting_video) is hidden from everyone but
+    // the meeting's readers (#2874), so this read cannot see one. That is harmless: meeting media is ciphertext sealed in the browser, so a user's bytes never share
+    // a sha256 with it, and this path is the generic ingest, which refuses those sources.
     const existing = await ctx.trx
       .selectFrom('crove_kernel.file')
       .select(['id', 'source', 'original_deleted_at'])

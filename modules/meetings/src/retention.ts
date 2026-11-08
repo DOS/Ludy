@@ -32,6 +32,11 @@ export function vnDay(at: Date): string {
   return new Date(at.getTime() + VN_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** The instant a Vietnam calendar day (YYYY-MM-DD) begins, as an ISO 8601 UTC timestamp: the due moment of a date said in a meeting. */
+export function vnDayStart(day: string): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) - VN_OFFSET_MS).toISOString();
+}
+
 /** The Vietnam calendar day `days` days after an instant. */
 export function dayAfter(at: Date, days: number): string {
   return vnDay(new Date(at.getTime() + days * DAY_MS));
