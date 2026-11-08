@@ -7,3 +7,12 @@ import type { ConversationKind } from '@crove/kernel-contract';
 const ONE_TO_ONE: Readonly<Record<ConversationKind, boolean>> = { direct: true, email: true, comment_thread: false };
 
 export const canInsertQuoteLink = (kind: ConversationKind): boolean => ONE_TO_ONE[kind];
+
+// The text of a reply box with a quote message added (#2827): the message goes after what the person wrote, a blank line between. The textarea's own maxLength stops typing but
+// not text put in by code, and cutting the message would cut the link in it, so a message that does not fit is not added: `fits` is false and the text stays as it was, for
+// the box to say so before the person sends (the server refuses a reply over the channel's limit, REPLY_TOO_LONG, but only at send time). The length is counted as the server
+// counts it, on the trimmed text.
+export function appendQuoteMessage(current: string, inserted: string, max: number): { text: string; fits: boolean } {
+  const text = current.trim() === '' ? inserted : `${current.trimEnd()}\n\n${inserted}`;
+  return text.trim().length <= max ? { text, fits: true } : { text: current, fits: false };
+}
