@@ -1883,6 +1883,7 @@ export interface KernelFileTable {
   hold_error: string | null;
   upload_entity_id: string | null;
   inbound_message_id: string | null;
+  original_deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.file_upload */

@@ -8757,6 +8757,7 @@ export const vi = {
       LINK_CARD_THUMB_TOO_LARGE: 'Ảnh của thẻ liên kết quá lớn; Bluesky nhận ảnh tối đa 1 MB',
       FILE_IS_DOCUMENT: 'Tệp này đã có trong chứng từ kế toán của tổ chức, hãy dùng tệp khác cho bài đăng',
       FILE_IS_IMPORT: 'Tệp này đã được tải lên làm danh sách hóa đơn từ cổng thuế nên không được đọc như chứng từ; nếu đây là tệp ZIP chứng từ, hãy nén lại thành tệp mới rồi tải lên',
+      FILE_ORIGINAL_DELETED: 'Tệp gốc của báo cáo này đã được xóa sau 90 ngày kể từ khi bạn quyết định, nên không tải hay đọc lại được; hãy tải lại tệp từ sàn nếu cần. Chỉ còn bản tóm tắt.',
       FILE_IS_NOT_IMPORT: 'Tệp này đã có trong chứng từ của tổ chức nên không nhập làm danh sách được; hãy xuất lại danh sách từ cổng thuế rồi tải lên',
       VIDEO_TOO_LONG: 'Video dài quá 3 giờ',
       OAUTH_TOO_MANY: 'Bạn đã mở quá nhiều lượt kết nối chưa hoàn tất, hãy thử lại sau ít phút',
@@ -9093,6 +9094,10 @@ export const vi = {
         preview: 'Xem trước báo cáo thu nhập của sàn',
         reject: 'Bỏ qua báo cáo thu nhập của sàn',
         staged: 'Xem các báo cáo thu nhập chờ nhập',
+      },
+      marketplace_retention: {
+        apply: 'Xóa tệp gốc và số tiền từng đơn của báo cáo sàn đã quyết định quá 90 ngày',
+        key: 'Lấy khóa lưu trữ của tệp gốc báo cáo sàn đến hạn xóa',
       },
       einvoice: {
         issue: 'Phát hành hóa đơn bán ra',

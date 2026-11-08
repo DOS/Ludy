@@ -160,7 +160,7 @@ export async function uploaderEntity(ctx: CommandContext, uploader: string | nul
 async function lockFile(ctx: CommandContext, fileId: string, statement = false) {
   const file = await ctx.trx
     .selectFrom('crove_kernel.file')
-    .select(['id', 'filename', 'created_by', 'content_type', 'upload_entity_id'])
+    .select(['id', 'filename', 'created_by', 'content_type', 'upload_entity_id', 'original_deleted_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)
     .forUpdate()
@@ -263,6 +263,8 @@ export const reextractFile = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới yêu cầu đọc lại được');
     const file = await lockFile(ctx, input.fileId, true);
+    // The original of a marketplace report is deleted 90 days after the decision (#2516, ADR-0045 point 8): there is nothing left to read again.
+    if (file.original_deleted_at) throw new DomainError('FILE_ORIGINAL_DELETED', 409, 'Tệp gốc của báo cáo này đã được xóa sau 90 ngày kể từ khi bạn quyết định nên không đọc lại được; hãy tải lại tệp từ sàn');
     // A ZIP is read again only when it was read as a bank statement (#2142); an archive of documents is never read again.
     if (isArchiveType(file.content_type) && !(await readAsStatement(ctx, input.fileId))) {
       throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');

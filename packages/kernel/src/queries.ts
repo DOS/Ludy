@@ -575,12 +575,15 @@ export const fileGet = defineQuery({
   handler: async (ctx, input) => {
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'size_bytes', 'source'])
+      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'size_bytes', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
-    return file;
+    // The original of a marketplace report is deleted 90 days after the decision (#2516, ADR-0045 point 8): the row and its hash stay, the bytes do not.
+    if (file.original_deleted_at) throw new DomainError('FILE_ORIGINAL_DELETED', 409, 'Tệp gốc của báo cáo này đã được xóa sau 90 ngày kể từ khi bạn quyết định; chỉ còn bản tóm tắt');
+    const { original_deleted_at: _deleted, ...rest } = file;
+    return rest;
   },
 });
 
