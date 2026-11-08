@@ -31,6 +31,10 @@ function obligationOf(obligations: readonly Obligation[], kind: PayrollPaymentKi
   return found;
 }
 
+// The people whose net pay is at the cash limit or above (a payment of 5 million or more must not be in cash for the pay to be deductible, docs/plan/payroll.md row 19, commentary until the
+// accountant confirms it, #2535), as a number: finance flags a cash payment of the net pay when it is not zero, and learns no name or figure. Both the preparer and the verifier count it.
+const cashLargeOf = (kind: PayrollPaymentKind, nets: readonly string[]): number => (kind === 'net_pay' ? nets.filter((n) => isCashOverLimit('cash', n)).length : 0);
+
 export const preparePayrollPayment = defineCommand({
   name: 'hr.payroll.payment.prepare',
   input: zHrPaymentRequest,
@@ -54,9 +58,7 @@ export const preparePayrollPayment = defineCommand({
       .where(sql<string>`request_input ->> 'kind'`, '=', input.kind)
       .executeTakeFirst();
     if (open) throw new DomainError('HR_PAYMENT_OPEN', 409, 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt');
-    // The people whose net pay is at the cash limit or above (a payment of 5 million or more must not be in cash for the pay to be deductible, docs/plan/payroll.md row 19, commentary until the
-    // accountant confirms it, #2535), as a number: finance flags a cash payment of them, a flag and never a block, and learns no name or figure.
-    const cashLarge = input.kind === 'net_pay' ? nets.filter((n) => isCashOverLimit('cash', n)).length : 0;
+    const cashLarge = cashLargeOf(input.kind, nets);
     const reason = REASON[input.kind](payrollRun.month);
     const draft = await ctx.run<{ kind: string; command: string; title: string; payload: Record<string, unknown> }>('finance.payroll_payment.prepare', {
       runId: input.runId,
@@ -89,7 +91,7 @@ export const verifyPayrollPayment = defineCommand({
   access: MANAGERS,
   writes: [],
   handler: async (ctx, { runId, kind }) => {
-    const { payrollRun, regime, result } = await buildRunPosting(ctx, runId, false);
+    const { payrollRun, regime, result, nets } = await buildRunPosting(ctx, runId, false);
     const obligation = obligationOf(result.obligations, kind);
     return {
       runId,
@@ -101,6 +103,8 @@ export const verifyPayrollPayment = defineCommand({
       approvedBy: payrollRun.approved_by,
       lines: obligation.debits.map((d) => ({ account: d.account, amount: d.amount })),
       total: obligation.amount,
+      // How many people's net pay is at the cash limit or above: finance rebuilds the cash flag from it, so a proposal written without the flag is refused.
+      cashLarge: cashLargeOf(kind, nets),
     };
   },
 });

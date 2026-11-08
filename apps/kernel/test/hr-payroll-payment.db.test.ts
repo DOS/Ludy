@@ -283,6 +283,63 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
   });
 
+  it('rebuilds the cash flag when it records: a stored proposal without it, with a changed count, or with one on a bank payment is refused', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    const rawChecks = (proposalId: string, checks: string) =>
+      rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{checks}', $3::jsonb) WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId, checks]);
+    // A cash payment of the net pay raises the flag; the same row without it (raw SQL, staff here) cannot be approved, so it cannot slip into a bulk approval.
+    const cash = await pay(o, runId, 'net_pay', { type: 'cash_payment', cashAccount: '1111' });
+    await rawChecks(cash.proposalId, '[]');
+    await expect(approve(o, cash.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'checks' } });
+    // A flag naming another count is refused too.
+    await rawChecks(cash.proposalId, JSON.stringify([{ id: 'anomaly_cash', status: 'warn', code: 'anomaly_cash.payroll_limit', message: 'x', params: { count: '1' } }]));
+    await expect(approve(o, cash.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'checks' } });
+    // A bank payment carries no such flag: one written onto it is refused.
+    const bank = await pay(o, runId, 'tax');
+    await rawChecks(bank.proposalId, JSON.stringify([{ id: 'anomaly_cash', status: 'warn', code: 'anomaly_cash.payroll_limit', message: 'x', params: { count: '3' } }]));
+    await expect(approve(o, bank.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'checks' } });
+    expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    // The flag the preparer wrote is the one that passes: ask again after the raw rows are rejected, and approve it as it is.
+    await rt.execute('kernel.proposal.reject', { id: cash.proposalId, reason: 'test' }, { actor: asUser(o.owner), orgId: o.orgId });
+    await rt.execute('kernel.proposal.reject', { id: bank.proposalId, reason: 'test' }, { actor: asUser(o.owner), orgId: o.orgId });
+    const again = await pay(o, runId, 'net_pay', { type: 'cash_payment', cashAccount: '1111' });
+    await expect(approve(o, again.proposalId)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+  });
+
+  it('shows a payment proposal as the proposal of its bank line: the line is proposed, and a voucher of another kind is refused for it', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const net = money(totals.net).toFixed(0);
+    // An outgoing line of the bank account for the net pay, on the payment's date (what the statement of the pay day shows).
+    const [line] = await rows<{ id: string }>(
+      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref)
+       VALUES ($1, '1121', $2, 1, '2026-03-31', 'Chi luong thang 03', $3, 'FTPAY1') RETURNING id`,
+      [o.orgId, randomUUID(), `-${net}`],
+    );
+    const lineId = line?.id as string;
+    const lineStates = async () =>
+      new Map(
+        (await o.query<{ lines: { id: string; state: { status: string; proposalId?: string } }[] }>(o.owner, 'finance.bank.lines', { bankAccount: '1121', period: '2026-03' })).lines.map((l) => [l.id, l.state] as const),
+      );
+    expect((await lineStates()).get(lineId)).toEqual({ status: 'open' });
+    const { proposalId } = await pay(o, runId, 'net_pay', { bankLineId: lineId });
+    expect((await lineStates()).get(lineId)).toEqual({ status: 'proposed', proposalId });
+    // Another voucher for the same line, asked for by hand, is refused while the payment waits.
+    await expect(
+      rt.execute(
+        'kernel.proposal.request',
+        { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'trùng', lines: [{ account: '642', amount: net }], bankLineId: lineId } },
+        { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ code: 'BANK_LINE_PROPOSED' });
+    // And a second payment proposal of the same line too; approving the first settles the line.
+    await expect(pay(o, runId, 'net_pay', { bankLineId: lineId })).rejects.toMatchObject({ code: 'HR_PAYMENT_OPEN' });
+    await approve(o, proposalId);
+    expect((await lineStates()).get(lineId)).toMatchObject({ status: 'matched' });
+  });
+
   it('lets only an owner or an admin approve a payment: a member who holds the approval permission is told so, and the proposal stays pending', async () => {
     const o = await org('tt133', 'trio');
     const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
