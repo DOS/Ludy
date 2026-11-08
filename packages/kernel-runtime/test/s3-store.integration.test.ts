@@ -395,7 +395,7 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
     // The same bytes again (a retry): accepted, and it records the version that already holds them.
     const again = await store.beginStagedWrite!(`org/${orgId}`);
     await again.write(bytes);
-    await expect(again.commit(({ sha256 }) => fileKey(orgId, sha256), 'video/webm')).resolves.toEqual(stored);
+    await expect(again.commit(({ sha256 }) => fileKey(orgId, sha256), 'video/webm')).resolves.toEqual({ ...stored, created: false });
   }, 120_000);
 
   it('opens a staged object as a stream, and refuses one larger than the cap before reading', async () => {
