@@ -101,6 +101,8 @@ export const PARTY_KIND_HOLDERS = [
   ['crove_finance.bank_party_rule', 'party_id'],
   ['crove_crm.deal', 'party_id'],
   ['crove_crm.booking', 'party_id'],
+  // A quote names the buyer it was made for (#2693): a kind flip under it would change what the document means.
+  ['crove_crm.quote', 'party_id'],
   ['crove_kernel.conversation_identity', 'party_id'],
   ['crove_kernel.conversation', 'party_id'],
   ['crove_kernel.party', 'company_id'],

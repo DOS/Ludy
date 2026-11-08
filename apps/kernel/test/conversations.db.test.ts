@@ -177,6 +177,48 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(await query<ConversationCounted>(o, o.lan, 'kernel.conversation.counts', {})).toMatchObject({ new: 2 });
   });
 
+  it('pages a busy inbox past the first page with the cursor, narrowed to one channel, and counts the same channel (#2339)', async () => {
+    const o = await org();
+    const [a, b] = [await connection(o), await connection(o)];
+    // Eleven threads on channel a and four on b, interleaved so a page of one channel skips the other's threads.
+    for (let i = 0; i < 11; i++) {
+      await ingest(o, a, [comment(`a-${i}`, `Kênh a, ${i}`, { postId: 'post-1', contact: { id: `ua-${i}`, name: `Khách a${i}` } })]);
+      if (i % 3 === 0) await ingest(o, b, [comment(`b-${i}`, `Kênh b, ${i}`, { postId: 'post-1', contact: { id: `ub-${i}`, name: `Khách b${i}` } })]);
+    }
+    const walk = async (input: Record<string, unknown>, limit: number) => {
+      const pages: ConversationListed[] = [];
+      let before: { at: string | null; id: string } | undefined;
+      for (let guard = 0; guard < 20; guard++) {
+        const page = await listAll(o, o.lan, { ...input, limit, ...(before ? { before } : {}) });
+        pages.push(page);
+        const last = page.conversations.at(-1);
+        if (!page.more || !last) break;
+        // The cursor is what the screen sends: the last thread of the page, by last message time and id.
+        before = { at: last.lastMessageAt, id: last.id };
+      }
+      return pages;
+    };
+    // One channel: every page but the last is full and says there is more, no thread repeats, none of the other channel shows, newest first.
+    const onlyA = await walk({ connectionId: a }, 4);
+    expect(onlyA.map((p) => p.conversations.length)).toEqual([4, 4, 3]);
+    expect(onlyA.map((p) => p.more)).toEqual([true, true, false]);
+    const idsA = onlyA.flatMap((p) => p.conversations.map((c) => c.id));
+    expect(new Set(idsA).size).toBe(11);
+    expect(onlyA.flatMap((p) => p.conversations).every((c) => c.channel.connectionId === a)).toBe(true);
+    const timesA = onlyA.flatMap((p) => p.conversations.map((c) => c.lastMessageAt as string));
+    expect(timesA).toEqual([...timesA].sort().reverse());
+    // The channel's own tabs are counted under the same filter, and the other channel's threads are not in them.
+    expect(await query<ConversationCounted>(o, o.lan, 'kernel.conversation.counts', { connectionId: a })).toMatchObject({ new: 11 });
+    expect(await query<ConversationCounted>(o, o.lan, 'kernel.conversation.counts', { connectionId: b })).toMatchObject({ new: 4 });
+    // No filter: all fifteen across the pages, each once.
+    const everything = await walk({}, 6);
+    expect(everything.map((p) => p.conversations.length)).toEqual([6, 6, 3]);
+    expect(new Set(everything.flatMap((p) => p.conversations.map((c) => c.id))).size).toBe(15);
+    // A cursor past the oldest thread is an empty last page, not an error.
+    const oldest = everything.at(-1)?.conversations.at(-1);
+    expect(await listAll(o, o.lan, { limit: 6, before: { at: oldest?.lastMessageAt ?? null, id: oldest?.id } })).toEqual({ conversations: [], more: false });
+  });
+
   it("keeps a linked contact to its kind: a private message's link is not shown on the customer's public comments", async () => {
     const o = await org();
     const ch = await connection(o);
