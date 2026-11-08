@@ -147,7 +147,7 @@ export const declarationGet = defineQuery({
       };
     });
     const employer = { name: entity.name, taxCode: entity.tax_code, address: null };
-    let document;
+    let document: Omit<HrDeclarationDocument, 'used'>;
     if (input.kind === 'd02lt') {
       const previous = months[1] as string;
       const previousLines = approvedMonths.includes(previous) ? lines.filter((l) => l.month === previous && l.kind === 'pay') : null;
@@ -161,8 +161,13 @@ export const declarationGet = defineQuery({
     }
     if (taxCodeFromIdentity > 0) document.notes.push(`${taxCodeFromIdentity} người chưa có mã số thuế riêng trong hồ sơ nên cột mã số thuế lấy số định danh cá nhân (từ 2025-07-01 hai số này thường trùng nhau): kiểm tra lại.`);
     if (employer.taxCode === null) document.notes.push('Đơn vị chưa có mã số thuế trong hồ sơ pháp nhân.');
-    // D02-LT's previous month is for reading a change of wage only: the header names the period asked for.
-    return document;
+    // What the list used: the approved months it read (the D02-LT also reads the month before, to tell a change of wage) and, for the annual lists, the authorization list of the year.
+    const annual = input.kind === 'qtt' || input.kind === 'certificate';
+    const authorizedYear = annual ? Number(input.period) : undefined;
+    const authorizedPeople = authorizedYear === undefined ? undefined : persons.filter((p) => p.finalizationAuthorizedYears.includes(authorizedYear)).length;
+    document.header.push({ label: 'Bảng lương đã duyệt được dùng', value: approvedMonths.join(', ') || 'không có' });
+    if (authorizedYear !== undefined) document.header.push({ label: `Danh sách ủy quyền quyết toán năm ${authorizedYear}`, value: `${authorizedPeople} người trong bảng kê` });
+    return { ...document, used: { months: approvedMonths, ...(authorizedYear === undefined ? {} : { authorizedYear, authorizedPeople }) } };
   },
 });
 
@@ -173,7 +178,14 @@ export const declarationExport = defineCommand({
   sideEffect: 'none',
   access: MANAGERS,
   handler: async (ctx, input: HrDeclarationExport): Promise<{ rows: number }> => {
-    ctx.audit({ kind: input.kind, period: input.period, rows: input.rows, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) });
+    ctx.audit({
+      kind: input.kind,
+      period: input.period,
+      rows: input.rows,
+      months: input.months,
+      ...(input.authorizedYear === undefined ? {} : { authorizedYear: input.authorizedYear, authorizedPeople: input.authorizedPeople ?? 0 }),
+      ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}),
+    });
     return { rows: input.rows };
   },
 });
