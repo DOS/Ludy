@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The marker of a deleted original file (#2516 step C-2b3, ADR-0045 point 8): crove_kernel.file.original_deleted_at says the bytes of a file are gone while its row stays (its sha256,
 -- name and size, so the same bytes are still recognised). It moves once, from NULL to a time, and only for the worker acting as the system, through the definer
--- crove_finance.marketplace_retention_apply (20261128120000_crove_finance_marketplace_retention.sql), which also checks the kind and the age. The same bytes uploaded again (the object is
+-- crove_finance.marketplace_retention_apply (20261128160000_crove_finance_marketplace_retention.sql), which also checks the kind and the age. The same bytes uploaded again (the object is
 -- content addressed, so it lands under the same key and the file is a duplicate) bring the original back: crove_kernel.file_original_restore clears the marker, and the nightly run
 -- deletes that copy again, so a restored original is never kept past the next run. Every other change of the marker is refused here.
 SET LOCAL lock_timeout = '2s';
