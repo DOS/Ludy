@@ -2,9 +2,10 @@
 -- #2878: a recorder links only media file rows they created. Restated from the newest body of both policies (20261124130000_crove_meetings_core.sql, the only
 -- migration that defines them): audio_segment_insert and meeting_video_insert asked only that the caller records the meeting, so a recorder could name any file id of
 -- the org in their own meeting's segment or video row. The linked file must now be of the matching source and created by the caller; nothing else in either policy changes.
--- The file check is a SECURITY DEFINER helper because of RLS recursion: crove_kernel.file's SELECT policy (#2874) reads audio_segment and meeting_video, so an insert check
--- on those tables that read the file table under RLS would loop back into itself (SQLSTATE 42P17). The helper reads the file row as its owner, without RLS, and answers a
--- boolean only: false outside a user context, for another org, for a null id, and for any file that is not the caller's own media file of that kind.
+-- The file check is a SECURITY DEFINER helper because of RLS recursion: once the SELECT policy on crove_kernel.file for meeting media (#2874, PR #2875) exists, it reads
+-- audio_segment and meeting_video, so an insert check on those tables that read the file table under RLS would loop back into itself (SQLSTATE 42P17). The helper reads the
+-- file row as its owner, without RLS, and answers a boolean only: false outside a user context, for another org, when the file id is null, and for any file that is not the
+-- caller's own media file of that kind. It works with or without that policy on main.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_meetings.is_own_meeting_media_file(p_org_id uuid, p_file_id uuid, p_kind text)
