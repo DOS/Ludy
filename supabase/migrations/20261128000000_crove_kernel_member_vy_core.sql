@@ -69,11 +69,11 @@ DROP TRIGGER IF EXISTS member_vy_no_seat ON crove_kernel."position";
 CREATE TRIGGER member_vy_no_seat BEFORE INSERT OR UPDATE OF holder_agent_id ON crove_kernel."position"
   FOR EACH ROW EXECUTE FUNCTION crove_kernel.position_no_member_vy();
 
--- The user a member_vy agent works for, NULL for an org-chart agent or an unknown id. A definer, so a policy on ai_run
--- reads it whatever the reader may see of agent.
+-- The user a member_vy agent works for, NULL for an org-chart agent, an unknown id or an org other than the context's.
 CREATE OR REPLACE FUNCTION crove_kernel.agent_member_of(p_org uuid, p_agent uuid) RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  SELECT a.member_user_id FROM crove_kernel.agent a WHERE a.org_id = p_org AND a.id = p_agent AND a.kind = 'member_vy'
+  SELECT a.member_user_id FROM crove_kernel.agent a
+  WHERE a.org_id = p_org AND a.id = p_agent AND a.kind = 'member_vy' AND p_org = crove_kernel.ctx_org_id()
 $$;
 REVOKE ALL ON FUNCTION crove_kernel.agent_member_of(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.agent_member_of(uuid, uuid) TO crove_tenant;
@@ -89,12 +89,19 @@ GRANT EXECUTE ON FUNCTION crove_kernel.ctx_acting_user_id() TO crove_tenant;
 
 ALTER TABLE crove_kernel.ai_run ADD COLUMN IF NOT EXISTS private_read boolean NOT NULL DEFAULT false;
 
--- A run of a member_vy agent is inserted only in its member's own user context.
+-- A run of a member_vy agent is inserted only in its member's own user context, and a run never moves to another agent.
 CREATE OR REPLACE FUNCTION crove_kernel.ai_run_member_vy_bind() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  v_member uuid := crove_kernel.agent_member_of(NEW.org_id, NEW.agent_id);
+  v_member uuid;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.agent_id IS DISTINCT FROM OLD.agent_id THEN
+      RAISE EXCEPTION 'MEMBER_VY_RUN_BINDING' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
+  v_member := crove_kernel.agent_member_of(NEW.org_id, NEW.agent_id);
   IF v_member IS NOT NULL AND (
     crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR crove_kernel.ctx_org_id() IS DISTINCT FROM NEW.org_id
     OR v_member IS DISTINCT FROM crove_kernel.ctx_user_id()) THEN
@@ -104,7 +111,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.ai_run_member_vy_bind() FROM PUBLIC;
 DROP TRIGGER IF EXISTS member_vy_bind ON crove_kernel.ai_run;
-CREATE TRIGGER member_vy_bind BEFORE INSERT ON crove_kernel.ai_run
+CREATE TRIGGER member_vy_bind BEFORE INSERT OR UPDATE OF agent_id ON crove_kernel.ai_run
   FOR EACH ROW EXECUTE FUNCTION crove_kernel.ai_run_member_vy_bind();
 
 -- The private-read flag only goes from false to true.
@@ -125,7 +132,10 @@ CREATE TRIGGER private_read_monotonic BEFORE UPDATE OF private_read ON crove_ker
 -- see the cost through org_usage, never the run.
 DROP POLICY IF EXISTS member_vy_read ON crove_kernel.ai_run;
 CREATE POLICY member_vy_read ON crove_kernel.ai_run AS RESTRICTIVE FOR SELECT TO crove_tenant
-  USING (crove_kernel.agent_member_of(org_id, agent_id) IS NULL OR crove_kernel.agent_member_of(org_id, agent_id) = (SELECT crove_kernel.ctx_acting_user_id()));
+  USING (NOT EXISTS (
+    SELECT 1 FROM crove_kernel.agent a
+    WHERE a.org_id = ai_run.org_id AND a.id = ai_run.agent_id AND a.kind = 'member_vy'
+      AND a.member_user_id IS DISTINCT FROM (SELECT crove_kernel.ctx_acting_user_id())));
 
 -- ---------------------------------------------------------------------------
 -- enter_agent_context: as in 20261120100000, plus the refusal of a member_vy agent.

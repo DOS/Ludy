@@ -129,7 +129,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
 
   it('lets only the worker in the system context expire results, and removes the expired ones alone', async () => {
     for (const [url, enter, name] of [
-      [appUrl, asSystem, 'the API login'],
+      [appUrl, asUser(users.owner), 'the API login in a user context'],
       [workerUrl, asUser(users.owner), 'the worker in a user context'],
     ] as const) {
       const refused = await outcome(inContext(url, enter, (c) => c.query('SELECT crove_kernel.member_vy_results_expire(100)')));
@@ -163,5 +163,14 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     const out = await outcome(runtime.execute('kernel.agent.template.install', { templateKey: 'kernel.member_vy', reportsTo: null }, { actor: { type: 'user', userId: users.owner, aal: 'aal2', sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId }));
     expect(out.ok).toBe(false);
     expect(out.ok ? '' : out.message).toMatch(/TEMPLATE_NOT_FOUND|Không có mẫu/);
+  });
+
+  it('never moves a run to another agent, and answers agent_member_of for the context\'s org only', async () => {
+    const moved = await outcome(admin((c) => c.query('UPDATE crove_kernel.ai_run SET agent_id = $2 WHERE org_id = $1 AND agent_id = $3', [orgId, agents.gone, agents.member])));
+    expect(moved.ok, 'a run moved to another agent').toBe(false);
+    const own = await inContext(appUrl, asUser(users.owner), (c) => c.query<{ m: string | null }>('SELECT crove_kernel.agent_member_of($1::uuid, $2::uuid) AS m', [orgId, agents.member]));
+    expect(own.rows[0]?.m).toBe(users.member);
+    const foreign = await inContext(appUrl, asUser(users.owner), (c) => c.query<{ m: string | null }>('SELECT crove_kernel.agent_member_of($1::uuid, $2::uuid) AS m', [randomUUID(), agents.member]));
+    expect(foreign.rows[0]?.m, 'another org id').toBeNull();
   });
 });
