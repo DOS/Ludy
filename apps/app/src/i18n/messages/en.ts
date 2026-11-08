@@ -4867,12 +4867,15 @@ export const en = {
     download: 'Download',
     downloading: 'Downloading...',
     tableRows: '{rows} rows, {size}',
+    people: 'Staff and pay data, downloaded while you close the organization (NDJSON, one record per line).',
+    peopleNote: 'The employees\' identity numbers and bank account numbers are sealed with the organization\'s keys (ADR-0017) and are not in these files; only the organization\'s keys open them, so read them in the app before you close. These files are not kept after the download: save them now.',
     stepUpAction: 'close {name} and export its data',
     errors: {
       stepUp: 'This action needs two-factor authentication in the last 5 minutes. Verify your two-factor code again, then retry.',
       slug: 'The short name does not match. Type the organization short name exactly.',
       pending: 'The data is being exported. Wait for the current export to finish, then retry.',
       forbidden: 'Only owners can close the organization.',
+      incomplete: 'The download was cut short and was not saved. Download the file again.',
     },
   },
   twoFactor: {
@@ -9425,6 +9428,7 @@ export const en = {
           live_keys: 'List the data exports still kept',
           record: 'Record a data export',
           snapshot: 'Read the data to export',
+          people: 'Export the payroll people (owner)',
         },
         get: 'Read the organization',
         offboard: 'Offboard the organization and export its data',

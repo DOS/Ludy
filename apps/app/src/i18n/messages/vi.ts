@@ -4862,12 +4862,15 @@ export const vi = {
     download: 'Tải về',
     downloading: 'Đang tải...',
     tableRows: '{rows} dòng, {size}',
+    people: 'Dữ liệu nhân sự và bảng lương, tải ngay khi bạn đóng tổ chức (NDJSON, mỗi dòng một bản ghi).',
+    peopleNote: 'Số định danh và số tài khoản ngân hàng của nhân sự được niêm phong bằng khóa của tổ chức (ADR-0017) nên không nằm trong các tệp này; chỉ khóa của tổ chức mới mở được, hãy xem trong ứng dụng trước khi đóng. Các tệp này không được lưu sau khi tải: hãy lưu ngay.',
     stepUpAction: 'đóng tổ chức {name} và xuất dữ liệu',
     errors: {
       stepUp: 'Thao tác này cần xác thực hai lớp trong 5 phút gần nhất. Hãy xác minh lại mã hai lớp rồi thử lại.',
       slug: 'Mã rút gọn nhập vào không khớp. Hãy nhập đúng mã của tổ chức.',
       pending: 'Dữ liệu đang được xuất. Hãy đợi bản xuất hiện tại xong rồi thử lại.',
       forbidden: 'Chỉ chủ sở hữu mới đóng được tổ chức.',
+      incomplete: 'Tệp tải xuống bị cắt giữa chừng nên chưa được lưu. Hãy tải lại tệp.',
     },
   },
   twoFactor: {
@@ -9422,6 +9425,7 @@ export const vi = {
           live_keys: 'Xem các bản xuất dữ liệu còn hạn',
           record: 'Ghi bản xuất dữ liệu',
           snapshot: 'Đọc dữ liệu để xuất',
+          people: 'Xuất danh sách nhân sự (chủ sở hữu)',
         },
         get: 'Xem thông tin tổ chức',
         offboard: 'Ngừng dùng và xuất dữ liệu tổ chức',

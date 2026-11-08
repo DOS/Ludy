@@ -1,10 +1,21 @@
 // Helpers behind the offboarding card in settings (issue #212).
 import { describe, expect, it } from 'vitest';
-import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, slugConfirmed } from '../src/lib/offboarding.ts';
+import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, ownerRunFileComplete, slugConfirmed } from '../src/lib/offboarding.ts';
 import { translatorFor } from '../src/i18n/runtime.ts';
 
 const vi = translatorFor('vi');
 const en = translatorFor('en');
+
+describe('ownerRunFileComplete', () => {
+  it('accepts a file that ends with its own row count, and refuses a file cut short', () => {
+    expect(ownerRunFileComplete('{"a":1}\n{"a":2}\n{"_end":true,"rows":2}\n')).toBe(true);
+    expect(ownerRunFileComplete('{"_end":true,"rows":0}\n')).toBe(true);
+    expect(ownerRunFileComplete('{"a":1}\n{"a":2}\n')).toBe(false);
+    expect(ownerRunFileComplete('{"a":1}\n{"_end":true,"rows":2}\n')).toBe(false);
+    expect(ownerRunFileComplete('{"a":1}\n{"a":2}\n{"_end":tr')).toBe(false);
+    expect(ownerRunFileComplete('')).toBe(false);
+  });
+});
 
 describe('exportPhase', () => {
   const made = { createdAt: '2026-10-16T10:00:00.000Z', expiresAt: '2026-11-20T10:00:00.000Z', expired: false };

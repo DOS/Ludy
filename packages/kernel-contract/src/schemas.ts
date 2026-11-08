@@ -385,6 +385,8 @@ export const zOrgStatus = z.enum(['active', 'offboarding', 'closed']);
 export const zOrgExport = z.object({
   status: zOrgStatus,
   requestedAt: z.string().nullable(),
+  // The tables the owner downloads live while the org is closing (#2676), apart from the export job's tables.
+  ownerRunTables: z.array(z.string()),
   export: z
     .object({
       createdAt: z.string(),
