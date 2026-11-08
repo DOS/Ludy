@@ -29,7 +29,7 @@ pnpm --filter @crove/extension test:e2e                    # unpacked in Chromiu
 node apps/extension/scripts/build.mjs --version 1.2.3      # a release build from a tag, e.g. extension-v1.2.3
 ```
 
-A Ludy server signs in only the extension ids it lists: the store's id by default, or the ids in its `EXTENSION_IDS` setting (#2740). An unpacked build has its own id (shown at `chrome://extensions`), so list it in `EXTENSION_IDS` on the server it connects to, or the sign-in window says the request is not valid.
+A Ludy server signs in only the extension ids it lists: the store's id by default (not set until the store listing exists, so until then an unpacked build always needs its own), or the ids in its `EXTENSION_IDS` setting (#2740). An unpacked build has its own id (shown at `chrome://extensions`), so list it in `EXTENSION_IDS` on the server it connects to, or the sign-in window says the request is not valid.
 
 Load `dist/` through `chrome://extensions` (Developer mode, Load unpacked) or `edge://extensions`. Locally, `CHROMIUM_PATH=/path/to/chrome pnpm --filter @crove/extension test:e2e` uses a browser installed elsewhere.
 

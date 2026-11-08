@@ -61,6 +61,7 @@ describe('the allow-list of extension ids (#2740)', () => {
   it('refuses a well-formed chromiumapp.org address of an extension the deployment does not list', () => {
     const other = 'ponmlkjihgfedcbaponmlkjihgfedcba'.slice(0, 32).padEnd(32, 'p');
     expect(parseConnectRequest(query({ redirect_uri: `https://${other}.chromiumapp.org/ludy` }), ALLOWED)).toBeNull();
+    // An empty list (the default until the store id exists) refuses every extension.
     expect(parseConnectRequest(query(), [])).toBeNull();
     expect(parseConnectRequest(query({ redirect_uri: `https://${other}.chromiumapp.org/ludy` }), [other, EXTENSION])?.extensionId).toBe(other);
   });

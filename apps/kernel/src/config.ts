@@ -518,7 +518,7 @@ const schema = z.object({
   ),
   // The Ludy browser extension ids that may receive a sign-in code (#2740): the host of the extension's redirect address
   // (https://<id>.chromiumapp.org/), 32 letters a to p, separated by commas or spaces. Unset: the store's id
-  // (DEFAULT_EXTENSION_IDS). A self-hosted or development install lists its own unpacked extension's id here. The app and
+  // (DEFAULT_EXTENSION_IDS, empty until the store listing exists, which refuses every extension). A self-hosted or development install lists its own unpacked extension's id here. The app and
   // /api/extension/authorize both refuse any other. Browsers read the list from /api/config; it holds nothing secret.
   EXTENSION_IDS: optional.pipe(
     z

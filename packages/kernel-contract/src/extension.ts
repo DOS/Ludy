@@ -16,9 +16,10 @@ export const EXTENSION_ID_FORMAT = /^[a-p]{32}$/;
 export const zExtensionId = z.string().regex(EXTENSION_ID_FORMAT);
 
 // The ids that may receive a sign-in code when the deployment sets none (EXTENSION_IDS): the Ludy extension's id in the
-// browser stores. PLACEHOLDER until the store listing exists (M10, #2584): that PR puts the real id here. Until then no
-// store build can connect, which fails closed; a self-hosted or development install lists its own id in EXTENSION_IDS.
-export const DEFAULT_EXTENSION_IDS: readonly string[] = Object.freeze(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']);
+// browser stores. Empty until the store listing exists: M10 (#2584) puts the real store id here. Until then a build from
+// a store cannot connect (an empty list refuses every redirect, so it fails closed, with no made-up id in the code); a
+// self-hosted or development install lists its own extension's id in EXTENSION_IDS.
+export const DEFAULT_EXTENSION_IDS: readonly string[] = Object.freeze([] as string[]);
 
 // What the sign-in page asks the kernel for: the extension it is signing in (the host of its redirect address), the PKCE
 // challenge the extension sent, the scopes and a device name.

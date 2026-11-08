@@ -146,7 +146,7 @@ services:
       BRAND_NAME: ${BRAND_NAME:-}
       # The app's feedback and support link (https: or mailto:); empty hides it.
       SUPPORT_URL: ${SUPPORT_URL:-}
-      # The browser extension ids that may sign in (#2740); empty keeps the store's id.
+      # The browser extension ids that may sign in (#2740); empty keeps the store's id (none until the listing exists).
       EXTENSION_IDS: ${EXTENSION_IDS:-}
       TERMS_URL: ${TERMS_URL:-}
       PRIVACY_URL: ${PRIVACY_URL:-}

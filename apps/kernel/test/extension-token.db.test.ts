@@ -10,6 +10,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { DEFAULT_EXTENSION_IDS } from '@crove/kernel-contract';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { BlobNotFoundError, DomainError, Runtime, sha256Hex, type BlobStore, type CredentialBroker } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
@@ -46,7 +47,7 @@ class MemoryStore implements BlobStore {
   }
 }
 
-const EXT_ID = 'a'.repeat(32); // the placeholder store id (DEFAULT_EXTENSION_IDS)
+const EXT_ID = 'a'.repeat(32); // the id this test's deployment lists in EXTENSION_IDS
 const OTHER_EXT_ID = 'b'.repeat(32);
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
 const webm = () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...Array.from({ length: 64 }, (_, i) => i)]);
@@ -64,6 +65,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
   let sharedDb: ReturnType<typeof createDb>;
   let sharedConfig: ReturnType<typeof loadConfig>;
   let sharedBroker: CredentialBroker;
+  let sharedRuntime: Runtime;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -154,7 +156,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
     sharedDb = db;
-    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID });
     sharedConfig = config;
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
@@ -167,6 +169,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       deriveKey: (keyId: string, purpose: string) => createHash('sha256').update(`test-secret:${keyId}:${purpose}`).digest(),
     } as unknown as CredentialBroker;
     sharedBroker = broker;
+    sharedRuntime = runtime;
     app = createHttpApp({
       config,
       runtime,
@@ -372,6 +375,18 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(() => loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: 'not-an-id' })).toThrow(/EXTENSION_IDS/);
     const configured = (await app.request('/api/config')).json() as Promise<{ extensionIds: string[] }>;
     expect((await configured).extensionIds).toEqual([EXT_ID]);
+    // No EXTENSION_IDS and no store id yet: the allow-list is empty and refuses every extension, so a store build fails closed.
+    const none = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    expect(none.EXTENSION_IDS).toBeUndefined();
+    expect(DEFAULT_EXTENSION_IDS).toEqual([]);
+    const closed = createHttpApp({ config: none, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(none, sharedDb), pool, aiEnabled: false });
+    expect(((await (await closed.request('/api/config')).json()) as { extensionIds: string[] }).extensionIds).toEqual([]);
+    const refusedAll = await closed.request('/api/extension/authorize', {
+      method: 'POST',
+      headers: await asBrowser('recorder'),
+      body: JSON.stringify({ extensionId: EXT_ID, codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }),
+    });
+    expect(refusedAll.status).toBe(403);
   });
 
   it('voids a member\'s tokens for good when their role drops below member, with one audit row of ids only', async () => {
