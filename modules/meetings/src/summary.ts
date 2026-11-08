@@ -248,7 +248,8 @@ export const summaryStatus = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    return zSummaryStatus.parse({ meetingId: input.meetingId, enabled: summaryEnabled && meeting.recorder_user_id === userId });
+    const reason = !summaryEnabled ? ('off' as const) : meeting.recorder_user_id !== userId ? ('not_recorder' as const) : null;
+    return zSummaryStatus.parse({ meetingId: input.meetingId, enabled: reason === null, reason });
   },
 });
 

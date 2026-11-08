@@ -403,6 +403,7 @@ export const SUMMARY_STATES = ['ready', 'failed'] as const;
 export const zSummaryStart = z.strictObject({ meetingId: zId });
 export const zSummaryStarted = z.strictObject({ meetingId: zId, runId: zId });
 export const zSummaryRef = z.strictObject({ meetingId: zId });
-export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolean() });
+// `reason` says why not: the deployment's switch is off, or the caller is not the meeting's recorder.
+export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolean(), reason: z.enum(['off', 'not_recorder']).nullable() });
 export const zSummarized = z.strictObject({ meetingId: zId, runId: zId, state: z.enum(SUMMARY_STATES), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() });
 export type Summarized = z.infer<typeof zSummarized>;

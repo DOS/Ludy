@@ -88,9 +88,10 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
   if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
   // Only the recorder with the switch on spends the member's and the org's rate: anyone else is refused here with the precise answer, before a ticket is taken
   // (so a member cannot use up the org's few summaries a minute by asking about meetings they did not record).
-  const allowed = await deps.runtime.query<{ enabled: boolean }>('meetings.summary.status', { meetingId }, as);
+  const allowed = await deps.runtime.query<{ enabled: boolean; reason: 'off' | 'not_recorder' | null }>('meetings.summary.status', { meetingId }, as);
   if (!allowed.enabled) {
-    await deps.runtime.execute('meetings.summary.start', { meetingId }, as);
+    // The refusal is the status's own answer: no command runs, so a refused member can never leave a run behind.
+    if (allowed.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to summarize it');
     throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
   }
   const ticket = deps.budget.take(orgId, actor.userId);

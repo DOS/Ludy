@@ -140,8 +140,8 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     const viewerMeeting = await seedMeeting('nouse');
     await exec('owner', 'kernel.member.permission.set', { userId: users.nouse, permission: 'vy.use', allowed: false });
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('nouse'), viewerMeeting))).toBe('VY_NOT_ALLOWED');
-    // A viewer's role cannot ask for it at all.
-    expect(await refuses(runMeetingSummary(deps(), orgId, asUser('viewer'), viewerMeeting))).not.toBeNull();
+    // A viewer's role cannot ask for it at all (the role check of the status query).
+    expect(await refuses(runMeetingSummary(deps(), orgId, asUser('viewer'), viewerMeeting))).toBe('FORBIDDEN');
     const mine = await seedMeeting('recorder');
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('attendee'), mine))).toBe('MEETING_NOT_FOUND');
     await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), mine, users.attendee]);
