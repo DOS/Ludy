@@ -216,6 +216,15 @@ describe('what is refused before any model call', () => {
     await expect(summarizeMeeting({ segments: long, language: 'vi' }, bindPorts(A, ports))).rejects.toMatchObject({ code: 'SUMMARY_TOO_LONG' });
     expect(seen).toHaveLength(0);
   });
+
+  it('counts the cap in UTF-8 bytes: Vietnamese text under 60000 characters but over 60000 bytes is refused', async () => {
+    const { ports, seen } = fakeModel(body({ summary: 'Họp.', decisions: [], items: [] }));
+    const text = 'ệ'.repeat(1000); // 1000 characters, 3000 bytes
+    const segments = Array.from({ length: 21 }, (_, i) => seg(i * 10, i * 10 + 9, 'Lan', text)); // about 21000 characters, 63000 bytes
+    expect(segments.map((s) => s.text.length).reduce((a, b) => a + b, 0)).toBeLessThan(60_000);
+    await expect(summarizeMeeting({ segments, language: 'vi' }, bindPorts(A, ports))).rejects.toMatchObject({ code: 'SUMMARY_TOO_LONG' });
+    expect(seen).toHaveLength(0);
+  });
 });
 
 describe('helpers', () => {

@@ -101,7 +101,12 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
     const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.summary.start', { meetingId }, as);
     const runId = started.runId;
     const fail = async (errorCode: string): Promise<Summarized> => {
-      await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-summary] failed result not stored: ${codeOf(storeError)}`);
+      }
       console.error(`[meetings-summary] run failed: ${errorCode}`);
       return { meetingId, runId, state: 'failed', errorCode };
     };
