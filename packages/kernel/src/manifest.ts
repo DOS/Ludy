@@ -74,6 +74,7 @@ export const kernelManifest = defineModule({
       member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_at']),
       member_vy_memory: columns(['org_id', 'id', 'member_user_id', 'created_at', 'updated_at'], { body: 'pii' }),
       member_vy_result: columns(['org_id', 'id', 'member_user_id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'tainted', 'private_read', 'created_at', 'expires_at'], { body: 'pii' }),
+      member_vy_table: columns(['table_name', 'mode', 'adr']),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
       notification_mute: columns(['org_id', 'user_id', 'kind', 'created_at']),
       number_allocation: columns(['org_id', 'id', 'series_id', 'legal_entity_id', 'number', 'target_type', 'target_id', 'allocated_by', 'allocated_at']),
