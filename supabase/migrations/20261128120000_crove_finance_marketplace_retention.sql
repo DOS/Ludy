@@ -5,7 +5,7 @@
 -- "Deleted" is what the store's delete does: on a versioned bucket (the production one, with Object Lock) the current object gets a delete marker and the noncurrent version stays until the
 -- store-side fix (#2789). So every reader of a file's bytes refuses a file with original_deleted_at set, whatever the store still holds.
 --
---   1. (20261128100000_crove_kernel_file_original_deleted.sql)  crove_kernel.file.original_deleted_at, set once, only by the definer below (a trigger refuses any other change).
+--   1. (20261128110000_crove_kernel_file_original_deleted.sql)  crove_kernel.file.original_deleted_at, set once, only by the definer below (a trigger refuses any other change).
 --   2. crove_finance.marketplace_retention_due(days, limit)        worker only: the decided reports of the two marketplace kinds older than `days` (never fewer than 90).
 --   3. crove_finance.marketplace_retention_key(org, file, days)    system context, same org: the blob key of one due file, and whether another file row names it.
 --   4. crove_finance.marketplace_retention_apply(org, file, days)  system context, same org: marks the original deleted and deletes the OLDER extraction versions of the file
