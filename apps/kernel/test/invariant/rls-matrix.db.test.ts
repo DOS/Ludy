@@ -3196,6 +3196,23 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(rows.filter((r) => r.rolsuper || r.rolbypassrls)).toEqual([]);
   });
 
+  // The primary key columns of a table, from the catalog, for removing a seeded row by its own key.
+  const pkCache = new Map<string, string[]>();
+  async function primaryKeyOf(table: string): Promise<string[]> {
+    const cached = pkCache.get(table);
+    if (cached) return cached;
+    const { rows } = await admin.query<{ col: string }>(
+      `SELECT a.attname AS col FROM pg_catalog.pg_index i
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+       WHERE i.indrelid = $1::regclass AND i.indisprimary ORDER BY array_position(i.indkey::int2[], a.attnum)`,
+      [table],
+    );
+    expect(rows.length, `${table} has a primary key`).toBeGreaterThan(0);
+    const cols = rows.map((r) => r.col);
+    pkCache.set(table, cols);
+    return cols;
+  }
+
   for (const relation of relations) {
     const table = relation.name;
     describe(table, () => {
@@ -3361,9 +3378,12 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
                 // The completing rows were committed only when they applied (the fallback above), so they may be absent; the setup rows never.
                 for (const [rows, exact] of [[built.complete ?? [], false], [setupRows, true]] as const) {
                   for (const row of [...rows].reverse()) {
-                    const del = await admin.query(`DELETE FROM ${row.table} WHERE org_id = $1 AND id = $2`, [row.values.org_id, row.values.id]);
-                    if (exact) expect(del.rowCount, `${row.table} setup row ${row.values.id} removed after ${actor.name}'s case on ${table}`).toBe(1);
-                    else expect(del.rowCount ?? 0, `${row.table} completing row ${row.values.id}`).toBeLessThanOrEqual(1);
+                    // By the table's own primary key (several finance tables have no id column).
+                    const key = await primaryKeyOf(row.table);
+                    const del = await admin.query(`DELETE FROM ${row.table} WHERE ${key.map((k, i) => `${k} = $${i + 1}`).join(' AND ')}`, key.map((k) => row.values[k]));
+                    const which = key.map((k) => `${k}=${String(row.values[k])}`).join(', ');
+                    if (exact) expect(del.rowCount, `${row.table} setup row ${which} removed after ${actor.name}'s case on ${table}`).toBe(1);
+                    else expect(del.rowCount ?? 0, `${row.table} completing row ${which}`).toBeLessThanOrEqual(1);
                   }
                 }
                 await admin.query('COMMIT');
