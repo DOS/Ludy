@@ -115,7 +115,7 @@ export const summaryCopyResult = defineCommand({
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its summary');
     // The recorder's own result, read in the recorder's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
     const found = await ctx
-      .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null }>('kernel.member_vy.result.get', { runId: input.runId })
+      .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId: input.runId })
       .catch((error: unknown) => {
         // The kernel's own refusal for a run that is not the caller's or does not exist.
         if (error instanceof DomainError && error.code === 'RESULT_NOT_FOUND') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
@@ -126,6 +126,8 @@ export const summaryCopyResult = defineCommand({
     if (result.feature !== FEATURE || result.subjectType !== 'meeting' || result.subjectId !== input.meetingId) {
       throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
     }
+    // An answer past its expiry is gone for the member, as the kernel's own read treats it: it is not copied into a draft.
+    if (new Date(result.expiresAt).getTime() <= ctx.now.getTime()) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
     if (result.status !== 'ready' || result.body === null) throw new DomainError('SUMMARY_RESULT_NOT_READY', 409, 'The summary is not finished');
     // The body is the model's, checked once by the agent package; it is read back strictly here and never trusted for its shape.
     let body;
