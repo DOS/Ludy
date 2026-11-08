@@ -42,8 +42,8 @@ A transaction gets its context from exactly one entry function, called first. Wh
 
 | Entry | Caller | Checks | Newest definition |
 |---|---|---|---|
-| `enter_context(user, org)` | `crove_app` | re-entry guard; the purge fence of an org being offboarded; membership of an `active` org (an `offboarding` org admits its owners only), else `NOT_A_MEMBER`; derives the role and the legal-entity scope | [`roles`](../../supabase/migrations/20261101060000_crove_kernel_roles.sql#L254) |
-| `enter_user_context(org, token)` | `crove_app` | a context token the kernel signed (HMAC, 60 s, this org, session not revoked), then `enter_context` | [`context_token`](../../supabase/migrations/20261104230000_crove_kernel_context_token.sql#L137) |
+| `enter_context(user, org)` | none since #1822 step 2 (called by `enter_user_context` as its owner) | re-entry guard; the purge fence of an org being offboarded; membership of an `active` org (an `offboarding` org admits its owners only), else `NOT_A_MEMBER`; derives the role and the legal-entity scope | [`roles`](../../supabase/migrations/20261101060000_crove_kernel_roles.sql#L254) |
+| `enter_user_context(org, token)` | `crove_app` | a context token the kernel signed (HMAC, 60 s, this org, session recorded and active, and live in Supabase Auth for a `db` check), then `enter_context` | [`context_token`](../../supabase/migrations/20261104230000_crove_kernel_context_token.sql#L137) |
 | `enter_system_context(org)` | `crove_worker` | re-entry guard; `session_user` is the worker, else `SYSTEM_CONTEXT_WORKER_ONLY`; the purge fence; org `active` or `offboarding`, else `TENANT_NOT_ACTIVE` | [`org_purge`](../../supabase/migrations/20261028130000_crove_kernel_org_purge.sql#L475) |
 | `enter_agent_context(org, agent, run)` | `crove_worker` | the worker's `session_user`; an active org, agent and position; a live run; the template's role; the org's and the global kill switches; the hard budget stop | [`global_kill_switch`](../../supabase/migrations/20261023130000_crove_kernel_global_kill_switch.sql#L52) |
 
@@ -79,7 +79,7 @@ The runtime opens every transaction itself (`execute`, `executeOrgless`, and `qu
 
 ## What is not covered
 
-- **`crove_app` may still name another member.** The seal stops forged settings, not a call to `enter_context` with another existing member of the org: the API's login is trusted to name the user it authenticated. Context tokens (#1822 step 1) let the database check that the kernel signed the pair. Step 2 revokes `enter_context` from `crove_app` once the key is installed in production. Until then raw SQL on `crove_app` can act as any member (ADR-0028 section 9).
+- **`crove_app` may still name another member.** The seal stops forged settings, not a call to `enter_context` with another existing member of the org: the API's login is trusted to name the user it authenticated. Context tokens (#1822 step 1) let the database check that the kernel signed the pair. Step 2 (#1822) revoked `enter_context` from `crove_app`: a context is entered only with a token the key signs, so raw SQL on `crove_app` without the key cannot act as another member (ADR-0028 section 9).
 - **Within a token's 60 seconds,** the session, `aal` and MFA time it carries are not in the sealed context, so the database does not check fresh MFA for R3 itself (the kernel does), accepts a session it has not seen yet, and lets a token be reused.
 - **Access is checked when entering, not on every call.** A membership or assignment change applies from the next transaction.
 - **Seal residuals:** replay needs two transactions of one backend starting in the same microsecond; `ROLLBACK TO SAVEPOINT` may restore a context derived earlier in the same transaction (one `enter_context` already checked); the superuser, the database owner and a dump can read the key, as they can bypass RLS anyway.
