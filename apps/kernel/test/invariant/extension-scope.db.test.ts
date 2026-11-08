@@ -185,7 +185,7 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.execute('meetings.meeting.delete', { meetingId }, options),
       () => runtime.execute('meetings.reader.add', { meetingId, userId: users.other }, options),
       () => runtime.execute('kernel.extension.token.revoke', { tokenId: tokens.member }, options),
-      () => runtime.execute('kernel.extension.code.issue', { codeHash: '0'.repeat(64), codeChallenge: 'A'.repeat(43), scopes: ['meetings'], deviceName: 'x' }, options),
+      () => runtime.execute('kernel.extension.code.issue', { codeHash: '0'.repeat(64), codeChallenge: 'A'.repeat(43), scopes: ['meetings'], deviceName: 'x', extensionId: 'a'.repeat(32) }, options),
       () => runtime.execute('kernel.task.create', { title: 'x' }, options),
       () => runtime.execute('kernel.file.ingest', {}, options),
     ];
@@ -315,13 +315,16 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
   });
 
   it('lets a viewer connect no extension, a member with a stale second factor none, and a token none at all', async () => {
-    const issue = { codeHash: createHash('sha256').update(randomBytes(8)).digest('hex'), codeChallenge: 'B'.repeat(43), scopes: ['meetings'], deviceName: 'Laptop' };
+    const issue = { codeHash: createHash('sha256').update(randomBytes(8)).digest('hex'), codeChallenge: 'B'.repeat(43), scopes: ['meetings'], deviceName: 'Laptop', extensionId: 'a'.repeat(32) };
     expect((await refusal(runtime.execute('kernel.extension.code.issue', issue, { actor: browser(users.viewer), orgId: orgA }))).code).toBe('FORBIDDEN');
     const stale = { type: 'user' as const, userId: users.member, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) - 3600 };
     expect((await refusal(runtime.execute('kernel.extension.code.issue', issue, { actor: stale, orgId: orgA }))).code).toBe('STEP_UP_REQUIRED');
     const fresh = { ...stale, mfaAt: Math.floor(Date.now() / 1000) };
     const issued = await runtime.execute<{ codeId: string }>('kernel.extension.code.issue', issue, { actor: fresh, orgId: orgA });
     expect(issued.codeId).toBeTruthy();
+    // No code is made without the id of the extension it is for (#2850, step 2 #2855): the input without it is refused before anything runs.
+    const withoutId = Object.fromEntries(Object.entries(issue).filter(([key]) => key !== 'extensionId'));
+    expect((await refusal(runtime.execute('kernel.extension.code.issue', withoutId, { actor: fresh, orgId: orgA }))).code).toBe('VALIDATION');
     // The audit row names the code's id and scopes and carries neither the hash, the challenge nor the device name.
     const row = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.code.issue' AND org_id = $1 AND outcome = 'ok'`, [orgA])).rows[0]);
     const text = JSON.stringify(row?.detail);

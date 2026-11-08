@@ -71,6 +71,10 @@ const KERNEL_DIRS = ['packages/kernel/src', 'packages/kernel-runtime/src', 'apps
 const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why: string }> = {
   'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
   'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/kernel/src/member-vy.ts': {
+    modules: ['meetings'],
+    why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting",
+  },
   'packages/kernel/src/offboarding.ts': {
     modules: ['ads', 'crm', 'finance', 'hr', 'notes', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says; hr is read only by the owner-run people export (#2676)',

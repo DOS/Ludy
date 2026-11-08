@@ -3,7 +3,7 @@
 // the month's inputs (typed, or copied from last month where they recur) and the figures and breakdown the calculator of @crove/l10n-vn produced from them, stored as facts. A draft run
 // changes; an approved one never does (a correction is an adjustment line in a later run). Owners and admins only, and every read is a sensitive query.
 import { z } from 'zod';
-import { zId, zJournalVoucherProposal } from './schemas.ts';
+import { zAccountCode, zCashVoucherProposal, zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 import { zHrWage } from './hr.ts';
 
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
@@ -205,6 +205,30 @@ export const zPayrollPostingProposal = zJournalVoucherProposal.extend({
   mapStatus: z.enum(['confirmed', 'commentary']),
 });
 export type PayrollPostingProposal = z.infer<typeof zPayrollPostingProposal>;
+
+// The payment of an approved run's obligations (#2532, payroll plan 6.4): one voucher (a phiếu chi from the cash box or a giấy báo Nợ from a bank account) for the net pay and one for each
+// remittance. A person asks for it with the run, the kind of payment, the date and the account the money moves through (kernel.proposal.request with command
+// `finance.payroll_payment.record`); the server builds the lines and the amount from the frozen run, so the request carries nothing else. Ludy never initiates a payment: the voucher records one made.
+export const PAYROLL_PAYMENT_COMMAND = 'finance.payroll_payment.record';
+export const PAYROLL_PAYMENT_KINDS = ['net_pay', 'insurance', 'union', 'tax'] as const;
+export type PayrollPaymentKind = (typeof PAYROLL_PAYMENT_KINDS)[number];
+export const zHrPaymentRequest = z.strictObject({
+  runId: zId,
+  kind: z.enum(PAYROLL_PAYMENT_KINDS),
+  type: z.enum(['cash_payment', 'bank_debit']),
+  date: zLocalDate,
+  cashAccount: zAccountCode,
+  // The bank statement line the payment settles (#326, #2385), when it is made from one.
+  bankLineId: zId.optional(),
+});
+export type HrPaymentRequest = z.infer<typeof zHrPaymentRequest>;
+// What finance's record command asks the HR module to rebuild before it records the payment (hr.payroll.payment.verify).
+export const zHrPaymentVerify = z.strictObject({ runId: zId, kind: z.enum(PAYROLL_PAYMENT_KINDS) });
+// The proposal (kind finance.cash_voucher, shown as a voucher) with the run it pays, the kind of payment, the month and the chart the run was posted under. It names no person.
+export const zPayrollPaymentProposal = zCashVoucherProposal.extend({
+  payroll: z.strictObject({ runId: zId, kind: z.enum(PAYROLL_PAYMENT_KINDS), month: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/), regime: z.enum(PAYROLL_REGIMES) }),
+});
+export type PayrollPaymentProposal = z.infer<typeof zPayrollPaymentProposal>;
 
 // The finance coworker on payroll (#2534, plan 6.7). Each call is read-only: it reads the stored run through the audited sensitive queries, asks the model about the pseudonymized sheet
 // only (outside any transaction, under the AI budget meter) and answers with checked text, the people's names put back by code. `ai` names the state when there is no text: the sheet,

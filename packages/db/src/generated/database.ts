@@ -41,6 +41,7 @@ export interface CroveCrmSchema {
   'crove_crm.quote_link': CrmQuoteLinkTable;
   'crove_crm.quote_setting': CrmQuoteSettingTable;
   'crove_crm.sales_order': CrmSalesOrderTable;
+  'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
 }
 
@@ -681,6 +682,7 @@ export interface CrmQuoteSettingTable {
   phone: string | null;
   email: string | null;
   bank_note: string | null;
+  logo_file_id: string | null;
 }
 
 /** crove_crm.quote */
@@ -720,6 +722,22 @@ export interface CrmQuoteTable {
   seller_phone: string | null;
   seller_email: string | null;
   seller_bank_note: string | null;
+  seller_logo_file_id: string | null;
+  seller_logo_frozen: Generated<boolean>;
+}
+
+/** crove_crm.sales_order_delivery */
+export interface CrmSalesOrderDeliveryTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_no: ColumnType<number, number, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  delivered_on: ColumnType<string | null, string | null, NotGranted>;
+  reverses_id: ColumnType<string | null, string | null, NotGranted>;
+  reverses_kind: ColumnType<string | null, never, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_crm.sales_order_line */
@@ -865,6 +883,8 @@ export interface FinanceCashVoucherTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   number_period: ColumnType<string, string | undefined, NotGranted>;
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
+  payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
+  payroll_payment_kind: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.categorization_rule */

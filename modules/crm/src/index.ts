@@ -27,16 +27,17 @@ export { importCancel, importCommands, importCommit, importExpire, importPreview
 
 export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextStepList, nextStepQueries, nextStepRaise, nextStepSnooze, staleDays } from './next-steps.ts';
 
-export { loadQuoteDocument, quoteDocument } from './quote-pdf.ts';
+export { loadQuoteDocument, quoteDocument, type QuoteDocumentData, type QuoteLogoFile } from './quote-pdf.ts';
 export { renderQuotePdf, type QuoteDocument, type QuoteParty } from './pdf/quote-document.ts';
-export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, newQuoteToken, quoteGet, quoteLinkCreate, quoteLinkRevoke, quoteList, quoteQueries, quoteRevise, quoteSave, quoteSend, quoteSettingGet, quoteSettingSet, quoteTokenHash } from './quotes.ts';
+export { readLogoImage, type PdfImage } from './pdf/image.ts';
+export { dealHasQuotes, dealQuotes, quoteCommands, quoteDefaults, quoteDeleteDraft, newQuoteToken, quoteGet, quoteLinkCreate, quoteLinkRevoke, quoteList, quoteLogoRemove, quoteLogoSet, quoteQueries, quoteRevise, quoteSave, quoteSend, quoteSettingGet, quoteSettingSet, quoteTokenHash } from './quotes.ts';
 
 export { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, renderQuoteMail, zQuoteMail } from './quote-mail.ts';
 
 export { quoteSuggestSource, type QuoteSuggestSource } from './quote-suggest.ts';
 export { quoteReport } from './quote-report.ts';
 
-export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrderCommands, salesOrderGet, salesOrderHandoff, salesOrderList, salesOrderQueries } from './sales-orders.ts';
+export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrderCommands, salesOrderDeliver, salesOrderGet, salesOrderHandoff, salesOrderList, salesOrderQueries, salesOrderUndeliver } from './sales-orders.ts';
 
 export { crmToday } from './today.ts';
 

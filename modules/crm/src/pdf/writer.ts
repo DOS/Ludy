@@ -3,15 +3,17 @@
 // committed Vietnamese font embedded as a CID font (Identity-H, one glyph number per character) with its widths and a ToUnicode map, so the text
 // shows right and copies and searches as the words it is.
 //
-// It only writes. Nothing here reads a PDF, an image or any input a customer or a member supplied as a file: the one thing it takes is text,
-// which goes into the page as glyph numbers in hexadecimal strings, never as a PDF string, so no character can close one or start an operator;
-// the document's title is hexadecimal UTF-16 for the same reason. A character the font has not is drawn as a question mark.
+// It only writes. Nothing here reads a PDF or any input a customer or a member supplied as a file: the things it takes are text and a logo image
+// already read and checked by ./image.ts (plain samples or the JPEG file as it is, with its size). Text goes into the page as glyph numbers in
+// hexadecimal strings, never as a PDF string, so no character can close one or start an operator; the document's title is hexadecimal UTF-16 for
+// the same reason. A character the font has not is drawn as a question mark. An image is an XObject whose dictionary holds only numbers and fixed names.
 //
 // The output is deterministic: no date, no random id (the file id is a hash of the file's own bytes), objects in a fixed order, the same zlib level.
 // The same document gives the same bytes, so a mail sent again carries the same file.
 import { createHash } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { clean, type FontFace, type FontSet, type FontWeight } from './fonts.ts';
+import type { PdfImage } from './image.ts';
 
 export const A4_WIDTH = 595.28;
 export const A4_HEIGHT = 841.89;
@@ -54,10 +56,19 @@ export class PdfPage {
   readonly ops: string[] = [];
   private readonly fonts: FontSet;
   private readonly use: (face: FontFace, glyph: number, codePoint: number) => number;
+  private readonly useImage: (image: PdfImage) => string;
 
-  constructor(fonts: FontSet, use: (face: FontFace, glyph: number, codePoint: number) => number) {
+  constructor(fonts: FontSet, use: (face: FontFace, glyph: number, codePoint: number) => number, useImage: (image: PdfImage) => string = () => '') {
     this.fonts = fonts;
     this.use = use;
+    this.useImage = useImage;
+  }
+
+  // An image with its lower left corner at (x, y), drawn width by height points.
+  image(image: PdfImage, x: number, y: number, width: number, height: number): void {
+    const name = this.useImage(image);
+    if (name === '') return;
+    this.ops.push(`q ${num(width)} 0 0 ${num(height)} ${num(x)} ${num(y)} cm /${name} Do Q`);
   }
 
   // Text with its baseline starting at (x, y), y counted from the bottom of the page.
@@ -101,6 +112,7 @@ export class PdfDocument {
   private readonly fonts: FontSet;
   private readonly info: PdfInfo;
   private readonly used = new Map<FontFace, Used>();
+  private readonly images: PdfImage[] = [];
 
   constructor(fonts: FontSet, info: PdfInfo = {}) {
     this.fonts = fonts;
@@ -116,6 +128,10 @@ export class PdfDocument {
       }
       if (glyph !== 0 && !entry.glyphs.has(glyph)) entry.glyphs.set(glyph, codePoint);
       return entry.index;
+    }, (image) => {
+      let index = this.images.indexOf(image);
+      if (index === -1) index = this.images.push(image) - 1;
+      return `Im${index + 1}`;
     });
     this.pages.push(page);
     return page;
@@ -135,9 +151,16 @@ export class PdfDocument {
     const fontBase = 4;
     const pageBase = fontBase + fonts.length * 5;
     const resources = fonts.map((f, i) => `/F${f.index} ${fontBase + i * 5} 0 R`).join(' ');
+    // Each image is one object, or two when it has an alpha plane (the soft mask first), after the pages.
+    let next = pageBase + this.pages.length * 2;
+    const imageObjects = this.images.map((image) => {
+      const mask = image.alpha ? next++ : null;
+      return { image, mask, object: next++ };
+    });
+    const xobjects = imageObjects.length > 0 ? ` /XObject << ${imageObjects.map((o, i) => `/Im${i + 1} ${o.object} 0 R`).join(' ')} >>` : '';
 
     add(`<< /Type /Catalog /Pages 2 0 R /Lang (vi-VN) >>`);
-    add(`<< /Type /Pages /Count ${this.pages.length} /Kids [${this.pages.map((_, i) => `${pageBase + i * 2} 0 R`).join(' ')}] /Resources << /Font << ${resources} >> >> /MediaBox [0 0 ${A4_WIDTH} ${A4_HEIGHT}] >>`);
+    add(`<< /Type /Pages /Count ${this.pages.length} /Kids [${this.pages.map((_, i) => `${pageBase + i * 2} 0 R`).join(' ')}] /Resources << /Font << ${resources} >>${xobjects} >> /MediaBox [0 0 ${A4_WIDTH} ${A4_HEIGHT}] >>`);
     const info = [`/Producer ${textString('Ludy')}`];
     if (this.info.title) info.push(`/Title ${textString(clean(this.info.title))}`);
     if (this.info.author) info.push(`/Author ${textString(clean(this.info.author))}`);
@@ -163,6 +186,19 @@ export class PdfDocument {
       const contents = pageBase + i * 2 + 1;
       add(`<< /Type /Page /Parent 2 0 R /Contents ${contents} 0 R >>`);
       add(stream('', Buffer.from(page.ops.join('\n'), 'latin1')));
+    }
+
+    for (const { image, mask, object } of imageObjects) {
+      const dictionary = `/Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /BitsPerComponent 8`;
+      if (image.alpha && mask !== null) add(stream(`${dictionary} /ColorSpace /DeviceGray`, Buffer.from(image.alpha)));
+      const link = mask === null ? '' : ` /SMask ${mask} 0 R`;
+      if (image.colour.kind === 'jpeg') {
+        const data = Buffer.from(image.colour.data);
+        add(Buffer.concat([Buffer.from(`<< ${dictionary} /ColorSpace /${image.space}${link} /Filter /DCTDecode /Length ${data.length} >>\nstream\n`, 'latin1'), data, Buffer.from('\nendstream', 'latin1')]));
+      } else {
+        add(stream(`${dictionary} /ColorSpace /${image.space}${link}`, Buffer.from(image.colour.data)));
+      }
+      if (objects.length !== object) throw new Error('image object numbers out of order');
     }
 
     // The four bytes above 127 after the version line tell a transfer program the file is binary.

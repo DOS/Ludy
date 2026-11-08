@@ -27,6 +27,9 @@ export const zExtensionCodeIssue = z.strictObject({
   codeChallenge: zExtensionAuthorize.shape.codeChallenge,
   scopes: zExtensionAuthorize.shape.scopes,
   deviceName: zExtensionAuthorize.shape.deviceName,
+  // The extension the member approved (#2850): the code is bound to it and only that extension can exchange it. Required: no code is made
+  // without it (the unbound 5-argument definer is gone, step 2 #2855).
+  extensionId: zExtensionAuthorize.shape.extensionId,
 });
 
 // The errors the extension definers raise, as domain errors; anything else goes through the runtime's mapping.
@@ -64,7 +67,7 @@ export const extensionCodeIssue = defineCommand({
     }
     const { rows } = await sql<{ id: string }>`
       SELECT crove_kernel.issue_extension_auth_code(
-        decode(${input.codeHash}, 'hex'), ${input.codeChallenge}, 'S256', ${input.scopes}::text[], ${input.deviceName}) AS id`
+        decode(${input.codeHash}, 'hex'), ${input.codeChallenge}, 'S256', ${input.scopes}::text[], ${input.deviceName}, ${input.extensionId}::text) AS id`
       .execute(ctx.trx)
       .catch(extensionError);
     const codeId = rows[0]?.id;

@@ -118,6 +118,7 @@ describe('declared risk and side effects (#1563)', () => {
       'finance.journal.reverse',
       'finance.journal_voucher.record',
       'finance.opening_balance.post',
+      'finance.payroll_payment.record',
       'finance.payroll_posting.record',
       'finance.purchase.record',
       'finance.stock.close_period',

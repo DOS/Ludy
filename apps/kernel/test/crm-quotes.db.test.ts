@@ -281,7 +281,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const party = await o.party('Công ty ABC');
     const stranger = await o.party('Công ty khác');
     expect(await o.query<QuoteDefaults>(o.viewer, 'crm.quote.defaults', { partyId: party })).toEqual({ validDays: 14, defaultVat: '10%', defaultTerms: null, hints: [] });
-    expect(await o.exec(o.adminUser, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: 'Thanh toán trong 7 ngày' })).toEqual({ validDays: 30, defaultVat: '8%', defaultTerms: 'Thanh toán trong 7 ngày', phone: null, email: null, bankNote: null });
+    expect(await o.exec(o.adminUser, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: 'Thanh toán trong 7 ngày' })).toEqual({ validDays: 30, defaultVat: '8%', defaultTerms: 'Thanh toán trong 7 ngày', phone: null, email: null, bankNote: null, logoFileId: null });
     await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 6, defaultVat: '10%', defaultTerms: null })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 30, defaultVat: '77%', defaultTerms: null })).rejects.toMatchObject({ code: 'QUOTE_VAT_RATE_INVALID' });
     const deal = await o.newDeal(party);

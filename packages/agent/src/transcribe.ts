@@ -9,8 +9,8 @@
 //   (Whisper-class, the deployment's own choice: in Ludy Cloud a model run in Vietnam, chosen in the private layer; a
 //   self-hosted Ludy can point it at a local model). It is called only through transcribeChunks, which puts every call
 //   behind the AI budget meter (`metered('meetings.transcribe')`): the meter admits before the call and records after.
-//   Measuring by audio length and the member's own context come with M4b; here the call counts as one call. In M4b the run
-//   is the recorder's own Vy and it writes only its own result (member_vy_result), never crove_meetings.transcript_segment:
+//   A call is metered by the audio seconds the media sandbox measured for the chunk (M4b). The run is the recorder's own Vy and
+//   it writes only its own result (member_vy_result), never crove_meetings.transcript_segment:
 //   the recorder's own action then copies that result into the draft through meetings.transcript.draft_store (ADR-0049
 //   decision 8; decided on #2578 and #2756).
 //
@@ -226,8 +226,8 @@ function kindOf(status: number): TranscriptionErrorKind {
 
 // The provider adapter: one chunk to `${baseURL}/audio/transcriptions`, the answer parsed. Call it through
 // transcribeChunks only: that is what puts it behind the meter (packages/agent/test/meter-coverage.test.ts checks every
-// call of it sits inside metered()). The usage it reports is empty: the meter counts the call; audio seconds come with M4b.
-async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput): Promise<{ segments: TranscriptSegment[]; usage: { inputTokens: number; outputTokens: number } }> {
+// call of it sits inside metered()). The usage it reports is the chunk's measured audio seconds (M4b): the meter prices a call by them.
+async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput): Promise<{ segments: TranscriptSegment[]; usage: { inputTokens: number; outputTokens: number; audioSeconds: number } }> {
   const form = new FormData();
   form.set('file', new Blob([input.audio.slice()], { type: input.mimeType }), neutralFileName(input.mimeType));
   form.set('model', config.model);
@@ -255,7 +255,7 @@ async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput)
   } catch (error: unknown) {
     throw error instanceof TranscriptionError ? error : invalid();
   }
-  return { segments: parseTranscription(raw, { lengthSeconds: input.lengthSeconds, offsetSeconds: input.offsetSeconds }), usage: { inputTokens: 0, outputTokens: 0 } };
+  return { segments: parseTranscription(raw, { lengthSeconds: input.lengthSeconds, offsetSeconds: input.offsetSeconds }), usage: { inputTokens: 0, outputTokens: 0, audioSeconds: Math.max(0, input.lengthSeconds) } };
 }
 
 // The chunks of one meeting, one after the other, each admitted by the AI budget meter before its call (a spent budget refuses

@@ -12,15 +12,16 @@ import {
   zTranscriptCorrect,
   zTranscriptDraftStore,
   type Transcript,
+  type TranscriptSegmentInput,
   type TranscriptStage,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { dayText, vnDay } from './retention.ts';
 
-const ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
+export const ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const INSERT_BATCH = 500;
 
-function userOf(actor: { type: string; userId?: string }): string {
+export function userOf(actor: { type: string; userId?: string }): string {
   if (actor.type !== 'user' || !actor.userId) throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
   return actor.userId;
 }
@@ -28,7 +29,7 @@ function userOf(actor: { type: string; userId?: string }): string {
 const notFound = () => new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
 
 // The meeting, 404 when the caller cannot read it or its text period has ended.
-async function openMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string) {
+export async function openMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string) {
   const meeting = await trx
     .selectFrom('crove_meetings.meeting')
     .select(['id', 'recorder_user_id', sql<string | null>`text_retention_date::text`.as('text_day')])
@@ -37,6 +38,26 @@ async function openMeeting(trx: QueryContext['trx'], orgId: string, meetingId: s
     .executeTakeFirst();
   if (!meeting || (meeting.text_day !== null && dayText(meeting.text_day) <= vnDay(new Date()))) throw notFound();
   return meeting;
+}
+
+// A new run replaces the earlier draft, corrections included: the recorder asked for it. The caller has checked that the caller is the recorder.
+export async function replaceDraft(ctx: { trx: QueryContext['trx']; orgId: string }, meetingId: string, segments: readonly TranscriptSegmentInput[]): Promise<void> {
+  for (const segment of segments) {
+    if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
+  }
+  await ctx.trx.deleteFrom('crove_meetings.transcript_segment').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'draft').execute();
+  for (let i = 0; i < segments.length; i += INSERT_BATCH) {
+    const rows = segments.slice(i, i + INSERT_BATCH).map((s) => ({
+      org_id: ctx.orgId,
+      meeting_id: meetingId,
+      start_seconds: String(s.startSeconds),
+      end_seconds: String(s.endSeconds),
+      speaker_label: s.speakerLabel,
+      text: s.text,
+      stage: 'draft' as const,
+    }));
+    await ctx.trx.insertInto('crove_meetings.transcript_segment').values(rows).execute();
+  }
 }
 
 export const transcriptDraftStore = defineCommand({
@@ -50,23 +71,7 @@ export const transcriptDraftStore = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can store its transcript');
-    for (const segment of input.segments) {
-      if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
-    }
-    // A new run replaces the earlier draft, corrections included: the recorder asked for it.
-    await ctx.trx.deleteFrom('crove_meetings.transcript_segment').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
-    for (let i = 0; i < input.segments.length; i += INSERT_BATCH) {
-      const rows = input.segments.slice(i, i + INSERT_BATCH).map((s) => ({
-        org_id: ctx.orgId,
-        meeting_id: input.meetingId,
-        start_seconds: String(s.startSeconds),
-        end_seconds: String(s.endSeconds),
-        speaker_label: s.speakerLabel,
-        text: s.text,
-        stage: 'draft' as const,
-      }));
-      await ctx.trx.insertInto('crove_meetings.transcript_segment').values(rows).execute();
-    }
+    await replaceDraft(ctx, input.meetingId, input.segments);
     ctx.audit({ meetingId: input.meetingId, stored: input.segments.length });
     return { meetingId: input.meetingId, stored: input.segments.length };
   },

@@ -78,6 +78,40 @@ test('with meetings off in the org the feature does not show, with it on it does
   await page.close();
 });
 
+test('the code exchange carries the extension\'s own Origin, which the kernel binds the code to (#2850)', async () => {
+  // Signed out, pointing at the fake Ludy. The popup's own sign-in runs; only the browser window is replaced: it answers
+  // with the redirect address the extension asked for plus a code, as the app's connect page would.
+  const worker = context.serviceWorkers()[0]!;
+  await worker.evaluate((origin) => chrome.storage.local.set({ 'ludy-extension-state': { address: origin, accounts: {}, activeOrg: null, enabled: {} } }), fake.origin);
+  fake.requests.length = 0;
+  fake.exchanges.length = 0;
+  const page = await popup();
+  await page.evaluate(() => {
+    const seen: { redirect: string } = { redirect: '' };
+    (chrome.identity as { launchWebAuthFlow: unknown }).launchWebAuthFlow = async ({ url }: { url: string }) => {
+      const params = new URL(url).searchParams;
+      seen.redirect = params.get('redirect_uri') ?? '';
+      const back = new URL(seen.redirect);
+      back.searchParams.set('code', `crc_${'A'.repeat(43)}`);
+      back.searchParams.set('org', 'cong-ty');
+      back.searchParams.set('state', params.get('state') ?? '');
+      return back.toString();
+    };
+    (window as unknown as { seen: typeof seen }).seen = seen;
+  });
+  await page.getByRole('button', { name: 'Đăng nhập Ludy' }).click();
+  await expect.poll(() => fake.exchanges.length).toBe(1);
+  const redirect = await page.evaluate(() => (window as unknown as { seen: { redirect: string } }).seen.redirect);
+  // The address the extension asked the app to send the code to is its own id's, and the exchange request says the same id.
+  expect(redirect).not.toBe('');
+  expect(new URL(redirect).hostname).toBe(`${extensionId}.chromiumapp.org`);
+  const exchange = fake.requests.filter((r) => r.method === 'POST' && r.path === '/api/extension/token');
+  expect(exchange).toHaveLength(1);
+  expect(exchange[0]!.origin).toBe(`chrome-extension://${extensionId}`);
+  expect(fake.exchanges[0]).toEqual({ code: `crc_${'A'.repeat(43)}`, codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
+  await page.close();
+});
+
 test('the shell talks to the configured address only', async () => {
   await seed({});
   fake.requests.length = 0;

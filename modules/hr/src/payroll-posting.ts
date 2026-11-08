@@ -19,7 +19,7 @@ const monthEnd = (month: string): string => {
   const [year, m] = month.split('-').map(Number) as [number, number];
   return new Date(Date.UTC(year, m, 0)).toISOString().slice(0, 10);
 };
-const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
+export const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
 const mismatch = (what: string) => new DomainError('HR_POSTING_MISMATCH', 422, `Số liệu của bảng lương không khớp (${what}); không lập được bút toán`, { what });
 
 interface StoredFund {
@@ -44,17 +44,19 @@ function deductionsOf(breakdown: unknown): { advance: string; other: string } {
   return { advance: d.advance, other: toMoney(money(d.damage).plus(d.other)) };
 }
 
-interface BuiltPosting {
+export interface BuiltPosting {
   payrollRun: { id: string; legal_entity_id: string; month: string; approved_by: string | null };
   date: string;
   regime: PayrollRegime;
   result: ReturnType<typeof buildPosting>;
   lines: number;
+  // The net pay of each frozen line, in whole dong and in no order: what the payment of the net pay counts against the cash limit, without a name or a line id.
+  nets: string[];
 }
 
 // The entry of an approved pay run, built from its frozen lines in the caller's context: the same build the proposal rests on and the posting is checked against (hr.payroll.posting.verify),
 // so what is requested and what is recorded are one fact. `lock` holds the run's row to the end of the request, so two requests for the same run take turns.
-async function buildRunPosting(ctx: CommandContext, runId: string, lock: boolean): Promise<BuiltPosting> {
+export async function buildRunPosting(ctx: CommandContext, runId: string, lock: boolean): Promise<BuiltPosting> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   let query = ctx.trx
     .selectFrom('crove_hr.payroll_run')
@@ -138,7 +140,7 @@ async function buildRunPosting(ctx: CommandContext, runId: string, lock: boolean
     throw mismatch('tổng so với lúc duyệt');
   }
 
-  return { payrollRun: run, date, regime, result, lines: stored.length };
+  return { payrollRun: run, date, regime, result, lines: stored.length, nets: stored.map((l) => String(l.net)) };
 }
 
 export const prepareRunPosting = defineCommand({

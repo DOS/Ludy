@@ -116,8 +116,14 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     return { verifier, status: authorize.status, code: issued.code ?? '' };
   }
 
-  async function exchange(code: string, codeVerifier: string) {
-    const response = await app.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, codeVerifier }) });
+  // The extension trades its code from its own origin: the browser sends chrome-extension://<id> (#2850).
+  const originOf = (id: string) => `chrome-extension://${id}`;
+  async function exchange(code: string, codeVerifier: string, origin: string | null = originOf(EXT_ID), target = app) {
+    const response = await target.request('/api/extension/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(origin === null ? {} : { origin }) },
+      body: JSON.stringify({ code, codeVerifier }),
+    });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
 
@@ -231,6 +237,71 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     // The token is stored as its hash only.
     const hashes = await admin(async (c) => (await c.query<{ token_hash: Buffer }>('SELECT token_hash FROM crove_kernel.extension_token WHERE org_id = $1', [orgId])).rows);
     expect(hashes.some((r) => r.token_hash.equals(createHash('sha256').update(String(done.body.token)).digest()))).toBe(true);
+  });
+
+  it('binds a code to the extension it was issued for: another id, a wrong or missing Origin, or a code made without an id cannot exchange it (#2850)', async () => {
+    // A deployment that lists two extensions (the store's and a development one): the code of one must not work from the other.
+    const both = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: `${EXT_ID}, ${OTHER_EXT_ID}` });
+    const twoIds = createHttpApp({ config: both, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(both, sharedDb), pool, aiEnabled: false, extensionTokenLimit: new RateLimiter({ perMinute: 40 }) });
+    const issue = async (id: string) => {
+      const verifier = randomBytes(32).toString('base64url');
+      const response = await twoIds.request('/api/extension/authorize', {
+        method: 'POST',
+        headers: await asBrowser('recorder'),
+        body: JSON.stringify({ extensionId: id, codeChallenge: challengeOf(verifier), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'Chrome' }),
+      });
+      expect(response.status).toBe(200);
+      return { verifier, code: ((await response.json()) as { code: string }).code };
+    };
+    const a = await issue(EXT_ID);
+    // The id is stored with the code.
+    const bound = await admin(async (c) => (await c.query<{ extension_id: string | null }>('SELECT extension_id FROM crove_kernel.extension_auth_code WHERE code_hash = $1', [createHash('sha256').update(a.code).digest()])).rows[0]?.extension_id);
+    expect(bound).toBe(EXT_ID);
+    // Every refusal is the same flat 400, and none spends the code.
+    const refusals = [
+      await exchange(a.code, a.verifier, originOf(OTHER_EXT_ID), twoIds), // a listed id, but not the code's
+      await exchange(a.code, a.verifier, null, twoIds), // no Origin
+      await exchange(a.code, a.verifier, originOf('c'.repeat(32)), twoIds), // an id the deployment does not list
+      await exchange(a.code, a.verifier, `${originOf(EXT_ID)}/`, twoIds), // not exactly chrome-extension://<id>
+      await exchange(a.code, a.verifier, `https://${EXT_ID}.chromiumapp.org`, twoIds), // a web origin
+      await exchange(a.code, a.verifier, 'null', twoIds),
+    ];
+    for (const refused of refusals) expect(refused.status).toBe(400);
+    for (const refused of refusals) expect(refused.body).toEqual(refusals[0]!.body);
+    const unspent = await admin(async (c) => (await c.query<{ consumed_at: Date | null; failed_attempts: number }>('SELECT consumed_at, failed_attempts FROM crove_kernel.extension_auth_code WHERE code_hash = $1', [createHash('sha256').update(a.code).digest()])).rows[0]);
+    expect(unspent).toEqual({ consumed_at: null, failed_attempts: 0 });
+    // The code's own extension still gets its token, once.
+    const done = await exchange(a.code, a.verifier, originOf(EXT_ID), twoIds);
+    expect(done.status).toBe(200);
+    expect(done.body.token).toMatch(/^crx_/);
+    // And the other way round: a code for B is for B alone.
+    const b = await issue(OTHER_EXT_ID);
+    expect((await exchange(b.code, b.verifier, originOf(EXT_ID), twoIds)).status).toBe(400);
+    expect((await exchange(b.code, b.verifier, originOf(OTHER_EXT_ID), twoIds)).status).toBe(200);
+    // An id taken off the allow-list after the code was issued no longer exchanges, even from its own origin.
+    const c = await issue(OTHER_EXT_ID);
+    expect((await exchange(c.code, c.verifier, originOf(OTHER_EXT_ID))).status).toBe(400);
+    // A code with no bound id (a row from before the id was bound, written by the owner role: no definer makes one any more) is refused by the
+    // route whatever the origin, and the command no longer takes an input without the id.
+    const verifier = randomBytes(32).toString('base64url');
+    const unboundCode = `crc_${randomBytes(32).toString('base64url')}`;
+    await admin(async (c) =>
+      c.query(
+        `INSERT INTO crove_kernel.extension_auth_code (org_id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, 'S256', ARRAY['meetings'], 'Chrome', now(), now() + interval '5 minutes')`,
+        [orgId, await userIdOf('recorder'), createHash('sha256').update(unboundCode).digest(), challengeOf(verifier)],
+      ),
+    );
+    expect((await exchange(unboundCode, verifier, originOf(EXT_ID), twoIds)).status).toBe(400);
+    expect((await exchange(unboundCode, verifier, originOf(OTHER_EXT_ID), twoIds)).status).toBe(400);
+    const noId = await sharedRuntime
+      .execute(
+        'kernel.extension.code.issue',
+        { codeHash: createHash('sha256').update(randomBytes(8)).digest('hex'), codeChallenge: challengeOf(verifier), scopes: ['meetings'], deviceName: 'Chrome' },
+        { actor: { type: 'user', userId: await userIdOf('recorder'), aal: 'aal1', sessionId: randomUUID(), mfaAt: null }, orgId },
+      )
+      .then(() => 'accepted', (error: unknown) => (error as { code?: string }).code);
+    expect(noId).toBe('VALIDATION');
   });
 
   it('counts a token\'s requests per client even when the header has extra spaces', async () => {
@@ -564,7 +635,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       body: JSON.stringify({ extensionId: EXT_ID, codeChallenge: challengeOf(verifier), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'Chrome' }),
     });
     const { code } = (await authorize.json()) as { code: string };
-    const response = await broken.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, codeVerifier: verifier }) });
+    const response = await broken.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json', origin: originOf(EXT_ID) }, body: JSON.stringify({ code, codeVerifier: verifier }) });
     expect(response.status).toBeGreaterThanOrEqual(400);
     expect(JSON.stringify(await response.json())).not.toMatch(/crx_/);
     const rows = await admin(async (c) => (await c.query('SELECT id, revoked_at FROM crove_kernel.extension_token WHERE user_id = $1', [userId])).rows as Array<{ id: string; revoked_at: Date | null }>);
