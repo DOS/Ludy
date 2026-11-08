@@ -154,7 +154,7 @@ CREATE POLICY sales_order_line_insert ON crove_crm.sales_order_line AS RESTRICTI
 -- The decision time and a decline's reason (decided_at and decline_reason were left ungranted by Q1 and Q2 for this step); the guard below holds what may change with them.
 GRANT UPDATE (decided_at, decline_reason) ON crove_crm.quote TO crove_tenant;
 
--- The guard of Q2 (20261128010000) with one branch added: sent to accepted or declined. Every other rule is as it was.
+-- The guard of Q2 (20261128120000) with one branch added: sent to accepted or declined. Every other rule is as it was.
 CREATE OR REPLACE FUNCTION crove_crm.quote_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE

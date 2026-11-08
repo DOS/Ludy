@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2696): the org purge deletes the org's sales orders with the org (crove_crm.sales_order_line, sales_order), ahead of the quotes, deals and parties they name. Idempotent;
--- applied files stay untouched. This is the body of 20261128020000 (the newest, with the quote links) with the two tables added to the first list; its signature, owner, grants and
+-- applied files stay untouched. This is the body of 20261128130000 (the newest, with the quote links) with the two tables added to the first list; its signature, owner, grants and
 -- every other list and step are as they were.
 SET LOCAL lock_timeout = '2s';
 
@@ -30,6 +30,7 @@ DECLARE
   v_conversation_keys text[];
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
+    'crove_kernel.member_vy_memory', 'crove_kernel.member_vy_result',
     'crove_hr.payroll_bank_template', 'crove_hr.payroll_dependent', 'crove_hr.payroll_employee',
     'crove_meetings.media_key', 'crove_meetings.transcript_segment', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
