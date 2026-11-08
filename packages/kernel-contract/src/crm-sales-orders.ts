@@ -37,6 +37,17 @@ export type QuoteDecided = z.infer<typeof zQuoteDecided>;
 
 export const zSalesOrderRef = z.strictObject({ orderId: zId });
 export const zSalesOrderCancel = z.strictObject({ orderId: zId, version: z.number().int().min(1), reason: z.string().trim().min(1).max(SALES_ORDER_REASON_MAX) });
+// A person marks a goods line of a confirmed order delivered on a day (today in Vietnam's calendar by default; not before the order's day, never after today) or takes the mark
+// back (a reversing row, never a deletion). Whole lines only; a service line takes none (#2697, ADR-0050 point 4).
+export const zSalesOrderDeliver = z.strictObject({ orderId: zId, lineNo: z.number().int().min(1).max(100), deliveredOn: zDate.optional() });
+export type SalesOrderDeliver = z.infer<typeof zSalesOrderDeliver>;
+export const zSalesOrderUndeliver = z.strictObject({ orderId: zId, lineNo: z.number().int().min(1).max(100) });
+export type SalesOrderUndeliver = z.infer<typeof zSalesOrderUndeliver>;
+// The state of one line's delivery after a command, or as the order reads it: the day it was delivered, and whether the mark was taken back.
+export const zSalesOrderDelivery = z.strictObject({ lineNo: z.number().int(), deliveredOn: z.string(), reversed: z.boolean() });
+export type SalesOrderDelivery = z.infer<typeof zSalesOrderDelivery>;
+export const zSalesOrderDeliveryChanged = z.strictObject({ orderId: z.string(), lineNo: z.number().int(), delivery: zSalesOrderDelivery });
+export type SalesOrderDeliveryChanged = z.infer<typeof zSalesOrderDeliveryChanged>;
 export const zSalesOrderListQuery = z.strictObject({
   dealId: zId.optional(),
   partyId: zId.optional(),
@@ -83,6 +94,8 @@ export const zSalesOrder = zSalesOrderSummary.extend({
   acceptedVia: z.enum(QUOTE_ACCEPTED_VIA).nullable(),
   cancelReason: z.string().nullable(),
   lines: z.array(zQuoteLine),
+  // The lines delivered so far (a line with no row here is not delivered); a reversed one stays listed, marked, so the screen can say it was taken back.
+  deliveries: z.array(zSalesOrderDelivery),
 });
 export type SalesOrder = z.infer<typeof zSalesOrder>;
 export const zSalesOrderPage = z.strictObject({ items: z.array(zSalesOrderSummary), next: z.strictObject({ createdAt: z.string(), id: z.string() }).nullable() });
