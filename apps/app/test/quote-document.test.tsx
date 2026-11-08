@@ -94,6 +94,12 @@ describe("a sent quote's public page (#2694)", () => {
     expect(html).toContain('Vietcombank 0071000123456');
   });
 
+  it('shows the day the quote was sent in Vietnam time, as the PDF does (#2827)', () => {
+    // 18:30 UTC on 8 November is 01:30 on 9 November in Vietnam.
+    expect(render('vi', doc({ sentAt: '2026-11-08T18:30:00.000Z' }))).toContain('Ngày gửi: 09/11/2026');
+    expect(render('vi', doc({ sentAt: '2026-11-08T03:00:00.000Z' }))).toContain('Ngày gửi: 08/11/2026');
+  });
+
   it('shows the one refusal for a link that does not open', () => {
     expect(render('vi', null)).toContain(catalog('vi').quoteDocument.invalid);
     expect(render('en', null)).toContain(catalog('en').quoteDocument.invalid);
