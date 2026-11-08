@@ -811,10 +811,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   // The sales order of an accepted quote (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): one per quote, in the quote's issuing entity (named by issuer_entity_id, so it
-  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names only has to exist (the accept
-  // command takes it to `accepted` and makes the order in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
+  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names is sent and carries the same deal, customer and issuing entity
+  // (the order's insert policy holds it; the accept command makes the order and takes the quote to `accepted` in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
   // assign the cancel reason to itself.
   'crove_crm.sales_order': {
+    noInsertControl: 'an order is made for a sent quote of the same deal, customer and issuing entity, and the quote is sent only by the send command (a guard trigger), so the own-org insert control cannot build its setup as a login role; crm-sales-orders.db.test.ts tests the order insert as the runtime login',
     make: (o) => {
       const stage = randomUUID();
       const deal = randomUUID();
@@ -824,8 +825,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         setup: [
           { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
           { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
-          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
           { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link', issuer_entity_id: entity },
+          },
         ],
         row: {
           org_id: o.id,
@@ -884,6 +888,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
   'crove_crm.sales_order_line': {
+    noInsertControl: 'a line joins an order made in the same transaction, and that order needs a sent quote, which only the send command makes, so the own-org insert control cannot build its setup as a login role; crm-sales-orders.db.test.ts tests the accept as the runtime login',
     make: (o) => {
       const stage = randomUUID();
       const deal = randomUUID();
@@ -894,8 +899,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         setup: [
           { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
           { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
-          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
           { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link', issuer_entity_id: entity },
+          },
           {
             table: 'crove_crm.sales_order',
             values: {

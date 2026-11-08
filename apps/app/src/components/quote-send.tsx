@@ -76,12 +76,13 @@ export function QuoteSendPanel({ quote, dirty, onSent }: { quote: Quote; dirty: 
     },
     onError: refreshQuoteQueries,
   });
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    send.mutate();
+  // This panel sits inside the editor's <form> and has no form of its own: a nested form's submit bubbles up and would run the editor's save with the same version as
+  // the send (#2825). So the button is a plain button, and Enter in the address box sends instead of submitting the editor.
+  const sendNow = () => {
+    if (!dirty && !send.isPending) send.mutate();
   };
   return (
-    <form onSubmit={submit} className="space-y-3 rounded-md border border-border p-3" aria-label={t('title')} data-testid="quote-send">
+    <div role="group" className="space-y-3 rounded-md border border-border p-3" aria-label={t('title')} data-testid="quote-send">
       <h4 className="text-sm font-medium text-foreground">{t('title')}</h4>
       <p className="text-xs text-muted-foreground">{t('hint')}</p>
       <Field label={t('via')}>
@@ -94,15 +95,29 @@ export function QuoteSendPanel({ quote, dirty, onSent }: { quote: Quote; dirty: 
       </Field>
       {via === 'email' && (
         <Field label={t('to')} hint={t('toHint')}>
-          {(c) => <Input {...c} type="email" autoComplete="off" maxLength={254} value={to} onChange={(e) => setTo(e.target.value)} />}
+          {(c) => (
+            <Input
+              {...c}
+              type="email"
+              autoComplete="off"
+              maxLength={254}
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                e.preventDefault();
+                sendNow();
+              }}
+            />
+          )}
         </Field>
       )}
       {dirty && <p className="text-xs text-muted-foreground">{t('saveFirst')}</p>}
       {send.error && <ErrorText>{errorMessage(send.error)}</ErrorText>}
-      <Button type="submit" size="sm" loading={send.isPending} disabled={dirty}>
+      <Button type="button" size="sm" loading={send.isPending} disabled={dirty} onClick={sendNow}>
         {via === 'email' ? t('sendEmail') : t('sendLink')}
       </Button>
-    </form>
+    </div>
   );
 }
 
