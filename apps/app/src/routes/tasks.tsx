@@ -16,7 +16,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
+import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 
@@ -306,6 +306,7 @@ export function TaskDetailPage() {
   }
   const { task, comments, proposal } = detail.data;
   const postId = socialPostOf(task.sourceRef);
+  const meetingItemId = meetingItemOf(task.sourceRef);
   const members = org.data?.members ?? [];
   const authorName = (c: (typeof comments)[number]) =>
     c.authorType === 'agent'
@@ -372,6 +373,7 @@ export function TaskDetailPage() {
             </Link>
           </p>
         )}
+        {meetingItemId && <MeetingLink itemId={meetingItemId} slug={slug} />}
         {perms.tasks && (
           <label className="block w-56 text-xs">
             <span className="text-subtle-foreground">{t('setStatus')}</span>
@@ -443,5 +445,21 @@ export function TaskDetailPage() {
         )}
       </section>
     </div>
+  );
+}
+
+// The meeting a task came from (#2580). Only a reader of the meeting is told where it is; anyone else, and the days after the meeting's text is erased, read
+// "the record cannot be opened": the same answer for an unknown item, so the task reveals nothing of the meeting.
+function MeetingLink({ itemId, slug }: { itemId: string; slug: string }) {
+  const t = useTranslations('tasks');
+  const source = useQuery({ ...orpc.meetings.actionItems.source.queryOptions({ input: { itemId } }), retry: false });
+  if (source.isPending) return null;
+  if (source.error) return <p className="text-sm text-muted-foreground">{t('meetingClosed')}</p>;
+  return (
+    <p className="text-sm">
+      <Link to="/o/$slug/meetings/$id" params={{ slug, id: source.data.meetingId }} className="text-link underline">
+        {t('openMeeting')}
+      </Link>
+    </p>
   );
 }

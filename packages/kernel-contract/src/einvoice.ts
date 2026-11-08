@@ -259,14 +259,21 @@ export type EInvoiceIssueView = z.infer<typeof zEInvoiceIssueView>;
 // the model may see, asks the model outside any transaction through the AI budget meter, checks the answer in code, and gives back PROPOSALS that fill the form marked as the coworker's. Nothing is
 // stored and nothing is issued: a person reads the whole draft, saves it, and the issue keeps its own approval.
 export const EINVOICE_SUGGEST_TEXT_MAX = 2000;
-export const zEInvoiceSuggestInput = z.strictObject({
-  text: z.string().trim().min(1).max(EINVOICE_SUGGEST_TEXT_MAX),
-  // The date of the invoice on the form: it decides which VAT rates are allowed.
-  date: zLocalDate,
-  // An issued invoice of the org that is part of the source (#2721, the previous invoice to the buyer): its lines go to the model with the text, so a figure it holds is a figure the
-  // source holds. A draft that is not issued, or another org's, is refused (EINVOICE_DRAFT_NOT_FOUND).
-  invoiceDraftId: zId.optional(),
-});
+export const zEInvoiceSuggestInput = z
+  .strictObject({
+    text: z.string().trim().min(1).max(EINVOICE_SUGGEST_TEXT_MAX),
+    // The date of the invoice on the form: it decides which VAT rates are allowed.
+    date: zLocalDate,
+    // An issued invoice of the org that is part of the source (#2721, the previous invoice to the buyer): its lines go to the model with the text, so a figure it holds is a figure the
+    // source holds. It must be an invoice to `buyerPartyId`, in the books of the form's legal entity (#2883); a draft that is not issued, another buyer's, another entity's or another org's is
+    // refused (EINVOICE_DRAFT_NOT_FOUND).
+    invoiceDraftId: zId.optional(),
+    // The buyer the form is for, with `invoiceDraftId`.
+    buyerPartyId: zId.optional(),
+    // The legal entity of the form, as in zLegalEntityChoice: the default (or only visible) one when omitted.
+    legalEntityId: zId.optional(),
+  })
+  .refine((v) => v.invoiceDraftId === undefined || v.buyerPartyId !== undefined, { message: 'buyerPartyId is required with invoiceDraftId', path: ['buyerPartyId'] });
 export type EInvoiceSuggestInput = z.infer<typeof zEInvoiceSuggestInput>;
 
 // ai: used (a proposal came), off (the deployment has no model), busy (too many asks at once), budget (the org's AI budget of the month is spent), failed (the call failed), refused (the answer
@@ -285,8 +292,9 @@ export type EInvoiceSuggested = z.infer<typeof zEInvoiceSuggested>;
 
 // The previous issued invoice to the same buyer (#2721), for a copy by code with no model: the buyer as that invoice held it and its lines, with whether each line's VAT rate is still one the
 // date of the new invoice allows (`vatAllowed`; a rate that is not is the person's to choose, never carried silently). Only an invoice that was issued, in the books of an entity the caller may
-// see; none gives `invoice: null`.
-export const zEInvoicePreviousInput = z.strictObject({ buyerPartyId: zId, date: zLocalDate });
+// see; none gives `invoice: null`. The buyer's name, tax code, address and email are the party record's now (#2883), the invoice's own where the record has none; `legalEntityId` names the form's
+// entity (the default one when omitted) and only that entity's invoices count.
+export const zEInvoicePreviousInput = z.strictObject({ buyerPartyId: zId, date: zLocalDate, legalEntityId: zId.optional() });
 export const zEInvoicePrevious = z.strictObject({
   invoice: z
     .strictObject({
