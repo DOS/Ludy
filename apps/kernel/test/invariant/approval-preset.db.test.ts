@@ -286,15 +286,19 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
+    const approvedAudit = await o.audit('kernel.proposal.approve', after);
+    expect(approvedAudit).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
-      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-      // 8: the posting of an approved pay run was given its approval policy (#2532; the allowance of 7 or 8 that step one gave is gone).
-      policy_version: 8,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
+    // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+    // 8: the posting of an approved pay run was given its approval policy (#2532). This is a dated allowance for #2736: 8, as before, or 9, which the co-authors of a proposal raise it to
+    // (people a proposal rests on besides its requester count in four-eyes, in the database gate and in approval.ts). The step-two change of #2736 pins 9 and removes this allowance; it
+    // expires with that PR and, failing that, fails on 2026-12-24.
+    expect(Date.now(), 'the allowance of #2736 for policy_version 8 or 9 has expired: pin the number').toBeLessThan(Date.parse('2026-12-24T00:00:00Z'));
+    expect([8, 9]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
