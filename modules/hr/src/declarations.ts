@@ -229,6 +229,12 @@ const sameWages = (a: DeclarationLine, b: DeclarationLine): boolean => INSURANCE
  * before, or newly insured, is an adjustment effective on the first of the month. A person not insured that month is not listed. Persons who left in an earlier month are not in the run.
  */
 export function buildD02Lt(input: D02LtInput): DeclarationDocument {
+  return buildD02LtListing(input).document;
+}
+
+/** The D02-LT and the people it lists (the ones with a change that month), so a caller can open the identifiers of those people only. */
+export function buildD02LtListing(input: D02LtInput): { document: DeclarationDocument; listed: ReadonlySet<string> } {
+  const listed = new Set<string>();
   const lineOf = (lines: readonly DeclarationLine[] | null, id: string) => lines?.find((l) => l.employeeId === id && l.kind === 'pay');
   assertKnown(input.persons, [...input.lines, ...(input.previousLines ?? [])]);
   const rows: (Record<string, string> & { _order: string; _name: string; _id: string })[] = [];
@@ -262,6 +268,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
       continue;
     }
     for (const { movement, effective, source } of movements) {
+      listed.add(person.employeeId);
       rows.push({
         _order: String(MOVEMENT_ORDER[movement]),
         _name: person.name,
@@ -308,7 +315,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
   if (skipped > 0) notes.push(`${skipped} người không đóng bảo hiểm trong tháng nên không có trong danh sách.`);
   if (suspended > 0) notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (nghỉ không lương từ 14 ngày): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
   if (unexplained > 0) notes.push(`${unexplained} người có mức đóng tháng trước nhưng tháng này không có mức đóng (không rõ lý do): kiểm tra xem có phải báo giảm hay điều chỉnh không.`);
-  return documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes);
+  return { document: documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes), listed };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------

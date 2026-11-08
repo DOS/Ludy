@@ -12,8 +12,8 @@
 // Never a silently cut file: more people than HR_DECLARATION_MAX_PEOPLE is refused with a message. Nothing is sent and nothing is filed.
 import type { MemberRole } from '@crove/db';
 import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { buildAnnual, buildCertificates, buildD02Lt, buildQuarterly, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
+import { buildAnnual, buildCertificates, buildD02Lt, buildD02LtListing, buildQuarterly, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { IDENTITY_PLACE, INSURANCE_PLACE, TAX_CODE_PLACE, subjectOf } from './employees.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -45,7 +45,12 @@ export const declarationGet = defineQuery({
   input: zHrDeclarationQuery,
   access: MANAGERS,
   sensitive: true,
+  // The kind names what is read (a name of fixed shape), so the audit row of the read says which form it was before a value is opened.
+  auditDetail: (input) => ({ kind: input.kind }),
   handler: async (ctx, input): Promise<HrDeclarationDocument> => {
+    // Bulk decryption of staff identifiers needs a second factor used within the last 5 minutes (policy P11), as an R3 command does; the app's StepUpPrompt answers STEP_UP_REQUIRED. Checked
+    // before anything is read or opened, and for every caller (the download route and the screen's read).
+    if (ctx.actor.type !== 'user' || !hasFreshMfa(ctx.actor)) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
     const entity = input.legalEntityId
       ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst()
       : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
@@ -111,53 +116,68 @@ export const declarationGet = defineQuery({
     const startedOn = new Map<string, string>();
     for (const s of starts) if (!startedOn.has(s.employee_id)) startedOn.set(s.employee_id, iso(s.effective_from));
 
-    // The sealed identifiers opened, here and only here, in one batch for the people who appear: the audit row of this read is already committed. A value whose key is gone reads as none.
-    const items: { sealed: string; place: string; ref: string }[] = [];
-    const slots: { id: string; field: 'identityNumber' | 'taxCode' | 'insuranceNumber' }[] = [];
-    for (const e of employees) {
-      if (e.erased_at !== null) continue;
-      const subject = subjectOf(e.id);
-      if (e.national_id_sealed !== null) { items.push({ sealed: e.national_id_sealed, place: IDENTITY_PLACE, ref: subject }); slots.push({ id: e.id, field: 'identityNumber' }); }
-      if (e.tax_code_sealed !== null) { items.push({ sealed: e.tax_code_sealed, place: TAX_CODE_PLACE, ref: subject }); slots.push({ id: e.id, field: 'taxCode' }); }
-      if (e.insurance_number_sealed !== null) { items.push({ sealed: e.insurance_number_sealed, place: INSURANCE_PLACE, ref: subject }); slots.push({ id: e.id, field: 'insuranceNumber' }); }
-    }
-    const opened = items.length === 0 ? [] : await ctx.openMany(items);
-    const clear = new Map<string, { identityNumber?: string; taxCode?: string; insuranceNumber?: string }>();
-    slots.forEach((slot, i) => {
-      const value = opened[i];
-      if (typeof value !== 'string') return;
-      clear.set(slot.id, { ...clear.get(slot.id), [slot.field]: value });
-    });
-    let taxCodeFromIdentity = 0;
-    const persons: DeclarationPerson[] = employees.map((e) => {
-      const c = clear.get(e.id) ?? {};
-      // Since 2025-07-01 the tax code is in most cases the identity number: a person with no tax code of their own is listed under the identity number, and the document says so.
-      const taxCode = c.taxCode ?? c.identityNumber ?? null;
-      if (c.taxCode === undefined && c.identityNumber !== undefined) taxCodeFromIdentity += 1;
-      return {
-        employeeId: e.id,
-        name: e.display_name,
-        birthDate: e.erased_at === null && e.birth_date !== null ? iso(e.birth_date) : null,
-        taxCode,
-        insuranceNumber: c.insuranceNumber ?? null,
-        identityNumber: c.identityNumber ?? null,
-        startedOn: startedOn.get(e.id) ?? '1900-01-01',
-        endedOn: e.ended_on === null ? null : iso(e.ended_on),
-        finalizationAuthorizedYears: [...e.finalization_authorized_years],
-      };
-    });
+    // What a form prints is all that is opened (the sealed values of a person are opened only when the form shows them): the D02-LT shows the identity number and the social insurance number, and
+    // only of the people it lists (a change that month, worked out first from data that is not sealed); the tax forms show the identity number and the tax code. One batch, after the audit row.
     const employer = { name: entity.name, taxCode: entity.tax_code, address: null };
-    let document: Omit<HrDeclarationDocument, 'used'>;
-    if (input.kind === 'd02lt') {
+    type Clear = { identityNumber?: string; taxCode?: string; insuranceNumber?: string };
+    const personsOf = (clear: ReadonlyMap<string, Clear>): DeclarationPerson[] =>
+      employees.map((e) => {
+        const c = clear.get(e.id) ?? {};
+        // Since 2025-07-01 the tax code is in most cases the identity number: a person with no tax code of their own is listed under the identity number, and the document says so.
+        return {
+          employeeId: e.id,
+          name: e.display_name,
+          birthDate: e.erased_at === null && e.birth_date !== null ? iso(e.birth_date) : null,
+          taxCode: c.taxCode ?? c.identityNumber ?? null,
+          insuranceNumber: c.insuranceNumber ?? null,
+          identityNumber: c.identityNumber ?? null,
+          startedOn: startedOn.get(e.id) ?? '1900-01-01',
+          endedOn: e.ended_on === null ? null : iso(e.ended_on),
+          finalizationAuthorizedYears: [...e.finalization_authorized_years],
+        };
+      });
+    const d02Input = (persons: DeclarationPerson[]) => {
       const previous = months[1] as string;
       const previousLines = approvedMonths.includes(previous) ? lines.filter((l) => l.month === previous && l.kind === 'pay') : null;
-      document = buildD02Lt({ month: input.period, employer, persons, lines: lines.filter((l) => l.month === input.period), previousLines });
-    } else if (input.kind === 'kk') {
-      document = buildQuarterly({ quarter: input.period, employer, persons, lines, approvedMonths });
-    } else if (input.kind === 'qtt') {
-      document = buildAnnual({ year: Number(input.period), employer, persons, lines, approvedMonths });
+      return { month: input.period, employer, persons, lines: lines.filter((l) => l.month === input.period), previousLines };
+    };
+    const openFor = async (who: ReadonlySet<string> | null, fields: readonly ('identityNumber' | 'taxCode' | 'insuranceNumber')[]): Promise<Map<string, Clear>> => {
+      const places = { identityNumber: [IDENTITY_PLACE, 'national_id_sealed'], taxCode: [TAX_CODE_PLACE, 'tax_code_sealed'], insuranceNumber: [INSURANCE_PLACE, 'insurance_number_sealed'] } as const;
+      const items: { sealed: string; place: string; ref: string }[] = [];
+      const slots: { id: string; field: (typeof fields)[number] }[] = [];
+      for (const e of employees) {
+        if (e.erased_at !== null || (who !== null && !who.has(e.id))) continue;
+        for (const field of fields) {
+          const [place, column] = places[field];
+          const sealed = e[column];
+          if (sealed === null) continue;
+          items.push({ sealed, place, ref: subjectOf(e.id) });
+          slots.push({ id: e.id, field });
+        }
+      }
+      // A value whose key is gone reads as none.
+      const opened = items.length === 0 ? [] : await ctx.openMany(items);
+      const clear = new Map<string, Clear>();
+      slots.forEach((slot, i) => {
+        const value = opened[i];
+        if (typeof value === 'string') clear.set(slot.id, { ...clear.get(slot.id), [slot.field]: value });
+      });
+      return clear;
+    };
+    let document: Omit<HrDeclarationDocument, 'used'>;
+    let persons: DeclarationPerson[];
+    let taxCodeFromIdentity = 0;
+    if (input.kind === 'd02lt') {
+      const { listed } = buildD02LtListing(d02Input(personsOf(new Map())));
+      persons = personsOf(await openFor(listed, ['identityNumber', 'insuranceNumber']));
+      document = buildD02Lt(d02Input(persons));
     } else {
-      document = buildCertificates({ year: Number(input.period), employer, persons, lines });
+      const clear = await openFor(null, ['identityNumber', 'taxCode']);
+      for (const c of clear.values()) if (c.taxCode === undefined && c.identityNumber !== undefined) taxCodeFromIdentity += 1;
+      persons = personsOf(clear);
+      if (input.kind === 'kk') document = buildQuarterly({ quarter: input.period, employer, persons, lines, approvedMonths });
+      else if (input.kind === 'qtt') document = buildAnnual({ year: Number(input.period), employer, persons, lines, approvedMonths });
+      else document = buildCertificates({ year: Number(input.period), employer, persons, lines });
     }
     if (taxCodeFromIdentity > 0) document.notes.push(`${taxCodeFromIdentity} người chưa có mã số thuế riêng trong hồ sơ nên cột mã số thuế lấy số định danh cá nhân (từ 2025-07-01 hai số này thường trùng nhau): kiểm tra lại.`);
     if (employer.taxCode === null) document.notes.push('Đơn vị chưa có mã số thuế trong hồ sơ pháp nhân.');
@@ -182,6 +202,7 @@ export const declarationExport = defineCommand({
       kind: input.kind,
       period: input.period,
       rows: input.rows,
+      via: input.via,
       months: input.months,
       ...(input.authorizedYear === undefined ? {} : { authorizedYear: input.authorizedYear, authorizedPeople: input.authorizedPeople ?? 0 }),
       ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}),
