@@ -2065,6 +2065,7 @@ export const vi = {
     unverified: 'Chưa xác minh người gửi',
     unverifiedHint: 'Máy chủ nhận thư không xác nhận được người gửi là chủ địa chỉ này. Tên và địa chỉ trong thư có thể do người khác viết, hãy kiểm tra trước khi làm theo.',
     replyPlaceholder: 'Viết câu trả lời…',
+    quoteTooLong: 'Chưa chèn được báo giá: tin nhắn sẽ dài quá {max} ký tự mà kênh này cho phép. Hãy rút gọn phần đã viết rồi chèn lại.',
     send: 'Gửi',
     movedAfterSend: 'Hội thoại vừa có tin mới nên chưa gửi. Hãy đọc tin mới rồi bấm Gửi lại.',
     notes: 'Ghi chú nội bộ',
