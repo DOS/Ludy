@@ -9163,6 +9163,7 @@ export const vi = {
         send: 'Gửi báo giá bằng liên kết hoặc email',
         create_link: 'Tạo liên kết xem báo giá đã gửi',
         revoke_link: 'Thu hồi liên kết xem báo giá',
+        mail_data: 'Tạo liên kết cho thư báo giá đang gửi',
         defaults: 'Xem giá trị mặc định và giá cũ của khách khi lập báo giá',
         delete_draft: 'Xóa báo giá nháp',
         get: 'Xem một báo giá',

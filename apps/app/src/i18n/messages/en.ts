@@ -9166,6 +9166,7 @@ export const en = {
         send: 'Send a quote by a link or by email',
         create_link: 'Make a link to view a sent quote',
         revoke_link: 'Revoke a quote link',
+        mail_data: 'Make the link of a quote mail being sent',
         defaults: "See the org's defaults and a customer's earlier prices for a quote",
         delete_draft: 'Delete a draft quote',
         get: 'See a quote',
