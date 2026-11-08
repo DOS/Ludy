@@ -13,7 +13,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@crove/kernel-contract';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries, readMarketplaceFile, readMarketplaceIncomeFile } from '@crove/mod-finance';
+import { financeCommands, financeQueries, readMarketplaceIncomeFile } from '@crove/mod-finance';
 import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { runMarketplaceRetention } from '../src/marketplace-retention.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -69,17 +69,6 @@ class MemoryStore implements BlobStore {
   }
 }
 
-interface Preview {
-  reportNet: string;
-  fileStatesNet: boolean;
-  linesNet: string;
-  unknownOrders: number;
-  unknownOrderNos: string[];
-  overlap: { periodStart: string; periodEnd: string } | null;
-  repeatedLines: number;
-  blockers: string[];
-}
-
 suite('retention of marketplace report originals (#2516, C-2b3)', () => {
   const dbName = `crove_test_mkt_retention_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
@@ -133,7 +122,6 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     const result = await readMarketplaceIncomeFile({ runtime: worker, store, extract }, o.orgId, fileId);
     return { fileId, ...result };
   }
-  const preview = (o: Org, fileId: string, user = o.member) => query<Preview>(o, 'finance.marketplace_income.preview', { fileId }, user);
   const confirm = (o: Org, fileId: string, user = o.member) => execute<{ settlementId: string; lines: number; reportNet: string; other: string }>(o, 'finance.marketplace_income.confirm', { fileId }, user);
   const settlements = (o: Org) => rows<{ id: string; platform: string; period_start: string; period_end: string; report_net: string; source_sha256: string | null }>("SELECT id::text, platform, period_start::text, period_end::text, report_net::text, source_sha256 FROM crove_finance.channel_settlement WHERE org_id = $1 ORDER BY period_start", [o.orgId]);
   const settlementLines = (o: Org) => rows<{ line_key: string; sales: string; commission: string; tax_withheld: string; other: string; net: string; source_row: number }>('SELECT line_key, sales::text, commission::text, tax_withheld::text, other::text, net::text, source_row FROM crove_finance.channel_settlement_line WHERE org_id = $1 ORDER BY line_key', [o.orgId]);
@@ -196,7 +184,11 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
       await client.end();
     }
   }
-  const fileRow = async (fileId: string) => (await rows<{ original_deleted_at: string | null; sha256: string; storage_key: string }>('SELECT original_deleted_at::text, sha256, storage_key FROM crove_kernel.file WHERE id = $1', [fileId]))[0];
+  const fileRow = async (fileId: string) => {
+    const [row] = await rows<{ original_deleted_at: string | null; sha256: string; storage_key: string }>('SELECT original_deleted_at::text, sha256, storage_key FROM crove_kernel.file WHERE id = $1', [fileId]);
+    if (!row) throw new Error('no such file');
+    return row;
+  };
   const versions = (fileId: string) => rows<{ version: number; state: string | null; has_lines: boolean }>("SELECT version, result -> 'summary' ->> 'state' AS state, (result ? 'lines') AS has_lines FROM crove_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
   const reject = (o: Org, fileId: string) => execute(o, 'finance.marketplace_income.reject', { fileId }, o.member);
 
@@ -311,7 +303,7 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     expect(await versions(fileId)).toEqual([{ version: 2, state: 'imported', has_lines: false }]);
   });
 
-  it('refuses a download and a re-read of a deleted original in Vietnamese, and the same bytes stay recognised as a duplicate', async () => {
+  it('refuses a download and a re-read of a deleted original in Vietnamese; the same bytes uploaded again bring it back for a night and are deleted again', async () => {
     const o = await org();
     const bytes = workbook(lines(o.a, o.b), 125750, 'gone');
     const { fileId } = await read(o, bytes);
@@ -320,14 +312,24 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await run();
     await expect(query(o, 'kernel.file.get', { id: fileId })).rejects.toMatchObject({ code: 'FILE_ORIGINAL_DELETED', status: 409, message: expect.stringContaining('đã được xóa') });
     await expect(execute(o, 'kernel.file.reextract', { fileId })).rejects.toMatchObject({ code: 'FILE_ORIGINAL_DELETED', status: 409, message: expect.stringContaining('đã được xóa') });
-    // The same bytes are still one file: uploading them again is a duplicate, never a second copy of the deleted original.
+    // The same bytes uploaded again are still one file (a duplicate): the upload stores the object under the same content-addressed key first, which brings the original back, and the
+    // marker is cleared so the file reads again. The next nightly run deletes that copy again (the decision is old), so a restored original is never kept past it.
     const sha256 = sha256Hex(bytes);
+    const key = fileKey(o.orgId, sha256);
+    const generation = await store.put(key, bytes);
     const again = await rt.execute<{ fileId: string; duplicate: boolean }>(
       'kernel.file.ingest',
-      { filename: 'thu-nhap.xlsx', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(o.orgId, sha256), generation: `content:${sha256}`, source: 'upload' },
+      { filename: 'thu-nhap.xlsx', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: key, generation, source: 'upload' },
       { actor: asUser(o.owner), orgId: o.orgId },
     );
     expect(again).toMatchObject({ fileId, duplicate: true });
+    expect((await fileRow(fileId)).original_deleted_at).toBeNull();
+    expect(store.has(key)).toBe(true);
+    await expect(query(o, 'kernel.file.get', { id: fileId })).resolves.toMatchObject({ id: fileId });
+    expect(await run()).toMatchObject({ deleted: 1, objects: 1, failed: 0 });
+    expect(store.has(key)).toBe(false);
+    expect((await fileRow(fileId)).original_deleted_at).not.toBeNull();
+    await expect(query(o, 'kernel.file.get', { id: fileId })).rejects.toMatchObject({ code: 'FILE_ORIGINAL_DELETED' });
   });
 
   it('refuses a shorter period, a caller that is not the worker, and any other change of the marker', async () => {
@@ -341,8 +343,9 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await expect(pool.query('SELECT * FROM crove_finance.marketplace_retention_due($1, 10)', [DAY])).rejects.toThrow(/permission denied|MARKETPLACE_RETENTION_WORKER_ONLY/);
     // Setting the marker by hand is refused by the trigger, even for the database owner.
     await expect(rows('UPDATE crove_kernel.file SET original_deleted_at = now() WHERE id = $1', [fileId])).rejects.toThrow(/FILE_ORIGINAL_DELETED_IMMUTABLE/);
-    // After a real deletion it cannot be cleared or moved either.
+    // After a real deletion it cannot be cleared by hand either: only the restore definer (a duplicate upload) clears it, in the caller's own org.
     await run();
     await expect(rows('UPDATE crove_kernel.file SET original_deleted_at = NULL WHERE id = $1', [fileId])).rejects.toThrow(/FILE_ORIGINAL_DELETED_IMMUTABLE/);
+    await expect(pool.query('SELECT crove_kernel.file_original_restore($1::uuid)', [fileId])).rejects.toThrow(/permission denied|FILE_ORIGINAL_RESTORE_NO_ORG/);
   });
 });
