@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Who may message the worker and the offscreen document, and what a start request must look like.
 import { describe, expect, it } from 'vitest';
-import { isOwnSender, parseCaptureStart, parseStartRequest } from '../src/messages.ts';
+import { isOwnSender, parseCaptureStart, parseStartRequest, parseTick } from '../src/messages.ts';
 
 const request = { title: 'Họp', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: false, streamId: 'abc' };
 const command = { target: 'offscreen', type: 'capture-start', address: 'https://app.ludy.vn', token: 'crx_t', orgId: 'o1', uploads: 'direct', ...request };
@@ -46,5 +46,25 @@ describe('start request', () => {
     expect(parseCaptureStart({ ...command, consentMethod: 'verbally' })).toBeNull();
     expect(parseCaptureStart({ ...command, token: undefined })).toBeNull();
     expect(parseCaptureStart({ ...command, target: 'worker' })).toBeNull();
+  });
+});
+
+describe('tick', () => {
+  it('takes a finite, non-negative time', () => {
+    expect(parseTick({ type: 'tick', elapsedMs: 0 })).toEqual({ type: 'tick', elapsedMs: 0 });
+    expect(parseTick({ type: 'tick', elapsedMs: 61_000, extra: 1 })).toEqual({ type: 'tick', elapsedMs: 61_000 });
+  });
+
+  it.each([
+    ['NaN', { type: 'tick', elapsedMs: Number.NaN }],
+    ['Infinity', { type: 'tick', elapsedMs: Number.POSITIVE_INFINITY }],
+    ['a negative time', { type: 'tick', elapsedMs: -1 }],
+    ['a string', { type: 'tick', elapsedMs: '5000' }],
+    ['a missing time', { type: 'tick' }],
+    ['another type', { type: 'stop', elapsedMs: 1 }],
+    ['null', null],
+    ['a string message', 'tick'],
+  ])('refuses %s', (_label, raw) => {
+    expect(parseTick(raw)).toBeNull();
   });
 });

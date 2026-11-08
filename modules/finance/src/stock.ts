@@ -40,7 +40,9 @@ export interface StockMoveWrite {
     // `attempt` is the line's live attempt (#2633): unassigning a line moves it to the next one.
     | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return'; attempt: number }
     // The adjustment of a count of stock (#2513), one per count line, with its value (whole dong, signed like the quantity).
-    | { type: 'count'; countLineId: string; amount: string };
+    | { type: 'count'; countLineId: string; amount: string }
+    // The delivery of a line of a CRM sales order (#2818, ADR-0050): one forward move per (order, line), a return is a reversal.
+    | { type: 'crm_order_line'; orderId: string; lineNo: number };
 }
 
 // The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), so a move whose own date falls in one is written on today, in the
@@ -93,6 +95,8 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       order_move: move.source.type === 'order_line' ? move.source.move : null,
       order_attempt: move.source.type === 'order_line' ? move.source.attempt : 1,
       count_line_id: move.source.type === 'count' ? move.source.countLineId : null,
+      crm_order_id: move.source.type === 'crm_order_line' ? move.source.orderId : null,
+      crm_order_line_no: move.source.type === 'crm_order_line' ? move.source.lineNo : null,
       amount: move.source.type === 'count' ? move.source.amount : null,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
       created_by: userId,

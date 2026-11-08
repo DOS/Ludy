@@ -191,7 +191,7 @@ import {
 } from './schemas.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -254,6 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
+import { zEInvoiceDraftFromOrder, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
 import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
@@ -330,6 +331,21 @@ import {
   zTranscribeStarted,
   zTranscribeStatus,
   zTranscriptCopy,
+  zActionItemAccept,
+  zActionItemAccepted,
+  zActionItemAcceptClean,
+  zActionItemCreate,
+  zActionItemCreated,
+  zActionItemDeleted,
+  zActionItemEdit,
+  zActionItemRef,
+  zActionItemSource,
+  zActionItemsAccepted,
+  zMeetingResultSave,
+  zMeetingResultSaved,
+  zMeetingResults,
+  zResultPublish,
+  zResultPublished,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -790,6 +806,20 @@ export const contract = {
       start: oc.input(zTranscribeStart).output(zTranscribeStarted),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
+    },
+    // The summary, the decisions and the action items (#2580): the recorder's drafts, published by one click to the meeting's readers, and the tasks made from items.
+    results: {
+      get: oc.input(zMeetingRef).output(zMeetingResults),
+      saveSummary: oc.input(zMeetingResultSave).output(zMeetingResultSaved),
+      publish: oc.input(zResultPublish).output(zResultPublished),
+    },
+    actionItems: {
+      create: oc.input(zActionItemCreate).output(zActionItemCreated),
+      edit: oc.input(zActionItemEdit).output(zActionItemCreated),
+      delete: oc.input(zActionItemRef).output(zActionItemDeleted),
+      accept: oc.input(zActionItemAccept).output(zActionItemAccepted),
+      acceptClean: oc.input(zActionItemAcceptClean).output(zActionItemsAccepted),
+      source: oc.input(zActionItemRef).output(zActionItemSource),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
@@ -1819,11 +1849,18 @@ export const contract = {
       // EINVOICE_DRAFT_INVALID (422), PARTY_NOT_FOUND (404). A draft that fails a check is saved all the same, with its issues.
       save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
       delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
+      // The draft of a sales order (#2818, ADR-0050): the hand-off Engage's crm.salesOrders.handoff read, with the line numbers to invoice (none: every open item line); whole lines only. Owners, admins and members;
+      // the idempotency key replays the same draft. ORDER_PAYLOAD_MISMATCH, ORDER_LINE_UNKNOWN, ORDER_LINE_NOT_INVOICEABLE, ORDER_LINE_DISCOUNTED, ORDER_TOO_MANY_LINES, EINVOICE_TOTAL_TOO_LARGE (422),
+      // ORDER_LINE_ALREADY_INVOICED and ORDER_NOTHING_TO_INVOICE (409), LEGAL_ENTITY_NOT_ALLOWED (403). Nothing is issued: issuing needs finance's approval.
+      fromOrder: oc.input(zEInvoiceDraftFromOrder.extend({ idempotencyKey: zId })).output(zEInvoiceDraft),
       // The request to issue a draft as the Inbox card shows it (#2502): the draft now, and whether it is still what was asked for. Owners, admins and members.
       issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
       // The coworker's proposal for the form from a text a person typed (#2505): lines, the VAT rate the text states, and the buyer from the org's customers. Owners, admins and members. Read only;
       // the model is asked outside any transaction, and an answer with a figure or a rate the text or the date does not allow is refused (ai: refused).
       suggest: oc.input(zEInvoiceSuggestInput).output(zEInvoiceSuggested),
+      // The previous issued invoice to a customer, to copy with no model (#2721): the buyer and the lines it held, each line marked with whether its VAT rate is still allowed on the date given.
+      // `invoice: null` when the customer has none in the books the caller may see. Owners, admins and members.
+      previousInvoice: oc.input(zEInvoicePreviousInput).output(zEInvoicePrevious),
     },
   },
   // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.
@@ -1871,6 +1908,10 @@ export const contract = {
       // The correction of a move: a reversing move of the opposite quantity. STOCK_MOVE_NOT_FOUND (404), STOCK_MOVE_IS_REVERSAL and STOCK_MOVE_REVERSED (409).
       reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
     },
+    // The stock of a delivered CRM order line (#2818, ADR-0050): the hand-off, the line number, the date and 'deliver' (default) or 'return' (a reversing move). Idempotent on (order, line): a retry answers
+    // already_moved. A text line is a service and moves nothing. ORDER_PAYLOAD_MISMATCH, ORDER_DATE_FUTURE, STOCK_ORDER_LINE_NO_ITEM, STOCK_LINE_NO_QUANTITY, STOCK_ITEM_ENTITY_MISMATCH (422),
+    // ORDER_LINE_UNKNOWN (404), ORDER_LINE_NOT_DELIVERED and ORDER_LINE_RETURNED (409).
+    moveFromOrderLine: oc.input(zStockMoveFromOrderLine.extend({ idempotencyKey: zId })).output(zStockMoveFromOrderLineResult),
     // The goods lines of posted documents that moved no stock: they matched no item by code or by a taught name.
     unassigned: oc.input(zStockUnassignedInput.optional()).output(z.array(zStockUnassignedLine)),
     // Writes the move of a line and, unless told not to, teaches its name to the item. STOCK_LINE_NOT_FOUND (404), STOCK_LINE_ASSIGNED and STOCK_LINE_VOIDED (409),
