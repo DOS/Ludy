@@ -56,6 +56,9 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
     await page.goto(`/o/${slug}/meetings/${meetingId}`);
     const panel = page.getByTestId('meeting-results');
     await expect(panel).toBeVisible();
+    // The stack runs with MEETINGS_SUMMARY off (the default): no way to ask Vy, and nothing to read or confirm; the manual path below works as it does.
+    await expect(panel.getByTestId('vy-summary')).toHaveCount(0);
+    await expect(panel.getByTestId('vy-review')).toHaveCount(0);
     await panel.getByLabel('Tóm tắt', { exact: true }).fill('Chốt báo giá tuần này.');
     await panel.getByLabel('Quyết định', { exact: true }).fill('Giữ giá cũ');
     await panel.getByRole('button', { name: 'Lưu bản nháp' }).click();

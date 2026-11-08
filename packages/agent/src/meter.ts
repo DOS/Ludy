@@ -57,6 +57,8 @@ export const AI_FEATURES = {
   'crm.quote_suggest': 'crm',
   // Speech to text for the meetings module (#2578, M4a): one call per audio chunk of a meeting, through the deployment's OpenAI-compatible transcription endpoint.
   'meetings.transcribe': 'meetings',
+  // The recorder's Vy summarizing one meeting (#2580, M6 part B2): one call over the transcript, the member waiting for it, through their own meter.
+  'meetings.summary': 'meetings',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

@@ -288,6 +288,7 @@ export const KERNEL_ERROR_CODES = [
   // The recorder's Vy summarizing a meeting (#2580, M6 part B).
   'DRAFT_NOT_REVIEWED',
   'DRAFT_SUMMARY_EXISTS',
+  'SUMMARY_BUSY',
   'SUMMARY_ALREADY_COPIED',
   'SUMMARY_OFF',
   'SUMMARY_RESULT_INVALID',
