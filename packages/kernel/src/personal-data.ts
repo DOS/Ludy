@@ -333,6 +333,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.bank_name': { kind: 'other', handling: 'erase', reason: "The name of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
 } as const satisfies Record<string, PersonalDataColumn>;
 

@@ -1561,6 +1561,7 @@ export interface HrPayrollEmployeeTable {
   tax_code_sealed: string | null;
   insurance_number_sealed: string | null;
   finalization_authorized_years: Generated<number[]>;
+  bank_name: string | null;
 }
 
 /** crove_hr.payroll_employment */

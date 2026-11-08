@@ -53,11 +53,21 @@ export const zHrEmploymentTerms = z.strictObject({
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
 
 // A new employee with the first terms. The legal entity is the org's default one when none is named.
+// The name of the bank a person is paid at (#2897), as the org writes it: 1 to 60 characters, no control character. Stored plain; cleared by the erasure.
+export const HR_PERSON_BANK_MAX = 60;
+export const zHrBankName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(HR_PERSON_BANK_MAX)
+  .refine((value) => !/\p{Cc}/u.test(value), 'no control character');
+
 export const zHrEmployeeAdd = z.strictObject({
   displayName: zName,
   address: zAddress.optional(),
   identityNumber: zHrIdentityNumber.optional(),
   accountNumber: zHrAccountNumber.optional(),
+  bankName: zHrBankName.optional(),
   birthDate: zHrBirthDate.optional(),
   taxCode: zHrTaxCode.optional(),
   insuranceNumber: zHrInsuranceNumber.optional(),
@@ -74,6 +84,7 @@ export const zHrEmployeeEdit = z
     address: zAddress.nullable().optional(),
     identityNumber: zHrIdentityNumber.nullable().optional(),
     accountNumber: zHrAccountNumber.nullable().optional(),
+    bankName: zHrBankName.nullable().optional(),
     birthDate: zHrBirthDate.nullable().optional(),
     taxCode: zHrTaxCode.nullable().optional(),
     insuranceNumber: zHrInsuranceNumber.nullable().optional(),
@@ -84,6 +95,7 @@ export const zHrEmployeeEdit = z
       v.address !== undefined ||
       v.identityNumber !== undefined ||
       v.accountNumber !== undefined ||
+      v.bankName !== undefined ||
       v.birthDate !== undefined ||
       v.taxCode !== undefined ||
       v.insuranceNumber !== undefined,
@@ -142,6 +154,8 @@ export const zHrEmployee = zHrEmployeeSummary.extend({
   address: z.string().nullable(),
   identityNumber: z.string().nullable(),
   accountNumber: z.string().nullable(),
+  // The bank the person is paid at (#2897); the sensitive read only, null once erased.
+  bankName: z.string().nullable(),
   birthDate: z.string().nullable(),
   taxCode: z.string().nullable(),
   insuranceNumber: z.string().nullable(),

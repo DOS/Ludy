@@ -328,7 +328,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(detail.dependents).toEqual([expect.objectContaining({ displayName: DEPENDENT, endedOn: '2026-06-30' })]);
     // A former employee's record is kept for the retention: no edit at all, so neither an admin nor an owner can clear the numbers, the name or the address.
     for (const who of [o.admin, o.owner]) {
-      for (const change of [{ identityNumber: null }, { accountNumber: null }, { address: null }, { displayName: 'Changed' }]) {
+      for (const change of [{ identityNumber: null }, { accountNumber: null }, { bankName: null }, { bankName: 'Techcombank' }, { address: null }, { displayName: 'Changed' }]) {
         await expect(o.exec(who, 'hr.payroll.employee.edit', { employeeId: created.employeeId, ...change }), JSON.stringify(change)).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED' });
       }
     }
@@ -336,12 +336,41 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(kept).toMatchObject({ displayName: NAME, address: ADDRESS, identityNumber: IDENTITY, accountNumber: ACCOUNT });
   });
 
+  it('records the bank each person is paid at, read only by the one employee\'s sensitive record, and refuses a bad name (#2897)', async () => {
+    const o = await org();
+    const created = await o.add(o.owner, { bankName: '  Vietcombank  ' });
+    // Trimmed, and given back only by the audited record of the one employee: the list carries no bank, and the stored column is plain text of at most 60 characters.
+    expect(await o.query<HrEmployee>(o.admin, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ bankName: 'Vietcombank' });
+    const [listed] = await o.query<Record<string, unknown>[]>(o.admin, 'hr.payroll.employee.list', { status: 'all' });
+    expect(listed).not.toHaveProperty('bankName');
+    expect(JSON.stringify(listed)).not.toContain('Vietcombank');
+    // Changed, then cleared; an employee added with none has none.
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankName: 'Techcombank' });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ bankName: 'Techcombank' });
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankName: null });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ bankName: null });
+    const none = await o.add(o.owner);
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: none.employeeId })).toMatchObject({ bankName: null });
+    // A name that is empty, too long or holds a control character is refused before anything is stored; the database refuses what the commands do not.
+    for (const bad of ['', '   ', 'x'.repeat(61), 'Ngan\u0000hang', 'Ngan\nhang']) {
+      await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankName: bad }), JSON.stringify(bad)).rejects.toMatchObject({ code: 'VALIDATION' });
+    }
+    await expect(withAdmin((c) => c.query('UPDATE crove_hr.payroll_employee SET bank_name = $2 WHERE id = $1', [created.employeeId, ' padded ']))).rejects.toMatchObject({ code: '23514' });
+    await expect(withAdmin((c) => c.query('UPDATE crove_hr.payroll_employee SET bank_name = $2 WHERE id = $1', [created.employeeId, '']))).rejects.toMatchObject({ code: '23514' });
+    // The audit rows say that a bank was set or changed, never which.
+    const added = (await o.audits('hr.payroll.employee.add'))[0];
+    expect(added?.detail).toMatchObject({ bank: { redacted: 'payment' } });
+    const edits = await o.audits('hr.payroll.employee.edit');
+    expect(JSON.stringify([added, ...edits].map((r) => r?.detail))).not.toMatch(/Vietcombank|Techcombank/);
+    expect(edits.map((e) => (e.detail as { changed: string[] }).changed)).toEqual([['bankName'], ['bankName']]);
+  });
+
   it('erases an ended employee only after the retention, and then no one can open the numbers again', async () => {
     const o = await org();
     // Names of their own: the database holds the other tests' employees too.
     const tag = randomUUID().slice(0, 8);
     const [name, address, child] = [`${NAME} ${tag}`, `${ADDRESS} ${tag}`, `${DEPENDENT} ${tag}`];
-    const created = await o.add(o.owner, { displayName: name, address });
+    const created = await o.add(o.owner, { displayName: name, address, bankName: 'Vietcombank' });
     await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: created.employeeId, displayName: child, relation: 'child', registeredOn: '2026-02-01' });
     const erase = () => o.exec<HrEmployeeErased>(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asMfa(o.owner));
     await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, birthDate: '1985-03-09', taxCode: '5927301846', insuranceNumber: '618034297561' });
@@ -361,10 +390,13 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const result = await erase();
     expect(result).toMatchObject({ employeeId: created.employeeId, shreddedKeys: 1 });
     expect(result.cleared).toContain('name');
+    expect(result.cleared).toContain('bank name');
+    // The bank's name is cleared in the row too, not only hidden by the read.
+    expect(await withAdmin(async (c) => (await c.query<{ bank_name: string | null }>('SELECT bank_name FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]?.bank_name)).toBeNull();
     expect(result.kept.length).toBeGreaterThan(0);
     // The record reads as erased: no name, no address, no dependent's name, no numbers; the terms stay as amounts.
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
-    expect(detail).toMatchObject({ displayName: HR_ERASED_NAME, address: null, identityNumber: null, accountNumber: null, birthDate: null, taxCode: null, insuranceNumber: null, erased: true });
+    expect(detail).toMatchObject({ displayName: HR_ERASED_NAME, address: null, identityNumber: null, accountNumber: null, bankName: null, birthDate: null, taxCode: null, insuranceNumber: null, erased: true });
     expect(detail.dependents.map((d) => d.displayName)).toEqual([HR_ERASED_NAME]);
     expect(detail.employments).toHaveLength(1);
     expect(detail.employments[0]?.baseWage).toBe('15000000.00');

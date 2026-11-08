@@ -904,6 +904,7 @@ export const vi = {
     address: 'Địa chỉ',
     identityNumber: 'Số căn cước / hộ chiếu',
     accountNumber: 'Số tài khoản ngân hàng',
+    bankName: 'Ngân hàng',
     sealedHint: 'Số căn cước, số tài khoản, mã số thuế và số sổ BHXH được mã hóa bằng khóa riêng của người này. Ảnh giấy tờ không được lưu.',
     none: '(chưa có)',
     detailTitle: 'Hồ sơ: {name}',

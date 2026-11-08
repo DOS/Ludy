@@ -6,7 +6,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HR_CONTRACT_TYPES, HR_PAY_FUNCTIONS, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrPayFunction, type HrRegion, type HrRelation } from '@crove/kernel-contract';
+import { HR_CONTRACT_TYPES, HR_PAY_FUNCTIONS, HR_PERSON_BANK_MAX, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrPayFunction, type HrRegion, type HrRelation } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -88,6 +88,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
   const [address, setAddress] = useState('');
   const [identity, setIdentity] = useState('');
   const [account, setAccount] = useState('');
+  const [bank, setBank] = useState('');
   const [birth, setBirth] = useState('');
   const [tax, setTax] = useState('');
   const [insurance, setInsurance] = useState('');
@@ -99,6 +100,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(identity.trim() ? { identityNumber: identity.trim() } : {}),
         ...(account.trim() ? { accountNumber: account.trim() } : {}),
+        ...(bank.trim() ? { bankName: bank.trim() } : {}),
         ...(birth ? { birthDate: birth } : {}),
         ...(tax.trim() ? { taxCode: tax.trim() } : {}),
         ...(insurance.trim() ? { insuranceNumber: insurance.trim() } : {}),
@@ -129,6 +131,10 @@ function AddForm({ onClose }: { onClose: () => void }) {
         <div className="space-y-1">
           <Label htmlFor={`${id}-account`}>{t('accountNumber')}</Label>
           <Input id={`${id}-account`} value={account} maxLength={34} autoComplete="off" onChange={(e) => setAccount(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-bank`}>{t('bankName')}</Label>
+          <Input id={`${id}-bank`} value={bank} maxLength={HR_PERSON_BANK_MAX} onChange={(e) => setBank(e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
@@ -167,7 +173,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
-  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; tax: boolean; insurance: boolean } } | null>(null);
+  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; bank: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean } } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
@@ -195,6 +201,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
           ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
           ...(edit && (edit.clear.account ? { accountNumber: null } : edit.account.trim() ? { accountNumber: edit.account.trim() } : {})),
+          ...(edit && (edit.clear.bank ? { bankName: null } : edit.bank.trim() ? { bankName: edit.bank.trim() } : {})),
           ...(edit && edit.birth ? { birthDate: edit.birth } : {}),
           ...(edit && (edit.clear.tax ? { taxCode: null } : edit.tax.trim() ? { taxCode: edit.tax.trim() } : {})),
           ...(edit && (edit.clear.insurance ? { insuranceNumber: null } : edit.insurance.trim() ? { insuranceNumber: edit.insurance.trim() } : {})),
@@ -244,6 +251,10 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
             )}
           </div>
           <div>
+            <dt className="text-subtle-foreground">{t('bankName')}</dt>
+            <dd data-testid="hr-employee-bank">{e.bankName ?? none}</dd>
+          </div>
+          <div>
             <dt className="text-subtle-foreground">{t('birthDate')}</dt>
             <dd data-testid="hr-employee-birth">{e.birthDate === null ? none : f.date(e.birthDate)}</dd>
           </div>
@@ -275,7 +286,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       {!e.erased && (
         <div className="mt-3">
           {edit === null ? (
-            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, tax: false, insurance: false } })}>
+            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', bank: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, bank: false, tax: false, insurance: false } })}>
               {t('edit')}
             </Button>
           ) : (
@@ -312,6 +323,16 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                 {e.hasAccountNumber && (
                   <label className="flex items-center gap-1 text-xs text-subtle-foreground">
                     <input type="checkbox" checked={edit.clear.account} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, account: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-bank">{t('bankName')}</Label>
+                <Input id="hr-edit-bank" value={edit.bank} maxLength={HR_PERSON_BANK_MAX} disabled={edit.clear.bank} onChange={(ev) => setEdit({ ...edit, bank: ev.target.value })} />
+                {e.bankName !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.bank} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, bank: ev.target.checked } })} />
                     {t('clearStored')}
                   </label>
                 )}

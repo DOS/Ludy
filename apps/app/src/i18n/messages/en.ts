@@ -906,6 +906,7 @@ export const en = {
     address: 'Address',
     identityNumber: 'Identity or passport number',
     accountNumber: 'Bank account number',
+    bankName: 'Bank',
     sealedHint: "The identity number, the account number, the tax code and the insurance number are encrypted under this person's own key. No photo of a document is stored.",
     none: '(none)',
     detailTitle: 'Record: {name}',

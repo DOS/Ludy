@@ -51,7 +51,7 @@ export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_seale
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
-const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
+const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_name', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
 const EMPLOYMENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function', 'created_by', 'created_at'] as const;
 const DEPENDENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'display_name', 'relation', 'registered_on', 'created_by', 'created_at'] as const;
 
@@ -138,6 +138,7 @@ export const employeeAdd = defineCommand({
         address: input.address ?? null,
         national_id_sealed: identity,
         bank_account_sealed: account,
+        bank_name: input.bankName ?? null,
         birth_date: input.birthDate ?? null,
         tax_code_sealed: taxSealed,
         insurance_number_sealed: insuranceSealed,
@@ -171,6 +172,7 @@ export const employeeAdd = defineCommand({
       address: auditValue(EMPLOYEE, 'address', input.address ?? null),
       hasIdentityNumber: identity !== null,
       hasAccountNumber: account !== null,
+      bank: auditValue(EMPLOYEE, 'bank_name', input.bankName ?? null),
       hasTaxNumber: taxSealed !== null,
       hasInsuranceNo: insuranceSealed !== null,
       birth: auditValue(EMPLOYEE, 'birth_date', input.birthDate ?? null),
@@ -193,12 +195,12 @@ export const employeeEdit = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_name', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address; the owner's erasure is the way out. The one
     // exception is what the declarations need of a leaver (#2533): the birth date, the tax code and the insurance number may be set or corrected, audited like any edit.
     const employee = await loadEmployee(ctx, input.employeeId);
-    if (employee.status !== 'active' && (input.displayName !== undefined || input.address !== undefined || input.identityNumber !== undefined || input.accountNumber !== undefined)) requireActive(employee);
+    if (employee.status !== 'active' && (input.displayName !== undefined || input.address !== undefined || input.identityNumber !== undefined || input.accountNumber !== undefined || input.bankName !== undefined)) requireActive(employee);
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
     const set: {
@@ -206,6 +208,7 @@ export const employeeEdit = defineCommand({
       address?: string | null;
       national_id_sealed?: string | null;
       bank_account_sealed?: string | null;
+      bank_name?: string | null;
       birth_date?: string | null;
       tax_code_sealed?: string | null;
       insurance_number_sealed?: string | null;
@@ -226,6 +229,10 @@ export const employeeEdit = defineCommand({
     if (input.accountNumber !== undefined) {
       set.bank_account_sealed = input.accountNumber === null ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
       changed.push('accountNumber');
+    }
+    if (input.bankName !== undefined) {
+      set.bank_name = input.bankName;
+      changed.push('bankName');
     }
     if (input.birthDate !== undefined) {
       set.birth_date = input.birthDate;
@@ -434,7 +441,7 @@ export function retentionEnds(endedOn: string): string {
   return ends.toISOString().slice(0, 10);
 }
 
-// The erasure of an ended employee after the retention (plan 6.6): the name, the address and the dependents' names are cleared, and the person's key is shredded, so the identity
+// The erasure of an ended employee after the retention (plan 6.6): the name, the address, the birth date, the bank's name and the dependents' names are cleared, and the person's key is shredded, so the identity
 // number and the account number, which stay in their row byte for byte, can never be opened again. The employment rows stay: amounts that tie to no person. R3 for owners: it
 // cannot be undone, so it asks for a fresh second factor first; subject_key_shred itself asserts an owner.
 export const employeeErase = defineCommand({
@@ -445,7 +452,7 @@ export const employeeErase = defineCommand({
   access: OWNERS,
   target: targetOf,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'erased_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_name', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     // The person's key, deleted by crove_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
@@ -469,7 +476,7 @@ export const employeeErase = defineCommand({
       .execute();
     await ctx.trx
       .updateTable('crove_hr.payroll_employee')
-      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, erased_at: ctx.now, updated_at: ctx.now })
+      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_name: null, erased_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
@@ -479,7 +486,7 @@ export const employeeErase = defineCommand({
     return {
       employeeId: input.employeeId,
       shreddedKeys,
-      cleared: ['name', 'address', 'birth date', 'dependents names'],
+      cleared: ['name', 'address', 'birth date', 'bank name', 'dependents names'],
       kept: [
         { what: 'the identity number, the account number, the tax code and the insurance number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },
@@ -563,7 +570,7 @@ export const employeeGet = defineQuery({
   handler: async (ctx, input): Promise<HrEmployee> => {
     const e = await ctx.trx
       .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'finalization_authorized_years'])
+      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'national_id_sealed', 'bank_account_sealed', 'bank_name', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'finalization_authorized_years'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .executeTakeFirst();
@@ -632,6 +639,7 @@ export const employeeGet = defineQuery({
       address: e.address,
       identityNumber,
       accountNumber,
+      bankName: e.erased_at === null ? e.bank_name : null,
       birthDate: e.erased_at === null && e.birth_date !== null ? iso(e.birth_date) : null,
       taxCode,
       insuranceNumber,
