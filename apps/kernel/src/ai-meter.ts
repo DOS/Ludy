@@ -42,7 +42,19 @@ class RuntimeMeter implements AiMeter {
   }
 
   private check(call: AiCall): Promise<AiBudgetCheck> {
+    // Vy working for a member: the member's own commands derive the agent, check vy.use and all four kill switches (decision 6).
+    if (call.memberRunId != null) return this.checkMemberVy(call);
     return this.runtime.query<AiBudgetCheck>(this.authority.kind === 'system' ? 'kernel.ai.budget.check' : 'kernel.ai.budget.check_member', { module: call.module, agentId: call.agentId }, this.as(call.orgId));
+  }
+
+  private async checkMemberVy(call: AiCall): Promise<AiBudgetCheck> {
+    if (this.authority.kind !== 'member') throw new Error('a member Vy call needs the member as the meter authority');
+    const answer = await this.runtime.query<{ allowed: true } | { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string }>(
+      'kernel.member_vy.meter.check',
+      { feature: call.feature },
+      this.as(call.orgId),
+    );
+    return answer.allowed ? { allowed: true, hasOrgBudget: true } : answer;
   }
 
   async admit(call: AiCall): Promise<void> {
@@ -58,6 +70,10 @@ class RuntimeMeter implements AiMeter {
   }
 
   async record(call: AiCall, usage: AiUsage): Promise<void> {
+    if (call.memberRunId != null) {
+      await this.runtime.execute('kernel.member_vy.meter.record', { feature: call.feature, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cost: aiCost([usage], this.options.price) }, this.as(call.orgId));
+      return;
+    }
     await this.runtime.execute(
       this.authority.kind === 'system' ? 'kernel.ai.usage.record' : 'kernel.ai.usage.record_member',
       { feature: call.feature, module: call.module, agentId: call.agentId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cost: aiCost([usage], this.options.price) },

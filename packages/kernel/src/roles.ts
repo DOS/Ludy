@@ -14,6 +14,7 @@ import { BUILTIN_ROLE_KEYS, zId, zRoleAssignInput, type BuiltinRoleKey, type Mem
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { lastChiefAccountant } from './approval.ts';
+import { cancelMemberVyRunsUnlessAllowed } from './member-vy.ts';
 import { lockChartChanges, positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -226,6 +227,7 @@ export const revokeRole = defineCommand({
       roleRefusal(error);
     }
     if (!revoked) throw new Error('role_assignment_revoke answered no row');
+    await cancelMemberVyRunsUnlessAllowed(ctx, revoked.user_id, 'VY_USE_REMOVED');
     ctx.audit({ target_user: revoked.user_id, role_key: revoked.role_key, legal_entity_id: revoked.legal_entity_id, assignment_id: input.assignmentId });
     // Revoking an org-wide or an entity assignment can narrow the person's scope (#1799).
     await rerouteStrandedTasks(ctx, await positionsHeldBy(ctx, revoked.user_id));
@@ -265,7 +267,9 @@ export const setMemberPermission = defineCommand({
       if (pg?.message === 'PERMISSION_MANAGE_FORBIDDEN') throw new DomainError('PERMISSION_MANAGE_FORBIDDEN', 403, 'Bạn không đổi được quyền làm việc với Vy của người này');
       throw error;
     }
-    ctx.audit({ changed });
+    // A deny, or a clear that leaves them without vy.use, ends their live runs of Vy (the store command re-checks too).
+    const cancelled = changed ? await cancelMemberVyRunsUnlessAllowed(ctx, input.userId, 'VY_USE_REMOVED') : 0;
+    ctx.audit({ changed, cancelled_vy_runs: cancelled });
     return { userId: input.userId, changed };
   },
 });
