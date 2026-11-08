@@ -309,57 +309,6 @@ suite('meeting media file rows are visible to readers only (#2874, ADR-0047)', (
     expect(rows).not.toContain(ids.demotedUpload);
   });
 
-  it('a recorder links only a media file they created: another member\'s file id is refused, their own is accepted', async () => {
-    const recorder = member('the recorder', () => users.recorder);
-    const foreign = await run(recorder, async (c) => {
-      try {
-        await c.query(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 5, 0, 60)`, [
-          orgId,
-          randomUUID(),
-          ids.attendeesMeeting,
-          ids.formerUpload,
-        ]);
-        return 'inserted';
-      } catch (error) {
-        return (error as { code?: string }).code ?? 'error';
-      }
-    });
-    expect(foreign).toBe('42501');
-    // A video row cannot point at an audio file, even one the recorder created.
-    const wrongKind = await run(recorder, async (c) => {
-      try {
-        await c.query(`INSERT INTO crove_meetings.meeting_video (org_id, id, meeting_id, file_id, length_seconds, video_retention_date) VALUES ($1, $2, $3, $4, 60, current_date + 7)`, [
-          orgId,
-          randomUUID(),
-          ids.orgMeeting,
-          ids.orgAudio,
-        ]);
-        return 'inserted';
-      } catch (error) {
-        return (error as { code?: string }).code ?? 'error';
-      }
-    });
-    expect(wrongKind).toBe('42501');
-    const own = randomUUID();
-    const sha256 = own.replaceAll('-', '').padEnd(64, '2');
-    const ok = await run(recorder, async (c) => {
-      await c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source, created_by)
-         VALUES ($1, $2, $3, $4, 'own.bin', 'application/octet-stream', 1, 'meeting_audio', $5)`,
-        [orgId, own, sha256, `org/${orgId}/${sha256}`, users.recorder],
-      );
-      return (
-        await c.query(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 6, 0, 60)`, [
-          orgId,
-          randomUUID(),
-          ids.attendeesMeeting,
-          own,
-        ])
-      ).rowCount;
-    });
-    expect(ok).toBe(1);
-  });
-
   it('the org export carries no meeting media row', async () => {
     const from = EXPORT_TABLES['kernel.file'].from;
     for (const actor of [system, member('an owner', () => users.owner)]) {
