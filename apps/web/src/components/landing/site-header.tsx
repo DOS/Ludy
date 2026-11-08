@@ -52,7 +52,7 @@ export function SiteHeader({ dict, linkToHome = false }: { dict: Dictionary; lin
           <a href={SIGN_IN_URL} className="hidden h-9 items-center rounded-md px-3 text-sm text-muted transition-colors hover:text-fg sm:inline-flex">
             {nav.signIn}
           </a>
-          <a href={`${base}#tu-host`} className="hidden h-9 items-center rounded-md bg-fg px-3 text-sm font-medium whitespace-nowrap text-bg transition-colors hover:bg-fg/85 sm:inline-flex">
+          <a href={`${base}#tu-host`} className="hidden h-9 items-center rounded-md bg-accent px-3 text-sm font-medium whitespace-nowrap text-accent-fg transition-colors hover:bg-accent/90 sm:inline-flex">
             {nav.cta}
           </a>
           <MobileMenu

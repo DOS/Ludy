@@ -8,8 +8,8 @@ export const BASE_PERMISSIONS = ['identity', 'storage'] as const;
 export const MEETINGS_OPTIONAL_PERMISSIONS = ['offscreen', 'tabCapture'] as const;
 // The Ludy cloud address, granted at install.
 export const DEFAULT_HOST_PERMISSIONS = ['https://app.ludy.vn/*'] as const;
-// A self-hosted address the member types: asked for that one origin at setup, never granted by default. A loopback
-// address serves the `docker compose up` stack on the member's own machine.
+// A self-hosted address the member types: asked for that one origin at setup, never granted by default. `localhost`
+// (plain http) serves the `docker compose up` stack on the member's own machine; 127.0.0.1 and [::1] are not accepted.
 export const OPTIONAL_HOST_PERMISSIONS = ['http://localhost/*', 'https://*/*'] as const;
 
 // Manifest keys that would reach sites or run code outside the package.
