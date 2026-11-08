@@ -5,6 +5,7 @@
 // the one employee a person asked to see, and an erasure after the retention shreds the key. No image of an identity document is stored.
 import { z } from 'zod';
 import { zId, zLocalDate } from './schemas.ts';
+import { vietnamToday } from './vietnam-time.ts';
 
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
 export type HrContractType = (typeof HR_CONTRACT_TYPES)[number];
@@ -32,9 +33,12 @@ export const zHrWage = z.string().regex(/^\d{1,16}(\.\d{1,2})?$/, 'decimal strin
 export const zHrIdentityNumber = z.string().trim().min(6).max(30).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'identity number');
 export const zHrAccountNumber = z.string().trim().min(6).max(34).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'account number');
 // The tax code and the social insurance number (#2533): sealed like the identity number, since the tax code is in most cases that number.
-export const zHrTaxCode = z.string().trim().min(6).max(20).regex(/^[0-9][0-9-]*$/, 'tax code');
-export const zHrInsuranceNumber = z.string().trim().min(6).max(20).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'insurance number');
-export const zHrBirthDate = zLocalDate;
+// A personal tax code and a social insurance number are 10 digits (the old numbers) or 12 (the identity number that replaces them), nothing else: a short or lettered value is refused here, not
+// stored sealed where nobody can look at it again.
+export const zHrTaxCode = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'tax code: 10 or 12 digits');
+export const zHrInsuranceNumber = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'insurance number: 10 or 12 digits');
+// A birth date from 1900-01-01 to today (Vietnam).
+export const zHrBirthDate = zLocalDate.refine((v) => v >= '1900-01-01' && v <= vietnamToday(), 'birth date between 1900-01-01 and today');
 const zName = z.string().trim().min(1).max(200);
 const zAddress = z.string().trim().min(1).max(500);
 
