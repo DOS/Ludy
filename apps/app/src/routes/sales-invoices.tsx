@@ -21,6 +21,8 @@ import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../compo
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
+import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
+import { getConfig } from '../lib/auth.ts';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
@@ -159,12 +161,72 @@ function PreviousInvoice({ date, onCopy, onPicked }: { date: string; onCopy: (in
   );
 }
 
+/** The deal and booking sources of the draft form (#2721): where the CRM is installed, a person picks one of the open deals or a past booking, and a sentence about it is added to the coworker's text box, where it
+ * can be read and edited before asking. It reads only through the CRM's own queries under the person's own CRM permission; a query that is refused or fails hides the list. Nothing is saved or issued here. */
+function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
+  const t = useTranslations('salesInvoices.ai.crm');
+  const f = useFormat();
+  const installed = getConfig().modules.includes('crm');
+  const deals = useQuery({ ...orpc.crm.deals.list.queryOptions({ input: { status: 'open', limit: 50 } }), enabled: installed, retry: false });
+  const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'past' } }), enabled: installed, retry: false });
+  const dealItems = deals.data?.items ?? [];
+  const bookingItems = (bookings.data ?? []).filter((b) => b.status === 'confirmed').slice(0, 50);
+  if (!installed || (dealItems.length === 0 && bookingItems.length === 0)) return null;
+  return (
+    <div className="mt-3 grid gap-3 sm:grid-cols-2" data-testid="invoice-crm">
+      {dealItems.length > 0 && (
+        <div className="space-y-1">
+          <Label htmlFor="sales-invoice-deal">{t('deal')}</Label>
+          <NativeSelect
+            id="sales-invoice-deal"
+            value=""
+            onChange={(e) => {
+              const deal = dealItems.find((d) => d.id === e.target.value);
+              if (deal) onAdd(dealSourceText(deal));
+            }}
+            data-testid="invoice-crm-deal"
+          >
+            <NativeSelectOption value="">{t('choose')}</NativeSelectOption>
+            {dealItems.map((d) => (
+              <NativeSelectOption key={d.id} value={d.id}>
+                {d.title} - {d.partyName}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+      )}
+      {bookingItems.length > 0 && (
+        <div className="space-y-1">
+          <Label htmlFor="sales-invoice-booking">{t('booking')}</Label>
+          <NativeSelect
+            id="sales-invoice-booking"
+            value=""
+            onChange={(e) => {
+              const booking = bookingItems.find((b) => b.id === e.target.value);
+              if (booking) onAdd(bookingSourceText(booking, f.date(bookingDay(booking.startsAt))));
+            }}
+            data-testid="invoice-crm-booking"
+          >
+            <NativeSelectOption value="">{t('choose')}</NativeSelectOption>
+            {bookingItems.map((b) => (
+              <NativeSelectOption key={b.id} value={b.id}>
+                {b.eventType.title} - {f.date(bookingDay(b.startsAt))}
+                {b.visitor.name ? ` - ${b.visitor.name}` : ''}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+      )}
+      <p className="text-xs text-subtle-foreground sm:col-span-2">{t('hint')}</p>
+    </div>
+  );
+}
+
 /** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
  * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
-function CoworkerBox({ date, room, invoiceDraftId, onProposal }: { date: string; room: number; invoiceDraftId: string | null; onProposal: (proposal: EInvoiceSuggested) => void }) {
+function CoworkerBox({ date, room, invoiceDraftId, text, onText, onProposal }: { date: string; room: number; invoiceDraftId: string | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
   const tp = useTranslations('salesInvoices.ai.previous');
-  const [text, setText] = useState('');
   const current = useRef(date);
   // Written after the commit, not during render: a render React discards must not leave its date behind.
   useLayoutEffect(() => {
@@ -187,7 +249,7 @@ function CoworkerBox({ date, room, invoiceDraftId, onProposal }: { date: string;
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-dashed border-proposal/60 p-3" data-testid="invoice-ai">
       <Label htmlFor="sales-invoice-ai-text">{t('label')}</Label>
-      <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} onChange={(e) => setText(e.target.value)} data-testid="invoice-ai-text" />
+      <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} onChange={(e) => onText(e.target.value)} data-testid="invoice-ai-text" />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate(date)} data-testid="invoice-ai-ask">
           {t('button')}
@@ -210,6 +272,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   const f = useFormat();
   const [form, setForm] = useState(initial);
   const [sourceInvoice, setSourceInvoice] = useState<string | null>(null);
+  const [aiText, setAiText] = useState('');
   // The buyer of the invoice copied last: a second copy replaces that buyer, never one a person typed or a proposal brought.
   const copiedBuyer = useRef<string | null>(null);
   const deferred = useDeferredValue(form);
@@ -273,7 +336,8 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           return { added: done.added, rateChanged: done.rateChanged };
         }}
       />
-      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} invoiceDraftId={sourceInvoice} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
+      <CrmSource onAdd={(sentence) => setAiText((text) => appendSource(text, sentence, EINVOICE_SUGGEST_TEXT_MAX))} />
+      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} invoiceDraftId={sourceInvoice} text={aiText} onText={setAiText} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
       {form.buyerAi && (
         <p className="mt-3 text-xs text-subtle-foreground" data-testid="invoice-buyer-ai">
           <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t('ai.buyerNote')}</span>
