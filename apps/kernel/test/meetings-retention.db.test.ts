@@ -668,6 +668,9 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await upload('purgeOwner', hidden, 'audio', 'h', purgeSlug);
     const keysBefore = [...store.storage.keys()].filter((k) => k.startsWith(`org/${purgeOrgId}/`));
     expect(keysBefore.length).toBe(3);
+    // An ordinary document of the same org (a row only, no bytes needed): the export must still list it.
+    const docId = randomUUID();
+    await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'contract.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [purgeOrgId, docId, 'c'.repeat(64), `org/${purgeOrgId}/${'c'.repeat(64)}`, userIds.get('purgeOwner')]);
 
     // The export: the shared meeting, a count for the attendees-only one, no file row of any recording.
     const exported = async (table: string) => {
@@ -681,7 +684,10 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(exportedMeetings.map((m) => m.id)).toEqual([shared]);
     expect(await exported('meetings.private_count')).toEqual([expect.objectContaining({ org_id: purgeOrgId, meetings: 1 })]);
     expect(JSON.stringify(await exported('meetings.meeting'))).not.toContain('Attendees only');
-    expect((await exported('kernel.file')).filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
+    const exportedFiles = await exported('kernel.file');
+    expect(exportedFiles.filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
+    // The filter is on the source alone: the ordinary document is the one file row exported.
+    expect(exportedFiles.map((f) => f.id)).toEqual([docId]);
     expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId]))[0]!.n).toBe('3');
 
     // A meeting deleted before the purge leaves a shred reference that outlives the org (it is under Object Lock).
