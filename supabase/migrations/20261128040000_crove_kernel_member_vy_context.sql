@@ -12,8 +12,7 @@
 --   agent_write_guard                    a second branch for kind 'member_vy': a write passes only on a catalog table with mode
 --                                        'write' (each row also passes its own policy) or the narrow rows every agent writes; never an
 --                                        agent wakeup. The org-chart branches are byte for byte what they were.
---   crove_notes.note_read                reads ctx_acting_user_id() where it read ctx_user_id(): a member-scoped context reads its
---                                        member's notes and the shared ones the member may read, and writes none.
+--   activity_stamp_agent                 refuses a member-mode context (activity is an org-visible sink).
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_kernel.member_vy_table (
@@ -237,21 +236,6 @@ BEGIN
   END IF;
   RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
 END $$;
-
--- ---------------------------------------------------------------------------
--- Notes: a member-scoped context reads what its member could (ADR-0049 decision 2; ADR-0037 N-6 is revised on purpose for this
--- context and no other). note_read as in 20261103130000, with ctx_acting_user_id() where it read ctx_user_id(); the "system" clause
--- (no user, no agent) still never matches an agent context, and the insert and update policies are untouched.
--- ---------------------------------------------------------------------------
-DROP POLICY IF EXISTS note_read ON crove_notes.note;
-CREATE POLICY note_read ON crove_notes.note AS RESTRICTIVE FOR SELECT TO crove_tenant
-  USING (
-    author_user_id = (SELECT crove_kernel.ctx_acting_user_id())
-    OR (visibility = 'org' AND (
-      ((SELECT crove_kernel.ctx_user_id()) IS NULL AND (SELECT crove_kernel.ctx_agent_id()) IS NULL)
-      OR ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) AND EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
-        WHERE m.org_id = note.org_id AND m.user_id = (SELECT crove_kernel.ctx_acting_user_id()) AND m.role IN ('owner', 'admin', 'member'))))));
 
 -- ---------------------------------------------------------------------------
 -- Activity is an org-visible sink the write guard exempts for org-chart agents (they stamp their own row). Vy in member mode writes
