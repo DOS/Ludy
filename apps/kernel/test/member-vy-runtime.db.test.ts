@@ -3,6 +3,7 @@
 // query runs for it only when it declares memberVy and its `access` also admits the member's base role, R0 or R1 only, and the rows the
 // runtime writes for it pass the write guard. The database cases are in test/invariant/member-vy-background.db.test.ts.
 import { randomUUID } from "node:crypto";
+import { sql } from "kysely";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { z } from "zod";
@@ -87,6 +88,25 @@ const query = (
 const QUERIES = [
   query("kernel.member_vy.t_q", { memberVy: {} }),
   query("kernel.member_vy.t_q_undeclared", {}),
+  query("kernel.member_vy.t_q_iso", {
+    memberVy: {},
+    handler: async (ctx) => ({
+      isolation: (
+        await sql<{
+          v: string;
+        }>`SELECT current_setting('transaction_isolation') AS v`.execute(
+          ctx.trx,
+        )
+      ).rows[0]?.v,
+      readOnly: (
+        await sql<{
+          v: string;
+        }>`SELECT current_setting('transaction_read_only') AS v`.execute(
+          ctx.trx,
+        )
+      ).rows[0]?.v,
+    }),
+  }),
 ];
 
 suite("member-scoped agent actor in the runtime", () => {
@@ -296,6 +316,13 @@ suite("member-scoped agent actor in the runtime", () => {
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
       details: { rule: "member_vy_access" },
+    });
+  });
+
+  it("reads a member-mode query in one REPEATABLE READ, READ ONLY snapshot", async () => {
+    expect(await run("member").query("kernel.member_vy.t_q_iso", {})).toEqual({
+      isolation: "repeatable read",
+      readOnly: "on",
     });
   });
 

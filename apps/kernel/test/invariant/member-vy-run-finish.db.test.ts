@@ -79,7 +79,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     run: string,
     status: string,
     code: string | null,
-    enter = systemEnter(),
+    enter: (c: pg.Client) => Promise<unknown> = systemEnter(),
     url = () => workerUrl,
   ) =>
     outcome(

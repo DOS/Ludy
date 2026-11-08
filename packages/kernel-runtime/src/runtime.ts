@@ -2987,7 +2987,11 @@ export class Runtime {
         audited = true;
         reached = false;
       }
-      return await db.transaction().execute(async (trx) => {
+      // A query of Vy in member mode reads one snapshot (REPEATABLE READ, as a streamed query does), so the member's rights it entered with
+      // and the rows it reads belong to the same instant: a result or a note changed between two reads of one query is never half seen.
+      const memberMode = options.actor.type === 'agent' && options.actor.memberVy === true;
+      const tx = memberMode ? db.transaction().setIsolationLevel('repeatable read') : db.transaction();
+      return await tx.execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
         await this.checkSession(trx, options.actor, options.orgId);
         await sql`SET TRANSACTION READ ONLY`.execute(trx);
