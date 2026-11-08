@@ -12,6 +12,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  PAYROLL_PAYMENT_COMMAND,
   VOUCHER_COMMAND,
   defaultCounterAccount,
   voucherCode,
@@ -118,7 +119,8 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
     .selectFrom('crove_kernel.proposal')
     .select(['id', sql<string>`payload->>'bankLineId'`.as('line_id')])
     .where('org_id', '=', ctx.orgId)
-    .where('command', '=', VOUCHER_COMMAND)
+    // A payment voucher of a pay run (#2532) settles a bank line too, so its pending proposal counts as proposed.
+    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND])
     .where('status', '=', 'pending')
     .where(sql<string>`payload->>'bankLineId'`, 'in', ids)
     .orderBy('created_at')
@@ -371,7 +373,7 @@ export const bankOpenLines = defineQuery({
             selectFrom('crove_kernel.proposal as p')
               .select('p.id')
               .whereRef('p.org_id', '=', 'l.org_id')
-              .where('p.command', '=', VOUCHER_COMMAND)
+              .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND])
               .where('p.status', '=', 'pending')
               .where(sql`p.payload->>'bankLineId'`, '=', sql`l.id::text`),
           ),

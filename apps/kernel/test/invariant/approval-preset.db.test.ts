@@ -286,19 +286,15 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const approvedAudit = await o.audit('kernel.proposal.approve', after);
-    expect(approvedAudit).toMatchObject({
+    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
+      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+      // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532; the allowance of 9 or 10 that step one gave is gone).
+      policy_version: 10,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
-    // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-    // 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736). This is a dated allowance for #2532: 9, as before, or 10, which the payment voucher of an
-    // approved pay run raises it to (it is given its approval policy and its ledger-effect check, as the posting was in #2731). The step-two change of that PR pins 10 and removes this
-    // allowance; it expires with that PR and, failing that, fails on 2026-12-24.
-    expect(Date.now(), 'the allowance of #2532 for policy_version 9 or 10 has expired: pin the number').toBeLessThan(Date.parse('2026-12-24T00:00:00Z'));
-    expect([9, 10]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
