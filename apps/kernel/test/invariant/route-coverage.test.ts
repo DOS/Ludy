@@ -60,7 +60,9 @@ const PUBLIC: Record<string, string> = {
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
-const PENDING: Record<string, string> = {};
+const PENDING: Record<string, string> = {
+  '/api/quote/view': "the public page of a sent quote (#2694): a signed, expiring, revocable quote link is the credential; rate limited per client, it answers one quote document and nothing else",
+};
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
 const WEB_DIST = mkdtempSync(join(tmpdir(), 'crove-route-coverage-'));

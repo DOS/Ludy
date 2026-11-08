@@ -8955,6 +8955,7 @@ export const vi = {
       extension_scope: 'Mã của tiện ích không được dùng cho việc này',
       extension_org: 'Mã của tiện ích chỉ dùng được trong tổ chức đã cấp',
       extension_only: 'Đường này chỉ dành cho tiện ích trình duyệt',
+      extension_id: 'Tiện ích trình duyệt này không được phép kết nối với máy chủ này',
     },
   },
   // The label of every registered command and query, by its name (#1654), for the audit log and its export.
@@ -9579,6 +9580,8 @@ export const vi = {
           exchanged: 'Ghi nhận lượt đổi mã đăng nhập của tiện ích',
           list: 'Xem các thiết bị tiện ích đã kết nối',
           revoke: 'Ngắt kết nối một thiết bị tiện ích',
+          list_org: 'Xem thiết bị tiện ích đã kết nối của mọi thành viên',
+          revoke_member: 'Ngắt kết nối thiết bị tiện ích của một thành viên',
         },
       },
       extraction: {
