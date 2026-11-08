@@ -17,6 +17,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
 import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { DealQuotes } from '../components/deal-quotes.tsx';
 import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
 import { DealStaleSetting } from '../components/deal-stale-setting.tsx';
 import { PipelineSettings } from '../components/pipeline-settings.tsx';
@@ -37,6 +38,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
   const [editing, setEditing] = useState(false);
+  const [quoting, setQuoting] = useState(false);
   // A move into a lost stage asks for an optional reason first.
   const [losing, setLosing] = useState<PipelineStage | null>(null);
   const [reason, setReason] = useState('');
@@ -74,6 +76,9 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
             )}
           </p>
           {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
+          <Button size="sm" variant="ghost" className="-ml-2 mt-1" onClick={() => setQuoting((q) => !q)} aria-expanded={quoting} data-testid="deal-quotes-toggle">
+            {t('quotes')}
+          </Button>
         </TableCell>
         <TableCell className="px-4 text-sm">{deal.partyName}</TableCell>
         <TableCell className="px-4 text-sm">
@@ -141,6 +146,13 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
               </form>
             )}
             {(move.error || remove.error) && <ErrorText>{errorMessage(move.error ?? remove.error)}</ErrorText>}
+          </TableCell>
+        </TableRow>
+      )}
+      {quoting && (
+        <TableRow>
+          <TableCell colSpan={columns} className="px-4 py-3">
+            <DealQuotes deal={deal} canEdit={canEdit} onClose={() => setQuoting(false)} />
           </TableCell>
         </TableRow>
       )}
