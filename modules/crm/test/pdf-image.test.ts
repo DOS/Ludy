@@ -76,12 +76,15 @@ describe('the logo as a PNG', () => {
     expect(readLogoImage(pngWithIdat({ width: 4, height: 4, colorType: 2 }, Buffer.from('not zlib at all')), 'image/png')).toBeNull();
   });
 
-  it('allows the largest picture it takes and no more by pixels', () => {
-    expect(MAX_PIXELS).toBe(4 * 1024 * 1024);
-    // 2048 by 2048 gray, all one value: small as a file, the most it takes as a picture.
-    const big = readLogoImage(png({ width: 2048, height: 2048, colorType: 0, samples: new Uint8Array(2048 * 2048) }), 'image/png');
-    expect(big).toMatchObject({ width: 2048, height: 2048 });
-    expect(readLogoImage(png({ width: 2049, height: 2049, colorType: 0, samples: new Uint8Array(2049 * 2049) }), 'image/png')).toBeNull();
+  it('allows the largest picture it takes and no more, by a side and by pixels', () => {
+    expect([MAX_SIDE, MAX_PIXELS]).toEqual([1024, 1024 * 1024]);
+    // 1024 by 1024 gray, all one value: small as a file, the most it takes as a picture.
+    const big = readLogoImage(png({ width: 1024, height: 1024, colorType: 0, samples: new Uint8Array(1024 * 1024) }), 'image/png');
+    expect(big).toMatchObject({ width: 1024, height: 1024 });
+    expect(readLogoImage(png({ width: 1025, height: 1, colorType: 0, samples: new Uint8Array(1025) }), 'image/png')).toBeNull();
+    expect(readLogoImage(png({ width: 1, height: 1025, colorType: 0, samples: new Uint8Array(1025) }), 'image/png')).toBeNull();
+    // Within a side and the megapixel: taken.
+    expect(readLogoImage(png({ width: 1024, height: 1023, colorType: 0, samples: new Uint8Array(1024 * 1023) }), 'image/png')).toMatchObject({ width: 1024, height: 1023 });
   });
 });
 
@@ -103,6 +106,8 @@ describe('the logo as a JPEG', () => {
     expect(readLogoImage(jpeg({ width: 0, height: 10 }), 'image/jpeg')).toBeNull();
     expect(readLogoImage(jpeg({ width: MAX_SIDE + 1, height: 10 }), 'image/jpeg')).toBeNull();
     expect(readLogoImage(jpeg({ width: 3000, height: 3000 }), 'image/jpeg')).toBeNull();
+    expect(readLogoImage(jpeg({ width: 1024, height: 1024 }), 'image/jpeg')).not.toBeNull();
+    expect(readLogoImage(jpeg({ width: 1025, height: 100 }), 'image/jpeg')).toBeNull();
     const file = jpeg({ width: 10, height: 10 });
     expect(readLogoImage(file.subarray(0, 12), 'image/jpeg')).toBeNull();
     expect(readLogoImage(file.subarray(2), 'image/jpeg')).toBeNull();

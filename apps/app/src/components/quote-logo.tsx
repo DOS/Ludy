@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES } from '@crove/kernel-contract';
+import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_MAX_SIDE, QUOTE_LOGO_TYPES } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, fetchFile, orpc, queryClient, uploadFiles } from '../lib/api.ts';
@@ -74,7 +74,7 @@ export function QuoteLogoField({ fileId }: { fileId: string | null }) {
           </Button>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">{t('logoHint', { max: String(QUOTE_LOGO_MAX_BYTES / 1024) })}</p>
+      <p className="text-xs text-muted-foreground">{t('logoHint', { max: String(QUOTE_LOGO_MAX_BYTES / 1024), side: String(QUOTE_LOGO_MAX_SIDE) })}</p>
       {problem && <ErrorText>{problem === 'type' ? t('logoType') : t('logoTooLarge', { max: String(QUOTE_LOGO_MAX_BYTES / 1024) })}</ErrorText>}
       {error && <ErrorText>{errorMessage(error)}</ErrorText>}
     </div>

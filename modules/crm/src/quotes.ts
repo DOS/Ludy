@@ -15,6 +15,8 @@ import {
   QUOTE_DEFAULT_VAT,
   QUOTE_HINTS_MAX,
   QUOTE_LOGO_MAX_BYTES,
+  QUOTE_LOGO_MAX_PIXELS,
+  QUOTE_LOGO_MAX_SIDE,
   QUOTE_LOGO_TYPES,
   QUOTE_LINKS_MAX,
   QUOTE_LINK_DAYS_AFTER_VALID,
@@ -143,13 +145,18 @@ export const quoteLogoSet = defineCommand({
     const userId = userOf(ctx.actor);
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['content_type', 'size_bytes', 'source'])
+      .select(['content_type', 'size_bytes', 'source', 'image_width', 'image_height'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
       .executeTakeFirst();
     if (!file || file.source !== 'social') throw new DomainError('QUOTE_LOGO_NOT_FOUND', 404, 'Không tìm thấy ảnh này');
     if (!(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type)) throw new DomainError('QUOTE_LOGO_TYPE', 422, 'Logo chỉ nhận ảnh PNG hoặc JPEG');
     if (Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) throw new DomainError('QUOTE_LOGO_TOO_LARGE', 422, `Logo lớn hơn ${QUOTE_LOGO_MAX_BYTES / 1024} KB; hãy thu nhỏ ảnh rồi chọn lại`);
+    // The picture's size as the upload recorded it from the file's own header: a logo is decoded for the PDF, so its size is bounded here, and one whose size is not known is refused.
+    if (file.image_width === null || file.image_height === null) throw new DomainError('QUOTE_LOGO_DIMENSIONS', 422, 'Không đọc được kích thước ảnh; hãy chọn ảnh PNG hoặc JPEG khác');
+    if (file.image_width > QUOTE_LOGO_MAX_SIDE || file.image_height > QUOTE_LOGO_MAX_SIDE || file.image_width * file.image_height > QUOTE_LOGO_MAX_PIXELS) {
+      throw new DomainError('QUOTE_LOGO_DIMENSIONS', 422, `Logo lớn hơn ${QUOTE_LOGO_MAX_SIDE} x ${QUOTE_LOGO_MAX_SIDE} điểm ảnh; hãy thu nhỏ ảnh rồi chọn lại`);
+    }
     const values = { logo_file_id: input.fileId, set_by: userId, updated_at: ctx.now };
     await ctx.trx
       .insertInto('crove_crm.quote_setting')

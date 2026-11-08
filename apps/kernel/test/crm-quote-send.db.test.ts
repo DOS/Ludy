@@ -464,13 +464,13 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const o = await org();
     const store = new MemoryStore();
     // A file row as the upload would record it (source 'social': never extracted), with its bytes in the store.
-    const makeFile = async (orgId: string, bytes: Uint8Array, over: { source?: string; contentType?: string; size?: number } = {}) => {
+    const makeFile = async (orgId: string, bytes: Uint8Array, over: { source?: string; contentType?: string; size?: number; width?: number | null; height?: number | null } = {}) => {
       const sha = sha256Hex(bytes);
       await store.put(fileKey(orgId, sha), bytes);
       const inserted = await admin((c) =>
         c.query<{ id: string }>(
-          "INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'logo', $5, $6, $7) RETURNING id",
-          [orgId, sha, fileKey(orgId, sha), contentGeneration(sha), over.contentType ?? 'image/png', over.size ?? bytes.byteLength, over.source ?? 'social'],
+          "INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source, image_width, image_height) VALUES ($1, $2, $3, $4, 'logo', $5, $6, $7, $8, $9) RETURNING id",
+          [orgId, sha, fileKey(orgId, sha), contentGeneration(sha), over.contentType ?? 'image/png', over.size ?? bytes.byteLength, over.source ?? 'social', over.width === undefined ? 120 : over.width, over.height === undefined ? 40 : over.height],
         ),
       );
       return inserted.rows[0]!.id;
@@ -487,6 +487,14 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 1]), { source: 'upload' }) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_NOT_FOUND' });
     await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 2]), { contentType: 'image/webp' }) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_TYPE', status: 422 });
     await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 3]), { size: 512 * 1024 + 1 }) })).rejects.toMatchObject({ code: 'QUOTE_LOGO_TOO_LARGE', status: 422 });
+    // A picture over 1024 on a side or over a megapixel in all, and one whose size the upload could not read, are refused (the PDF decodes a PNG on the API's thread).
+    for (const [index, dims] of [[4, { width: 1025, height: 100 }], [5, { width: 100, height: 1025 }], [7, { width: null, height: null }]] as const) {
+      const fileId = await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, index]), dims);
+      await expect(o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId })).rejects.toMatchObject({ code: 'QUOTE_LOGO_DIMENSIONS', status: 422 });
+    }
+    // The most it takes is taken.
+    expect(await o.exec(o.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(o.orgId, new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9, 9, 8]), { width: 1024, height: 1024 }) })).toMatchObject({ validDays: 14 });
+    await o.exec(o.owner, 'crm.quote_setting.logo_remove', {});
 
     // Quote A is sent with no logo: it has none, and keeps having none when the org adds one (the freeze marker says it was decided at the send).
     const deal = await o.newDeal(await o.party('Công ty ABC'));

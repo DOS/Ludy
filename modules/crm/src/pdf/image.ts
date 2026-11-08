@@ -6,11 +6,13 @@
 //
 // Taken: a baseline, extended or progressive JPEG of one or three 8-bit components; a PNG of 8 bits per sample, not interlaced, as gray, gray and alpha, RGB, RGBA or palette (with
 // its transparency). Not taken, so no logo on the PDF (the page and the screen are not affected): a 16-bit or interlaced PNG, a CMYK or lossless or arithmetic-coded JPEG, a picture over
-// MAX_SIDE on a side or MAX_PIXELS in all.
+// MAX_SIDE on a side or MAX_PIXELS in all (1024 and 1 Mpixel).
 import { inflateSync } from 'node:zlib';
+import { QUOTE_LOGO_MAX_PIXELS, QUOTE_LOGO_MAX_SIDE } from '@crove/kernel-contract';
 
-export const MAX_SIDE = 4096;
-export const MAX_PIXELS = 4 * 1024 * 1024;
+// The size the settings allow (the command refuses a bigger logo): a PNG is decoded on the API's thread, about 80 ms for the most this allows.
+export const MAX_SIDE = QUOTE_LOGO_MAX_SIDE;
+export const MAX_PIXELS = QUOTE_LOGO_MAX_PIXELS;
 
 // What the writer embeds: the picture's size, and its colour as either a JPEG file (written as is, DCTDecode) or plain 8-bit samples (written deflated), with an optional 8-bit alpha plane.
 export interface PdfImage {

@@ -169,6 +169,7 @@ export const KERNEL_ERROR_CODES = [
   'QUOTE_LOGO_NOT_FOUND',
   'QUOTE_LOGO_TYPE',
   'QUOTE_LOGO_TOO_LARGE',
+  'QUOTE_LOGO_DIMENSIONS',
   // Quote acceptance and the sales order (#2696, ADR-0050).
   'QUOTE_NOT_DECIDABLE',
   'QUOTE_NUMBER_TAKEN',

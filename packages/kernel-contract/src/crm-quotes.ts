@@ -35,6 +35,9 @@ export const QUOTE_PHONE_MAX = 40;
 // The logo on the letterhead (#2814): a PNG or a JPEG of an image the org uploaded, at most this many bytes (the page and the PDF read it on every view).
 export const QUOTE_LOGO_TYPES = ['image/png', 'image/jpeg'] as const;
 export const QUOTE_LOGO_MAX_BYTES = 512 * 1024;
+// The picture's own size: the PDF decodes a PNG on the API's thread, so the cost is bounded by the size (a logo needs about 625 by 225 pixels at 300 dpi in its box on the page).
+export const QUOTE_LOGO_MAX_SIDE = 1024;
+export const QUOTE_LOGO_MAX_PIXELS = 1024 * 1024;
 // Earlier lines offered as price hints for a customer.
 export const QUOTE_HINTS_MAX = 50;
 
