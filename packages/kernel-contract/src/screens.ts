@@ -192,9 +192,9 @@ const HR_SCREENS = {
 } as const satisfies ModuleScreens;
 
 // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): accessed through Cuoc hop tab inside Ludy Notes;
-// individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
+// the in-app recorder at /o/$slug/meetings/record (M7, #2581); individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
 export const MEETINGS_SCREENS = {
-  routes: [{ path: 'meetings' }, { path: 'meetings/$id' }],
+  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }],
   nav: [],
 } as const satisfies ModuleScreens;
 
