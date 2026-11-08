@@ -9134,6 +9134,7 @@ export const vi = {
         delete_draft: 'Xóa báo giá nháp',
         get: 'Xem một báo giá',
         list: 'Xem danh sách báo giá',
+        report: 'Xem số báo giá và giá trị theo trạng thái',
         revise: 'Tạo bản sửa đổi của báo giá đã gửi',
         save: 'Tạo báo giá từ cơ hội hoặc lưu báo giá nháp',
         suggest_source: 'Đọc cơ hội, tin khách nhắn và báo giá cũ để gợi ý dòng hàng',

@@ -9137,6 +9137,7 @@ export const en = {
         delete_draft: 'Delete a draft quote',
         get: 'See a quote',
         list: 'See the list of quotes',
+        report: 'See the number and value of quotes by status',
         revise: 'Make a revision of a sent quote',
         save: 'Make a quote from a deal or save a draft quote',
         suggest_source: 'Read the deal, the customer\'s messages and earlier quotes to suggest lines',
