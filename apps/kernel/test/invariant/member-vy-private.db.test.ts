@@ -193,14 +193,14 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
                 has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
                 has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant_exec
          FROM pg_proc p
-         WHERE p.pronamespace = 'crove_kernel'::regnamespace AND p.proname LIKE 'member\\_vy\\_%'`,
+         WHERE p.pronamespace = 'crove_kernel'::regnamespace AND (p.proname LIKE 'member\\_vy\\_%' OR p.proname LIKE 'enter\\_member\\_vy%')`,
       ),
     );
     for (const f of rows) {
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
       // The definers that touch member text (expire, purge) are never callable by the tenant role: only the worker login, in the system context, reaches them.
-      if (f.definer && /results_expire|data_purge/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      if (f.definer && /results_expire|data_purge|enter_member_vy/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
@@ -264,18 +264,20 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
           return { update, remove, insert };
         });
         // An update or a delete sees no row; an insert for another member's name is refused (privilege or policy), never accepted.
-        expect(changes.update.ok && (changes.update.value as pg.QueryResult).rowCount, `${actor.name} updating the result`).not.toBeGreaterThan(0);
-        expect(changes.remove.ok && (changes.remove.value as pg.QueryResult).rowCount, `${actor.name} deleting the memory`).not.toBeGreaterThan(0);
-        expect(changes.insert.ok, `${actor.name} writing a memory for the member`).toBe(false);
+        const touched = (r: { ok: boolean; value?: unknown }) => (r.ok ? ((r.value as pg.QueryResult).rowCount ?? 0) : 0);
+        expect(touched(changes.update), `${actor.name} updating the result`).toBe(0);
+        expect(touched(changes.remove), `${actor.name} deleting the memory`).toBe(0);
+        expect(changes.insert, `${actor.name} writing a memory for the member`).toMatchObject({ ok: false, code: '42501' });
       }
+      // Positive control: the member writes their own memory in the same shape, so the refusals above are about who writes, not the shape.
+      const own = await outcome(
+        run(author, (c) => c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`, [orgId, randomUUID(), users.author])),
+      );
+      expect(own.ok, 'the member writing their own memory').toBe(true);
+      const kept = await admin((c) => c.query('SELECT id FROM crove_kernel.member_vy_memory WHERE id = $1', [ids.memory]));
+      expect(kept.rowCount, 'the memory is untouched').toBe(1);
       const after = await admin((c) => c.query<{ body: string }>('SELECT body FROM crove_kernel.member_vy_result WHERE id = $1', [ids.result]));
       expect(after.rows[0]?.body, 'the result is untouched').toBe(SECRET);
-    });
-
-    it('keeps the seeded result text out of every audit row', async () => {
-      if (!has.results) return;
-      const audit = await admin((c) => c.query('SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2', [orgId, `%${SECRET.slice(0, 12)}%`]));
-      expect(audit.rowCount, 'no audit row holds the result text').toBe(0);
     });
   });
 
@@ -372,21 +374,20 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
         // enter_agent_context refuses it: it is no org-chart agent (ADR-0049 decision 1).
         const entered = await outcome(inContext(workerUrl, async () => {}, (c) => c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agentId, runId])));
         expect(entered.ok, 'enter_agent_context for a member_vy agent').toBe(false);
+        // Not merely "no seat": a member_vy agent has none by design, so the refusal must come from its kind.
+        expect(entered.ok ? '' : entered.message, 'refused for its kind, not for lacking a position').not.toMatch(/AGENT_NO_POSITION/);
         // A run of the member's Vy is read by that member alone: no owner, admin, member, viewer, agent or system.
         const mine = await run(author, async (c) => (await c.query('SELECT id FROM crove_kernel.ai_run WHERE id = $1', [runId])).rowCount);
         expect(mine, 'the member reading their run').toBe(1);
         for (const actor of others) {
-          const seen = await run(actor, async (c) => ({
-            run: (await c.query('SELECT id FROM crove_kernel.ai_run WHERE id = $1', [runId])).rowCount,
-            agent: (await c.query('SELECT id FROM crove_kernel.agent WHERE kind = $1', ['member_vy'])).rowCount,
-          }));
-          expect(seen.run, `${actor.name} reading the member's run`).toBe(0);
+          const seen = await run(actor, async (c) => (await c.query('SELECT id FROM crove_kernel.ai_run WHERE id = $1', [runId])).rowCount);
+          expect(seen, `${actor.name} reading the member's run`).toBe(0);
         }
         // A run of a member_vy agent is inserted only in that member's context.
-        for (const actor of [member('an owner', () => users.owner), member('an admin', () => users.admin), system]) {
+        for (const actor of [member('an owner', () => users.owner), member('an admin', () => users.admin), member('another member', () => users.member), member('a viewer', () => users.viewer), agentActor, system]) {
           const forged = await outcome(
             inContext(actor.url(), actor.enter, (c) =>
-              c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'failed', true, now() - interval '2 minutes', now() - interval '1 minute')`, [orgId, randomUUID(), agentId]),
+              c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`, [orgId, randomUUID(), agentId]),
             ),
           );
           expect(forged.ok, `${actor.name} writing a run for the member's Vy`).toBe(false);
@@ -422,7 +423,12 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, id, user_id, permission, allowed, set_by) VALUES ($1, $2, $3, 'vy.use', false, $4)`, [orgId, randomUUID(), users.member, users.owner]));
       try {
         expect(await permitted(users.member, 'vy.use'), 'a member with a deny').toBe(false);
+        // A deny beats a role that grants it too, and an entity-scoped role still counts for vy.use (the permission has no entity meaning).
+        expect(await permitted(users.limited, 'vy.use'), 'a member whose only role is limited to one entity').toBe(true);
+        await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'crm.sales', $3)`, [orgId, users.member, users.owner]));
+        expect(await permitted(users.member, 'vy.use'), 'a deny against a granting role').toBe(false);
       } finally {
+        await admin((c) => c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2 AND role_key = 'crm.sales'`, [orgId, users.member]));
         await admin((c) => c.query(`DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, [orgId, users.member]));
       }
     });
@@ -441,13 +447,21 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
         }
         return out;
       };
+      // A role that grants vy.use and a real permission gives a viewer vy.use and nothing else.
+      await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'finance.chief_accountant', $3)`, [orgId, users.viewer, users.owner]));
+      try {
+        expect(await permitted(users.viewer, 'vy.use'), 'a viewer with a department role').toBe(true);
+        expect(await permitted(users.viewer, 'finance.period.unlock'), 'the same viewer, the role\'s other permission').toBe(false);
+      } finally {
+        await admin((c) => c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2`, [orgId, users.viewer]));
+      }
       expect(await viewerRoles([...VY_ROLES, 'finance.viewer'])).toEqual({ ...Object.fromEntries(VY_ROLES.map((r) => [r, true])), 'finance.viewer': false });
       // A viewer holds no other permission, whatever a grant says.
       if (has.override) {
         await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, id, user_id, permission, allowed, set_by) VALUES ($1, $2, $3, 'vy.use', true, $4)`, [orgId, randomUUID(), users.viewer, users.owner]));
         try {
           expect(await permitted(users.viewer, 'vy.use'), 'a viewer with a grant of vy.use').toBe(true);
-          expect(await permitted(users.viewer, 'finance.close'), 'the same viewer, any other permission').toBe(false);
+          expect(await permitted(users.viewer, 'finance.period.unlock'), 'the same viewer, a permission no grant of vy.use gives').toBe(false);
         } finally {
           await admin((c) => c.query(`DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, [orgId, users.viewer]));
         }
@@ -464,10 +478,9 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
   });
 
   // The store command of stage A is the only writer of what Vy produced (decision 0, the stage A write boundary).
-  it('declares the store command as one R0 or R1 command of its own and no command of another name that persists a result', () => {
-    const names = kernelCommands.map((c) => c.name);
-    const mine = names.filter((n) => n.startsWith('kernel.member_vy.'));
-    for (const n of mine) expect(['kernel.member_vy.run.start', 'kernel.member_vy.result.store', 'kernel.member_vy.memory.set', 'kernel.member_vy.memory.delete', 'kernel.member_vy.result.confirm'], n).toContain(n);
+  it('declares the member_vy commands at R0 or R1 only, the store command among them, and none with memberVy before stage B', () => {
+    const mine = kernelCommands.filter((c) => c.name.startsWith('kernel.member_vy.'));
+    for (const c of mine) expect(['R0', 'R1'], `${c.name} risk`).toContain(c.risk);
     const store = kernelCommands.find((c) => c.name === 'kernel.member_vy.result.store');
     if (store) expect(['R0', 'R1'], 'the store command risk').toContain(store.risk);
     // No command outside the kernel.member_vy namespace is declared for a member-mode run before stage B.

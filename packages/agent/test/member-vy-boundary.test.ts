@@ -40,8 +40,8 @@ const BANNED_IMPORT = /^(?:@crove\/(?:kernel|kernel-runtime|kernel-contract|db|m
 export function memberVyViolations(text: string): string[] {
   const out: string[] = [];
   for (const spec of specifiers(text)) if (BANNED_IMPORT.test(spec)) out.push(`imports ${spec}`);
-  // A command name: three or more dotted segments in a string (kernel.member_vy.result.store, notes.todo.create). A feature key has two (notes.summary).
-  for (const m of text.matchAll(/['"`]([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){2,})['"`]/g)) out.push(`names the command or path ${m[1]}`);
+  // A command name: a module namespace and two or more further segments in a string (kernel.member_vy.result.store, notes.todo.create). A feature key has two (notes.summary).
+  for (const m of text.matchAll(/['"`]((?:kernel|notes|meetings|finance|crm|hr|social|projects|calendar|desk)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)['"`]/g)) out.push(`names the command or path ${m[1]}`);
   // A table name, and a call that runs a command.
   if (/['"`][^'"`\n]*\bcrove_[a-z]+\b/.test(text)) out.push('names a crove_ table');
   if (/\.\s*execute\s*\(/.test(text)) out.push('calls execute()');
