@@ -6,6 +6,7 @@ import { hrPostingCommands } from './payroll-posting.ts';
 export * from './employees.ts';
 export * from './payroll-run.ts';
 export * from './payroll-posting.ts';
+export * from './declarations.ts';
 
 export const hrCommands = [...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands];
 export const hrQueries = [...hrEmployeeQueries, ...hrPayrollQueries];
