@@ -60,6 +60,14 @@ export function orgFeatureViolations(text: string): string[] {
   return out;
 }
 
+// The member-Vy names a file outside member-vy/ must not carry, and the notes feature keys (N8) it must not meter.
+export function memberVyNames(text: string): string[] {
+  return ['memberVy', 'member_vy', 'PrivateText'].filter((name) => new RegExp(`\\b${name}\\b`).test(text));
+}
+export function meteredNotes(text: string): string[] {
+  return [...text.matchAll(/\bmetered\(\s*['"`](notes\.[a-z0-9_]+)['"`]/g)].map((m) => m[1] as string);
+}
+
 describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)', () => {
   it('flags what a pure feature must not do (the scanner is not vacuous)', () => {
     expect(memberVyViolations(`import { Runtime } from '@crove/kernel-runtime';`)).toEqual(['imports @crove/kernel-runtime']);
@@ -92,13 +100,26 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
   });
 
   // Tripwires: the boundary cannot be dodged by putting the feature where the scan does not look.
-  it('keeps the member-Vy names inside packages/agent/src/member-vy (and the two files that join it to the rest)', () => {
+  it('flags a member-Vy name or a notes feature key outside member-vy/ (the tripwire is not vacuous)', () => {
+    expect(memberVyNames('const x: PrivateText = y;')).toEqual(['PrivateText']);
+    expect(memberVyNames('const f = memberVy.run;')).toEqual(['memberVy']);
+    expect(memberVyNames("const t = 'member_vy';")).toEqual(['member_vy']);
+    expect(meteredNotes("await metered('notes.summary', () => call())")).toEqual(['notes.summary']);
+    expect(meteredNotes('await metered(`notes.todo_suggest`, fn)')).toEqual(['notes.todo_suggest']);
+    expect(meteredNotes("await metered('conversation.draft', fn)")).toEqual([]);
+    expect(memberVyNames('const role = "member";')).toEqual([]);
+  });
+
+  it('keeps the member-Vy names inside packages/agent/src/member-vy (and the three files that join it to the rest)', () => {
     const JOINTS = new Set(['meter.ts', 'index.ts', 'private-text.ts']);
-    const bad = sources(SRC)
-      .filter((file) => !file.startsWith(`${MEMBER_VY}/`) && !JOINTS.has(file.slice(SRC.length + 1)))
-      .filter((file) => /\bmemberVy\b|\bPrivateText\b/.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(ROOT, file));
-    expect(bad, 'a member-Vy feature or its private type outside member-vy/').toEqual([]);
+    const outside = sources(SRC).filter((file) => !file.startsWith(`${MEMBER_VY}/`));
+    const names = outside
+      .filter((file) => !JOINTS.has(file.slice(SRC.length + 1)))
+      .flatMap((file) => memberVyNames(readFileSync(file, 'utf8')).map((n) => `${relative(ROOT, file)}: ${n}`));
+    expect(names, 'a member-Vy feature or its private type outside member-vy/').toEqual([]);
+    // The notes feature keys of N8 are metered only from member-vy/, whatever file joins it to the rest (no exemption).
+    const keys = outside.flatMap((file) => meteredNotes(readFileSync(file, 'utf8')).map((n) => `${relative(ROOT, file)}: metered('${n}')`));
+    expect(keys, 'a notes feature (N8) metered outside member-vy/').toEqual([]);
   });
 
   it('has member-vy source files once the store command exists in the kernel', () => {
