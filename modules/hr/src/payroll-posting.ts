@@ -192,7 +192,16 @@ export const verifyRunPosting = defineCommand({
   writes: [],
   handler: async (ctx, { runId }) => {
     const { payrollRun, date, regime, result } = await buildRunPosting(ctx, runId, false);
-    return { runId, month: payrollRun.month, date, regime, lines: result.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit })) };
+    return {
+      runId,
+      month: payrollRun.month,
+      date,
+      regime,
+      // The run's entity and the person who approved it: the posting must name this entity, and its proposal must list this person as a co-author (finance's record checks both).
+      legalEntityId: payrollRun.legal_entity_id,
+      approvedBy: payrollRun.approved_by,
+      lines: result.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit })),
+    };
   },
 });
 

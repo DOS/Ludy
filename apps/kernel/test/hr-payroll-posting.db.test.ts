@@ -390,4 +390,24 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
   });
+
+  it("refuses a stored proposal that names another entity than the run's, or does not list the run's approver as a co-author", async () => {
+    const o = await org('tt133', 'trio');
+    // A second legal entity of the org, and two runs (one proposal each is tampered with, the run's own stay as made).
+    const [branch] = await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner]);
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId, o.admin);
+    const approveBy = async (user: string) => {
+      const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
+      return rt.execute('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
+    };
+    // The proposal names the branch while the run belongs to the default entity (raw SQL, staff here): refused before anything posts.
+    await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($3::text)) WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId, branch?.id]);
+    await expect(approveBy(o.admin2)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'legalEntityId' } });
+    // Put the entity back; now the run's approver (the owner) is removed from the co-authors, which would let them approve: refused as not made by the preparer.
+    await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb(legal_entity_id::text)), co_authors = NULL WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId]);
+    await expect(approveBy(o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'coAuthors' } });
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+  });
 });

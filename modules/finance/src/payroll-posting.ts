@@ -144,7 +144,7 @@ export const recordPayrollPosting = defineCommand({
     // row not written by the preparer (raw SQL) cannot post lines the run does not hold.
     // Payroll is read by owners and admins only, so only they can approve a posting: anyone else who holds the approval permission (a chief accountant who is a member) is told so, and the proposal
     // stays pending for one of them. If the owner later lets members read payroll totals, a follow-up can verify on the totals alone.
-    let expected: { runId: string; month: string; date: string; regime: string; lines: { account: string; debit: string; credit: string }[] };
+    let expected: { runId: string; month: string; date: string; regime: string; legalEntityId: string; approvedBy: string | null; lines: { account: string; debit: string; credit: string }[] };
     try {
       expected = await ctx.run('hr.payroll.posting.verify', { runId: payload.payrollRunId });
     } catch (error) {
@@ -154,6 +154,17 @@ export const recordPayrollPosting = defineCommand({
         });
       }
       throw error;
+    }
+    // The posting goes into the entity the run belongs to, never another the payload names.
+    if (expected.legalEntityId.toLowerCase() !== checked.legalEntityId.toLowerCase()) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán ghi vào pháp nhân khác pháp nhân của bảng lương; hãy lập lại đề xuất', { what: 'legalEntityId' });
+    }
+    // The person who approved the run is a co-author of its posting (four-eyes): a proposal that does not list them was not made by the preparer, so it is refused.
+    if (expected.approvedBy) {
+      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
+        throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
+      }
     }
     const key = (l: { account: string; debit: string; credit: string }) => `${l.account}|${money(l.debit).toFixed(0)}|${money(l.credit).toFixed(0)}`;
     const stored = payload.lines.map(key).sort();
