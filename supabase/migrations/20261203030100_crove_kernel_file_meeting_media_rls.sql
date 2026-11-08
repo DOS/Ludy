@@ -5,7 +5,7 @@
 -- Visible rows: any file that is not meeting media (tested first, so ordinary rows never reach the probes); every row to the system context (worker sweeps, orphan
 -- scan, org purge); the creator's own row while the creator still holds a base role of owner, admin or member (an upload is inserted before its segment or video row
 -- exists); a meeting media row whose segment or video row names a meeting the sealed context's user reads (crove_meetings.is_meeting_reader); and, to a member Vy
--- run (actor agent), a segment file of a meeting that run may open (crove_meetings.member_vy_reads_media_file from 20261202030000, which asks audio_for_member_vy and so repeats none of its checks).
+-- run (actor agent), a segment file of a meeting that run may open (crove_meetings.member_vy_reads_media_file from 20261203030000, which asks audio_for_member_vy and so repeats none of its checks).
 -- The owner's compliance path stays the meeting_owner_list / meeting_owner_delete definers. No index is built on the hot file table: the probes use
 -- audio_segment_file_idx and meeting_video_file_idx.
 SET LOCAL lock_timeout = '2s';

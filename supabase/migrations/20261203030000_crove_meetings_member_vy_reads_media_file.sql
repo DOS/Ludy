@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- #2874: the question the file table's meeting-media policy asks for a member Vy run (see 20261202030100_crove_kernel_file_meeting_media_rls.sql).
+-- #2874: the question the file table's meeting-media policy asks for a member Vy run (see 20261203030100_crove_kernel_file_meeting_media_rls.sql).
 -- crove_meetings.member_vy_reads_media_file(org, file) answers true only for a segment file of the ONE meeting the sealed context's own run names, under the
 -- same checks as audio_for_member_vy (which it calls, so none is repeated). It takes no run or meeting argument, so it cannot be asked about another meeting's
 -- file ids: for any other file it answers false exactly as for a file that does not exist. It never raises, writes or audits; it answers a boolean only.
