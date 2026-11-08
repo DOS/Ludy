@@ -22,6 +22,8 @@ export interface PublicConfig {
   stream?: boolean;
   // The feedback and support link (SUPPORT_URL, issue #310): https: or mailto:, null when the deployment has none.
   supportUrl?: string | null;
+  // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); absent from an older kernel: none.
+  extensionIds?: string[];
   // Cloudflare Turnstile's site key for the booking form (TURNSTILE_SITE_KEY, #1353); null when the deployment sets none.
   turnstileSiteKey?: string | null;
   // The product name users see (BRAND_NAME, issue #1040); older servers send none, and "Crove" stands.
