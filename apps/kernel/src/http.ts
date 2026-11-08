@@ -233,7 +233,7 @@ export interface HttpDeps {
   // person's write grant is found by the hash keyed with its secret. With ads installed only.
   adsWriteDeletion?: { appSecret: string };
   // The Pages app's secret for the conversations of the Facebook Pages and Instagram accounts, answered by the same callback (CV6, #2305).
-  conversationsDeletion?: { appSecret: string };
+  conversationsDeletion?: { appSecret: string; instagramAppSecret?: string };
   // Requests per minute per client address for that callback and its status page.
   adsDeletionLimit?: RateLimiter;
   // Per-client budget for Supabase Auth's emails (#190). Unset: the database limiter on `pool`.
@@ -872,7 +872,7 @@ export function createHttpApp(deps: HttpDeps) {
       const limited = take(c);
       if (limited) return limited;
       try {
-        const outcome = await acceptMetaDeletion(runtime, { ads: adsDeletion?.appSecret, adsWrite: adsWriteDeletion?.appSecret, conversations: conversationsDeletion?.appSecret }, await c.req.text());
+        const outcome = await acceptMetaDeletion(runtime, { ads: adsDeletion?.appSecret, adsWrite: adsWriteDeletion?.appSecret, conversations: conversationsDeletion?.appSecret, instagram: conversationsDeletion?.instagramAppSecret }, await c.req.text());
         if (outcome.status !== 200) return c.json({ code: outcome.code }, outcome.status);
         // What Meta asks for: where the person can see the request's status, and the code that names it.
         return c.json({ url: `${config.PUBLIC_URL}${ADS_DELETION_PATH}?code=${outcome.code}`, confirmation_code: outcome.code });
