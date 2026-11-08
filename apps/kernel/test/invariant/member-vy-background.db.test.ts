@@ -916,6 +916,63 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     }
   });
 
+  it("enters in a READ ONLY transaction without the membership lock, reads as the member and writes nothing", async () => {
+    if (!has.entry || !has.kind) return;
+    const run = await liveRun("vyUser");
+    const mine = await addResult(run.runId, users.vyUser);
+    const c = new pg.Client({ connectionString: workerUrl });
+    await c.connect();
+    try {
+      await c.query("BEGIN READ ONLY");
+      await memberEnter(run.agentId, run.runId)(c);
+      expect(
+        await sealOf(c),
+        "a read-only entry seals the same shape",
+      ).toMatchObject({
+        kind: "member_vy",
+        member: users.vyUser,
+        tainted: true,
+      });
+      const read = await c.query<{ id: string }>(
+        `SELECT id FROM crove_kernel.member_vy_result`,
+      );
+      expect(
+        read.rows.map((r) => r.id),
+        "a read-only member-mode context reads its member's results",
+      ).toEqual([mine]);
+      const write = await outcome(
+        c.query(
+          `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'x' WHERE id = $1`,
+          [mine],
+        ),
+      );
+      expect(write, "a write in a read-only transaction").toMatchObject({
+        ok: false,
+        code: "25006",
+      });
+    } finally {
+      await c.query("ROLLBACK").catch(() => {});
+      await c.end();
+    }
+  });
+
+  it("seals tainted true whatever the run row says", async () => {
+    if (!has.entry || !has.kind) return;
+    const run = await liveRun("vyUser");
+    await admin((a) =>
+      a.query(
+        `UPDATE crove_kernel.ai_run SET tainted = false WHERE org_id = $1 AND id = $2`,
+        [orgId, run.runId],
+      ),
+    );
+    const seal = await inContext(
+      workerUrl,
+      memberEnter(run.agentId, run.runId),
+      sealOf,
+    );
+    expect(seal.tainted, "the seal of a member-mode run").toBe(true);
+  });
+
   // ---- Writes ----------------------------------------------------------------------------------------------------------------
   it("refuses a member-mode context every guarded table that is not a catalog 'write' table, enumerated from the catalog (AGENT_FORBIDDEN)", async () => {
     if (!has.entry || !has.kind || !has.catalog) return;
@@ -1013,6 +1070,18 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       // The runtime stores a keyed input hash ("k1:" and 64 hex) unless it runs in plain sha256 mode: both are hashes.
       const keyed = await audit(goodDetail, { sha: `k1:${HASH}` });
       expect(keyed.ok || keyed.message, "a keyed input hash").toBe(true);
+      // The bounds are inclusive and a code the runtime raises passes (the controls for the negatives below).
+      const edge = await audit({
+        agentRun: run.runId,
+        code: "AGENT_FORBIDDEN",
+        errorCode: "AGENT_FORBIDDEN",
+        rule: "P03",
+        bodyLength: 10000000,
+      });
+      expect(
+        edge.ok || edge.message,
+        "a known code, a rule and a number at the bound",
+      ).toBe(true);
       const clean = await audit(goodDetail);
       expect(
         clean.ok || clean.message,
@@ -1052,6 +1121,24 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           { agentRun: run.runId, resultId: "khach-hang-Nam" },
           {},
         ],
+        [
+          "a code the runtime never raises",
+          { agentRun: run.runId, code: "GOI_ANH_NAM" },
+          {},
+        ],
+        [
+          "an errorCode the runtime never raises",
+          { agentRun: run.runId, errorCode: "GOI_ANH_NAM" },
+          {},
+        ],
+        ["a fractional number", { agentRun: run.runId, bodyLength: 1.5 }, {}],
+        [
+          "a number over ten million",
+          { agentRun: run.runId, bodyLength: 10000001 },
+          {},
+        ],
+        ["a negative number", { agentRun: run.runId, bodyLength: -1 }, {}],
+        ["a number as a string", { agentRun: run.runId, bodyLength: "12" }, {}],
         ["a key off the list", { agentRun: run.runId, summary: "x" }, {}],
         ["a nested value", { agentRun: run.runId, status: { a: 1 } }, {}],
         ["another run", { agentRun: randomUUID() }, {}],
@@ -1075,6 +1162,46 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         await attempt(`INSERT INTO crove_kernel.agent_wakeup DEFAULT VALUES`),
         "a wakeup",
       ).toMatchObject(forbidden);
+      // A member's Vy holds no seat, so a NULL seat matches a task nobody is assigned to: the org-chart claim rule would pass. It must not.
+      // A task its run already holds a lease on (seeded as the superuser) is no way in either: no claim, no release, no comment.
+      const heldTask = await admin(
+        async (a) =>
+          (
+            await a.query<{ id: string }>(
+              `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, status, checkout_run_id, lock_expires_at, fence) VALUES ($1, 'Việc đang giữ', 'human', 'user', 'in_progress', $2, now() + interval '10 minutes', 1) RETURNING id`,
+              [orgId, run.runId],
+            )
+          ).rows[0]?.id as string,
+      );
+      for (const [why, sql, params] of [
+        [
+          "claiming an owner's unassigned task",
+          `UPDATE crove_kernel.task SET checkout_run_id = $2, fence = fence + 1, lock_expires_at = now() + interval '10 minutes', status = 'in_progress' WHERE id = $1`,
+          [taskId, run.runId],
+        ],
+        [
+          "releasing the lease its run holds",
+          `UPDATE crove_kernel.task SET checkout_run_id = NULL, lock_expires_at = NULL WHERE id = $1`,
+          [heldTask],
+        ],
+        [
+          "a comment as an agent on a task its run holds",
+          `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'Gọi anh Nam 0909123456', 'agent')`,
+          [orgId, heldTask],
+        ],
+        [
+          "a comment as a user on a task its run holds",
+          `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'x', 'user')`,
+          [orgId, heldTask],
+        ],
+        [
+          "a comment on an unassigned task",
+          `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'x', 'agent')`,
+          [orgId, taskId],
+        ],
+      ] as const) {
+        expect(await attempt(sql, [...params]), why).toMatchObject(forbidden);
+      }
       // Tasks, comments and activity carry their own rules (no seat, no lease, an org-visible sink); the context writes none.
       for (const [why, sql, params] of [
         [
@@ -1202,7 +1329,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         ) =>
           attempt(
             `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, response) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-            [orgId, ownKey, k, command, sha, JSON.stringify(response)],
+            [
+              orgId,
+              ownKey,
+              k,
+              command,
+              sha,
+              response === null ? null : JSON.stringify(response),
+            ],
           );
         return {
           // emit() with any type and a free-text payload, a declared-looking type with ids only, and a direct outbox_pending row.
@@ -1216,9 +1350,19 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             `INSERT INTO crove_kernel.outbox_pending DEFAULT VALUES`,
           ),
           // The run's own key: ids and a hash pass (the control); text in the key, the command, the hash or the response never does.
-          keyOk: await key("store-1", "kernel.member_vy.result.store", HASH, {
-            resultId: randomUUID(),
-          }),
+          keyOk: await key(
+            randomUUID(),
+            "kernel.member_vy.result.store",
+            HASH,
+            { resultId: randomUUID() },
+          ),
+          keyHex: await key(HASH, "kernel.member_vy.result.store", HASH, null),
+          keySlug: await key(
+            "goi_anh_Nam",
+            "kernel.member_vy.result.store",
+            HASH,
+            null,
+          ),
           keyText: await key(
             "Gọi anh Nam",
             "kernel.member_vy.result.store",
@@ -1226,25 +1370,25 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             { resultId: randomUUID() },
           ),
           commandText: await key(
-            "store-2",
+            randomUUID(),
             "Gọi anh Nam 0909123456",
             HASH,
             null,
           ),
           hashText: await key(
-            "store-3",
+            randomUUID(),
             "kernel.member_vy.result.store",
             "Tóm tắt riêng",
             null,
           ),
           responseText: await key(
-            "store-4",
+            randomUUID(),
             "kernel.member_vy.result.store",
             HASH,
             { feature: "Tóm tắt riêng: khách đề nghị giảm giá 12%" },
           ),
           responseSlug: await key(
-            "store-5",
+            randomUUID(),
             "kernel.member_vy.result.store",
             HASH,
             { status: "goi_anh_Nam_0909123456" },
@@ -1267,6 +1411,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       ],
       ["a direct outbox_pending row", attempts.pending],
       ["text in the idempotency key", attempts.keyText],
+      ["an ASCII slug as the idempotency key", attempts.keySlug],
       ["text in the idempotency command", attempts.commandText],
       ["text in the request hash", attempts.hashText],
       ["text in the stored response", attempts.responseText],
@@ -1275,14 +1420,19 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     ] as const) {
       expect(o, why).toMatchObject(forbidden);
     }
-    expect(
-      attempts.keyOk.ok || attempts.keyOk.message,
-      "an idempotency key of the run's own with ids and a hash only",
-    ).toBe(true);
+    for (const [why, o] of [
+      ["an idempotency key of the run's own that is a uuid", attempts.keyOk],
+      ["an idempotency key that is a 64-hex hash", attempts.keyHex],
+    ] as const) {
+      expect(o.ok || o.message, why).toBe(true);
+    }
   });
 
   it("writes only its own result: the run's result updates, another member's is out of reach, and the cross-member insert is refused", async () => {
     if (!has.entry || !has.kind) return;
+    // An earlier run's result of the same member, then the run under test (a new run cancels the earlier one).
+    const earlier = await liveRun("vyUser");
+    const earlierResult = await addResult(earlier.runId, users.vyUser);
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser);
     const otherRun = await liveRun("other");
@@ -1311,13 +1461,19 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           foreign.ok && foreign.value.rowCount,
           "updating another member's result",
         ).toBe(0);
-        const read = await c.query<{ id: string }>(
-          `SELECT id FROM crove_kernel.member_vy_result`,
+        const read = await c.query<{ id: string; member_user_id: string }>(
+          `SELECT id, member_user_id FROM crove_kernel.member_vy_result`,
         );
+        const ids = read.rows.map((r) => r.id);
         expect(
-          read.rows.map((r) => r.id),
-          "results a member-mode context reads",
-        ).toEqual([mine]);
+          ids,
+          "the run's own result and its member's earlier one",
+        ).toEqual(expect.arrayContaining([mine, earlierResult]));
+        expect(ids, "another member's result").not.toContain(theirs);
+        expect(
+          read.rows.filter((r) => r.member_user_id !== users.vyUser),
+          "results of any other member",
+        ).toEqual([]);
         // What it may not do to its own result and run: clear the taint, delete the result, lower private_read, extend or untaint the run.
         // Each is refused or finds nothing to change; the state is read back below.
         for (const [why, sql, params] of [
@@ -1329,6 +1485,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           [
             "lowering private_read of its own result",
             `UPDATE crove_kernel.member_vy_result SET private_read = false WHERE id = $1`,
+            [mine],
+          ],
+          [
+            "rewriting the same member's result of another run",
+            `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'Gọi anh Nam' WHERE id = $1`,
+            [earlierResult],
+          ],
+          [
+            "moving its own result to another run",
+            `UPDATE crove_kernel.member_vy_result SET run_id = '${earlier.runId}' WHERE id = $1`,
+            [mine],
+          ],
+          [
+            "an update that writes a body and clears the taint together",
+            `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'x', tainted = false WHERE id = $1`,
             [mine],
           ],
           [
@@ -1359,6 +1530,18 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             o.ok ? 0 : "42501",
           );
         }
+        await c.query("SAVEPOINT own_insert");
+        const ownInsert = await outcome(
+          c.query(
+            `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, expires_at) VALUES ($1, $2, $3, 'notes.summary', 'note', $4, now() + interval '30 minutes')`,
+            [orgId, users.vyUser, run.runId, randomUUID()],
+          ),
+        );
+        await c.query("ROLLBACK TO SAVEPOINT own_insert");
+        expect(
+          ownInsert,
+          "a new result for its own member and run (results are made by the member's own command)",
+        ).toMatchObject({ ok: false, code: "42501" });
         const cross = await outcome(
           c.query(
             `INSERT INTO crove_kernel.member_vy_result (org_id, member_user_id, run_id, feature, subject_type, subject_id, expires_at) VALUES ($1, $2, $3, 'notes.summary', 'note', $4, now() + interval '30 minutes')`,

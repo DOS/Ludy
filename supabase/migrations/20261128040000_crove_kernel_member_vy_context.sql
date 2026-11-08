@@ -145,12 +145,12 @@ BEGIN
     'position', NULL,
     'module', v_module,
     'max_risk', v_risk,
-    'tainted', v_run_tainted,
+    'tainted', true,
     'le_scope', COALESCE(v_scope, pg_catalog.jsonb_build_array('*')),
     'flags', '[]'::jsonb,
     'kind', 'member_vy',
     'member', v_member));
-  RETURN pg_catalog.jsonb_build_object('role', v_role, 'member', v_member, 'module', v_module, 'maxRisk', v_risk, 'tainted', v_run_tainted);
+  RETURN pg_catalog.jsonb_build_object('role', v_role, 'member', v_member, 'module', v_module, 'maxRisk', v_risk, 'tainted', true);
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.enter_member_vy_context(uuid, uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.enter_member_vy_context(uuid, uuid, uuid) TO crove_worker;
@@ -158,7 +158,7 @@ GRANT EXECUTE ON FUNCTION crove_kernel.enter_member_vy_context(uuid, uuid, uuid)
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_audit_detail_ok(p_detail jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
   -- Listed keys only, each with the one shape its values have: an id is a uuid, a feature or status one of the known words, a code a
-  -- fixed upper-case code without digits, numbers and flags as such. Never free text, never a slug a person could have typed (the
+  -- code from the runtime's own list, integers from 0 to ten million. Never free text, never a slug a person could have typed (the
   -- audit stream is WORM and anchored, so a text that reaches it cannot be erased; ADR-0049 decision 4).
   SELECT pg_catalog.jsonb_typeof(p_detail) = 'object'
     AND (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(p_detail)) <= 12
@@ -172,11 +172,11 @@ LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
         WHEN 'feature' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['notes.summary', 'notes.todo_suggest'])
         WHEN 'subjectType' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['note', 'meeting'])
         WHEN 'status' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['running', 'ready', 'failed'])
-        WHEN 'code' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
-        WHEN 'errorCode' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
+        WHEN 'code' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['AGENT_FORBIDDEN', 'AGENT_RUN_NOT_LIVE', 'AI_BUDGET_EXHAUSTED', 'AUTH_NOT_READY', 'AUTH_UNAVAILABLE', 'BROKER_NOT_CONFIGURED', 'BUDGET_EXHAUSTED', 'COMMAND_NOT_FOUND', 'CONFLICT', 'EXTENSION_TOKEN_INVALID', 'FORBIDDEN', 'IDEMPOTENCY_MISMATCH', 'INTERNAL', 'INVALID', 'KILL_SWITCH_ON', 'LAST_OWNER', 'LEASE_LOST', 'MEMBER_NOT_ACTIVE', 'MEMBER_VY_RESULT_RUN_MISMATCH', 'MEMORY_NOT_FOUND', 'MFA_REQUIRED', 'NOT_A_MEMBER', 'NOT_STREAMED', 'OAUTH_CLIENT_TOKEN_REFUSED', 'OVERLOADED', 'POSITION_CYCLE', 'QUERY_NOT_FOUND', 'RATE_LIMITED', 'RESULT_NOT_FOUND', 'RETRY', 'SENSITIVE_ONLY', 'SESSION_REVOKED_IN_ORG', 'STEP_UP_REQUIRED', 'STREAM_ONLY', 'UNAUTHENTICATED', 'USER_DISABLED', 'VALIDATION', 'VY_NOT_ALLOWED', 'VY_RUN_NOT_LIVE'])
+        WHEN 'errorCode' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['AGENT_FORBIDDEN', 'AGENT_RUN_NOT_LIVE', 'AI_BUDGET_EXHAUSTED', 'AUTH_NOT_READY', 'AUTH_UNAVAILABLE', 'BROKER_NOT_CONFIGURED', 'BUDGET_EXHAUSTED', 'COMMAND_NOT_FOUND', 'CONFLICT', 'EXTENSION_TOKEN_INVALID', 'FORBIDDEN', 'IDEMPOTENCY_MISMATCH', 'INTERNAL', 'INVALID', 'KILL_SWITCH_ON', 'LAST_OWNER', 'LEASE_LOST', 'MEMBER_NOT_ACTIVE', 'MEMBER_VY_RESULT_RUN_MISMATCH', 'MEMORY_NOT_FOUND', 'MFA_REQUIRED', 'NOT_A_MEMBER', 'NOT_STREAMED', 'OAUTH_CLIENT_TOKEN_REFUSED', 'OVERLOADED', 'POSITION_CYCLE', 'QUERY_NOT_FOUND', 'RATE_LIMITED', 'RESULT_NOT_FOUND', 'RETRY', 'SENSITIVE_ONLY', 'SESSION_REVOKED_IN_ORG', 'STEP_UP_REQUIRED', 'STREAM_ONLY', 'UNAUTHENTICATED', 'USER_DISABLED', 'VALIDATION', 'VY_NOT_ALLOWED', 'VY_RUN_NOT_LIVE'])
         WHEN 'rule' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['P02', 'P03', 'P05', 'P06', 'member_vy_access', 'member_vy_context', 'member_vy_role'])
-        WHEN 'bodyLength' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
-        WHEN 'count' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
+        WHEN 'bodyLength' THEN CASE WHEN pg_catalog.jsonb_typeof(e.value) = 'number' THEN (e.value #>> '{}')::numeric BETWEEN 0 AND 10000000 AND (e.value #>> '{}')::numeric = pg_catalog.trunc((e.value #>> '{}')::numeric) ELSE false END
+        WHEN 'count' THEN CASE WHEN pg_catalog.jsonb_typeof(e.value) = 'number' THEN (e.value #>> '{}')::numeric BETWEEN 0 AND 10000000 AND (e.value #>> '{}')::numeric = pg_catalog.trunc((e.value #>> '{}')::numeric) ELSE false END
         ELSE false
       END)
 $$;
@@ -211,8 +211,11 @@ BEGIN
       IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
       END IF;
-      IF TG_OP = 'UPDATE' AND TG_TABLE_NAME = 'member_vy_result' THEN
-        IF OLD.tainted AND NOT NEW.tainted THEN
+      -- A result is made by the member's own command, so a background run only updates the one result of its own run: it never inserts one,
+      -- never moves a result to another run and never rewrites another run's result of the same member; what it writes stays tainted.
+      IF TG_TABLE_NAME = 'member_vy_result' THEN
+        IF TG_OP <> 'UPDATE' OR OLD.run_id IS DISTINCT FROM (v_ctx ->> 'run')::uuid OR NEW.run_id IS DISTINCT FROM OLD.run_id
+           OR NEW.tainted IS NOT TRUE THEN
           RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
         END IF;
       END IF;
@@ -232,7 +235,7 @@ BEGIN
       ELSIF TG_TABLE_NAME = 'idempotency_key' THEN
         IF NEW.actor_key = 'agent:' || v_agent::text || ':' || (v_ctx ->> 'run')
            AND (TG_OP = 'INSERT' OR OLD.actor_key = NEW.actor_key)
-           AND NEW.key ~ '^[A-Za-z0-9_.:-]{1,64}$'
+           AND NEW.key ~ '^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})$'
            AND NEW.command ~ '^kernel\.member_vy\.[a-z_.]{1,60}$'
            AND NEW.request_sha256 ~ '^(k1:)?[0-9a-f]{64}$'
            AND (NEW.response IS NULL OR crove_kernel.member_vy_audit_detail_ok(NEW.response)) THEN
@@ -308,3 +311,39 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- The tables the guard exempts (20261019010000) are org-visible sinks with rules of their own, written for org-chart agents. Vy in member
+-- mode writes none of them: a trigger that fires before every other one refuses the member context outright (ai_run keeps its own-run
+-- rule and activity its stamp above). A background run claims no task, comments nowhere, emits nothing and counts no refusal in the tally.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION crove_kernel.member_vy_forbid() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF crove_kernel.ctx_verified() ->> 'kind' = 'member_vy' THEN
+    RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.member_vy_forbid() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS a00_member_vy_forbid ON crove_kernel.task;
+CREATE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.task
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
+DROP TRIGGER IF EXISTS a00_member_vy_forbid ON crove_kernel.task_comment;
+CREATE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.task_comment
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
+-- outbox_event is a hot table: its trigger is created in the lock-retry block (plan §5.5).
+DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
+    PERFORM set_config('lock_timeout', '2s', true);
+    CREATE OR REPLACE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.outbox_event
+      FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
+    EXIT;
+  EXCEPTION WHEN lock_not_available THEN n := n + 1; IF n >= 15 THEN RAISE; END IF; PERFORM pg_sleep(1 + random());
+  END; END LOOP; END $$;
+DROP TRIGGER IF EXISTS a00_member_vy_forbid ON crove_kernel.refusal_tally;
+CREATE TRIGGER a00_member_vy_forbid BEFORE INSERT OR UPDATE OR DELETE ON crove_kernel.refusal_tally
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_forbid();
