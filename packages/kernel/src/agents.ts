@@ -1598,6 +1598,8 @@ export const templateList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_kernel.agent_template')
       .select(['key', 'module', 'title', 'role_key', 'max_risk', 'daily_run_cap', 'job_description'])
+      // The template of a member's own Vy (ADR-0049) is no part of the chart's catalog.
+      .where('key', '<>', 'kernel.member_vy')
       .orderBy('key')
       .execute();
     return {

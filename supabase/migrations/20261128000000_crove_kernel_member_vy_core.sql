@@ -30,6 +30,9 @@ ALTER TABLE crove_kernel.agent ADD CONSTRAINT agent_kind_check CHECK (kind IN ('
 ALTER TABLE crove_kernel.agent DROP CONSTRAINT IF EXISTS agent_member_vy_shape_check;
 ALTER TABLE crove_kernel.agent ADD CONSTRAINT agent_member_vy_shape_check
   CHECK ((kind = 'member_vy') = (member_user_id IS NOT NULL) AND (kind = 'member_vy') = (template_key = 'kernel.member_vy'));
+-- A member's Vy never runs above R1 (ADR-0049 decision 1).
+ALTER TABLE crove_kernel.agent DROP CONSTRAINT IF EXISTS agent_member_vy_risk_check;
+ALTER TABLE crove_kernel.agent ADD CONSTRAINT agent_member_vy_risk_check CHECK (kind <> 'member_vy' OR max_risk IN ('R0', 'R1'));
 CREATE UNIQUE INDEX IF NOT EXISTS agent_member_vy_uq ON crove_kernel.agent (org_id, member_user_id) WHERE kind = 'member_vy';
 
 -- The binding between member and agent, held by the database (ADR-0049 decision 1).
@@ -44,7 +47,8 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  IF NEW.kind IS DISTINCT FROM OLD.kind OR NEW.member_user_id IS DISTINCT FROM OLD.member_user_id OR NEW.template_key IS DISTINCT FROM OLD.template_key THEN
+  IF NEW.kind IS DISTINCT FROM OLD.kind OR NEW.member_user_id IS DISTINCT FROM OLD.member_user_id
+     OR (OLD.kind = 'member_vy' AND NEW.template_key IS DISTINCT FROM OLD.template_key) THEN
     RAISE EXCEPTION 'MEMBER_VY_AGENT_IMMUTABLE' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;
@@ -89,9 +93,10 @@ GRANT EXECUTE ON FUNCTION crove_kernel.ctx_acting_user_id() TO crove_tenant;
 
 ALTER TABLE crove_kernel.ai_run ADD COLUMN IF NOT EXISTS private_read boolean NOT NULL DEFAULT false;
 
--- A run of a member_vy agent is inserted only in its member's own user context, and a run never moves to another agent.
+-- A run of a member_vy agent is inserted only in its member's own user context (the lookup is a definer's, so a policy
+-- that hides agent rows from the caller cannot open the check), expires within 4 hours, and never moves to another agent.
 CREATE OR REPLACE FUNCTION crove_kernel.ai_run_member_vy_bind() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_member uuid;
 BEGIN
@@ -101,11 +106,16 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  v_member := crove_kernel.agent_member_of(NEW.org_id, NEW.agent_id);
-  IF v_member IS NOT NULL AND (
-    crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR crove_kernel.ctx_org_id() IS DISTINCT FROM NEW.org_id
-    OR v_member IS DISTINCT FROM crove_kernel.ctx_user_id()) THEN
-    RAISE EXCEPTION 'MEMBER_VY_RUN_BINDING' USING ERRCODE = '42501';
+  SELECT a.member_user_id INTO v_member FROM crove_kernel.agent a
+  WHERE a.org_id = NEW.org_id AND a.id = NEW.agent_id AND a.kind = 'member_vy';
+  IF v_member IS NOT NULL THEN
+    IF crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR crove_kernel.ctx_org_id() IS DISTINCT FROM NEW.org_id
+       OR v_member IS DISTINCT FROM crove_kernel.ctx_user_id() THEN
+      RAISE EXCEPTION 'MEMBER_VY_RUN_BINDING' USING ERRCODE = '42501';
+    END IF;
+    IF NEW.expires_at > NEW.started_at + interval '4 hours' THEN
+      RAISE EXCEPTION 'MEMBER_VY_RUN_EXPIRY' USING ERRCODE = '23514';
+    END IF;
   END IF;
   RETURN NEW;
 END $$;
@@ -131,11 +141,12 @@ CREATE TRIGGER private_read_monotonic BEFORE UPDATE OF private_read ON crove_ker
 -- Restrictive, so it narrows the tenant policy: the row of a member_vy run is its member's alone. Owners and admins
 -- see the cost through org_usage, never the run.
 DROP POLICY IF EXISTS member_vy_read ON crove_kernel.ai_run;
-CREATE POLICY member_vy_read ON crove_kernel.ai_run AS RESTRICTIVE FOR SELECT TO crove_tenant
+CREATE POLICY member_vy_read ON crove_kernel.ai_run AS RESTRICTIVE FOR ALL TO crove_tenant
   USING (NOT EXISTS (
     SELECT 1 FROM crove_kernel.agent a
     WHERE a.org_id = ai_run.org_id AND a.id = ai_run.agent_id AND a.kind = 'member_vy'
-      AND a.member_user_id IS DISTINCT FROM (SELECT crove_kernel.ctx_acting_user_id())));
+      AND a.member_user_id IS DISTINCT FROM (SELECT crove_kernel.ctx_acting_user_id())))
+  WITH CHECK (true);
 
 -- ---------------------------------------------------------------------------
 -- enter_agent_context: as in 20261120100000, plus the refusal of a member_vy agent.
@@ -271,6 +282,20 @@ GRANT UPDATE (status, error_code, source_revision, body, tainted, private_read) 
 REVOKE UPDATE ON crove_kernel.member_vy_memory FROM crove_tenant;
 GRANT UPDATE (body, updated_at) ON crove_kernel.member_vy_memory TO crove_tenant;
 
+-- A result inherits the flag of its run (a member cannot delete a result and insert it again with the flag false).
+CREATE OR REPLACE FUNCTION crove_kernel.member_vy_result_inherit_flag() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM crove_kernel.ai_run r WHERE r.org_id = NEW.org_id AND r.id = NEW.run_id AND r.private_read) THEN
+    NEW.private_read := true;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.member_vy_result_inherit_flag() FROM PUBLIC;
+DROP TRIGGER IF EXISTS inherit_flag ON crove_kernel.member_vy_result;
+CREATE TRIGGER inherit_flag BEFORE INSERT ON crove_kernel.member_vy_result
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_result_inherit_flag();
+
 DROP TRIGGER IF EXISTS private_read_monotonic ON crove_kernel.member_vy_result;
 CREATE TRIGGER private_read_monotonic BEFORE UPDATE OF private_read ON crove_kernel.member_vy_result
   FOR EACH ROW EXECUTE FUNCTION crove_kernel.private_read_monotonic();
@@ -312,8 +337,9 @@ END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_results_expire(integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.member_vy_results_expire(integer) TO crove_worker;
 
--- Removes a former member's results and memory from the context's org, unless they are a member again (worker login,
--- in the org's system context, 30 days after the removal). Returns how many rows it removed.
+-- Removes a former member's results and memory from the context's org, unless they are a member again or were removed
+-- less than 30 days ago (worker login, in the org's system context). Holds the membership lock until the transaction
+-- ends, so a re-add waits or is seen. Returns how many rows it removed.
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_member_data_purge(p_org uuid, p_user uuid)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -327,7 +353,18 @@ BEGIN
   IF v_org IS NULL OR v_org IS DISTINCT FROM p_org OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'system' THEN
     RAISE EXCEPTION 'MEMBER_VY_SYSTEM_CONTEXT' USING ERRCODE = '42501';
   END IF;
+  -- A re-add of this user (crove_kernel.invite_accept) either committed before this and the check below sees it, or waits
+  -- until this transaction ends.
+  PERFORM crove_kernel.membership_lock(v_org, p_user);
   IF EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = p_user) THEN
+    RETURN 0;
+  END IF;
+  -- Nothing goes in the 30 days after the removal (the rule of crove_notes.member_items_purge).
+  IF EXISTS (
+    SELECT 1 FROM crove_kernel.audit_event a
+    WHERE a.org_id = v_org AND a.occurred_at > pg_catalog.now() - interval '30 days'
+      AND a.command = 'kernel.member.remove' AND a.outcome = 'ok' AND a.target_id = p_user
+  ) THEN
     RETURN 0;
   END IF;
   DELETE FROM crove_kernel.member_vy_result r WHERE r.org_id = v_org AND r.member_user_id = p_user;

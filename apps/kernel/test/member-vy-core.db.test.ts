@@ -26,8 +26,9 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
   const pools: pg.Pool[] = [];
   let orgId = '';
   let runtime: Runtime;
-  const users = { owner: '', admin: '', member: '', gone: '' };
-  const agents = { member: '', gone: '' };
+  const users = { owner: '', admin: '', member: '', gone: '', recent: '', old: '' };
+  const agents: Record<string, string> = { member: '', gone: '' };
+  const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -56,7 +57,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
   const outcome = <T>(p: Promise<T>) => p.then((value) => ({ ok: true as const, value }), (error: { message: string }) => ({ ok: false as const, message: error.message }));
 
   // A member's Vy agent, a run and a result and a memory entry, seeded as the superuser with the binding set aside.
-  async function seed(userId: string, key: 'member' | 'gone', expired: boolean) {
+  async function seed(userId: string, key: string, expired: boolean) {
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       const agentId = randomUUID();
@@ -66,7 +67,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
       await c.query(
         `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', now() - interval '40 days', ${expired ? "now() - interval '1 day'" : "now() + interval '30 days'"})`,
+         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : "now(), now() + interval '30 days'"})`,
         [orgId, randomUUID(), userId, runId, randomUUID()],
       );
       await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`, [orgId, randomUUID(), userId]);
@@ -104,6 +105,18 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     await seed(users.member, 'member', true);
     // A former member: no tenant_member row.
     await seed(users.gone, 'gone', false);
+    // Two members removed through the command: one now, one 31 days ago by the audit trail.
+    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recent, users.old]));
+    for (const user of [users.recent, users.old]) await runtime.execute('kernel.member.remove', { userId: user }, { actor: asMfa(users.owner), orgId });
+    // The audit trail is append-only, so its trigger is set aside for this statement.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [orgId, users.old]);
+      await c.query('COMMIT');
+    });
+    await seed(users.recent, 'recent', false);
+    await seed(users.old, 'old', false);
   }, 300_000);
 
   afterAll(async () => {
@@ -119,7 +132,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     for (const who of [users.owner, users.admin]) {
       const out = await inContext(appUrl, asUser(who), (c) => c.query('SELECT * FROM crove_kernel.member_vy_private_counts()'));
       expect(out.rows.map((r) => [r.member_user_id, r.results, r.memories]).sort()).toEqual(
-        [[users.gone, '1', '1'], [users.member, '1', '1']].sort(),
+        [[users.gone, '1', '1'], [users.member, '1', '1'], [users.recent, '1', '1'], [users.old, '1', '1']].sort(),
       );
       expect(Object.keys(out.fields.reduce((o, f) => ({ ...o, [f.name]: 1 }), {}))).toEqual(['org_id', 'member_user_id', 'results', 'memories']);
     }
@@ -141,7 +154,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       return out.rows[0]?.n;
     });
     expect(expired).toBe('1');
-    expect(await rows('member_vy_result')).toBe('1');
+    expect(await rows('member_vy_result'), 'the expired one is gone, the other three stay').toBe('3');
   });
 
   it('purges a former member\'s results and memory at once, and nothing of a member who is back', async () => {
@@ -155,8 +168,35 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       return out.rows[0]?.n;
     });
     expect(purged).toBe('2');
-    expect(await rows('member_vy_result')).toBe('0');
-    expect(await rows('member_vy_memory')).toBe('1');
+    // The audit trail's 30 days: a member removed now keeps everything, one removed 31 days ago loses it.
+    const purgeOf = (user: string) =>
+      inContext(workerUrl, asSystem, async (c) => {
+        const out = await c.query<{ n: string }>('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, user]);
+        await c.query('COMMIT');
+        return out.rows[0]?.n;
+      });
+    expect(await purgeOf(users.recent), 'removed less than 30 days ago').toBe('0');
+    expect(await purgeOf(users.old), 'removed 31 days ago').toBe('2');
+  });
+
+  it('holds the membership lock until the purge ends, so a re-add waits or is seen', async () => {
+    const holder = new pg.Client({ connectionString: workerUrl });
+    await holder.connect();
+    const other = new pg.Client({ connectionString: adminUrl });
+    await other.connect();
+    try {
+      await holder.query('BEGIN');
+      await asSystem(holder);
+      await holder.query('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid)', [orgId, users.gone]);
+      await other.query(`SET lock_timeout = '500ms'`);
+      const waited = await outcome(other.query('SELECT crove_kernel.membership_lock($1::uuid, $2::uuid)', [orgId, users.gone]));
+      expect(waited, 'a re-add taking the membership lock while the purge runs').toMatchObject({ ok: false });
+      expect(waited.ok ? '' : waited.message).toMatch(/lock timeout/);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      await holder.end();
+      await other.end();
+    }
   });
 
   it('never installs the template of a member\'s own Vy into the chart', async () => {
