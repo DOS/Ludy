@@ -422,6 +422,25 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(matchOf(team, line)).rejects.toMatchObject({ code: 'BANK_LINE_NOT_FOUND' });
   });
 
+  it('does not offer a payment of a run whose posting was reversed (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const [line] = (await statement(o, [{ out: vn(totals.net), description: 'Tra luong' }])) as [string];
+    expect((await matchOf(o, line)).candidates).toHaveLength(1);
+    const [posting] = await rows<{ id: string }>(
+      `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+        WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
+      [o.orgId, runId],
+    );
+    const asked = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId: posting?.id, entryDate: '2026-03-31', reason: 'Lập lại bảng lương' } },
+      { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, asked.proposalId);
+    expect((await matchOf(o, line)).candidates).toEqual([]);
+  });
+
   it('offers amounts equal to the obligations of the run\'s entry, by kind: what the query adds up is what the payment will ask for', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);

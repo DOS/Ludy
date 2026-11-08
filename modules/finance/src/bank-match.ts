@@ -37,6 +37,7 @@ import { Decimal } from '@crove/l10n-vn';
 import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
+import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 import { payrollPaymentMention } from './domain/bank-payroll.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -408,13 +409,20 @@ export const bankPayrollMatch = defineQuery({
     const out = new Decimal(line.amount);
     if (!out.isNegative() || out.isZero()) return none;
     if (((await bankLineStates(ctx, [line.id])).get(line.id)?.status ?? 'open') !== 'open') return none;
+    // A run whose posting was reversed is not offered (#2854): its entry has a reversal, so there is nothing left to pay against.
     const posted = await ctx.trx
-      .selectFrom('crove_finance.journal_voucher')
-      .select('payroll_run_id')
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', line.legalEntityId)
-      .where('payroll_run_id', 'is not', null)
-      .orderBy('voucher_date', 'desc')
+      .selectFrom('crove_finance.journal_voucher as j')
+      .innerJoin('crove_finance.journal_entry as e', (join) =>
+        join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null).on(latestRevision('e')),
+      )
+      .select('j.payroll_run_id')
+      .where('j.org_id', '=', ctx.orgId)
+      .where('j.legal_entity_id', '=', line.legalEntityId)
+      .where('j.payroll_run_id', 'is not', null)
+      .where(({ not, exists, selectFrom }) =>
+        not(exists(selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
+      )
+      .orderBy('j.voucher_date', 'desc')
       .limit(24)
       .execute();
     const runIds = posted.map((r) => r.payroll_run_id as string);
