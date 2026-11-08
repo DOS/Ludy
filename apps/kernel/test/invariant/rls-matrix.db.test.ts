@@ -208,6 +208,8 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// A marketplace connection is unique per entity, provider and platform, so each seeded one names a provider of its own.
+let marketplaceSeq = 0;
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
@@ -1005,10 +1007,12 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_finance.marketplace_connection': {
     update: { set: 'last_test_state = last_test_state' },
     make: (o) => {
-      const connection = { ...channelConnectionRow(o), provider: 'marketplace_sandbox' };
+      // An account is one per entity, provider and platform, so each row names a provider of its own.
+      const provider = `marketplace_s${marketplaceSeq++}`;
+      const connection = { ...channelConnectionRow(o), provider };
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
-        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'marketplace_sandbox', platform: 'shopee' },
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
       };
     },
   },
