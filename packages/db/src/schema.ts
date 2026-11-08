@@ -263,12 +263,17 @@ export type AgentTemplateTable = Refine<
 
 export const AGENT_STATUSES = ['active', 'paused', 'retired'] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
+export const AGENT_KINDS = ['org_chart', 'member_vy'] as const;
+export type AgentKind = (typeof AGENT_KINDS)[number];
+export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
+export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
 
 export type AgentTable = Refine<
   G.KernelAgentTable,
   {
     runtime: Generated<(typeof AGENT_RUNTIMES)[number]>;
+    kind: Generated<AgentKind>;
     status: Generated<AgentStatus>;
     max_risk: Generated<AgentRisk>;
   }
@@ -852,6 +857,7 @@ export type ConversationDraftTable = Refine<
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
+export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
 export type ConversationAttachmentTable = Refine<
   G.KernelConversationAttachmentTable,
@@ -1097,6 +1103,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;
+  'crove_kernel.member_vy_result': MemberVyResultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;
   'crove_kernel.mail_event': MailEventTable;
