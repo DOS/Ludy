@@ -53,7 +53,9 @@ export function renderQuoteMail(raw: unknown, context: { publicUrl: string; repl
   const mail = zQuoteMail.parse(raw);
   const brand = context.brand ?? 'Ludy';
   const org = oneLine(mail.org);
-  const url = `${context.publicUrl.replace(/\/+$/, '')}${QUOTE_PAGE_PATH}#${mail.token}`;
+  let base = context.publicUrl;
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  const url = `${base}${QUOTE_PAGE_PATH}#${mail.token}`;
   const label = mail.revision > 1 ? `${mail.number}-R${mail.revision}` : mail.number;
   const lead = `${org} gửi Quý khách báo giá số ${label}, tổng cộng ${dong(mail.total)}, có hiệu lực đến ngày ${dateVi(mail.validUntil)}.`;
   const text = [
