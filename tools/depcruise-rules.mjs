@@ -76,6 +76,7 @@ export const EXCEPTIONS = [
       'apps/kernel/test/portal-sync.db.test.ts',
       'apps/kernel/test/tax-portal.test.ts',
       'e2e/tests/bulk-intake.spec.ts',
+      'e2e/tests/marketplace-income.spec.ts',
       'e2e/tests/marketplace-orders.spec.ts',
     ],
     to: '^(apps/extract/test/(zip|xlsx)-fixture\\.ts|e2e/fake-tax-portal/server\\.ts)$',

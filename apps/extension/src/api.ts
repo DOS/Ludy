@@ -3,7 +3,7 @@
 // address, built by `ludyUrl`, which refuses any other origin before a request is made; none carries cookies. The one
 // exception is the staged upload of a recording to the storage address the configured Ludy server itself granted (a
 // single-use signed form, https only), the same step the app takes. The bearer token is the extension token.
-import { ludyUrl } from './ludy-address.ts';
+import { isLocalhost, ludyUrl } from './ludy-address.ts';
 import type { Me } from './features.ts';
 import type { ConsentMethod } from './consent.ts';
 
@@ -24,11 +24,12 @@ async function failure(response: Response): Promise<LudyError> {
   return new LudyError(typeof body?.code === 'string' ? body.code : 'HTTP_ERROR', response.status, typeof body?.message === 'string' ? body.message : `HTTP ${response.status}`);
 }
 
-// A signed form's address: https, no credentials. Loopback http is accepted for a stack on the member's own machine.
-export function assertGrantUrl(value: string): URL {
+// A signed form's address: https, no credentials. Plain http is accepted only when the configured Ludy address is itself
+// plain http on localhost (a stack on the member's own machine), and then only for localhost.
+export function assertGrantUrl(value: string, address: string): URL {
   const url = new URL(value);
-  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
-  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) || url.username !== '' || url.password !== '') {
+  const local = isLocalhost(url.hostname) && isLocalhost(new URL(address).hostname) && new URL(address).protocol === 'http:';
+  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) || url.username !== '' || url.password !== '') {
     throw new Error('Refused: the upload address is not a plain https address');
   }
   return url;
@@ -59,7 +60,9 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       if (token === null) throw new LudyError('NOT_SIGNED_IN', 401, 'Chưa đăng nhập');
       headers.set('authorization', `Bearer ${token}`);
     }
-    const response = await fetchImpl(ludyUrl(address, path), { ...init, headers, credentials: 'omit', cache: 'no-store' });
+    // `redirect: 'error'`: a proxy that answers with a redirect must not send the token (or the request) to another
+    // origin; older Chromium within minimum_chrome_version may forward Authorization across origins.
+    const response = await fetchImpl(ludyUrl(address, path), { ...init, headers, credentials: 'omit', cache: 'no-store', redirect: 'error' });
     if (!response.ok) throw await failure(response);
     return response;
   };
@@ -97,12 +100,12 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
       if (uploads === 'presigned') {
         const grant = (await (await call('/api/files/uploads', json({ purpose }))).json()) as { uploadId: string; url: string; fields: Record<string, string> };
-        const target = assertGrantUrl(grant.url);
+        const target = assertGrantUrl(grant.url, address);
         const form = new FormData();
         for (const [name, value] of Object.entries(grant.fields)) form.append(name, value);
         // The file goes last: S3 ignores fields after it.
         form.append('file', file);
-        const stored = await fetchImpl(target.toString(), { method: 'POST', body: form, credentials: 'omit' }).catch(() => null);
+        const stored = await fetchImpl(target.toString(), { method: 'POST', body: form, credentials: 'omit', redirect: 'error' }).catch(() => null);
         if (!stored?.ok) throw new LudyError('STORAGE_UPLOAD_FAILED', stored?.status ?? 0, 'Không tải được tệp lên kho lưu trữ');
         return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media`, json({ uploadId: grant.uploadId, kind, lengthSeconds })))).json()) as Uploaded;
       }

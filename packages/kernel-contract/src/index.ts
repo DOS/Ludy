@@ -99,6 +99,7 @@ export * from './calendar.ts';
 export * from './crm.ts';
 export * from './hr.ts';
 export * from './hr-payroll.ts';
+export * from './hr-declarations.ts';
 export * from './notes.ts';
 export * from './extension.ts';
 export * from './meetings.ts';
