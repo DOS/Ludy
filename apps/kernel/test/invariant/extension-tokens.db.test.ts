@@ -781,6 +781,24 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
     }
   });
 
+  it('refuses the owner and admin device routines once the org is no longer active (#2868)', async () => {
+    if (!tables.extension_token) {
+      expect(tables.extension_token).toBe(false);
+      return;
+    }
+    // The context is entered while the org is active, then the org is closed inside the same rolled-back transaction: what is left
+    // to refuse is the routine itself, as it is for issuing a code. Entered as the owner of org A, from the admin connection.
+    const closed = <T>(fn: (c: pg.Client) => Promise<T>) =>
+      inContext(adminUrl, ownerA.enter, async (c) => {
+        const before = await c.query('SELECT * FROM crove_kernel.list_extension_tokens_for_org()');
+        expect(before.rows.length, 'the owner of an active org reads the list').toBeGreaterThan(0);
+        await c.query(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [orgAId]);
+        return fn(c);
+      });
+    await expect(closed((c) => c.query('SELECT * FROM crove_kernel.list_extension_tokens_for_org()'))).rejects.toSatisfy((e) => isExpectedRefusal(e));
+    await expect(closed((c) => c.query('SELECT crove_kernel.revoke_extension_token_as_admin($1::uuid)', [randomUUID()]))).rejects.toSatisfy((e) => isExpectedRefusal(e));
+  });
+
   it('enforces cross-org and cross-member isolation on listing and revoking extension tokens', async () => {
     if (!tables.extension_token) {
       expect(tables.extension_token).toBe(false);
