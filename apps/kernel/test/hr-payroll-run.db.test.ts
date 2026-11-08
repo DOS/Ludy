@@ -727,16 +727,19 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     await withAdmin(async (c) => {
       // The freeze trigger of the lines is off for these inserts only (a disposable database): the rows are copies of the first person and of their July line, 5,000 times over.
       await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
-      await c.query('CREATE TEMP TABLE copies AS SELECT gen_random_uuid() AS new_id FROM generate_series(1, 5000)');
-      await c.query(
-        `INSERT INTO crove_hr.payroll_employee SELECT (jsonb_populate_record(NULL::crove_hr.payroll_employee, to_jsonb(e) || jsonb_build_object('id', m.new_id))).* FROM (SELECT * FROM crove_hr.payroll_employee WHERE org_id = $1 LIMIT 1) e, copies m`,
-        [o.orgId],
-      );
-      await c.query(
-        `INSERT INTO crove_hr.payroll_line SELECT (jsonb_populate_record(NULL::crove_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id))).* FROM (SELECT l.* FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
-        [o.orgId],
-      );
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+      try {
+        await c.query('CREATE TEMP TABLE copies AS SELECT gen_random_uuid() AS new_id FROM generate_series(1, 5000)');
+        await c.query(
+          `INSERT INTO crove_hr.payroll_employee SELECT (jsonb_populate_record(NULL::crove_hr.payroll_employee, to_jsonb(e) || jsonb_build_object('id', m.new_id))).* FROM (SELECT * FROM crove_hr.payroll_employee WHERE org_id = $1 LIMIT 1) e, copies m`,
+          [o.orgId],
+        );
+        await c.query(
+          `INSERT INTO crove_hr.payroll_line SELECT (jsonb_populate_record(NULL::crove_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id))).* FROM (SELECT l.* FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
+          [o.orgId],
+        );
+      } finally {
+        await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+      }
     });
     await expect(get(o.owner, 'kk', '2026-Q3')).rejects.toMatchObject({ code: 'EXPORT_TOO_LARGE', status: 422 });
   });
