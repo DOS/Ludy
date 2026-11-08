@@ -214,7 +214,7 @@ export const einvoiceDraftCheck = defineQuery({
   },
 });
 
-function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'date' | 'seriesId' | 'buyer' | 'lines'>): DraftInput {
+export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'date' | 'seriesId' | 'buyer' | 'lines'>): DraftInput {
   const blank = (value: string | null): string | null => (value && value.trim() !== '' ? value.trim() : null);
   // A tax code that reads as one is kept in its written form (spaces and dots out, a branch code with its dash); one that does not is kept as typed, for the checks to report.
   const taxCode = (value: string | null): string | null => {
@@ -303,6 +303,7 @@ export const einvoiceDraftSave = defineCommand({
       vat_amount: computed.vatAmount,
       total: computed.total,
     };
+    let carried = new Map<number, { source_kind: string | null; source_id: string | null; source_line_no: number | null }>();
     try {
       if (draftId === null) {
         draftId = randomUUID();
@@ -317,6 +318,22 @@ export const einvoiceDraftSave = defineCommand({
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', draftId)
           .execute();
+        // A line made from an order line keeps its source (ADR-0050): the order line stays invoiced, so a second draft of it is refused. Its amount cannot change and it cannot go;
+        // a description or unit fix is allowed. The person deletes the draft and drafts the order again for anything else.
+        const kept = await ctx.trx
+          .selectFrom('crove_finance.einvoice_draft_line')
+          .select(['line_no', 'amount', 'source_kind', 'source_id', 'source_line_no'])
+          .where('org_id', '=', ctx.orgId)
+          .where('draft_id', '=', draftId)
+          .where('source_kind', 'is not', null)
+          .execute();
+        for (const old of kept) {
+          const next = computed.lines[old.line_no - 1];
+          if (!next || !money(next.amount).equals(money(old.amount))) {
+            throw new DomainError('EINVOICE_SOURCE_LINE_LOCKED', 422, 'Dòng này lập từ đơn hàng nên không đổi số tiền hoặc xóa được; hãy xóa bản nháp và lập lại từ đơn hàng');
+          }
+        }
+        carried = new Map(kept.map((k) => [k.line_no, k]));
         await ctx.trx.deleteFrom('crove_finance.einvoice_draft_line').where('org_id', '=', ctx.orgId).where('draft_id', '=', draftId).execute();
       }
       for (const [index, line] of computed.lines.entries()) {
@@ -334,6 +351,9 @@ export const einvoiceDraftSave = defineCommand({
             amount: line.amount,
             vat_rate: line.vatRate,
             vat_amount: line.vatAmount,
+            source_kind: carried.get(index + 1)?.source_kind ?? null,
+            source_id: carried.get(index + 1)?.source_id ?? null,
+            source_line_no: carried.get(index + 1)?.source_line_no ?? null,
           })
           .execute();
       }
