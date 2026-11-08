@@ -4601,6 +4601,7 @@ export const vi = {
     journalVoucherSubtitlePosted: 'Phiếu kế toán số {code} ngày {date}, đã ghi sổ.',
     stepUpApproveVoucher: 'duyệt và ghi sổ chứng từ thu chi này',
     voucherFourEyes: 'Cần một người khác duyệt (bạn đã lập chứng từ này).',
+    journalCoAuthorFourEyes: 'Cần một người khác duyệt (bạn là người đã duyệt bảng lương mà bút toán này dựa trên).',
     voucherNotEligible: 'Chỉ chủ sở hữu hoặc quản trị duyệt được chứng từ thu chi.',
     // A request to open the way to spend on an ad platform (#2294): it posts nothing to the books.
     adsChange: 'Thay đổi gì',
@@ -8122,6 +8123,7 @@ export const vi = {
       HR_EMPLOYEE_NOT_FOUND: 'Không tìm thấy nhân viên này',
       HR_EMPLOYEE_ENDED: 'Nhân viên này đã nghỉ việc',
       HR_EMPLOYEE_NOT_ENDED: 'Chỉ xóa được hồ sơ của nhân viên đã nghỉ việc',
+      HR_YEAR_NOT_BEGUN: 'Chưa thể ghi nhận ủy quyền cho một năm chưa bắt đầu',
       HR_EMPLOYEE_ERASED: 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa',
       HR_RETENTION_NOT_PASSED: 'Hồ sơ này chưa hết thời hạn lưu trữ nên chưa xóa được',
       HR_EMPLOYMENT_NOT_NEWER: 'Ngày hiệu lực phải sau ngày hiệu lực của dòng gần nhất',
@@ -8138,6 +8140,7 @@ export const vi = {
       HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
       HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
       HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
+      HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương, vì người duyệt phải đối chiếu được với bảng lương',
       HR_RUN_NOT_DRAFT: 'Bảng lương đã được duyệt, không sửa được nữa; sửa sai bằng dòng điều chỉnh ở tháng sau',
       HR_RUN_EXISTS: 'Tháng này đã có bảng lương',
       HR_RUN_EMPTY: 'Bảng lương chưa có dòng nào để duyệt',
@@ -9205,6 +9208,9 @@ export const vi = {
           add: 'Thêm nhân viên cùng dòng hợp đồng và lương đầu tiên',
           edit: 'Sửa thông tin cá nhân của nhân viên',
           end: 'Cho nhân viên nghỉ việc',
+          finalization: {
+            set: 'Ghi nhận nhân viên ủy quyền (hoặc thôi ủy quyền) cho đơn vị quyết toán thuế thu nhập cá nhân một năm',
+          },
           erase: 'Xóa hồ sơ nhân viên đã nghỉ sau thời hạn lưu trữ',
           get: 'Xem hồ sơ một nhân viên, kể cả số căn cước và số tài khoản',
           list: 'Xem danh sách nhân viên và lương cơ bản',
@@ -9221,6 +9227,7 @@ export const vi = {
         },
         posting: {
           prepare: 'Lập đề xuất hạch toán lương của một tháng đã duyệt',
+          verify: 'Dựng lại bút toán lương từ bảng lương đã duyệt để đối chiếu khi ghi sổ',
         },
         run: {
           approve: 'Duyệt bảng lương tháng (cần xác thực hai bước, khóa số liệu)',

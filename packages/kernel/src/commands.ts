@@ -71,7 +71,7 @@ import { numberingCommands } from './numbering.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
-import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
+import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
 import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
@@ -601,6 +601,7 @@ export const requestProposal = defineCommand({
     const draft = zPreparedProposal.parse(await ctx.run(PROPOSAL_PREPARERS[input.command], input.input));
     if (draft.command !== input.command) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     const entity = preparedEntity(draft);
+    const coAuthors = preparedCoAuthors(draft);
     const proposal = await ctx.trx
       .insertInto('crove_kernel.proposal')
       .values({
@@ -612,6 +613,8 @@ export const requestProposal = defineCommand({
         // P12: who may approve this command right now; approval re-checks each one's role live.
         eligible_approvers: await eligibleApprovers(ctx.trx, ctx.orgId, draft.command),
         authors: JSON.stringify([actorRef(ctx.actor)]),
+        // The people the preparer says the proposal rests on besides the requester (never from the client); they count as authors in four-eyes.
+        ...(coAuthors ? { co_authors: coAuthors } : {}),
         // Kept so the requester can ask for it again if it expires (#876); the preparer then checks it all anew.
         request_input: JSON.stringify(input.input),
         // The entity it belongs to (#1538): a member limited to other entities neither sees nor decides it.
@@ -619,7 +622,7 @@ export const requestProposal = defineCommand({
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command });
+    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', proposal.id, 'proposal.created', 'Tạo đề xuất');
     await ctx.emit('kernel.proposal.created', { proposalId: proposal.id, kind: draft.kind });
     return { proposalId: proposal.id };

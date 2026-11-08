@@ -8,9 +8,9 @@
 //   has such a voucher (crove_finance.ledger_effect_recorded) before it moves to 'executed'.
 // No finance code reads a payroll table: the run's id is the voucher's source, carried in the payload, and the lines are one per account (the detail stays on the run). A posting is
 // corrected by reversing its entry (finance.journal.reverse) while the period lock allows it.
-import { PAYROLL_POSTING_MAPS } from '@crove/l10n-vn';
+import { PAYROLL_POSTING_MAPS, money } from '@crove/l10n-vn';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_POSTING_COMMAND, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
+import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
@@ -120,7 +120,8 @@ export const payrollPostingRegime = defineCommand({
 });
 
 export const recordPayrollPosting = defineCommand({
-  name: PAYROLL_POSTING_COMMAND,
+  // A literal, not the shared constant: the job-egress analyzer follows the nested `ctx.run` calls of a command and reads its name from source (the contract's PAYROLL_POSTING_COMMAND equals it).
+  name: 'finance.payroll_posting.record',
   input: z.object({ payload: zPayrollPostingProposal, acceptFailedChecks: z.boolean().default(false) }),
   risk: 'R3',
   sideEffect: 'financial',
@@ -139,6 +140,38 @@ export const recordPayrollPosting = defineCommand({
     }
     const done = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', payload.payrollRunId).executeTakeFirst();
     if (done) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
+    // The entry is built again from the frozen run, in the approver's context (the HR module's own command: no payroll table is read from here), and the stored proposal must equal it. A proposal
+    // row not written by the preparer (raw SQL) cannot post lines the run does not hold.
+    // Payroll is read by owners and admins only, so only they can approve a posting: anyone else who holds the approval permission (a chief accountant who is a member) is told so, and the proposal
+    // stays pending for one of them. If the owner later lets members read payroll totals, a follow-up can verify on the totals alone.
+    let expected: { runId: string; month: string; date: string; regime: string; legalEntityId: string; approvedBy: string | null; lines: { account: string; debit: string; credit: string }[] };
+    try {
+      expected = await ctx.run('hr.payroll.posting.verify', { runId: payload.payrollRunId });
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'FORBIDDEN') {
+        throw new DomainError('HR_POSTING_APPROVER_ROLE', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương, vì người duyệt phải đối chiếu được với bảng lương', {
+          approvers: ['owner', 'admin'],
+        });
+      }
+      throw error;
+    }
+    // The posting goes into the entity the run belongs to, never another the payload names.
+    if (expected.legalEntityId.toLowerCase() !== checked.legalEntityId.toLowerCase()) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán ghi vào pháp nhân khác pháp nhân của bảng lương; hãy lập lại đề xuất', { what: 'legalEntityId' });
+    }
+    // The person who approved the run is a co-author of its posting (four-eyes): a proposal that does not list them was not made by the preparer, so it is refused.
+    if (expected.approvedBy) {
+      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
+        throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
+      }
+    }
+    const key = (l: { account: string; debit: string; credit: string }) => `${l.account}|${money(l.debit).toFixed(0)}|${money(l.credit).toFixed(0)}`;
+    const stored = payload.lines.map(key).sort();
+    const rebuilt = expected.lines.map(key).sort();
+    if (expected.month !== payload.month || expected.date !== payload.date || expected.regime !== payload.regime || stored.length !== rebuilt.length || stored.some((k, i) => k !== rebuilt[i])) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán không khớp bảng lương đã duyệt; hãy lập lại đề xuất', { what: 'lines' });
+    }
     return postJournalVoucher(ctx, { ...payload, legalEntityId: checked.legalEntityId }, null, null, null, payload.payrollRunId);
   },
 });

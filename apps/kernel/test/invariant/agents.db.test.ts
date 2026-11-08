@@ -432,7 +432,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
       return eligibleApprovers(trx, orgA, 'finance.purchase.record');
     });
     expect(snapshot).toEqual([owner]);
-    const proposal = { command: 'finance.purchase.record', status: 'pending', eligible_approvers: [owner, actor.agentId], authors: [] };
+    const proposal = { command: 'finance.purchase.record', status: 'pending', eligible_approvers: [owner, actor.agentId], authors: [], co_authors: null };
     const asAgent = await db.transaction().execute(async (trx) => {
       await sql`SELECT crove_kernel.enter_user_context(${orgA}::uuid, ${contextToken(owner, orgA)}::text)`.execute(trx);
       return {
@@ -2118,7 +2118,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     // P10 counts only humans: an agent author neither blocks nor satisfies four-eyes.
     const decided = await db.transaction().execute(async (trx) => {
       await sql`SELECT crove_kernel.enter_user_context(${orgA}::uuid, ${contextToken(owner, orgA)}::text)`.execute(trx);
-      const base = { command: 'finance.purchase.record', status: 'pending', eligible_approvers: [owner] };
+      const base = { command: 'finance.purchase.record', status: 'pending', eligible_approvers: [owner], co_authors: null };
       const agentAuthor = { type: 'agent', id: randomUUID(), run: randomUUID() };
       return {
         agentOnly: await decideApproval(trx, orgA, asUser(owner), { ...base, authors: [agentAuthor] }, { lock: false }),
