@@ -45,6 +45,8 @@ export interface MeetingsTranscribeDeps {
 const SYSTEM: SystemActor = { type: 'system', component: 'meetings.transcribe' };
 // One audio object the sandbox made is at most a 10 minute chunk; the cap keeps a wrong row from filling memory.
 const SEGMENT_CIPHERTEXT_MAX = 64 * 1024 * 1024;
+// About what a 100000 character result row holds (an hour and a half of speech); longer meetings are refused before any call.
+export const TRANSCRIPT_MAX_SECONDS = 90 * 60;
 const CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 interface RunAudio {
@@ -103,18 +105,21 @@ async function openAudio(deps: MeetingsTranscribeDeps, job: MeetingsTranscribeJo
   const subkey = broker.deriveKey ? broker.deriveKey(audio.keyId, info) : broker.derive && broker.keyId === audio.keyId ? broker.derive(info) : null;
   if (!subkey) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
   const binding = { orgId: job.orgId, meetingId: job.meetingId, kind: 'audio' as const };
-  const dataKey = unwrapMediaKeyWithSubkey(Buffer.from(audio.wrappedKey), { ...binding, keyId: audio.keyId }, subkey);
   const language = audio.language === 'en' ? 'en' : 'vi';
+  let dataKey: Buffer | null = null;
   try {
+    dataKey = unwrapMediaKeyWithSubkey(Buffer.from(audio.wrappedKey), { ...binding, keyId: audio.keyId }, subkey);
     const inputs: TranscribeInput[] = [];
     for (const segment of audio.segments) {
       const ciphertext = await readVerified(deps.store, { key: segment.storageKey, generation: segment.generation, sha256: segment.sha256 }, SEGMENT_CIPHERTEXT_MAX);
       const plain = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, binding);
-      inputs.push({ audio: new Uint8Array(plain), mimeType: segment.contentType, language, lengthSeconds: segment.lengthSeconds, offsetSeconds: segment.startOffsetSeconds });
+      const copy = new Uint8Array(plain);
+      plain.fill(0);
+      inputs.push({ audio: copy, mimeType: segment.contentType, language, lengthSeconds: segment.lengthSeconds, offsetSeconds: segment.startOffsetSeconds });
     }
     return inputs;
   } finally {
-    dataKey.fill(0);
+    dataKey?.fill(0);
     subkey.fill(0);
   }
 }
@@ -125,12 +130,16 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
   let code: string | null = null;
   try {
     const audio = await vy.execute<RunAudio>('kernel.member_vy.meeting_audio.open', { meetingId: job.meetingId });
+    // A transcript past what one result row holds fails whatever is done, so it is refused before any chunk is sent and charged.
+    if (audio.segments.reduce((n, seg) => n + seg.lengthSeconds, 0) > TRANSCRIPT_MAX_SECONDS) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The meeting is too long to transcribe in one go');
     const inputs = await openAudio(deps, job, audio);
     const segments = await withAiScope({ orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new RunMeter(deps, vy, job) }, () => transcribeChunks(deps.provider, inputs));
     const body = encodeTranscriptResult(segments);
     if (segments.length === 0) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'The recording holds no speech');
     if (body.length > TRANSCRIPT_RESULT_MAX) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The transcript is longer than a result holds');
-    await vy.execute('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'ready', body } });
+    const stored = await vy.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'ready', body } });
+    // A kill switch or a spent budget that appeared since the last admit makes the store keep a failed result, not the text: the run is failed too.
+    if (!stored.stored) code = 'AI_STOPPED';
   } catch (error: unknown) {
     code = failureCode(error);
     // Best effort: when the context itself is refused (the member left, a switch is on) there is nothing to write and the finish below fails the result.

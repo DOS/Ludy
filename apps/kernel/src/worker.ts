@@ -2238,9 +2238,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               // The recorder asked for a meeting to be transcribed (#2578, M4b): ids only in the job. With no provider here the run stays running until it expires
               // (the command refuses to start one when transcription is off, so this only happens when a deployment turned it off after the click).
-              if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && row.type === 'meetings.transcript.requested') {
+              if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.transcript.requested') {
                 const transcribeJob: MeetingsTranscribeJob = { orgId: row.org_id, meetingId: String(row.payload.meetingId), runId: String(row.payload.runId), agentId: String(row.payload.agentId) };
-                await boss.send(QUEUES.meetingsTranscribe, transcribeJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranscribe, transcribeJob.runId), retryLimit: 0 });
+                await boss.send(QUEUES.meetingsTranscribe, transcribeJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranscribe, transcribeJob.runId), retryLimit: 0, expireInSeconds: 4 * 3600 });
               }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);

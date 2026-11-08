@@ -88,6 +88,21 @@ function build() {
       if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can start its transcription');
       if (!transcribeEnabled) throw new DomainError('TRANSCRIBE_OFF', 422, 'Transcription is not turned on here; the meeting works as it did');
       if (!(await meetingHasAudio(ctx.trx, ctx.orgId, input.meetingId))) throw new DomainError('MEETING_NO_AUDIO', 422, 'This meeting has no audio to transcribe');
+      // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. (Another use of Vy by the
+      // recorder, a note summary for one, also supersedes a live run: the member has one run at a time, ADR-0049 decision 1; the screen then shows the run as ended.)
+      const live = await ctx.trx
+        .selectFrom('crove_kernel.member_vy_result as v')
+        .innerJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+        .select('v.id')
+        .where('v.org_id', '=', ctx.orgId)
+        .where('v.member_user_id', '=', userId)
+        .where('v.feature', '=', FEATURE)
+        .where('v.subject_id', '=', input.meetingId)
+        .where('v.status', '=', 'running')
+        .where('r.status', '=', 'running')
+        .where('r.expires_at', '>', new Date())
+        .executeTakeFirst();
+      if (live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is already being transcribed');
       // The kernel's start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget (AI_BUDGET_EXHAUSTED), and makes the
       // member's Vy and this run (a result row in status running, the subject this meeting).
       const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });

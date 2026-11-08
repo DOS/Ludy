@@ -59,11 +59,17 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     deriveKey: (keyId: string, purpose: string) => createHash('sha256').update(`test-secret:${keyId}:${purpose}`).digest(),
   } as unknown as CredentialBroker;
   let providerCalls = 0;
+  let afterFirstCall: (() => Promise<void>) | null = null;
   const provider: MeetingsTranscribeDeps['provider'] = {
     baseURL: 'http://provider.test/v1',
     model: 'whisper-test',
     fetch: (async () => {
       providerCalls += 1;
+      if (afterFirstCall) {
+        const hook = afterFirstCall;
+        afterFirstCall = null;
+        await hook();
+      }
       return new Response(JSON.stringify({ text: 'xin chao', segments: [{ start: 0, end: 5, text: `xin chào ${providerCalls}` }, { start: 5, end: 9, text: 'tạm biệt' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch,
   };
@@ -241,10 +247,10 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     // An org kill switch: start is refused with the kernel's AI refusal, and a run already started stops at its next entry.
     const { runId } = await start('recorder', meetingId);
     await admin((c) => c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]));
-    expect(await refuses(start('recorder', meetingId))).toBe('AI_BUDGET_EXHAUSTED');
     const before = providerCalls;
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls).toBe(before);
+    expect(await refuses(start('recorder', meetingId))).toBe('AI_BUDGET_EXHAUSTED');
     await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]));
 
     // A spent hard-stop budget for the module: refused at start, before any provider call.
@@ -255,5 +261,23 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await refuses(start('recorder', meetingId))).toBe('AI_BUDGET_EXHAUSTED');
     expect(providerCalls).toBe(before);
     await admin((c) => c.query(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]));
+  });
+
+  it('does not start a meeting that is already being transcribed, and a switch that appears mid-run stops it before the next chunk', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    expect(await refuses(start('recorder', meetingId))).toBe('TRANSCRIBE_RUNNING');
+    // A kill switch engaged while chunk 1 is at the provider: chunk 1 was admitted and paid, chunk 2 is refused at its admit, one provider call is made, the run fails.
+    const before = providerCalls;
+    afterFirstCall = async () => {
+      await admin((c) => c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'module', 'meetings', $2)`, [orgId, users.owner]));
+    };
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    afterFirstCall = null;
+    expect(providerCalls - before).toBe(1);
+    expect((await status('recorder', meetingId)).state).toBe('failed');
+    const run = await admin((c) => c.query<{ status: string }>(`SELECT status FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    expect(run.rows[0]?.status).toBe('failed');
+    await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]));
   });
 });

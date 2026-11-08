@@ -14,7 +14,7 @@
 --         - the audio key has not been shredded.
 --       Anything else is refused with 42501 and a fixed code. One meeting per call; there is no list form. The sealed member is never read here:
 --       the member is the agent row's (the invariant suite pins that nothing but the pinned policies reads the seal).
---       The read is audited by the command that calls it (meetings.transcript.run_audio, ids only).
+--       The read is audited by the command that calls it (kernel.member_vy.meeting_audio.open, ids only).
 --   the queue meetings-transcribe: one job per run the recorder starts (ids only: org, meeting, run, the recorder's Vy).
 SET LOCAL lock_timeout = '2s';
 

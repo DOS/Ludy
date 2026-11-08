@@ -104,6 +104,8 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
       return t('vy.codes.AI_STOPPED');
     case 'TRANSCRIBE_OFF':
       return t('vy.codes.TRANSCRIBE_OFF');
+    case 'TRANSCRIBE_RUNNING':
+      return t('vy.codes.TRANSCRIBE_RUNNING');
     case 'MEETING_NO_AUDIO':
       return t('vy.codes.MEETING_NO_AUDIO');
     case 'TRANSCRIPT_EMPTY':
@@ -149,14 +151,14 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         {running && <p role="status">{t('vy.running')}</p>}
-        {data.state === 'ready' && data.runId && (
+        {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
+        {data.state === 'ready' && data.runId && !copy.isSuccess && (
           <div className="space-y-2">
             <p>{t('vy.ready')}</p>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
             <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(data.runId as string)}>
               {t('vy.copy')}
             </Button>
-            {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
           </div>
         )}
         {data.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${codeText(t, data.errorCode) ?? t('vy.codes.default')}`}</ErrorText>}

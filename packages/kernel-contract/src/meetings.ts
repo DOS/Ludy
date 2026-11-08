@@ -257,7 +257,7 @@ export const zTranscribeStatus = z.strictObject({
 export type TranscribeStatus = z.infer<typeof zTranscribeStatus>;
 // The recorder copies a finished run's result into the draft transcript (replacing the earlier draft, as draft_store does).
 export const zTranscriptCopy = z.strictObject({ meetingId: zId, runId: zId });
-// The bytes a run needs, as a declared member-Vy query: ids only (the ciphertext is fetched and decrypted by the worker).
+// A meeting, for the recorder's transcription status.
 export const zTranscribeRunRef = z.strictObject({ meetingId: zId });
 // What a transcription run stores in its result row: a compact JSON, `{"v":1,"p":[speakers],"s":[[start,end,speaker index,text],...]}`. A result row holds at
 // most 100000 characters (a database check), which is about an hour and a half of speech; a longer meeting fails with TRANSCRIPT_TOO_LONG, never a cut transcript.
