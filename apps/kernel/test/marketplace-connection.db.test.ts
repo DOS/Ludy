@@ -425,7 +425,7 @@ suite('marketplace connections (#2519)', () => {
         if (since !== null) return { orders: [], nextCursor: since };
         const line = (n: string, quantity: string) => ({ lineKey: `${n}-1`, sku: 'MAU-001', itemName: 'Áo', quantity, unitPrice: '100000', amount: '150000' });
         const order = (orderNo: string, quantity: string) => ({ orderNo, orderedAt: '2026-11-02', shippedAt: null, stage: 'placed' as const, lines: [line(orderNo, quantity)] });
-        return { orders: [order('7000000001', '1.5'), order('7000000002', '3')], nextCursor: 'sandbox:2' };
+        return { orders: [order('7000000001', '1.5'), order('7000000003', '3')], nextCursor: 'sandbox:2' };
       },
     };
     const other = await call('connections/connect', owner, connectInput({ platform: 'lazada', legalEntityId: String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh C', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id) }));

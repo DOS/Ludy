@@ -2638,7 +2638,7 @@ export const vi = {
   },
   integrations: {
     title: 'Tích hợp',
-    lead: 'Kết nối {brand} với ngân hàng, đơn vị phát hành hóa đơn và các sàn bán hàng của công ty.',
+    lead: 'Kết nối {brand} với ngân hàng và đơn vị phát hành hóa đơn của công ty.',
   },
   einvoiceConnections: {
     title: 'Hóa đơn điện tử: nhà cung cấp của bạn',

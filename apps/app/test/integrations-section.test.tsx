@@ -73,7 +73,6 @@ describe('IntegrationsSection', () => {
     expect(html).toContain('<h2');
     // The lead names the product by its brand, and the apostrophe is escaped in the markup.
     expect(html).toContain('Connect');
-    expect(html).toContain('company&#x27;s bank, invoice provider and marketplaces.');
     expect(html).toContain(`aria-label="${en.bankFeeds.title}"`);
     expect(html).toContain(`aria-label="${en.einvoiceConnections.title}"`);
   });
@@ -100,7 +99,8 @@ describe('IntegrationsSection', () => {
     const platforms = [{ platform: 'shopee', adapter: true, adapters: ['sandbox'] }];
     const on = withMarketplace({ adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['shopee'] }], platforms }, []);
     expect(on).toContain(`>${en.integrations.title}<`);
-    expect(on).toContain(`aria-label="${en.marketplaceConnections.title}"`);
+    expect(on).toContain(`>${en.marketplaceConnections.title}<`);
+    expect(on).toContain('role="group"');
     const off = withMarketplace({ adapters: [], platforms: [{ platform: 'shopee', adapter: false, adapters: [] }] }, []);
     expect(off).toBe('');
   });

@@ -2640,7 +2640,7 @@ export const en = {
   },
   integrations: {
     title: 'Integrations',
-    lead: 'Connect {brand} to your company\'s bank, invoice provider and marketplaces.',
+    lead: 'Connect {brand} to your company\'s bank and invoice provider.',
   },
   einvoiceConnections: {
     title: 'E-invoices: your provider',

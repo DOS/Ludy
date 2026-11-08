@@ -102,8 +102,8 @@ suite('crove_jobs from committed migrations', () => {
       expect(queues.rows).toEqual(
         [...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].sort().map((name) => ({
           name,
-          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give.
-          policy: name === QUEUES.einvoiceIssue ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
+          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give. The marketplace poll queue is exclusive for the same reason: one poll per connection at a time (#2519).
+          policy: name === QUEUES.einvoiceIssue || name === QUEUES.marketplacePoll ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
           dead_letter: name === QUEUES.deadLetter ? null : QUEUES.deadLetter,
         })),
       );
