@@ -10,8 +10,21 @@ export const EXTENSION_SCOPE_IDS = ['meetings'] as const;
 export type ExtensionScopeId = (typeof EXTENSION_SCOPE_IDS)[number];
 export const zExtensionScope = z.enum(EXTENSION_SCOPE_IDS);
 
-// What the sign-in page asks the kernel for: the PKCE challenge the extension sent, the scopes and a device name.
+// An extension's id as Chrome and Edge make it: 32 letters a to p. It is the host of the extension's redirect address
+// (https://<id>.chromiumapp.org/).
+export const EXTENSION_ID_FORMAT = /^[a-p]{32}$/;
+export const zExtensionId = z.string().regex(EXTENSION_ID_FORMAT);
+
+// The ids that may receive a sign-in code when the deployment sets none (EXTENSION_IDS): the Ludy extension's id in the
+// browser stores. Empty until the store listing exists: M10 (#2584) puts the real store id here. Until then a build from
+// a store cannot connect (an empty list refuses every redirect, so it fails closed, with no made-up id in the code); a
+// self-hosted or development install lists its own extension's id in EXTENSION_IDS.
+export const DEFAULT_EXTENSION_IDS: readonly string[] = Object.freeze([] as string[]);
+
+// What the sign-in page asks the kernel for: the extension it is signing in (the host of its redirect address), the PKCE
+// challenge the extension sent, the scopes and a device name.
 export const zExtensionAuthorize = z.strictObject({
+  extensionId: zExtensionId,
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
   scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length),
@@ -32,3 +45,9 @@ export type ExtensionTokenView = z.infer<typeof zExtensionToken>;
 
 export const zExtensionTokenRevoke = z.strictObject({ tokenId: zId });
 export const zExtensionTokenRevoked = z.strictObject({ tokenId: zId, revoked: z.literal(true) });
+
+// One connected device of any member of the org, for an owner or an admin. Never a hash.
+export const zExtensionOrgToken = zExtensionToken.extend({ userId: zId });
+export type ExtensionOrgTokenView = z.infer<typeof zExtensionOrgToken>;
+
+export const zExtensionTokenRevokedMember = z.strictObject({ tokenId: zId, userId: zId, revoked: z.literal(true) });
