@@ -67,6 +67,8 @@ const PENDING_TABLES = new Set<string>([
   // Q4 of the CRM quotes (#2696, ADR-0050): the sales order of an accepted quote, its frozen lines and the org's per-year number counter.
   'crove_crm.sales_order',
   'crove_crm.sales_order_counter',
+  // Q4b (#2697, ADR-0050 point 4): the delivery of a sales order line and its reversal.
+  'crove_crm.sales_order_delivery',
   'crove_crm.sales_order_line',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
@@ -175,6 +177,8 @@ const leScopeOrOrgPredicate = (c: string) =>
 // listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
 // listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
 const APPEND_ONLY = new Set<string>([
+  // The delivery of a sales order line and its reversal (Q4b, #2697, ADR-0050 point 4): a wrong mark is reversed by a reversing row, never changed or deleted.
+  'crove_crm.sales_order_delivery',
   // The lines of a sales order (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): a frozen copy made with the order; a correction is a cancelled order and a new quote.
   'crove_crm.sales_order_line',
   'crove_finance.channel_settlement',
@@ -845,6 +849,38 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'last_no = last_no' },
     noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
+  },
+  // The delivery of a sales order line, or its reversal (Q4b, #2697, ADR-0050 point 4): append-only, it names its line (a composite key on order and line number). The
+  // factory row is a delivery (a date, no reversed row); a reversal names the delivery it reverses and has no date. Nothing updates or deletes it (APPEND_ONLY).
+  'crove_crm.sales_order_delivery': {
+    noInsertControl: 'a delivery needs a confirmed order, which needs a sent quote, which only the send command makes, so the own-org insert control cannot build its setup as a login role; crm-sales-order-delivery.db.test.ts tests the delivery as the runtime login',
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      const entity = randomUUID();
+      const order = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link', issuer_entity_id: entity },
+          },
+          {
+            table: 'crove_crm.sales_order',
+            values: { org_id: o.id, id: order, quote_id: quote, deal_id: deal, party_id: o.party, issuer_entity_id: entity, number: `DH-RLS-${tag()}`, order_date: '2031-02-01', buyer_name: 'RLS matrix buyer', created_by: o.owner },
+          },
+          {
+            table: 'crove_crm.sales_order_line',
+            values: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'delivery', delivered_on: '2031-02-02', created_by: o.owner },
+      };
+    },
   },
   // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
   'crove_crm.sales_order_line': {
