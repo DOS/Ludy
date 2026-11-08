@@ -7,7 +7,7 @@ import { crmCommands, crmQueries } from '../src/index.ts';
 
 describe('the sales order commands', () => {
   it('lists every command and query of the step in the module', () => {
-    expect(salesOrderCommands.map((c) => c.name)).toEqual(['crm.quote.accept', 'crm.quote.decline', 'crm.sales_order.cancel']);
+    expect(salesOrderCommands.map((c) => c.name)).toEqual(['crm.quote.accept', 'crm.quote.decline', 'crm.sales_order.cancel', 'crm.sales_order.deliver', 'crm.sales_order.undeliver']);
     expect(salesOrderQueries.map((q) => q.name)).toEqual(['crm.sales_order.get', 'crm.sales_order.list', 'crm.deal.sales_orders', 'crm.sales_order.handoff']);
     for (const command of salesOrderCommands) expect(crmCommands).toContain(command);
     for (const query of salesOrderQueries) expect(crmQueries).toContain(query);

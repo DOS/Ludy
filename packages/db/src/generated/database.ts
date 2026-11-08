@@ -41,6 +41,7 @@ export interface CroveCrmSchema {
   'crove_crm.quote_link': CrmQuoteLinkTable;
   'crove_crm.quote_setting': CrmQuoteSettingTable;
   'crove_crm.sales_order': CrmSalesOrderTable;
+  'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
 }
 
@@ -713,6 +714,19 @@ export interface CrmQuoteTable {
   buyer_tax_code: string | null;
   buyer_address: string | null;
   buyer_email: string | null;
+}
+
+/** crove_crm.sales_order_delivery */
+export interface CrmSalesOrderDeliveryTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_no: ColumnType<number, number, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  delivered_on: ColumnType<string | null, string | null, NotGranted>;
+  reverses_id: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_crm.sales_order_line */

@@ -15,11 +15,15 @@ import {
   zQuoteAccept,
   zQuoteDecline,
   zSalesOrderCancel,
+  zSalesOrderDeliver,
   zSalesOrderListQuery,
   zSalesOrderRef,
+  zSalesOrderUndeliver,
   type QuoteDecided,
   type SalesOrder,
   type SalesOrderBuyer,
+  type SalesOrderDelivery,
+  type SalesOrderDeliveryChanged,
   type SalesOrderHandoff,
   type SalesOrderPage,
   type SalesOrderStatus,
@@ -333,6 +337,20 @@ async function loadLines(ctx: Reader, orderId: string) {
   }));
 }
 
+// The deliveries of an order's lines, by line: the day it was delivered, and whether the mark was taken back. A line with no delivery row is not delivered.
+async function loadDeliveries(ctx: Reader, orderId: string): Promise<SalesOrderDelivery[]> {
+  const rows = await ctx.trx
+    .selectFrom('crove_crm.sales_order_delivery as d')
+    .leftJoin('crove_crm.sales_order_delivery as r', (j) => j.onRef('r.org_id', '=', 'd.org_id').onRef('r.reverses_id', '=', 'd.id').on('r.kind', '=', 'reversal'))
+    .select(['d.line_no', 'd.delivered_on', 'r.id as reversal_id'])
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.order_id', '=', orderId)
+    .where('d.kind', '=', 'delivery')
+    .orderBy('d.line_no')
+    .execute();
+  return rows.map((r) => ({ lineNo: r.line_no, deliveredOn: r.delivered_on === null ? '' : day(r.delivered_on), reversed: r.reversal_id !== null }));
+}
+
 async function loadOrder(ctx: Reader, orderId: string): Promise<SalesOrder> {
   const row = await base(ctx).where('o.id', '=', orderId).executeTakeFirst();
   if (!row) throw orderNotFound();
@@ -350,6 +368,7 @@ async function loadOrder(ctx: Reader, orderId: string): Promise<SalesOrder> {
     acceptedVia: extra.accepted_via,
     cancelReason: extra.cancel_reason,
     lines: await loadLines(ctx, orderId),
+    deliveries: await loadDeliveries(ctx, orderId),
   };
 }
 
@@ -434,8 +453,8 @@ export const salesOrderHandoff = defineQuery({
 // ---------------------------------------------------------------------------------------------------------------
 
 // A confirmed order is cancelled with a reason, once. What Kế toán has made from it (a draft) is read from Kế toán and cannot be checked here (no module reads the other's
-// tables, ADR-0050 "Consequences"): the Orders screen disables the action for an order it last read a draft for, and a draft is only a draft until finance issues it. The
-// delivery check of Q4b joins this one when `sales_order_delivery` exists.
+// tables, ADR-0050 "Consequences"): the Orders screen disables the action for an order it last read a draft for, and a draft is only a draft until finance issues it. An order
+// with a delivery that was not taken back is refused here (and by the database guard).
 export const salesOrderCancel = defineCommand({
   name: 'crm.sales_order.cancel',
   input: zSalesOrderCancel,
@@ -455,6 +474,8 @@ export const salesOrderCancel = defineCommand({
     if (!order) throw orderNotFound();
     if (order.status !== 'confirmed') throw new DomainError('ORDER_ALREADY_CANCELLED', 409, 'Đơn hàng này đã hủy');
     if (order.version !== input.version) throw new DomainError('STALE_VERSION', 409, 'Đơn hàng này vừa được người khác sửa; hãy mở lại để xem bản mới');
+    // A delivery nobody took back means goods left: the order is kept (the database guard says the same).
+    if ((await loadDeliveries(ctx, order.id)).some((d) => !d.reversed)) throw new DomainError('ORDER_DELIVERED', 409, 'Đơn hàng đã giao hàng nên không hủy được');
     await ctx.trx
       .updateTable('crove_crm.sales_order')
       .set({ status: 'cancelled', cancelled_at: ctx.now, cancel_reason: input.reason, version: order.version + 1, updated_by: userId, updated_at: ctx.now })
@@ -468,5 +489,101 @@ export const salesOrderCancel = defineCommand({
   },
 });
 
-export const salesOrderCommands = [quoteAccept, quoteDecline, salesOrderCancel];
+// ---------------------------------------------------------------------------------------------------------------
+// Delivery (Q4b, #2697, ADR-0050 point 4)
+// ---------------------------------------------------------------------------------------------------------------
+
+// Locks the order, then finds the goods line: the lock makes a delivery and a cancellation of the same order take turns. A cancelled order, a service line and a line that does
+// not exist are each refused with their own error, nothing written.
+async function lockedGoodsLine(ctx: Pick<CommandContext, 'trx' | 'orgId'>, orderId: string, lineNo: number) {
+  const order = await ctx.trx
+    .selectFrom('crove_crm.sales_order')
+    .select(['id', 'party_id', 'status', 'order_date'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', orderId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!order) throw orderNotFound();
+  if (order.status !== 'confirmed') throw new DomainError('ORDER_CANCELLED', 409, 'Đơn hàng đã hủy nên không ghi giao hàng được');
+  const line = await ctx.trx
+    .selectFrom('crove_crm.sales_order_line')
+    .select(['line_no', 'kind'])
+    .where('org_id', '=', ctx.orgId)
+    .where('order_id', '=', orderId)
+    .where('line_no', '=', lineNo)
+    .executeTakeFirst();
+  if (!line) throw new DomainError('ORDER_LINE_NOT_FOUND', 404, 'Đơn hàng không có dòng này');
+  if (line.kind !== 'item') throw new DomainError('ORDER_LINE_NOT_DELIVERABLE', 422, 'Dòng ghi chú không có hàng để giao');
+  return order;
+}
+
+async function deliveryOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, orderId: string, lineNo: number): Promise<{ id: string; delivered_on: Date | string; reversed: boolean } | undefined> {
+  const row = await ctx.trx
+    .selectFrom('crove_crm.sales_order_delivery as d')
+    .leftJoin('crove_crm.sales_order_delivery as r', (j) => j.onRef('r.org_id', '=', 'd.org_id').onRef('r.reverses_id', '=', 'd.id').on('r.kind', '=', 'reversal'))
+    .select(['d.id', 'd.delivered_on', 'r.id as reversal_id'])
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.order_id', '=', orderId)
+    .where('d.line_no', '=', lineNo)
+    .where('d.kind', '=', 'delivery')
+    .executeTakeFirst();
+  return row && row.delivered_on !== null ? { id: row.id, delivered_on: row.delivered_on, reversed: row.reversal_id !== null } : undefined;
+}
+
+// A person marks a goods line of a confirmed order delivered. The command records it and nothing else: no stock moves here (Kế toán's own command does that, run by the screen
+// with the line from `crm.sales_order.handoff`, ADR-0050 point 4). A second call for the same line is refused, so nothing is recorded twice; a line whose delivery was taken back
+// is not delivered again in this slice.
+export const salesOrderDeliver = defineCommand({
+  name: 'crm.sales_order.deliver',
+  input: zSalesOrderDeliver,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'crm.sales_order', id: input.orderId }),
+  handler: async (ctx, input): Promise<SalesOrderDeliveryChanged> => {
+    const userId = userOf(ctx.actor);
+    const order = await lockedGoodsLine(ctx, input.orderId, input.lineNo);
+    const today = vietnamToday(ctx.now);
+    const deliveredOn = input.deliveredOn ?? today;
+    if (!validDate(deliveredOn)) throw new DomainError('VALIDATION', 400, 'Ngày giao hàng không hợp lệ');
+    if (deliveredOn > today) throw new DomainError('ORDER_DELIVERY_DATE_FUTURE', 422, 'Ngày giao hàng không được sau hôm nay');
+    if (deliveredOn < day(order.order_date)) throw new DomainError('ORDER_DELIVERY_DATE_BEFORE_ORDER', 422, 'Ngày giao hàng không được trước ngày đặt hàng');
+    const existing = await deliveryOf(ctx, input.orderId, input.lineNo);
+    if (existing?.reversed) throw new DomainError('ORDER_LINE_DELIVERY_REVERSED', 409, 'Dòng này đã được hoàn giao; bản này chưa cho giao lại');
+    if (existing) throw new DomainError('ORDER_LINE_ALREADY_DELIVERED', 409, 'Dòng này đã được ghi giao hàng');
+    await ctx.trx
+      .insertInto('crove_crm.sales_order_delivery')
+      .values({ org_id: ctx.orgId, id: randomUUID(), order_id: input.orderId, line_no: input.lineNo, kind: 'delivery', delivered_on: deliveredOn, reverses_id: null, created_by: userId })
+      .execute();
+    ctx.audit({ orderId: input.orderId, lineNo: input.lineNo, partyId: order.party_id });
+    await ctx.activity('kernel.party', order.party_id, 'order.delivered', 'Giao hàng một dòng đơn hàng');
+    return { orderId: input.orderId, lineNo: input.lineNo, delivery: { lineNo: input.lineNo, deliveredOn, reversed: false } };
+  },
+});
+
+// A person takes a delivery back (it was marked by mistake, or the goods came back): a reversing row naming the delivery, never a deletion. One reversal per delivery.
+export const salesOrderUndeliver = defineCommand({
+  name: 'crm.sales_order.undeliver',
+  input: zSalesOrderUndeliver,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'crm.sales_order', id: input.orderId }),
+  handler: async (ctx, input): Promise<SalesOrderDeliveryChanged> => {
+    const userId = userOf(ctx.actor);
+    const order = await lockedGoodsLine(ctx, input.orderId, input.lineNo);
+    const existing = await deliveryOf(ctx, input.orderId, input.lineNo);
+    if (!existing) throw new DomainError('ORDER_LINE_NOT_DELIVERED', 409, 'Dòng này chưa được ghi giao hàng');
+    if (existing.reversed) throw new DomainError('ORDER_LINE_DELIVERY_REVERSED', 409, 'Dòng này đã được hoàn giao rồi');
+    await ctx.trx
+      .insertInto('crove_crm.sales_order_delivery')
+      .values({ org_id: ctx.orgId, id: randomUUID(), order_id: input.orderId, line_no: input.lineNo, kind: 'reversal', delivered_on: null, reverses_id: existing.id, created_by: userId })
+      .execute();
+    ctx.audit({ orderId: input.orderId, lineNo: input.lineNo, partyId: order.party_id });
+    await ctx.activity('kernel.party', order.party_id, 'order.delivery_reversed', 'Hoàn giao một dòng đơn hàng');
+    return { orderId: input.orderId, lineNo: input.lineNo, delivery: { lineNo: input.lineNo, deliveredOn: day(existing.delivered_on), reversed: true } };
+  },
+});
+
+export const salesOrderCommands = [quoteAccept, quoteDecline, salesOrderCancel, salesOrderDeliver, salesOrderUndeliver];
 export const salesOrderQueries = [salesOrderGet, salesOrderList, dealSalesOrders, salesOrderHandoff];
