@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The mail of a sent quote (#2694, template crm.quote): crm.quote.send stored the facts as the mail's merge data and the worker renders them here, with the link to the
-// quote's page. The link carries the token, which the stored merge data holds until the mail row is purged; the link opens only the one quote and expires with it.
+// quote's page. The merge data names the quote and holds no token: the template asks crm.quote.mail_data for a new link when it sends the mail (the booking mails'
+// pattern), so the queue and its retention never hold a secret; the link opens only the one quote and expires with it.
 // The words are Vietnamese (the quote itself is; a second language is a translation of these strings, not a rebuild).
 import { z } from 'zod';
 import { QUOTE_PAGE_PATH, QUOTE_TOKEN_PATTERN } from '@crove/kernel-contract';
@@ -16,7 +17,7 @@ export const zQuoteMail = z.strictObject({
   revision: z.number().int().min(1),
   total: z.string().regex(/^\d{1,18}(\.\d{1,4})?$/),
   validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  token: z.string().regex(QUOTE_TOKEN_PATTERN),
+  quoteId: z.uuid(),
 });
 
 export interface RenderedQuoteMail {
@@ -48,14 +49,15 @@ function dateVi(value: string): string {
 }
 
 // The mail from its stored merge data. publicUrl: where the app is served (no trailing slash needed). replyTo: the org's inbound address when the deployment receives
-// mail. brand: the product name users see (BRAND_NAME).
-export function renderQuoteMail(raw: unknown, context: { publicUrl: string; replyTo: string | null; brand?: string }): RenderedQuoteMail {
+// mail. brand: the product name users see (BRAND_NAME). token: the link's token, made when the mail is sent.
+export function renderQuoteMail(raw: unknown, context: { publicUrl: string; replyTo: string | null; brand?: string; token: string }): RenderedQuoteMail {
   const mail = zQuoteMail.parse(raw);
+  if (!QUOTE_TOKEN_PATTERN.test(context.token)) throw new Error('quote mail: the link token is malformed');
   const brand = context.brand ?? 'Ludy';
   const org = oneLine(mail.org);
   let base = context.publicUrl;
   while (base.endsWith('/')) base = base.slice(0, -1);
-  const url = `${base}${QUOTE_PAGE_PATH}#${mail.token}`;
+  const url = `${base}${QUOTE_PAGE_PATH}#${context.token}`;
   const label = mail.revision > 1 ? `${mail.number}-R${mail.revision}` : mail.number;
   const lead = `${org} gửi Quý khách báo giá số ${label}, tổng cộng ${dong(mail.total)}, có hiệu lực đến ngày ${dateVi(mail.validUntil)}.`;
   const text = [

@@ -164,6 +164,10 @@ BEGIN
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
   END IF;
+  -- A line stays on its quote: moving one would write to a quote whose status was never looked at.
+  IF TG_OP = 'UPDATE' AND (NEW.org_id, NEW.quote_id) IS DISTINCT FROM (OLD.org_id, OLD.quote_id) THEN
+    RAISE EXCEPTION 'QUOTE_FROZEN' USING ERRCODE = '42501', DETAIL = 'a line does not move to another quote';
+  END IF;
   IF TG_OP = 'DELETE' THEN
     v_org := OLD.org_id;
     v_quote := OLD.quote_id;
@@ -223,6 +227,8 @@ CREATE POLICY quote_link_insert ON crove_crm.quote_link AS RESTRICTIVE FOR INSER
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR (EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = quote_link.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))
       AND EXISTS (SELECT 1 FROM crove_crm.quote q WHERE q.org_id = quote_link.org_id AND q.id = quote_link.quote_id AND q.status IN ('sent', 'accepted', 'declined'))
+      AND quote_link.created_by = (SELECT crove_kernel.ctx_user_id())
+      AND quote_link.created_at BETWEEN pg_catalog.now() - pg_catalog.make_interval(mins => 1) AND pg_catalog.now() + pg_catalog.make_interval(mins => 1)
       AND quote_link.revoked_at IS NULL AND quote_link.first_viewed_at IS NULL AND quote_link.views = 0));
 DROP POLICY IF EXISTS quote_link_update ON crove_crm.quote_link;
 CREATE POLICY quote_link_update ON crove_crm.quote_link AS RESTRICTIVE FOR UPDATE TO crove_tenant
@@ -280,15 +286,16 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = v_link.org_id AND t.status = 'active') THEN
     RETURN NULL;
   END IF;
-  SELECT q.* INTO v_quote FROM crove_crm.quote q WHERE q.org_id = v_link.org_id AND q.id = v_link.quote_id;
+  -- Locked first (a send of a revision waits), so the status read here is the one the two updates below act on.
+  SELECT q.* INTO v_quote FROM crove_crm.quote q WHERE q.org_id = v_link.org_id AND q.id = v_link.quote_id FOR UPDATE;
   IF v_quote.id IS NULL OR v_quote.status NOT IN ('sent', 'accepted', 'declined') THEN
     RETURN NULL;
   END IF;
   -- The quote row first, then the link: the send of a revision locks them in that order too, so the two cannot deadlock.
   IF v_quote.first_viewed_at IS NULL THEN
-    UPDATE crove_crm.quote SET first_viewed_at = pg_catalog.now() WHERE org_id = v_quote.org_id AND id = v_quote.id;
+    UPDATE crove_crm.quote SET first_viewed_at = pg_catalog.now() WHERE org_id = v_quote.org_id AND id = v_quote.id AND status IN ('sent', 'accepted', 'declined');
   END IF;
-  UPDATE crove_crm.quote_link SET views = views + 1, first_viewed_at = coalesce(first_viewed_at, pg_catalog.now()) WHERE org_id = v_link.org_id AND id = v_link.id;
+  UPDATE crove_crm.quote_link SET views = views + 1, first_viewed_at = coalesce(first_viewed_at, pg_catalog.now()) WHERE org_id = v_link.org_id AND id = v_link.id AND revoked_at IS NULL;
   RETURN (
     SELECT pg_catalog.jsonb_build_object(
       'number', v_quote.number,

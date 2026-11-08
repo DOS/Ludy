@@ -602,7 +602,7 @@ const LINK_MAX_DAYS = 119;
 
 // A link to a sent quote: it opens until the quote's validity plus 30 days (never more than 119 days from now), and a quote keeps a few at once. The token is in the
 // answer only. The caller holds the quote and has read that it is sent (or decided).
-async function makeLink(ctx: CommandContext, quote: { id: string; valid_until: Date | string }, userId: string): Promise<QuoteLinkCreated> {
+async function makeLink(ctx: CommandContext, quote: { id: string; valid_until: Date | string }, userId: string, options: { limit: boolean } = { limit: true }): Promise<QuoteLinkCreated> {
   const live = await ctx.trx
     .selectFrom('crove_crm.quote_link')
     .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -611,7 +611,7 @@ async function makeLink(ctx: CommandContext, quote: { id: string; valid_until: D
     .where('revoked_at', 'is', null)
     .where('expires_at', '>', ctx.now)
     .executeTakeFirstOrThrow();
-  if (Number(live.n) >= QUOTE_LINKS_MAX) throw new DomainError('QUOTE_LINK_LIMIT', 409, `Báo giá này đã có ${QUOTE_LINKS_MAX} liên kết còn hạn; hãy thu hồi bớt`);
+  if (options.limit && Number(live.n) >= QUOTE_LINKS_MAX) throw new DomainError('QUOTE_LINK_LIMIT', 409, `Báo giá này đã có ${QUOTE_LINKS_MAX} liên kết còn hạn; hãy thu hồi bớt`);
   const natural = new Date(`${addDays(day(quote.valid_until), QUOTE_LINK_DAYS_AFTER_VALID)}T23:59:59+07:00`).getTime();
   const expires = Math.min(natural, ctx.now.getTime() + LINK_MAX_DAYS * DAY_MS);
   if (expires <= ctx.now.getTime() + 60_000) throw new DomainError('QUOTE_LINK_EXPIRED', 409, 'Báo giá đã hết hạn từ lâu; hãy tạo bản sửa đổi rồi gửi lại');
@@ -628,7 +628,7 @@ const NOT_SENDABLE = 'Báo giá cần ít nhất một dòng hàng có giá và 
 
 // A person sends a draft: it needs a priced line, a total above zero and a validity date that has not passed. The quote takes its number (a revision keeps the
 // number of the quote it revises, which it replaces and whose links it revokes), the buyer is copied from the customer as they are now, and the issuing entity is the
-// org's default. By email it also makes a link and queues one mail with it (a suppressed address refuses the whole send); by link the person makes the link next
+// org's default. By email it also queues one mail, whose link is made when the mail is sent (a suppressed address refuses the whole send); by link the person makes the link next
 // (crm.quote.create_link) and sends it in the chat. Nothing leaves without this click, and no agent can run it.
 export const quoteSend = defineCommand({
   name: 'crm.quote.send',
@@ -693,7 +693,8 @@ export const quoteSend = defineCommand({
         buyer_name: party.name.slice(0, 400),
         buyer_tax_code: party.tax_code,
         buyer_address: party.address,
-        buyer_email: party.email,
+        // The address the mail goes to when the person typed one, else the customer's own.
+        buyer_email: input.via === 'email' ? recipient : party.email,
         version: locked.version + 1,
         updated_by: userId,
         updated_at: ctx.now,
@@ -718,9 +719,9 @@ export const quoteSend = defineCommand({
     let mail: 'queued' | null = null;
     let messageId: string | null = null;
     if (input.via === 'email') {
-      const link = await makeLink(ctx, quote, userId);
+      // The merge data names the quote and holds no token: the template mints the link when the mail is sent (crm.quote.mail_data), so only its hash is ever stored.
       const total = money(quote.total).toFixed();
-      const payload = zQuoteMail.parse({ lang: 'vi', org: issuer.name, number, revision: quote.revision, total, validUntil: day(quote.valid_until), token: link.token });
+      const payload = zQuoteMail.parse({ lang: 'vi', org: issuer.name, number, revision: quote.revision, total, validUntil: day(quote.valid_until), quoteId: quote.id });
       const queued = await createMailMessage(ctx, {
         stream: 'transactional',
         source: QUOTE_MAIL_SOURCE,
@@ -731,7 +732,7 @@ export const quoteSend = defineCommand({
         payload,
         status: 'queued',
       });
-      // A blocked address refuses the whole send: the quote stays a draft and no link was kept.
+      // A blocked address refuses the whole send: the quote stays a draft.
       if (queued.status === 'suppressed') throw new DomainError('QUOTE_EMAIL_SUPPRESSED', 422, 'Địa chỉ email này đang bị chặn nên không gửi được báo giá; hãy dùng địa chỉ khác hoặc gửi bằng liên kết');
       mail = 'queued';
       messageId = queued.id;
@@ -739,6 +740,35 @@ export const quoteSend = defineCommand({
     ctx.audit({ quoteId: quote.id, dealId: quote.deal_id, partyId: quote.party_id, via: input.via, revision: quote.revision, supersedes: quote.revises_id, linksRevoked: revoked, messageId });
     await ctx.activity('kernel.party', quote.party_id, 'quote.sent', input.via === 'email' ? 'Gửi báo giá bằng email' : 'Gửi báo giá bằng liên kết');
     return { quote: await loadQuote(ctx, quote.id, ctx.now), mail };
+  },
+});
+
+// What a quote mail being sent now needs beyond its merge data (the worker's mail template asks for it): a new link to the quote, made at send time, so the queue never
+// holds a token. A quote that is no longer the current sent one (replaced, or decided) gets none and its mail is not sent. The link is made in the name of the person
+// who sent the quote; a mail that is tried again makes another (a few at most, the queue's attempts), each opening only this quote and each revocable.
+export const quoteMailData = defineCommand({
+  name: 'crm.quote.mail_data',
+  input: zQuoteRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ token: string | null }> => {
+    const quote = await ctx.trx
+      .selectFrom('crove_crm.quote')
+      .select(['id', 'status', 'valid_until', 'updated_by'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.quoteId)
+      // Held, so a revision sent in between cannot leave this link open on a replaced quote.
+      .forShare()
+      .executeTakeFirst();
+    if (!quote || quote.status !== 'sent' || !quote.updated_by) return { token: null };
+    try {
+      return { token: (await makeLink(ctx, quote, quote.updated_by, { limit: false })).token };
+    } catch (error) {
+      // A quote whose validity ran out long ago has no link to make: the mail is not sent.
+      if (error instanceof DomainError && error.code === 'QUOTE_LINK_EXPIRED') return { token: null };
+      throw error;
+    }
   },
 });
 
@@ -790,5 +820,5 @@ export async function dealHasQuotes(ctx: Pick<CommandContext, 'trx' | 'orgId'>, 
   return row !== undefined;
 }
 
-export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet];
+export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteMailData, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet];
 export const quoteQueries = [quoteGet, quoteList, dealQuotes, quoteDefaults, quoteSettingGet];

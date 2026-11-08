@@ -12,7 +12,8 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { Deal, PipelineStage, Quote, QuoteDocument, QuoteLinkCreated, QuoteSent } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries, renderQuoteMail } from '@crove/mod-crm';
+import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { quoteMailTemplate } from '../src/quote-mail.ts';
 import { quoteView } from '../src/quote-link.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -21,6 +22,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
+const SYSTEM = { type: 'system' as const, component: 'test.crm.quote' };
 const item = (over: Record<string, unknown> = {}) => ({ kind: 'item' as const, description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', vatRate: '10%', ...over });
 
 suite('crm quote send on PostgreSQL (#2694)', () => {
@@ -237,7 +239,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(other.link(other.owner, current.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND' });
   });
 
-  it('sends by email: one queued mail with the link, a refused blocked address, and nothing sent without the click', async () => {
+  it('sends by email: one queued mail whose link is made when it is sent, a refused blocked address, and nothing sent without the click', async () => {
     const o = await org();
     const party = await o.party('Công ty ABC', 'ketoan@khach.test');
     const deal = await o.newDeal(party);
@@ -252,19 +254,31 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const { quote, mail } = await o.send(o.member, draft, 'email');
     expect(mail).toBe('queued');
     expect(quote).toMatchObject({ status: 'sent', sentVia: 'email' });
-    expect(quote.links).toHaveLength(1);
+    // No link yet and no token in the queue: the link is made as the mail is sent.
+    expect(quote.links).toHaveLength(0);
     const rows = await admin((c) => c.query<{ template_key: string; status: string; subject: string; source_id: string; payload: Record<string, unknown> }>("SELECT template_key, status, subject, source_id, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.quote.send'", [o.orgId]));
     expect(rows.rows).toHaveLength(1);
     const row = rows.rows[0]!;
     expect(row).toMatchObject({ template_key: 'crm.quote', status: 'queued', source_id: quote.id });
     expect(row.subject).toContain(quote.number as string);
-    // The mail's link opens the document, and the mail renders from its stored data.
-    const token = String(row.payload.token);
+    expect(JSON.stringify(row.payload)).not.toMatch(/[A-Za-z0-9_-]{43}/);
+    expect(row.payload).toMatchObject({ quoteId: quote.id, number: quote.number });
+    // The mail renders from its stored data and makes the link then: only its hash is stored, and it opens the document.
+    const execute = <T>(command: string, input: unknown) => rt.execute<T>(command, input, { actor: SYSTEM, orgId: o.orgId });
+    const rendered = await quoteMailTemplate.render({ messageId: randomUUID(), subject: row.subject, payload: row.payload, publicUrl: 'https://app.example.test/', inboundAddress: null, brand: 'Ludy', execute });
+    expect(rendered).not.toBeNull();
+    const token = /quote#([A-Za-z0-9_-]{43})/.exec(rendered!.text)![1]!;
+    expect(rendered!.text).toContain(quote.number as string);
+    expect(rendered!.html).toContain(`href="https://app.example.test/-/quote#${token}"`);
     expect(await quoteView(rt, { token })).toMatchObject({ number: quote.number, total: draft.total });
-    const rendered = renderQuoteMail(row.payload, { publicUrl: 'https://app.example.test/', replyTo: null });
-    expect(rendered.text).toContain(`https://app.example.test/-/quote#${token}`);
-    expect(rendered.text).toContain(quote.number as string);
-    expect(rendered.html).toContain(`href="https://app.example.test/-/quote#${token}"`);
+    const links = await admin((c) => c.query<{ token_sha256: string; created_by: string }>('SELECT token_sha256, created_by FROM crove_crm.quote_link WHERE org_id = $1 AND quote_id = $2', [o.orgId, quote.id]));
+    expect(links.rows).toHaveLength(1);
+    expect(links.rows[0]).toMatchObject({ created_by: o.member });
+    expect(links.rows[0]!.token_sha256).not.toContain(token);
+    // A quote that was replaced meanwhile gets no link and its mail is not sent.
+    const revised = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: quote.id });
+    await o.send(o.member, await o.exec<Quote>(o.member, 'crm.quote.save', { quoteId: revised.id, version: revised.version, lines: [item({ quantity: '5' })] }), 'link');
+    expect(await quoteMailTemplate.render({ messageId: randomUUID(), subject: row.subject, payload: row.payload, publicUrl: 'https://app.example.test/', inboundAddress: null, brand: 'Ludy', execute })).toBeNull();
     // A typed recipient is used instead of the customer's.
     const second = await o.readyDraft(deal.id);
     await o.send(o.member, second, 'email', 'khac@khach.test');
@@ -339,6 +353,11 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(as(o.orgId, o.member, (c) => c.query(insertLink(draft.id), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.viewer, (c) => c.query(insertLink(sent.id), [o.orgId, o.viewer]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(insertLink(sent.id, ', views', ', 5'), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
+    // Nor in another person's name, nor with a made-up time that would stretch the 120 days.
+    await expect(as(o.orgId, o.member, (c) => c.query(insertLink(sent.id), [o.orgId, o.owner]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.member, (c) => c.query(insertLink(sent.id, ', created_at', ", now() + interval '5 days'"), [o.orgId, o.member]))).rejects.toMatchObject({ code: '42501' });
+    // A line does not move to a sent quote.
+    await expect(as(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.quote_line SET quote_id = $3 WHERE org_id = $1 AND quote_id = $2', [o.orgId, draft.id, sent.id]))).rejects.toMatchObject({ code: '42501' });
     const made = await o.link(o.member, sent.id);
     for (const set of ['views = 7', 'first_viewed_at = now()', "token_sha256 = '" + 'b'.repeat(64) + "'", 'expires_at = expires_at + interval \'1 day\'']) {
       await expect(as(o.orgId, o.member, (c) => c.query(`UPDATE crove_crm.quote_link SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, made.linkId])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
