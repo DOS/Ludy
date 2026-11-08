@@ -165,6 +165,7 @@ import { opsAlert } from './ops-alert.ts';
 import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
 import type { AiMeter } from '@crove/agent';
+import type { ModelPort } from './member-vy-ports.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
 import type { ConversationReader } from './conversations-ai.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
@@ -297,6 +298,8 @@ export interface HttpDeps {
   bookingReader?: BookingReader;
   // The Inbox's suggested intent and likely contacts (CV3, #2306); unset: no suggestion.
   conversationReader?: ConversationReader;
+  // The recorder's Vy summarizing a meeting (#2580, M6 part B2); unset: the summary is off.
+  summaryModel?: ModelPort | null;
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
   taxLookup?: TaxCodeLookup;
   // The assisted purchase-invoice sync from the tax portal (issue #325); unset: off (TAX_PORTAL_SYNC).
@@ -508,7 +511,7 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader);
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 

@@ -92,7 +92,7 @@ describe('reading the lines', () => {
     expect(line).toMatchObject({
       rowNo: 2,
       orderNo: '2610A1',
-      lineKey: '2610A1',
+      lineKey: expect.stringMatching(/^2610A1#[0-9a-f]{14}$/),
       paidAt: '2026-11-02',
       sales: '100000',
       sellerDiscount: '10000',
@@ -127,19 +127,31 @@ describe('reading the lines', () => {
     expect(line?.other).toBe('0.0001');
   });
 
-  it('numbers an order paid in several rows, reads the one totals row as the report net and skips it', () => {
+  it('keys an order paid in several rows by what each row says, reads the one totals row as the report net and skips it', () => {
     const result = read([
       SHOPEE_HEAD,
       shopeeRow('2610D1', '2026-11-05', ['50.000', '0', '-2.500', '0', '0', '0', '0', '0', '0', '47.500']),
       shopeeRow('2610D1', '2026-11-05', ['30.000', '0', '-1.500', '0', '0', '0', '0', '0', '0', '28.500']),
       ['', '', '', '', '', '', '', '', '', '', '', '', '', '76.000'],
     ]);
-    expect(result.lines.map((l) => [l.orderNo, l.lineKey])).toEqual([
-      ['2610D1', '2610D1'],
-      ['2610D1', '2610D1#2'],
-    ]);
+    expect(result.lines.map((l) => l.orderNo)).toEqual(['2610D1', '2610D1']);
+    const [first, second] = result.lines.map((l) => l.lineKey);
+    expect(first).toMatch(/^2610D1#[0-9a-f]{14}$/);
+    expect(second).toMatch(/^2610D1#[0-9a-f]{14}$/);
+    expect(first).not.toBe(second);
     expect(result.statedNet).toBe('76000');
     expect(result.skipped).toEqual([{ rowNo: 4, reason: 'no_order_no' }]);
+  });
+
+  it('gives the same sale row the same key in any file and whatever its position, and a later split of the order its own', () => {
+    const sale = (order: string) => shopeeRow(order, '2026-11-05', ['50.000', '0', '-2.500', '0', '0', '0', '0', '0', '0', '47.500']);
+    const other = shopeeRow('2610E1', '2026-11-20', ['10.000', '0', '0', '0', '0', '0', '0', '0', '0', '10.000']);
+    const one = read([SHOPEE_HEAD, sale('2610E1')]).lines.map((l) => l.lineKey);
+    const two = read([SHOPEE_HEAD, other, sale('2610E1')]).lines.map((l) => l.lineKey);
+    expect(two[1]).toBe(one[0]);
+    expect(two[0]).not.toBe(two[1]);
+    // The same row under another order is another key.
+    expect(read([SHOPEE_HEAD, sale('2610E2')]).lines[0]?.lineKey).not.toBe(one[0]);
   });
 
   it('takes a totals row with a label in the order column for a totals row, not an order', () => {
@@ -153,14 +165,17 @@ describe('reading the lines', () => {
     expect(result.skipped).toEqual([{ rowNo: 3, reason: 'no_order_no' }]);
   });
 
-  it('never gives two lines of a settlement the same key, and refuses an order named like a numbered one', () => {
+  it('never gives two lines of a settlement the same key: identical rows get an ordinal, and an order named like a key is refused', () => {
     const row = (order: string) => shopeeRow(order, '2026-11-05', ['10.000', '0', '0', '0', '0', '0', '0', '0', '0', '10.000']);
     const result = read([SHOPEE_HEAD, row('2610J1'), row('2610J1'), row('2610J1#2'), row('2610J1')]);
     const keys = result.lines.map((l) => l.lineKey);
     expect(new Set(keys).size).toBe(keys.length);
-    // An order named like a numbered key has a '#', which no order number may hold, so it is refused and the numbered keys stay its own.
-    expect(keys).toEqual(['2610J1', '2610J1#2', '2610J1#3']);
+    expect(keys).toHaveLength(3);
+    const base = keys[0] as string;
+    expect(keys).toEqual([base, `${base}~2`, `${base}~3`]);
+    // An order named like a key has a '#', which no order number may hold, so it is refused.
     expect(result.skipped).toEqual([{ rowNo: 4, reason: 'bad_id' }]);
+    expect(Math.max(...keys.map((k) => k.length))).toBeLessThanOrEqual(120);
   });
 
   it('claims a short word only as a whole word of a header, so "Capital gains" is no PIT column, and takes a Shopee order export with fee columns for none', () => {

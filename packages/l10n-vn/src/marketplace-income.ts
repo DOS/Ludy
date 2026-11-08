@@ -178,7 +178,7 @@ export type IncomeSkipReason = (typeof INCOME_SKIP_REASONS)[number];
 export interface IncomeLine {
   rowNo: number;
   orderNo: string;
-  // The line inside its settlement: the order number, and "#2" and so on when the file pays an order in several rows.
+  // The line inside its settlement: `<order>#<hash of the row's date and amounts>`, and `~2` and so on for a row identical to an earlier one of the file (see incomeLines).
   lineKey: string;
   // YYYY-MM-DD, or null when the file has no such column or the cell is empty.
   paidAt: string | null;
@@ -204,8 +204,22 @@ export interface IncomeRead {
 }
 
 const MAX_ID = 64;
-const MAX_KEY = 120;
 const ZERO = new Decimal(0);
+
+// A short, deterministic hash of a row's content (cyrb53, 53 bits, 14 hex digits): it only tells the rows of one order apart and names the same row the same in any file, so it needs no
+// cryptographic strength, and it avoids a runtime-specific import in this shared package.
+function contentHash(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+}
 
 // A decimal string as the tables keep it (numeric(20, 4)): rounded half up to four places, null when it does not fit sixteen whole digits.
 function money(value: Decimal): string | null {
@@ -226,7 +240,6 @@ export function incomeLines(rows: StatementGrid, mapping: IncomeMapping, maxRows
   const out: IncomeLine[] = [];
   const skipped: IncomeRead['skipped'] = [];
   const seen = new Map<string, number>();
-  const used = new Set<string>();
   const totals: string[] = [];
   const cell = (row: ReadonlyMap<number, StatementCell>, field: IncomeField) => (columns[field] === null ? undefined : row.get(columns[field] as number));
   const text = (row: ReadonlyMap<number, StatementCell>, field: IncomeField) => cellText(cell(row, field));
@@ -297,16 +310,13 @@ export function incomeLines(rows: StatementGrid, mapping: IncomeMapping, maxRows
       continue;
     }
     const [vSales, vDisc, vComm, vSvc, vPay, vShip, vTax, vRefund, vOther, vNet] = parts as string[];
-    // The order number, or "#2" and so on for an order paid in several rows; a key already taken (an order named "A#2" among them) is passed over.
-    let count = (seen.get(orderNo) ?? 0) + 1;
-    while (used.has(count === 1 ? orderNo : `${orderNo}#${count}`)) count += 1;
-    seen.set(orderNo, count);
-    const lineKey = count === 1 ? orderNo : `${orderNo}#${count}`;
-    used.add(lineKey);
-    if (lineKey.length > MAX_KEY) {
-      skipped.push({ rowNo, reason: 'too_long' });
-      continue;
-    }
+    // The key is the order and what the row itself says (its date and every amount), so the same sale row has the same key in any file and two different rows of one order never share one; only
+    // rows with identical content are told apart, by an ordinal in their order of appearance. An order number holds no '#', so no key of one order can be another order's.
+    const content = [orderNo, paidAt ?? '', vSales, vDisc, vComm, vSvc, vPay, vShip, vTax, vRefund, vOther, vNet].join('|');
+    const key = `${orderNo}#${contentHash(content)}`;
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    const lineKey = count === 1 ? key : `${key}~${count}`;
     out.push({
       rowNo,
       orderNo,
