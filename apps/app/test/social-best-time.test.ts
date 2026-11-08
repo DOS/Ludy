@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublishedSample } from '@crove/mod-social/contract';
-import { BEST_TIME_MIN_POSTS, QUEUE_SUGGEST_MAX, channelBestTimes, knownZone, listedPosts, nextOccurrence, queueSuggestions, suggestBestTimes, takenTimes } from '../src/lib/social-best-time.ts';
+import { BEST_TIME_MIN_POSTS, QUEUE_SUGGEST_MAX, channelBestTimes, knownZone, listedPosts, nextOccurrence, queueSuggestions, suggestBestTimes, takenTimes, weekBestSlots, bestSlotSearch } from '../src/lib/social-best-time.ts';
 
 const HCM = 'Asia/Ho_Chi_Minh';
 const NY = 'America/New_York';
@@ -190,5 +190,38 @@ describe('queue slots suggested from the best times (#1166)', () => {
   it('says when enough posts show no slot that stands out', () => {
     const scattered = [6, 7, 8, 9, 10].map((d) => sample(`2026-10-${String(d).padStart(2, '0')}T0${d - 5}:00:00Z`, 4));
     expect(queueSuggestions(scattered, 'a', HCM, [])).toEqual({ state: 'none' });
+  });
+});
+
+describe('best times on the days a calendar shows (#2221)', () => {
+  // Monday 2026-10-19 to Sunday 2026-10-25, as the viewer's calendar days (local midnights).
+  const week = Array.from({ length: 7 }, (_, i) => new Date(2026, 9, 19 + i));
+  const now = ms('2026-10-21T03:00:00Z'); // Wednesday 10:00 in Ho Chi Minh City
+  const slots = [slot(2, 20, 30), slot(3, 20, 20), slot(5, 8, 15), slot(6, 9, 5)];
+
+  it('puts each of the top three slots on its day of the week, soonest first, and leaves out what is past', () => {
+    const got = weekBestSlots(slots, week, { timeZone: HCM, nowMs: now });
+    // Tuesday 20:00 is gone, the fourth slot is past the top three.
+    expect(got.map((s) => iso(s.at))).toEqual(['2026-10-21T13:00:00.000Z', '2026-10-23T01:00:00.000Z']);
+    expect(got[0]).toMatchObject({ weekday: 3, hour: 20, engagement: 20 });
+  });
+
+  it('skips an hour another post of the channel takes, and a time too close to now', () => {
+    const taken = [ms('2026-10-21T13:30:00Z')];
+    expect(weekBestSlots(slots, week, { timeZone: HCM, nowMs: now, taken }).map((s) => iso(s.at))).toEqual(['2026-10-23T01:00:00.000Z']);
+    // Wednesday 19:50 local: the 20:00 slot is inside the 15 minute lead.
+    const late = weekBestSlots(slots, week, { timeZone: HCM, nowMs: ms('2026-10-21T12:50:00Z') });
+    expect(late.map((s) => iso(s.at))).toEqual(['2026-10-23T01:00:00.000Z']);
+  });
+
+  it('gives nothing for days that have no slot, and reads the slot in the zone it was ranked in', () => {
+    expect(weekBestSlots([slot(7, 9)], week.slice(0, 5), { timeZone: HCM, nowMs: now })).toEqual([]);
+    expect(weekBestSlots([slot(7, 9)], week, { timeZone: HCM, nowMs: now }).map((s) => iso(s.at))).toEqual(['2026-10-25T02:00:00.000Z']);
+    expect(weekBestSlots([slot(7, 9)], week, { timeZone: NY, nowMs: now }).map((s) => iso(s.at))).toEqual(['2026-10-25T13:00:00.000Z']);
+  });
+
+  it('opens the composer for the channel at the slot', () => {
+    const [first] = weekBestSlots(slots, week, { timeZone: HCM, nowMs: now });
+    expect(bestSlotSearch(first as { at: number }, 'conn-1')).toEqual({ at: '2026-10-21T13:00:00.000Z', channel: 'conn-1' });
   });
 });

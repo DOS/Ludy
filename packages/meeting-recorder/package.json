@@ -1,0 +1,14 @@
+{
+  "name": "@crove/meeting-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "The meeting recorder's browser-side logic shared by the Ludy app and the Ludy extension: recorder types, consent gate, pause-aware clock and the on-device chunk store. No dependencies, no network.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

@@ -2450,6 +2450,20 @@ export function createRpcHandler(
           return runtime.execute('finance.marketplace.unassign', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      incomeStaged: os.marketplace.incomeStaged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_income.staged', {}, { actor, orgId }))),
+      incomePreview: os.marketplace.incomePreview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_income.preview', input, { actor, orgId }))),
+      incomeConfirm: os.marketplace.incomeConfirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace_income.confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      incomeReject: os.marketplace.incomeReject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace_income.reject', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
     },
     stock: {
       items: {

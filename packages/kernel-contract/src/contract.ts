@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -1783,6 +1783,14 @@ export const contract = {
     assign: oc.input(zMarketplaceAssign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int() })),
     // Takes a line back from its item: its stock comes back and it waits to be assigned again (#2633). MARKETPLACE_LINE_NOT_ASSIGNED (409) for a line that names no item, MARKETPLACE_LINE_CANCELLED (409) for one cancelled after it shipped (its stock came back by itself). forgot: whether the taught name of that SKU went too (only the one that put the line on its item).
     unassign: oc.input(zMarketplaceUnassign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int(), forgot: z.boolean() })),
+    // The income reports (#2516): the platform's own statement of what it paid for the orders of a period, staged from a file until a member confirms. incomeStaged lists the reports waiting,
+    // incomePreview says how one stands against the org's orders and settlements now and what blocks it (MARKETPLACE_INCOME_NOT_STAGED, 409, when it was already decided or read again), incomeConfirm
+    // stores the settlement and its lines in one transaction (MARKETPLACE_INCOME_PERIOD_UNKNOWN, MARKETPLACE_INCOME_TOTAL_MISMATCH, MARKETPLACE_INCOME_UNKNOWN_ORDERS 422; MARKETPLACE_INCOME_OVERLAP,
+    // MARKETPLACE_INCOME_REPEATED_LINES, MARKETPLACE_INCOME_BUSY 409), incomeReject skips it, storing nothing. No buyer data of any kind.
+    incomeStaged: oc.input(z.object({}).optional()).output(z.array(zMarketplaceIncomeStaged)),
+    incomePreview: oc.input(z.object({ fileId: zId })).output(zMarketplaceIncomePreview),
+    incomeConfirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceIncomeConfirmResult),
+    incomeReject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

@@ -152,3 +152,72 @@ describe('the board under a channel filter (#1044)', () => {
     expect(text(board())).not.toContain('Bài này còn đăng trên');
   });
 });
+
+// Best posting times in the week view (#2221): under a channel filter, the channel's best slots of the days shown, drawn
+// in the viewer's zone like the rest of the calendar, from the metrics summary the "Giờ đẹp" button reads.
+describe('best posting times on the week view (#2221)', () => {
+  beforeEach(() => client.current.clear());
+
+  // A Wednesday at least a week ahead: its week is wholly in the future, so no slot of it is past.
+  const nextWednesday = () => {
+    const d = addDays(startOfDay(new Date()), 7);
+    return addDays(d, (3 - d.getDay() + 7) % 7);
+  };
+  // The best slot is a Wednesday at 10:00 (three posts, 50 engagements each); two more posts make five with metrics.
+  const onWednesday = (weeksBack: number, hour: number) => {
+    const d = addDays(startOfDay(new Date()), -7 * weeksBack);
+    const wed = addDays(d, -((d.getDay() - 3 + 7) % 7));
+    return new Date(wed.getFullYear(), wed.getMonth(), wed.getDate(), hour).toISOString();
+  };
+  const sample = (publishedAt: string, reactions: number, connection = 1) => ({ connectionId: uuid(connection), publishedAt, metrics: { reactions } });
+  const history = [sample(onWednesday(2, 10), 50), sample(onWednesday(3, 10), 50), sample(onWednesday(4, 10), 50), sample(onWednesday(2, 15), 5), sample(onWednesday(3, 16), 5)];
+  const week = { view: 'week' as const, date: dayId(nextWednesday()) };
+  const open = (props: { canWrite?: boolean; connection?: number | null } = {}) =>
+    render(
+      <SocialCalendar
+        slug="hoa-mai"
+        names={names}
+        canDecide
+        canWrite={props.canWrite ?? true}
+        filters={props.connection === null ? {} : { connectionId: uuid(props.connection ?? 1) }}
+        period={week}
+        onPeriod={() => undefined}
+      />,
+    );
+
+  it('draws the channel\'s best slot on its day, at its hour, with a label that says what a click does', () => {
+    client.current.setQueryData(['social', 'posts', 'list'], []);
+    client.current.setQueryData(['social', 'metrics', 'summary'], history);
+    const html = open();
+    expect(count(html, 'data-testid="best-slot"')).toBe(1);
+    const when = new Date(Date.parse(/data-slot="([^"]+)" title/.exec(html)?.[1] ?? '')).getTime();
+    const shown = new Date(when);
+    expect(shown.getDay()).toBe(3);
+    expect(shown.getHours()).toBe(10);
+    expect(text(html)).toContain('10:00 Giờ đẹp');
+    expect(html).toContain('10:00 Giờ đẹp: soạn bài cho kênh này');
+    expect(html).toContain('trung bình 50 lượt tương tác mỗi bài');
+  });
+
+  it('shows nothing without a channel filter, in the month view, for a viewer, or with fewer than 5 posts with metrics', () => {
+    client.current.setQueryData(['social', 'posts', 'list'], []);
+    client.current.setQueryData(['social', 'metrics', 'summary'], history);
+    expect(count(open({ connection: null }), 'data-testid="best-slot"')).toBe(0);
+    expect(count(open({ canWrite: false }), 'data-testid="best-slot"')).toBe(0);
+    const month = render(<SocialCalendar slug="hoa-mai" names={names} canDecide canWrite filters={{ connectionId: uuid(1) }} />);
+    expect(count(month, 'data-testid="best-slot"')).toBe(0);
+    client.current.setQueryData(['social', 'metrics', 'summary'], history.slice(0, 4));
+    expect(count(open(), 'data-testid="best-slot"')).toBe(0);
+    // Another channel's history is not this channel's.
+    client.current.setQueryData(['social', 'metrics', 'summary'], history);
+    expect(count(open({ connection: 2 }), 'data-testid="best-slot"')).toBe(0);
+  });
+
+  it('leaves out an hour the channel already has a post at', () => {
+    client.current.setQueryData(['social', 'metrics', 'summary'], history);
+    const wed = nextWednesday();
+    const taken = post(900, 'Đã có bài', [channel(901, 'scheduled', new Date(wed.getFullYear(), wed.getMonth(), wed.getDate(), 10, 20).toISOString(), 1)]);
+    client.current.setQueryData(['social', 'posts', 'list'], [taken]);
+    expect(count(open(), 'data-testid="best-slot"')).toBe(0);
+  });
+});
