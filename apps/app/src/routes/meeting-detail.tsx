@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { MeetingResults } from '../components/meeting-results.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -300,6 +301,7 @@ export function MeetingDetailPage() {
 
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} />
+      <MeetingResults meetingId={id} readers={meeting.readers} />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Consent Record Card */}
