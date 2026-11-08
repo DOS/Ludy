@@ -32,7 +32,7 @@ const person = (id: string, name: string, extra: Partial<DeclarationPerson> = {}
 });
 
 const FUNDS: InsuranceFundKey[] = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'];
-function breakdown(wage: string, mode: WithholdingMode = 'progressive', suspended: 'not_insured' | null = null): DeclarationBreakdown {
+function breakdown(wage: string, mode: WithholdingMode = 'progressive', suspended: 'not_insured' | 'unpaid_leave' | null = null): DeclarationBreakdown {
   return {
     insurance: { suspended, funds: FUNDS.map((fund) => ({ fund, wage: suspended ? '0' : wage, employee: '0', employer: '0' })) },
     tax: { mode, exemptMealCash: '0', exemptOvertime: '100000', exemptNightWork: '0', personalDeduction: '15500000', dependentDeduction: '0', pensionDeduction: '0', assessableIncome: '4500000' },
@@ -284,10 +284,76 @@ describe('corrections and edge cases a reviewer found', () => {
       month: '2026-09',
       employer,
       persons: [short, leave],
-      lines: [line('1', '2026-09', '0', { breakdown: breakdown('8000000') }), line('2', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'not_insured') })],
+      lines: [line('1', '2026-09', '0', { breakdown: breakdown('8000000') }), line('2', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'unpaid_leave') })],
       previousLines: [line('2', '2026-08', '0', { breakdown: breakdown('10000000') })],
     });
     expect(doc.sheets[0]?.rows.map((r) => r.movement)).toEqual(['Tăng lao động', 'Giảm lao động']);
     expect(doc.notes.join(' ')).toContain('1 người tạm dừng đóng');
+  });
+});
+
+describe('what the second review found (#2533)', () => {
+  const adj = (employeeId: string, month: string, pit: string, extra: Partial<DeclarationLine> = {}): DeclarationLine => ({ ...line(employeeId, month, pit), kind: 'adjustment', gross: '0', employeeInsurance: '0', employerInsurance: '0', unionFee: '0', taxableIncome: '0', breakdown: null, ...extra });
+
+  it('lists a change of wage in the month the person leaves, then the end', () => {
+    const mai = person('1', 'Mai', { endedOn: '2026-09-20' });
+    const doc = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [mai],
+      lines: [line('1', '2026-09', '0', { breakdown: breakdown('12000000') })],
+      previousLines: [line('1', '2026-08', '0', { breakdown: breakdown('10000000') })],
+    });
+    expect(doc.sheets[0]?.rows.map((r) => [r.movement, r.effectiveOn, r.wageHealth])).toEqual([
+      ['Điều chỉnh mức đóng', '2026-09-01', '12000000.00'],
+      ['Giảm lao động', '2026-09-20', '12000000.00'],
+    ]);
+  });
+
+  it('calls only a month the calculator marked unpaid leave unpaid leave, and flags any other loss of an insured wage without a cause', () => {
+    const a = person('1', 'An');
+    const b = person('2', 'Bình');
+    const doc = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [a, b],
+      lines: [line('1', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'unpaid_leave') })],
+      previousLines: [line('1', '2026-08', '0', { breakdown: breakdown('10000000') }), line('2', '2026-08', '0', { breakdown: breakdown('10000000') })],
+    });
+    const notes = doc.notes.join(' ');
+    expect(notes).toContain('1 người tạm dừng đóng');
+    expect(notes).toContain('1 người có mức đóng tháng trước nhưng tháng này không có mức đóng (không rõ lý do)');
+  });
+
+  it('gives a correction its mode from the month it corrects, not the first pay line', () => {
+    const an = person('1', 'An');
+    const lines = [line('1', '2026-07', '300000', { breakdown: breakdown('0', 'flat', 'not_insured') }), line('1', '2026-08', '1000000'), adj('1', '2026-09', '-100000', { adjustsMonth: '2026-08' })];
+    const doc = buildQuarterly({ quarter: '2026-Q3', employer, persons: [an], lines, approvedMonths: ['2026-07', '2026-08', '2026-09'] });
+    const [, progressive, flat] = doc.sheets;
+    expect(progressive?.totals?.pit).toBe('900000.00');
+    expect(flat?.totals?.pit).toBe('300000.00');
+  });
+
+  it('says a correction with no breakdown leaves the assessable income out, and names a refund the certificate does not carry', () => {
+    const an = person('1', 'An');
+    const quarter = buildQuarterly({ quarter: '2026-Q3', employer, persons: [an], lines: [line('1', '2026-07', '1000000'), adj('1', '2026-08', '-100000')], approvedMonths: ['2026-07', '2026-08'] });
+    expect(quarter.notes.join(' ')).toContain('1 dòng điều chỉnh không có chi tiết thu nhập tính thuế');
+    const flat = person('2', 'Bình');
+    const certificates = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [flat],
+      lines: [line('2', '2026-01', '1000000', { breakdown: breakdown('0', 'flat', 'not_insured') }), adj('2', '2026-02', '-400000', { adjustsMonth: '2026-01' })],
+    });
+    expect(certificates.sheets[0]?.rows.map((r) => [r.period, r.pit])).toEqual([['2026-01', '1000000.00']]);
+    expect(certificates.notes.join(' ')).toContain('Bình: tháng 2026-02 có điều chỉnh hoàn thuế 400000.00');
+  });
+
+  it('reports the taxable income, not the gross, under the taxable-income header of the certificate', () => {
+    const an = person('1', 'An');
+    const doc = buildCertificates({ year: 2026, employer, persons: [an], lines: [line('1', '2026-01', '1000000')] });
+    const row = doc.sheets[0]?.rows[0];
+    expect(doc.sheets[0]?.columns.find((c) => c.key === 'taxable')?.header).toBe('Tổng thu nhập chịu thuế');
+    expect(row).toMatchObject({ gross: '25000000.00', taxable: '24900000.00' });
   });
 });

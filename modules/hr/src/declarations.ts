@@ -135,6 +135,8 @@ export interface DeclarationLine {
   taxableIncome: string;
   pit: string;
   breakdown: DeclarationBreakdown | null;
+  /** An adjustment line: the pay month it corrects, when known; its withholding mode is that month's. */
+  adjustsMonth?: string | null;
 }
 
 const text = (value: string | null | undefined): string => value ?? '';
@@ -154,7 +156,17 @@ function assertKnown(persons: readonly DeclarationPerson[], lines: readonly Decl
  * or the monthly brackets when the person has none in the lines given.
  */
 function modeOfLine(line: DeclarationLine, lines: readonly DeclarationLine[]): WithholdingMode {
-  return line.breakdown?.tax.mode ?? lines.find((l) => l.employeeId === line.employeeId && l.kind === 'pay' && l.breakdown !== null)?.breakdown?.tax.mode ?? 'progressive';
+  if (line.breakdown) return line.breakdown.tax.mode;
+  const mine = lines.filter((l) => l.employeeId === line.employeeId && l.kind === 'pay' && l.breakdown !== null);
+  // The month a correction corrects, when the line says it; else the person's first pay line.
+  const corrected = line.adjustsMonth ? mine.find((l) => l.month === line.adjustsMonth) : undefined;
+  return (corrected ?? mine[0])?.breakdown?.tax.mode ?? 'progressive';
+}
+
+/** Corrections that carry no breakdown add their tax and taxable income but not the assessable income; the document says so rather than report a figure that looks complete. */
+function assessableNote(lines: readonly DeclarationLine[]): string | null {
+  const n = lines.filter((l) => l.kind === 'adjustment' && l.breakdown === null).length;
+  return n === 0 ? null : `${n} dòng điều chỉnh không có chi tiết thu nhập tính thuế: cột Thu nhập tính thuế chưa gồm phần điều chỉnh của chúng (thuế đã khấu trừ thì đã gồm).`;
 }
 
 const exemptOf = (b: DeclarationBreakdown | null): Decimal => (b === null ? zero() : money(b.tax.exemptMealCash).plus(b.tax.exemptOvertime).plus(b.tax.exemptNightWork));
@@ -222,6 +234,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
   const rows: (Record<string, string> & { _order: string; _name: string; _id: string })[] = [];
   let skipped = 0;
   let suspended = 0;
+  let unexplained = 0;
   for (const person of input.persons) {
     const line = lineOf(input.lines, person.employeeId);
     const previous = lineOf(input.previousLines, person.employeeId);
@@ -231,16 +244,21 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
     const endsHere = person.endedOn !== null && monthOf(person.endedOn) === input.month;
     const movements: { movement: D02Movement; effective: string; source: DeclarationLine }[] = [];
     if (startsHere && line && wage !== null) movements.push({ movement: 'increase', effective: person.startedOn, source: line });
+    // A change of wage is listed even in the month the person leaves (the change, then the end).
+    if (!startsHere && line && wage !== null && input.previousLines !== null && (previous === undefined || insuredWage(previous) === null || !sameWages(previous, line))) {
+      movements.push({ movement: 'adjust', effective: `${input.month}-01`, source: line });
+    }
     // The wage a leaver was insured on: this month's, or the previous month's when the last month has no insured pay.
     if (endsHere) {
       const source = wage !== null && line ? line : insuredWage(previous) !== null ? previous : undefined;
       if (source) movements.push({ movement: 'decrease', effective: person.endedOn as string, source });
-    } else if (!startsHere && line && wage !== null && input.previousLines !== null && (previous === undefined || insuredWage(previous) === null || !sameWages(previous, line))) {
-      movements.push({ movement: 'adjust', effective: `${input.month}-01`, source: line });
     }
     if (movements.length === 0) {
-      if (wage === null && insuredWage(previous) !== null) suspended += 1;
-      else if (wage === null) skipped += 1;
+      if (wage === null && insuredWage(previous) !== null) {
+        // Only a month the calculator marked as unpaid leave is called unpaid leave; any other loss of an insured wage is flagged without a cause.
+        if (line?.breakdown?.insurance.suspended === 'unpaid_leave') suspended += 1;
+        else unexplained += 1;
+      } else if (wage === null) skipped += 1;
       continue;
     }
     for (const { movement, effective, source } of movements) {
@@ -289,6 +307,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
   if (input.previousLines === null) notes.push('Chưa có bảng lương đã duyệt của tháng trước nên không liệt kê được những người đổi mức đóng.');
   if (skipped > 0) notes.push(`${skipped} người không đóng bảo hiểm trong tháng nên không có trong danh sách.`);
   if (suspended > 0) notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (nghỉ không lương từ 14 ngày): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
+  if (unexplained > 0) notes.push(`${unexplained} người có mức đóng tháng trước nhưng tháng này không có mức đóng (không rõ lý do): kiểm tra xem có phải báo giảm hay điều chỉnh không.`);
   return documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes);
 }
 
@@ -446,6 +465,8 @@ export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
     'Quý không có khoản khấu trừ nào thì không phải nộp tờ khai, trừ quý cuối năm.',
   ];
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của quý chưa đủ.`);
+  const qNote = assessableNote(input.lines.filter((l) => months.has(l.month)));
+  if (qNote) notes.push(qNote);
   return documentOf(
     'kk',
     `${DECLARATION_NOTICE} 05/KK-TNCN quý ${input.quarter}`,
@@ -555,6 +576,8 @@ export function buildAnnual(input: AnnualInput): DeclarationDocument {
     'Thuế phải nộp hoặc được hoàn theo quyết toán chưa tính ở đây: biểu thuế năm và hạn quyết toán năm tính thuế 2026 chưa được kế toán xác nhận (dòng 14).',
   ];
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của năm chưa đủ.`);
+  const aNote = assessableNote(input.lines.filter((l) => l.month.startsWith(prefix)));
+  if (aNote) notes.push(aNote);
   return documentOf('qtt', `${DECLARATION_NOTICE} 05/QTT-TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm tính thuế', value: String(input.year) }]), [summary, schedule, notExcluded], notes);
 }
 
@@ -577,6 +600,7 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
   const prefix = `${input.year}-`;
   const rows: Record<string, string>[] = [];
   const authorized: DeclarationPerson[] = [];
+  const refunds: string[] = [];
   const mk = (p: DeclarationPerson, period: string, lines: DeclarationLine[], note: string): Record<string, string> => {
     const t = newTotals(p);
     for (const l of lines) add(t, l);
@@ -589,6 +613,7 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
       period,
       gross: fixed(t.gross),
       exempt: fixed(t.exempt),
+      taxable: fixed(t.taxable),
       insurance: fixed(t.insurance),
       deductions: fixed(t.deductions),
       assessable: fixed(t.assessable),
@@ -617,7 +642,10 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
     for (const line of flatLines) byMonth.set(line.month, [...(byMonth.get(line.month) ?? []), line]);
     for (const month of [...byMonth.keys()].sort()) {
       const group = byMonth.get(month) as DeclarationLine[];
-      if (group.reduce((acc, l) => acc.plus(l.pit), zero()).gt(0)) rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+      const net = group.reduce((acc, l) => acc.plus(l.pit), zero());
+      if (net.gt(0)) rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+      // A correction carried in a later month refunds tax withheld earlier; the certificate already issued is not changed here, so the refund is named for the person to reconcile.
+      else if (net.lt(0)) refunds.push(`${person.name}: tháng ${month} có điều chỉnh hoàn thuế ${fixed(net.abs())}`);
     }
   }
   rows.forEach((row, index) => {
@@ -633,8 +661,9 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
       { key: 'identityNumber', header: 'Số định danh cá nhân', kind: 'text' },
       { key: 'address', header: 'Địa chỉ', kind: 'text' },
       { key: 'period', header: 'Thời điểm trả thu nhập', kind: 'text' },
-      { key: 'gross', header: 'Tổng thu nhập chịu thuế đã trả', kind: 'money' },
+      { key: 'gross', header: 'Tổng thu nhập đã trả', kind: 'money' },
       { key: 'exempt', header: 'Thu nhập được miễn', kind: 'money' },
+      { key: 'taxable', header: 'Tổng thu nhập chịu thuế', kind: 'money' },
       { key: 'insurance', header: 'Bảo hiểm bắt buộc đã trừ', kind: 'money' },
       { key: 'deductions', header: 'Giảm trừ gia cảnh và hưu trí tự nguyện', kind: 'money' },
       { key: 'assessable', header: 'Thu nhập tính thuế', kind: 'money' },
@@ -657,5 +686,8 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
     'Chứng từ khấu trừ là chứng từ điện tử ký bằng chữ ký số của đơn vị (mẫu 03/TNCN): Ludy chỉ cung cấp số liệu, không giữ chữ ký số và không phát hành chứng từ.',
     'Địa chỉ của người nộp thuế nhập tay khi lập chứng từ.',
   ];
+  const cNote = assessableNote(yearLines);
+  if (cNote) notes.push(cNote);
+  if (refunds.length > 0) notes.push(`Có điều chỉnh hoàn thuế cần đối chiếu với chứng từ đã cấp: ${refunds.join('; ')}.`);
   return documentOf('certificate', `${DECLARATION_NOTICE} dữ liệu chứng từ 03/TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm', value: String(input.year) }]), [certificates, skipped], notes);
 }
