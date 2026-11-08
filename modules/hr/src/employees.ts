@@ -195,8 +195,10 @@ export const employeeEdit = defineCommand({
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
-    // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address. The owner's erasure is the way out.
-    requireActive(await loadEmployee(ctx, input.employeeId));
+    // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address; the owner's erasure is the way out. The one
+    // exception is what the declarations need of a leaver (#2533): the birth date, the tax code and the insurance number may be set or corrected, audited like any edit.
+    const employee = await loadEmployee(ctx, input.employeeId);
+    if (employee.status !== 'active' && (input.displayName !== undefined || input.address !== undefined || input.identityNumber !== undefined || input.accountNumber !== undefined)) requireActive(employee);
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
     const set: {
@@ -256,6 +258,8 @@ export const employeeFinalizationSet = defineCommand({
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['finalization_authorized_years', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     requireActive(await loadEmployee(ctx, input.employeeId));
+    // A year that has not begun cannot be authorized yet (Vietnam's year).
+    if (input.year > Number(vietnamDay(ctx.now).slice(0, 4))) throw new DomainError('HR_YEAR_NOT_BEGUN', 422, 'Chưa thể ghi nhận ủy quyền cho một năm chưa bắt đầu');
     const row = await ctx.trx.selectFrom('crove_hr.payroll_employee').select('finalization_authorized_years').where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).executeTakeFirstOrThrow();
     const years = new Set<number>(row.finalization_authorized_years);
     if (input.authorized) years.add(input.year);
