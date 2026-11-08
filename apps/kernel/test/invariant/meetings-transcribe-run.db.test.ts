@@ -17,11 +17,13 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove
 import { Runtime, memberVyRuntime } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries, setTranscribeEnabled, encodeTranscriptResult } from '@crove/mod-meetings';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { contextToken } from './fixtures/context-token.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const FN = 'crove_meetings.audio_for_member_vy(uuid,uuid)';
+const TRIGGER_FN = 'crove_meetings.meeting_discard_transcribe()';
 
 suite('the recorder\'s transcription run (#2578)', () => {
   const dbName = `crove_test_inv_transcribe_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -98,16 +100,17 @@ suite('the recorder\'s transcription run (#2578)', () => {
     const register = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     app = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(register);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(register);
-    for (const key of ['owner', 'recorder', 'other', 'reader', 'former', 'extra']) {
+    for (const key of ['owner', 'recorder', 'other', 'reader', 'former', 'extra', 'gone']) {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'inv-transcribe', subject: key, email: `${key}@inv-transcribe.test`, name: null });
     }
     orgId = (await createOrg(app, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Invariant transcribe')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.recorder, users.other, users.reader, users.former, users.extra]));
+    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`, [orgId, users.recorder, users.other, users.reader, users.former, users.extra, users.gone]));
     meetings.mine = await seedMeeting('recorder');
     meetings.mineToo = await seedMeeting('recorder');
     meetings.theirs = await seedMeeting('other');
     meetings.formers = await seedMeeting('former');
     meetings.extras = await seedMeeting('extra');
+    meetings.gones = await seedMeeting('gone');
     await admin((c) => c.query(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4), ($1, $5, $3, $6)`, [orgId, randomUUID(), meetings.mine, users.reader, randomUUID(), users.other]));
     runs.recorder = await startRun('recorder', meetings.mine as string);
     runs.other = await startRun('other', meetings.theirs as string);
@@ -140,72 +143,154 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect(await code(vy('other').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.mine }))).toBe('FORBIDDEN');
   });
 
-  it('is executable by the worker login alone, and refuses the system, a user and no context', async () => {
-    const privileges = await admin((c) =>
-      c.query<{ r: string; ok: boolean }>(
-        `SELECT r AS r, has_function_privilege(r, '${FN}', 'EXECUTE') AS ok FROM unnest(ARRAY['public', 'crove_app', 'crove_tenant', 'crove_worker', 'crove_definer_tenant']) r`,
-      ),
-    );
-    expect(Object.fromEntries(privileges.rows.map((p) => [p.r, p.ok]))).toEqual({ public: false, crove_app: false, crove_tenant: false, crove_worker: true, crove_definer_tenant: false });
-    const info = await admin((c) => c.query<{ definer: boolean; config: string[] }>(`SELECT prosecdef AS definer, proconfig AS config FROM pg_proc WHERE oid = '${FN}'::regprocedure`));
-    expect(info.rows[0]).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
-    const asWorker = async (enter: string): Promise<string | null> => {
-      const c = new pg.Client({ connectionString: workerUrl });
+  // A client on the worker login, entered as the recorder's Vy run in a READ ONLY transaction (the entry then takes no lock on the member's row, so the test can change
+  // the member, the run or the org from another connection AFTER a successful entry); the definer is then called and the message of its refusal is returned.
+  async function afterEntry(who: string, meeting: string, mutate: () => Promise<unknown>): Promise<string | null> {
+    const run = runs[who] as { agentId: string; runId: string };
+    const c = new pg.Client({ connectionString: workerUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN READ ONLY');
+      await c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, run.agentId, run.runId]);
+      await mutate();
+      await c.query(`SELECT * FROM ${FN.replace('(uuid,uuid)', '')}($1::uuid, $2::uuid)`, [orgId, meeting]);
+      return null;
+    } catch (error) {
+      return (error as pg.DatabaseError).code === '42501' ? (error as Error).message : `unexpected: ${(error as Error).message}`;
+    } finally {
+      await c.end();
+    }
+  }
+  const sqlAdmin = (text: string, params: unknown[] = []) => admin((c) => c.query(text, params));
+
+  it('is executable by the worker login alone: every crove_ role, the trigger function included, gets a real 42501 except the worker on the audio door', async () => {
+    const info = await admin((c) => c.query<{ definer: boolean; config: string[]; rettype: string }>(`SELECT prosecdef AS definer, proconfig AS config, prorettype::regtype::text AS rettype FROM pg_proc WHERE oid = '${FN}'::regprocedure`));
+    expect(info.rows[0]).toMatchObject({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
+    const trigger = await admin((c) => c.query<{ definer: boolean; config: string[] }>(`SELECT prosecdef AS definer, proconfig AS config FROM pg_proc WHERE oid = '${TRIGGER_FN}'::regprocedure`));
+    expect(trigger.rows[0]).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
+    const roles = (await admin((c) => c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper ORDER BY 1`))).rows.map((r) => r.rolname);
+    expect(roles, 'the matrix covers the roles of the stack').toEqual(expect.arrayContaining(['crove_app', 'crove_tenant', 'crove_worker', 'crove_definer_tenant']));
+    for (const role of ['public', ...roles]) {
+      const privilege = await admin((c) => c.query<{ door: boolean; trig: boolean }>(`SELECT has_function_privilege($1, '${FN}', 'EXECUTE') AS door, has_function_privilege($1, '${TRIGGER_FN}', 'EXECUTE') AS trig`, [role]));
+      expect(privilege.rows[0], `privileges of ${role}`).toEqual({ door: role === 'crove_worker', trig: false });
+    }
+    // A real call as every role: the connection is the superuser's, SET ROLE makes the role the one that is asked for EXECUTE.
+    for (const role of roles) {
+      const c = new pg.Client({ connectionString: adminUrl });
+      await c.connect();
+      try {
+        const attempt = async (text: string, params: unknown[] = []) => {
+          await c.query('BEGIN');
+          await c.query(`SET LOCAL ROLE ${role}`);
+          try {
+            await c.query(text, params);
+            return null;
+          } catch (error) {
+            return (error as pg.DatabaseError).code;
+          } finally {
+            await c.query('ROLLBACK');
+          }
+        };
+        expect(await attempt(`SELECT crove_meetings.meeting_discard_transcribe()`), `${role} calls the trigger function`).toBe('42501');
+        if (role !== 'crove_worker') expect(await attempt(`SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`, [orgId, meetings.mine]), `${role} calls the audio door`).toBe('42501');
+      } finally {
+        await c.end();
+      }
+    }
+  });
+
+  it('refuses, with the function\'s own codes, the system context, no context and a real user context', async () => {
+    const door = `SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`;
+    const as = async (url: string, enter: ((c: pg.Client) => Promise<unknown>) | null): Promise<string | null> => {
+      const c = new pg.Client({ connectionString: url });
       await c.connect();
       try {
         await c.query('BEGIN');
-        if (enter) await c.query(enter, [orgId]);
-        await c.query(`SELECT * FROM ${FN.replace('(uuid,uuid)', '')}($1::uuid, $2::uuid)`, [orgId, meetings.mine]);
+        if (enter) await enter(c);
+        await c.query(door, [orgId, meetings.mine]);
         return null;
       } catch (error) {
-        return (error as Error).message;
+        return `${(error as pg.DatabaseError).code} ${(error as Error).message}`;
       } finally {
         await c.end();
       }
     };
-    expect(await asWorker('SELECT crove_kernel.enter_system_context($1::uuid)')).toMatch(/MEETINGS_RUN_REQUIRED/);
-    expect(await asWorker('')).toMatch(/MEETINGS_RUN_REQUIRED/);
-    const asApp = new pg.Client({ connectionString: appUrl });
-    await asApp.connect();
-    try {
-      await expect(asApp.query(`SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`, [orgId, meetings.mine])).rejects.toMatchObject({ code: '42501' });
-    } finally {
-      await asApp.end();
+    expect(await as(workerUrl, (c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]))).toBe('42501 MEETINGS_RUN_REQUIRED');
+    expect(await as(workerUrl, null)).toBe('42501 MEETINGS_RUN_REQUIRED');
+    // A real user context of the recorder, entered on the app login (the one a user's request runs on): the login has no EXECUTE, so the database answers 42501 itself.
+    const asUser = await as(appUrl, (c) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users.recorder as string, orgId)]));
+    expect(asUser).toMatch(/^42501 permission denied for function audio_for_member_vy/);
+  });
+
+  it('refuses after a successful entry, in the definer\'s own checks: a run that is succeeded, cancelled, expired or whose result is no longer running', async () => {
+    const meeting = meetings.extras as string;
+    const runOf = (who: string) => (runs[who] as { runId: string }).runId;
+    const cases: Array<{ name: string; mutate: () => Promise<unknown>; expected: string }> = [
+      { name: 'succeeded', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
+      { name: 'cancelled', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'TEST' WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
+      { name: 'expired', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
+      { name: 'result failed', mutate: () => sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'failed', body = NULL, error_code = 'TEST' WHERE org_id = $1 AND run_id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
+    ];
+    for (const item of cases) {
+      runs.extra = await startRun('extra', meeting);
+      expect(await afterEntry('extra', meeting, async () => undefined), `${item.name}: a control, nothing changed`).toBeNull();
+      expect(await afterEntry('extra', meeting, item.mutate), item.name).toBe(item.expected);
     }
   });
 
-  it('refuses a result that is no longer running, and a member who left; the entry refuses a run that is not live', async () => {
-    await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET status = 'failed', body = NULL, error_code = 'TEST' WHERE org_id = $1 AND run_id = $2`, [orgId, runs.recorder?.runId]));
-    expect(await code(vy('recorder').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.mine }))).toBe('FORBIDDEN');
-    await admin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.former]));
-    expect(await code(vy('former').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.formers }))).not.toBeNull();
-    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runs.other?.runId]));
-    expect(await code(vy('other').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.theirs }))).not.toBeNull();
+  it('refuses after a successful entry when the member, their rights or the org changed: vy.use revoked, demoted to viewer, removed', async () => {
+    const meeting = meetings.gones as string;
+    runs.gone = await startRun('gone', meeting);
+    const member = [orgId, users.gone];
+    expect(await afterEntry('gone', meeting, async () => undefined), 'a control').toBeNull();
+    expect(await afterEntry('gone', meeting, () => sqlAdmin(`INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', false, $3)`, [...member, users.owner])), 'vy.use revoked').toBe('MEETINGS_NOT_RECORDER');
+    await sqlAdmin(`DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, member);
+    expect(await afterEntry('gone', meeting, () => sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, member)), 'demoted to viewer').toBe('MEETINGS_NOT_RECORDER');
+    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, member);
+    expect(await afterEntry('gone', meeting, async () => undefined), 'a control after the restores').toBeNull();
+    expect(await afterEntry('gone', meeting, () => sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, member)), 'member removed').toBe('MEETINGS_NOT_RECORDER');
   });
 
-  it('refuses a member who lost vy.use or the base role that reads, and another org\'s id, mid-run; allowed only in the exact run', async () => {
-    const open = () => code(vy('extra').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.extras }));
-    expect(await open()).toBeNull();
-    await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', false, $3)`, [orgId, users.extra, users.owner]));
-    expect(await open()).not.toBeNull();
-    await admin((c) => c.query(`DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, [orgId, users.extra]));
-    expect(await open()).toBeNull();
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, users.extra]));
-    expect(await open()).not.toBeNull();
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.extra]));
-    expect(await open()).toBeNull();
-    // Another org's id with the right run entered: refused by the function itself, not by the caller's argument.
+  it('refuses at the entry, with the runtime\'s own codes, a member who left, a revoked vy.use and an expired run', async () => {
+    // The runtime's refusals before the definer is reached, each by its exact code: the former member's membership ends, and another member's run expires.
+    await sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.former]);
+    await sqlAdmin(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runs.other?.runId]);
+    const enterError = async (who: string): Promise<string> => {
+      const run = runs[who] as { agentId: string; runId: string };
+      const c = new pg.Client({ connectionString: workerUrl });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, run.agentId, run.runId]);
+        return 'entered';
+      } catch (error) {
+        return `${(error as pg.DatabaseError).code} ${(error as Error).message}`;
+      } finally {
+        await c.end();
+      }
+    };
+    // The database's own words at the entry, and the runtime's code for them.
+    expect(await enterError('former')).toBe('42501 MEMBER_NOT_ACTIVE');
+    expect(await enterError('gone')).toBe('42501 MEMBER_NOT_ACTIVE');
+    expect(await enterError('other')).toBe('42501 AGENT_RUN_NOT_LIVE');
+    expect(await code(vy('former').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.formers }))).toBe('FORBIDDEN');
+    expect(await code(vy('gone').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.gones }))).toBe('FORBIDDEN');
+    expect(await code(vy('other').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.theirs }))).toBe('AGENT_RUN_NOT_LIVE');
+  });
+
+  it('refuses another org\'s id, with the right run entered, and a meeting that is not the run\'s subject', async () => {
+    runs.extra = await startRun('extra', meetings.extras as string);
+    expect(await code(vy('extra').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.extras }))).toBeNull();
     const run = runs.extra as { agentId: string; runId: string };
     const c = new pg.Client({ connectionString: workerUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
       await c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, run.agentId, run.runId]);
-      await expect(c.query('SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)', [randomUUID(), meetings.extras])).rejects.toThrow(/MEETINGS_RUN_REQUIRED/);
+      await expect(c.query('SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)', [randomUUID(), meetings.extras])).rejects.toThrow('MEETINGS_RUN_REQUIRED');
     } finally {
       await c.end();
     }
-    // The same member's run asked for the recorder's meeting is not this run's subject.
     expect(await code(vy('extra').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.mine }))).toBe('FORBIDDEN');
   });
 
@@ -218,12 +303,12 @@ suite('the recorder\'s transcription run (#2578)', () => {
     const drafts = () => admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
     expect((await drafts()).rows[0]?.n).toBe('0');
     // A non-recorder who cannot read the meeting, a reader who is not the recorder, the owner and a former member: refused, nothing copied.
-    for (const who of ['other', 'reader', 'owner', 'former']) {
-      expect(await code(app.execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }, { actor: asUser(who), orgId })), who).not.toBeNull();
+    for (const [who, expected] of [['other', 'MEETING_NOT_FOUND'], ['reader', 'MEETING_NOT_FOUND'], ['owner', 'MEETING_NOT_FOUND'], ['former', 'NOT_A_MEMBER']] as const) {
+      expect(await code(app.execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }, { actor: asUser(who), orgId })), who).toBe(expected);
     }
     expect((await drafts()).rows[0]?.n).toBe('0');
     // A member-scoped context cannot run the copy: it is no command of the kernel's own member_vy namespace.
-    expect(await code(vy('recorder').execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }))).not.toBeNull();
+    expect(await code(vy('recorder').execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }))).toBe('FORBIDDEN');
     expect((await drafts()).rows[0]?.n).toBe('0');
     await app.execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }, { actor: asUser('recorder'), orgId });
     expect((await drafts()).rows[0]?.n).toBe('1');
