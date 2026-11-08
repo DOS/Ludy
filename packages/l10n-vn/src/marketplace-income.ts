@@ -95,6 +95,9 @@ export const INCOME_PROFILES: readonly IncomeProfile[] = [
 
 const cellText = (cell: StatementCell | undefined): string => (cell?.value ?? '').trim();
 
+// Whether a header holds a word. A short word ("vat", "pit") must be a whole word of the header, so "capital" is no "pit"; a longer one may be part of one.
+const hasWord = (key: string, word: string): boolean => (word.length <= 4 ? ` ${key} `.includes(` ${word} `) : key.includes(word));
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Header detection
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -107,7 +110,7 @@ function claim(profile: IncomeProfile, headers: Map<number, string>): Record<Inc
   for (const field of order) {
     for (const word of profile.columns[field].contains) {
       const open = [...headers].filter(([col]) => !taken.has(col));
-      const hit = open.find(([, key]) => key === word) ?? open.find(([, key]) => key.includes(word));
+      const hit = open.find(([, key]) => key === word) ?? open.find(([, key]) => hasWord(key, word));
       if (hit) {
         columns[field] = hit[0];
         taken.add(hit[0]);
@@ -143,7 +146,7 @@ export function findIncomeColumns(rows: StatementGrid): IncomeMapping | null {
     if (headers.size < 4) continue;
     const fits: Array<{ profile: IncomeProfile; columns: Record<IncomeField, number | null>; score: number }> = [];
     for (const profile of INCOME_PROFILES) {
-      if (!profile.markers.some((marker) => [...headers.values()].some((key) => key === marker || key.includes(marker)))) continue;
+      if (!profile.markers.some((marker) => [...headers.values()].some((key) => key === marker || hasWord(key, marker)))) continue;
       const columns = claim(profile, headers);
       if (columns.orderNo === null || columns.net === null) continue;
       fits.push({ profile, columns, score: INCOME_FIELDS.filter((f) => columns[f] !== null).length });
@@ -223,6 +226,7 @@ export function incomeLines(rows: StatementGrid, mapping: IncomeMapping, maxRows
   const out: IncomeLine[] = [];
   const skipped: IncomeRead['skipped'] = [];
   const seen = new Map<string, number>();
+  const used = new Set<string>();
   const totals: string[] = [];
   const cell = (row: ReadonlyMap<number, StatementCell>, field: IncomeField) => (columns[field] === null ? undefined : row.get(columns[field] as number));
   const text = (row: ReadonlyMap<number, StatementCell>, field: IncomeField) => cellText(cell(row, field));
@@ -237,14 +241,15 @@ export function incomeLines(rows: StatementGrid, mapping: IncomeMapping, maxRows
     rowCount++;
     if (rowCount > maxRows) return null;
     const orderNo = text(row, 'orderNo');
-    if (orderNo === '') {
+    // A row whose order cell is empty or holds a label with no digit ("Tổng", "Total") is a totals or notice row, never an order.
+    if (orderNo === '' || !/\d/.test(orderNo)) {
       // A totals row: the net of the whole report, when the file states one.
       const total = readDecimal(cell(row, 'net'));
       if (total !== null && total !== 'bad') totals.push(total);
       skipped.push({ rowNo, reason: 'no_order_no' });
       continue;
     }
-    if (orderNo.length > MAX_ID || brokenId(cell(row, 'orderNo'))) {
+    if (orderNo.length > MAX_ID || brokenId(cell(row, 'orderNo')) || !/^[A-Za-z0-9._\-/]+$/.test(orderNo)) {
       skipped.push({ rowNo, reason: orderNo.length > MAX_ID ? 'too_long' : 'bad_id' });
       continue;
     }
@@ -292,10 +297,12 @@ export function incomeLines(rows: StatementGrid, mapping: IncomeMapping, maxRows
       continue;
     }
     const [vSales, vDisc, vComm, vSvc, vPay, vShip, vTax, vRefund, vOther, vNet] = parts as string[];
-    const orderKey = orderNo;
-    const count = (seen.get(orderKey) ?? 0) + 1;
-    seen.set(orderKey, count);
+    // The order number, or "#2" and so on for an order paid in several rows; a key already taken (an order named "A#2" among them) is passed over.
+    let count = (seen.get(orderNo) ?? 0) + 1;
+    while (used.has(count === 1 ? orderNo : `${orderNo}#${count}`)) count += 1;
+    seen.set(orderNo, count);
     const lineKey = count === 1 ? orderNo : `${orderNo}#${count}`;
+    used.add(lineKey);
     if (lineKey.length > MAX_KEY) {
       skipped.push({ rowNo, reason: 'too_long' });
       continue;

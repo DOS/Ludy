@@ -65,6 +65,18 @@ describe('readMarketplaceIncome', () => {
     expect(read.lines).toHaveLength(2);
   });
 
+  it('passes over a sheet that cannot be read and finds the table on the next one', () => {
+    const file = buildXlsx(SUMMARY, {
+      sheetName: 'Summary',
+      moreSheets: [
+        { name: 'Broken', rows: [['x']] },
+        { name: 'Income', rows: incomeRows() },
+      ],
+      override: { 'xl/worksheets/sheet2.xml': '<!DOCTYPE x><worksheet/>' },
+    });
+    expect(readMarketplaceIncome(file)).toMatchObject({ recognized: true, platform: 'shopee', sheet: 'Income' });
+  });
+
   it('answers a file that is no income report as such: an order report, a summary alone, a header with no lines, text', () => {
     expect(readMarketplaceIncome(buildXlsx([['Mã đơn hàng', 'Ngày đặt hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Số lượng'], ['2610A1', '2026-10-30', 'Hoàn thành', 'QC-1', 2]])).recognized).toBe(false);
     expect(readMarketplaceIncome(buildXlsx(SUMMARY)).recognized).toBe(false);

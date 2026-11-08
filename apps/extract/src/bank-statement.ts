@@ -15,12 +15,13 @@ const NONE: ExtractedBankStatement = { recognized: false, accountNumber: null, t
 
 // The cells of the workbook's sheet at a 0-based position, a date cell as its calendar day (the sheet's own date system decides it), every
 // other cell as the text it holds. null when the bytes are not a workbook or it has no such sheet.
-function workbookSheet(bytes: Uint8Array, index: number): { name: string; grid: Map<number, Map<number, StatementCell>> } | null {
+// 'broken' is a sheet that could not be read (a part that is corrupt, or more rows than the reader takes); null is no such sheet, the end of the workbook, or bytes that are no workbook.
+function workbookSheet(bytes: Uint8Array, index: number): { name: string; grid: Map<number, Map<number, StatementCell>> } | 'broken' | null {
   let sheet;
   try {
     sheet = readSheetAt(bytes, index);
   } catch (error) {
-    if (error instanceof XlsxError) return null;
+    if (error instanceof XlsxError) return index === 0 ? null : 'broken';
     throw error;
   }
   if (!sheet) return null;
@@ -37,7 +38,8 @@ function workbookSheet(bytes: Uint8Array, index: number): { name: string; grid: 
 }
 
 function workbookGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>> | null {
-  return workbookSheet(bytes, 0)?.grid ?? null;
+  const sheet = workbookSheet(bytes, 0);
+  return sheet === null || sheet === 'broken' ? null : sheet.grid;
 }
 
 // UTF-8, or UTF-16 with its byte order mark (Excel's "Unicode text"); null for bytes that are not text.
@@ -72,7 +74,9 @@ export function readSheetGrids(bytes: Uint8Array, maxSheets: number): Array<{ na
   const sheets: Array<{ name: string | null; grid: Map<number, Map<number, StatementCell>> }> = [];
   for (let index = 0; index < maxSheets; index += 1) {
     const sheet = workbookSheet(bytes, index);
-    if (!sheet) break;
+    if (sheet === null) break;
+    // A sheet that cannot be read is passed over: the table may be on the next one.
+    if (sheet === 'broken') continue;
     sheets.push(sheet);
   }
   return sheets;

@@ -142,6 +142,41 @@ describe('reading the lines', () => {
     expect(result.skipped).toEqual([{ rowNo: 4, reason: 'no_order_no' }]);
   });
 
+  it('takes a totals row with a label in the order column for a totals row, not an order', () => {
+    const result = read([
+      SHOPEE_HEAD,
+      shopeeRow('2610H1', '2026-11-05', ['50.000', '0', '-2.500', '0', '0', '0', '0', '0', '0', '47.500']),
+      ['Tổng cộng', '', '', '', '', '', '', '', '', '', '', '', '', '47.500'],
+    ]);
+    expect(result.lines.map((l) => l.orderNo)).toEqual(['2610H1']);
+    expect(result.statedNet).toBe('47500');
+    expect(result.skipped).toEqual([{ rowNo: 3, reason: 'no_order_no' }]);
+  });
+
+  it('never gives two lines of a settlement the same key, and refuses an order named like a numbered one', () => {
+    const row = (order: string) => shopeeRow(order, '2026-11-05', ['10.000', '0', '0', '0', '0', '0', '0', '0', '0', '10.000']);
+    const result = read([SHOPEE_HEAD, row('2610J1'), row('2610J1'), row('2610J1#2'), row('2610J1')]);
+    const keys = result.lines.map((l) => l.lineKey);
+    expect(new Set(keys).size).toBe(keys.length);
+    // An order named like a numbered key has a '#', which no order number may hold, so it is refused and the numbered keys stay its own.
+    expect(keys).toEqual(['2610J1', '2610J1#2', '2610J1#3']);
+    expect(result.skipped).toEqual([{ rowNo: 4, reason: 'bad_id' }]);
+  });
+
+  it('claims a short word only as a whole word of a header, so "Capital gains" is no PIT column, and takes a Shopee order export with fee columns for none', () => {
+    const mapping = findIncomeColumns(grid([['Mã đơn hàng', 'Ngày hoàn tất thanh toán', 'Giá sản phẩm', 'Capital gains', 'Phí cố định', 'Tổng số tiền đã thanh toán']]));
+    expect(mapping?.profile.platform).toBe('shopee');
+    expect(mapping?.headers.map((h) => h.field)).not.toContain('taxPit');
+    // An order export carries fee columns too but no released amount: it has no net, so it is no income report.
+    expect(findIncomeColumns(grid([['Mã đơn hàng', 'Ngày đặt hàng', 'Trạng Thái Đơn Hàng', 'Phí cố định', 'Phí dịch vụ', 'Phí giao dịch', 'Tổng giá bán sản phẩm']]))).toBeNull();
+  });
+
+  it('refuses an order number made of anything but letters, digits and . _ - /', () => {
+    const result = read([SHOPEE_HEAD, shopeeRow('2610K1 <b>', '2026-11-05', ['10.000', '0', '0', '0', '0', '0', '0', '0', '0', '10.000'])]);
+    expect(result.lines).toEqual([]);
+    expect(result.skipped).toEqual([{ rowNo: 2, reason: 'bad_id' }]);
+  });
+
   it('states no report net when the file has none or several totals rows', () => {
     const none = read([SHOPEE_HEAD, shopeeRow('2610E1', '2026-11-06', ['10.000', '0', '0', '0', '0', '0', '0', '0', '0', '10.000'])]);
     expect(none.statedNet).toBeNull();
