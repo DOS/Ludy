@@ -88,10 +88,13 @@ export function HrBankTemplatesPage() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (templateId: string) => client.hr.payroll.bankTemplates.delete({ templateId }),
-    onSuccess: async () => {
+    onSuccess: async (_done, templateId) => {
       setConfirming(null);
+      // A template deleted while its editor is open: the editor goes with it, so it cannot be saved into a 404.
+      setEditing((open) => (open?.template?.id === templateId ? null : open));
       await refresh();
     },
+    onError: () => setConfirming(null),
   });
   const rows = list.data ?? [];
   return (
@@ -132,7 +135,7 @@ export function HrBankTemplatesPage() {
                   </span>
                 ) : (
                   <>
-                    <Button variant="ghost" size="sm" onClick={() => setEditing({ template: r })} data-testid="hr-bank-edit">
+                    <Button variant="ghost" size="sm" disabled={editing !== null} onClick={() => setEditing({ template: r })} data-testid="hr-bank-edit">
                       {t('edit')}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => setConfirming(r.id)} data-testid="hr-bank-delete">

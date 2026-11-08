@@ -110,6 +110,8 @@ suite('saved bank templates through the commands (#2893)', () => {
     await o.exec(o.admin, 'hr.payroll.bank_template.edit', { templateId: a.templateId, name: '  VCB  ', layout: layout({ columns: [...COLUMNS].reverse() }) });
     const edited = (await o.list(o.owner)).find((t) => t.id === a.templateId);
     expect(edited?.name).toBe('VCB');
+    const stamped = await withAdmin(async (c) => (await c.query<{ moved: boolean }>('SELECT updated_at > created_at AS moved FROM crove_hr.payroll_bank_template WHERE org_id = $1 AND id = $2', [o.orgId, a.templateId])).rows[0]?.moved);
+    expect(stamped).toBe(true);
     expect(edited?.layout.columns.map((c) => c.key)).toEqual(['content', 'amount', 'bank', 'account', 'name', 'sequence']);
     await o.exec(o.owner, 'hr.payroll.bank_template.delete', { templateId: b.templateId });
     expect((await o.list(o.admin)).map((t) => t.name)).toEqual(['VCB']);
@@ -143,8 +145,10 @@ suite('saved bank templates through the commands (#2893)', () => {
       layout({ content: 'x'.repeat(141) }),
       { columns: COLUMNS },
     ];
+    bad.push(layout({ content: 'Luong\u0000 {month}' }), layout({ columns: [{ key: 'sequence', header: 'ST\u0000T' }, ...COLUMNS.slice(1)] }));
     for (const one of bad) await expect(o.create(o.owner, { name: 'Bank', layout: one })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(o.create(o.owner, { name: '   ', layout: layout() })).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(o.create(o.owner, { name: 'Ban\u0000k', layout: layout() })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(o.create(o.owner, { name: 'x'.repeat(81), layout: layout() })).rejects.toMatchObject({ code: 'VALIDATION' });
     // An edit that changes nothing is refused too.
     const ok = await o.create(o.owner, { name: 'Bank', layout: layout() });
