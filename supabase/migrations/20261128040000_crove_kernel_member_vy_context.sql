@@ -96,8 +96,11 @@ BEGIN
   IF v_status <> 'active' THEN
     RAISE EXCEPTION 'AGENT_NOT_ACTIVE' USING ERRCODE = '42501';
   END IF;
-  -- A removal and this entry serialize on the member's membership row, as approvals do.
-  PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = p_org_id AND m.user_id = v_member FOR SHARE;
+  -- A removal and this entry serialize on the member's membership row, as approvals do. A read-only transaction (a query) writes nothing and
+  -- cannot take a row lock, so it takes none: it sees the membership as of its snapshot, and every command re-enters in its own transaction.
+  IF pg_catalog.current_setting('transaction_read_only') = 'off' THEN
+    PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = p_org_id AND m.user_id = v_member FOR SHARE;
+  END IF;
   SELECT r.status, r.expires_at, r.tainted, r.module INTO v_run_status, v_run_expires, v_run_tainted, v_module
   FROM crove_kernel.ai_run r WHERE r.org_id = p_org_id AND r.id = p_run_id AND r.agent_id = p_agent_id;
   IF NOT FOUND OR v_run_status <> 'running' OR v_run_expires <= pg_catalog.now() THEN
