@@ -280,7 +280,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await expect(o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year: 1999, authorized: true })).rejects.toBeDefined();
     expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ taxCode: null, insuranceNumber: INS2, finalizationAuthorizedYears: [...new Set([2026, year])].sort() });
     await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: false });
-    expect((await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).finalizationAuthorizedYears).not.toContain(year === 2026 ? -1 : year);
+    // Revoking removes exactly that year: 2026 stays when the current year is a later one, and nothing is left when the current year is 2026.
+    expect((await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).finalizationAuthorizedYears).toEqual(year === 2026 ? [] : [2026]);
     // A former employee: the declarations need the birth date, tax code and insurance number of a leaver, so those three may still be set (audited); nothing else of the record changes, and the authorization is not changed.
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
     await o.exec(o.admin, 'hr.payroll.employee.edit', { employeeId: created.employeeId, birthDate: '1991-02-03', taxCode: '056123456789', insuranceNumber: '4051739286' });

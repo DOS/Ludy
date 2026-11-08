@@ -8,6 +8,7 @@
 // - the owner's org export carries the payroll tables through the owner-run path (#2676), with no plain number, an audit row naming each table, the refusals, and the download route.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
+import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -15,12 +16,13 @@ import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
+import type { HrDeclarationDocument, HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@crove/kernel-contract';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
 import { calculatePayroll, PAYROLL_RULES } from '@crove/l10n-vn';
 import { hrCommands, hrQueries } from '@crove/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
+import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -39,6 +41,28 @@ class MemoryStore implements BlobStore {
   async delete(key: string) {
     this.blobs.delete(key);
   }
+}
+
+// One file of a zip (an xlsx) by name, from the central directory: enough to read a workbook back without a spreadsheet library.
+function zipEntry(zip: Uint8Array, name: string): string | null {
+  const buf = Buffer.from(zip);
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let at = buf.readUInt32LE(eocd + 16);
+  for (let n = buf.readUInt16LE(eocd + 10); n > 0; n -= 1) {
+    const method = buf.readUInt16LE(at + 10);
+    const size = buf.readUInt32LE(at + 20);
+    const nameLen = buf.readUInt16LE(at + 28);
+    const extraLen = buf.readUInt16LE(at + 30);
+    const commentLen = buf.readUInt16LE(at + 32);
+    const local = buf.readUInt32LE(at + 42);
+    if (buf.toString('utf8', at + 46, at + 46 + nameLen) === name) {
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const data = buf.subarray(start, start + size);
+      return (method === 8 ? inflateRawSync(data) : data).toString('utf8');
+    }
+    at += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
 }
 
 // Every rule of the shipped set is `commentary` until the accountant confirms it (#2535), so a real approval cannot pass yet. The tests that approve confirm the rows for the test: the
@@ -69,6 +93,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
   let rt: Runtime;
   let workerRt: Runtime;
   const root = parseVaultKey(randomBytes(32).toString('base64'));
+  const subjectVault = new SubjectVault(new CredentialVault([root]).deriveKeys(SUBJECT_WRAP_INFO));
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
@@ -153,7 +178,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const register = (target: pg.Pool) =>
       new Runtime(createDb(target), {
         manifests: TEST_MANIFESTS,
-        subjectVault: new SubjectVault(new CredentialVault([root]).deriveKeys(SUBJECT_WRAP_INFO)),
+        subjectVault,
         readAuditKey: randomBytes(32),
       }).register({ commands: [...kernelCommands, ...hrCommands, TOUCH_LINE], queries: [...kernelQueries({ inboundDomain: null }), ...hrQueries, PEEK] });
     rt = register(pool);
@@ -500,6 +525,236 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     });
     return lines.map((l) => JSON.parse(l) as Record<string, unknown>);
   };
+
+  // The payroll declaration exports (#2533): figures from approved runs only, sealed identifiers opened in the audited sensitive path only, owners and admins only, no caching.
+  const DECL_IDENTITY = '079 321 654 987';
+  const DECL_IDENTITY_DIGITS = '079321654987';
+  const DECL_TAX = '8765432101';
+  const DECL_INSURANCE = '7305186294';
+  async function declarationOrg() {
+    setRuleStatus('confirmed');
+    const o = await org();
+    const an = await o.hire({ identityNumber: DECL_IDENTITY, taxCode: DECL_TAX, insuranceNumber: DECL_INSURANCE, birthDate: '1990-05-17' }, '35000000', NAMES[0]);
+    const binh = await o.hire({ identityNumber: '079 111 222 333' }, WAGES[1], NAMES[1]);
+    const chi = await o.hire({ taxCode: '1234567890' }, WAGES[2], NAMES[2]);
+    const formula = await o.hire({}, '12000000', '=HYPERLINK("http://example.test","click")');
+    for (const id of [chi.employeeId, formula.employeeId]) await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: id, year: 2026, authorized: true });
+    const months = ['2026-07', '2026-08'];
+    for (const month of months) {
+      const run = await o.open(month);
+      await o.approve(run.runId, (await o.sheet(run.runId)).fingerprint, { acceptFlags: true });
+    }
+    // The third month stays a draft: it is in no declaration.
+    await o.open('2026-09');
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: binh.employeeId, endedOn: '2026-08-15' });
+    setRuleStatus('commentary');
+    // A declaration read needs a second factor used in the last 5 minutes: the default here; `fresh = false` is a session without one.
+    const get = (who: string, kind: string, period: string, fresh = true) => rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind, period }, { actor: fresh ? asMfa(who) : asUser(who), orgId: o.orgId });
+    return { o, an, binh, chi, formula, get };
+  }
+
+  it('(declarations, #2533) ties a quarter to the approved runs: a draft month is left out, a leaver stays for the months paid, the sealed identifiers are opened for the people in it', async () => {
+    const { o, get } = await declarationOrg();
+    const doc = await get(o.owner, 'kk', '2026-Q3');
+    expect(doc.title.toLowerCase()).toContain('bảng kê để khai báo');
+    expect(doc.layout.version).toBe('ludy-hr-05kk/1');
+    expect(doc.draft).toContain('dòng 14');
+    expect(doc.header.find((h) => h.label.startsWith('Tháng chưa'))?.value).toBe('2026-09');
+    // The list says which approved months it used.
+    expect(doc.used).toEqual({ months: ['2026-07', '2026-08'] });
+    expect(doc.header.find((h) => h.label.startsWith('Bảng lương đã duyệt'))?.value).toBe('2026-07, 2026-08');
+    const [summary, progressive] = doc.sheets;
+    const stored = await withAdmin(async (c) => (await c.query<{ pit: string; n: string }>(`SELECT COALESCE(sum(l.pit), 0)::text AS pit, count(DISTINCT l.employee_id)::text AS n FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.status = 'approved'`, [o.orgId])).rows[0]);
+    const value = (item: string) => summary?.rows.find((r) => r.item?.startsWith(item))?.value;
+    expect(Number(value('Tổng số thuế'))).toBe(Number(stored?.pit));
+    expect(value('Tổng số người lao động')).toBe(stored?.n);
+    const binhRow = progressive?.rows.find((r) => r.name === NAMES[1]);
+    expect(binhRow).toMatchObject({ months: '2026-07, 2026-08', note: 'Nghỉ việc ngày 2026-08-15', identityNumber: '079 111 222 333' });
+    // The tax code is the one on file, or the identity number when none is: the document says so.
+    const anRow = progressive?.rows.find((r) => r.name === NAMES[0]);
+    expect(anRow).toMatchObject({ identityNumber: DECL_IDENTITY, taxCode: DECL_TAX, birthDate: '1990-05-17' });
+    expect(binhRow?.taxCode).toBe('079 111 222 333');
+    expect(doc.notes.join(' ')).toContain('chưa có mã số thuế riêng');
+  });
+
+  it('(declarations, #2533) lists the month of the D02-LT, the annual data of an authorizer and the certificates by the rules', async () => {
+    const { o, get } = await declarationOrg();
+    const d02 = await get(o.owner, 'd02lt', '2026-08');
+    expect(d02.sheets[0]?.rows.map((r) => [r.name, r.movement, r.effectiveOn])).toEqual([[NAMES[1], 'Giảm lao động', '2026-08-15']]);
+    expect(d02.layout.version).toBe('ludy-hr-d02lt/1');
+    const july = await get(o.owner, 'd02lt', '2026-07');
+    expect(july.sheets[0]?.rows).toEqual([]);
+    const annual = await get(o.owner, 'qtt', '2026');
+    // The annual lists name the authorization list used: the year and the two people (Chi and the formula-named one) who authorized.
+    expect(annual.used).toEqual({ months: ['2026-07', '2026-08'], authorizedYear: 2026, authorizedPeople: 2 });
+    expect(annual.sheets[1]?.rows.map((r) => r.name).sort()).toEqual([NAMES[2], '=HYPERLINK("http://example.test","click")'].sort());
+    expect(annual.sheets[2]?.rows.map((r) => r.name).sort()).toEqual([NAMES[0], NAMES[1]].sort());
+    expect(annual.notes[0]).toContain('Chưa có bảng lương đã duyệt');
+    const certificates = await get(o.owner, 'certificate', '2026');
+    // Only An (35M) and Chi (30M) are withheld; Chi authorized the payer to finalize, so An alone gets a certificate and Chi is listed as not given one. Bình (9M) and the 12M person owe no tax.
+    expect(certificates.sheets[0]?.rows.map((r) => r.name)).toEqual([NAMES[0]]);
+    expect(certificates.sheets[1]?.rows.map((r) => r.name)).toEqual([NAMES[2]]);
+  });
+
+  it('(declarations, #2533) is a sensitive query owners and admins only: audited before the read, with no identifier in any audit row', async () => {
+    const { o, get } = await declarationOrg();
+    await get(o.owner, 'kk', '2026-Q3');
+    await get(o.admin, 'd02lt', '2026-08');
+    // Without a second factor used in the last 5 minutes (aal1, or an aal2 whose factor is old) nothing is read or opened.
+    await expect(get(o.owner, 'kk', '2026-Q3', false)).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED', status: 403 });
+    await expect(rt.query('hr.payroll.declaration.get', { kind: 'kk', period: '2026-Q3' }, { actor: { ...asMfa(o.owner), mfaAt: Math.floor(Date.now() / 1000) - 3600 }, orgId: o.orgId })).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
+    for (const who of [o.member, o.viewer]) await expect(get(who, 'kk', '2026-Q3')).rejects.toMatchObject({ status: 403 });
+    await expect(rt.query('hr.payroll.declaration.get', { kind: 'kk', period: '2026-Q3' }, { actor: { type: 'agent', agentId: randomUUID(), runId: randomUUID() } as never, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(get(o.owner, 'kk', '2026-13')).rejects.toBeDefined();
+    const rows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.get' ORDER BY id`, [o.orgId])).rows);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.parse(rows[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read', kind: 'kk' });
+    expect(JSON.parse(rows[1]?.detail ?? '{}')).toMatchObject({ kind: 'd02lt' });
+    for (const r of rows) for (const needle of [DECL_IDENTITY_DIGITS, DECL_TAX, DECL_INSURANCE, '079111222333', NAMES[0]]) expect(r.row, needle).not.toContain(needle);
+    // Erased people read as none: shredding the key leaves the document with the placeholder and no identifier.
+  });
+
+  it('(declarations, #2533) serves the xlsx on an authenticated, audited, uncached route for owners and admins only', async () => {
+    const { o } = await declarationOrg();
+    const nowS = Math.floor(Date.now() / 1000);
+    const users = new Map<string, AuthUser>([o.owner, o.admin, o.member, o.viewer].map((id) => [id, { userId: id, email: '', name: null, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowS }]));
+    // The owner again, signed in without a second factor used lately; and the owner of another org.
+    users.set('stale-owner', { userId: o.owner, email: '', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null });
+    const elsewhere = await declarationOrg();
+    users.set('other-owner', { userId: elsewhere.o.owner, email: '', name: null, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowS });
+    const exports = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    const app = createHttpApp({
+      exports,
+      config: loadConfig({ DATABASE_URL: appUrl, AUTH_JWT_SECRET: 'test-only-jwt-secret-for-export-0123456789', AUTH_ISSUER: 'test-auth', WEB_DIST: '/nonexistent', EXPORT_ENCRYPTION_KEY: randomBytes(32).toString('base64') }),
+      runtime: rt,
+      store: new MemoryStore(),
+      authenticate: async (header) => {
+        const user = users.get(String(header).replace('Bearer ', ''));
+        if (!user) throw new DomainError('UNAUTHENTICATED', 401, 'no');
+        return user;
+      },
+      pool,
+      aiEnabled: false,
+    });
+    const get = (file: string, query: string, userId: string) => app.request(`/api/payroll-export/${file}?${query}`, { headers: { authorization: `Bearer ${userId}`, 'x-crove-org': o.slug } });
+    expect((await app.request('/api/payroll-export/kk.xlsx?period=2026-Q3')).status).toBe(401);
+    for (const who of [o.member, o.viewer]) expect((await get('kk.xlsx', 'period=2026-Q3', who)).status).toBe(403);
+    expect((await get('nothing.xlsx', 'period=2026-Q3', o.owner)).status).toBe(404);
+    expect((await get('kk.csv', 'period=2026-Q3', o.owner)).status).toBe(404);
+    expect((await get('kk.xlsx', 'period=2026-13', o.owner)).status).toBe(422);
+    for (const [file, period] of [['d02lt.xlsx', '2026-08'], ['kk.xlsx', '2026-Q3'], ['qtt.xlsx', '2026'], ['certificate.xlsx', '2026']] as const) {
+      for (const who of [o.owner, o.admin]) {
+        const res = await get(file, `period=${period}`, who);
+        expect(res.status, `${file} ${who}`).toBe(200);
+        expect(res.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        expect(res.headers.get('cache-control')).toBe('private, no-store');
+        expect(res.headers.get('content-disposition')).toContain('attachment');
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        expect(String.fromCharCode(bytes[0] as number, bytes[1] as number)).toBe('PK');
+      }
+    }
+    // A download leaves an audit row with counts only.
+    const exported = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    expect(exported.length).toBe(8);
+    const details = exported.map((r) => JSON.parse(r.detail) as { kind: string; period: string; months: string[]; authorizedYear?: number; authorizedPeople?: number });
+    expect(details.find((d) => d.kind === 'kk')).toMatchObject({ period: '2026-Q3', months: ['2026-07', '2026-08'] });
+    expect(details.find((d) => d.kind === 'qtt')).toMatchObject({ period: '2026', months: ['2026-07', '2026-08'], authorizedYear: 2026, authorizedPeople: 2 });
+    expect(details.find((d) => d.kind === 'd02lt')).not.toHaveProperty('authorizedYear');
+    for (const r of exported) for (const needle of [DECL_IDENTITY_DIGITS, DECL_TAX, NAMES[0], NAMES[1]]) expect(r.row, needle).not.toContain(needle);
+    // Every download took and gave back the one slot: held until the bytes were taken, never left behind.
+    expect(exports.inUse).toBe(0);
+    // A read that fails after the slot was taken gives it back.
+    expect((await get('kk.xlsx', 'period=2026-13', o.owner)).status).toBe(422);
+    expect(exports.inUse).toBe(0);
+    // No second factor used lately: refused before a slot, a row or a read. The owner of another org, and an entity of another org, read nothing.
+    const stale = await get('kk.xlsx', 'period=2026-Q3', 'stale-owner');
+    expect(stale.status).toBe(403);
+    expect(await stale.json()).toMatchObject({ code: 'STEP_UP_REQUIRED' });
+    expect((await get('kk.xlsx', 'period=2026-Q3', 'other-owner')).status).toBe(403);
+    const foreignEntity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [elsewhere.o.orgId])).rows[0]?.id as string);
+    expect((await get('kk.xlsx', `period=2026-Q3&legalEntityId=${foreignEntity}`, o.owner)).status).toBe(422);
+    expect(exports.inUse).toBe(0);
+    // HEAD is refused before any read, so it leaves no row for a download that never happened.
+    expect((await app.request('/api/payroll-export/kk.xlsx?period=2026-Q3', { method: 'HEAD', headers: { authorization: `Bearer ${o.owner}`, 'x-crove-org': o.slug } })).status).toBe(405);
+    expect(exports.inUse).toBe(0);
+    // The screen's view and print come from the same audited read, recorded by the same row.
+    const view = await get('kk.json', 'period=2026-Q3', o.owner);
+    expect(view.status).toBe(200);
+    expect(view.headers.get('cache-control')).toBe('private, no-store');
+    expect(((await view.json()) as HrDeclarationDocument).layout.version).toBe('ludy-hr-05kk/1');
+    const after = await withAdmin(async (c) => (await c.query<{ detail: string }>(`SELECT detail::text AS detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    expect(after.map((r) => (JSON.parse(r.detail) as { via: string }).via).slice(-2)).toEqual(['xlsx', 'view']);
+    expect(after.length, 'only successful reads leave a download row').toBe(9);
+    // A name that starts with "=" is a string cell in the file, never a formula.
+    const annual = new Uint8Array(await (await get('qtt.xlsx', 'period=2026', o.owner)).arrayBuffer());
+    const sheets = [1, 2, 3].map((i) => zipEntry(annual, `xl/worksheets/sheet${i}.xml`)).filter((x): x is string => x !== null);
+    expect(sheets.length).toBeGreaterThan(0);
+    for (const xml of sheets) expect(xml).not.toContain('<f>');
+    const strings = `${zipEntry(annual, 'xl/sharedStrings.xml') ?? ''}${sheets.join('')}`;
+    expect(strings).toContain('=HYPERLINK(');
+  });
+
+  it('(declarations, #2533) opens only what each form prints: a D02-LT the identity and insurance numbers of the people it lists, the tax forms the identity number and tax code', async () => {
+    const { o } = await declarationOrg();
+    // Every sealed value opened goes through the vault: what a read opens is counted by place.
+    const opened: string[] = [];
+    const real = subjectVault.open.bind(subjectVault);
+    const spy = vi.spyOn(subjectVault, 'open').mockImplementation((dataKey, orgId, subjectId, place, packed) => {
+      opened.push(place);
+      return real(dataKey, orgId, subjectId, place, packed);
+    });
+    const IDENTITY = 'crove_hr.payroll_employee.national_id_sealed';
+    const TAX = 'crove_hr.payroll_employee.tax_code_sealed';
+    try {
+      const read = (kind: string, period: string) => rt.query('hr.payroll.declaration.get', { kind, period }, { actor: asMfa(o.owner), orgId: o.orgId });
+      // August: only Bình has a change (leaves on the 15th) and has an identity number but no insurance number, so exactly one value is opened: no one else's, and never a tax code.
+      await read('d02lt', '2026-08');
+      expect(opened).toEqual([IDENTITY]);
+      // July: nobody is listed (there is no month before the first), so nothing is opened.
+      opened.length = 0;
+      await read('d02lt', '2026-07');
+      expect(opened).toEqual([]);
+      // The tax forms: identity numbers and tax codes of the people in it, no insurance number.
+      // 05/QTT prints only the authorizers who qualify (Chi, who has a tax code and no identity number, and a person with neither): so exactly one value, Chi's tax code.
+      opened.length = 0;
+      await read('qtt', '2026');
+      expect(opened).toEqual([TAX]);
+      // 05/KK prints the people on its schedules (An, Bình and Chi; the 12M person is in the headcount only): the tax codes of An and Chi (Bình has none, so is printed under the identity number) and
+      // the identity numbers of An and Bình (Chi has none). 03/TNCN certifies An alone and lists Chi, who authorized the payer, by name and tax code: An's two numbers and Chi's tax code.
+      for (const [kind, period, expected] of [
+        ['kk', '2026-Q3', [IDENTITY, IDENTITY, TAX, TAX]],
+        ['certificate', '2026', [IDENTITY, TAX, TAX]],
+      ] as const) {
+        opened.length = 0;
+        await read(kind, period);
+        expect([...opened].sort(), kind).toEqual([...expected].sort());
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('(declarations, #2533) refuses a list of more than 5,000 people with a message, before anything is opened', async () => {
+    const { o, get } = await declarationOrg();
+    await withAdmin(async (c) => {
+      // The freeze trigger of the lines is off for these inserts only (a disposable database): the rows are copies of the first person and of their July line, 5,000 times over.
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      try {
+        await c.query('CREATE TEMP TABLE copies AS SELECT gen_random_uuid() AS new_id FROM generate_series(1, 5000)');
+        await c.query(
+          `INSERT INTO crove_hr.payroll_employee SELECT (jsonb_populate_record(NULL::crove_hr.payroll_employee, to_jsonb(e) || jsonb_build_object('id', m.new_id))).* FROM (SELECT * FROM crove_hr.payroll_employee WHERE org_id = $1 LIMIT 1) e, copies m`,
+          [o.orgId],
+        );
+        await c.query(
+          `INSERT INTO crove_hr.payroll_line SELECT (jsonb_populate_record(NULL::crove_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id))).* FROM (SELECT l.* FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
+          [o.orgId],
+        );
+      } finally {
+        await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+      }
+    });
+    await expect(get(o.owner, 'kk', '2026-Q3')).rejects.toMatchObject({ code: 'EXPORT_TOO_LARGE', status: 422 });
+  });
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
