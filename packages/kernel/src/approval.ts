@@ -26,7 +26,7 @@ export function parseAuthors(raw: unknown): ActorRef[] | null {
 }
 
 // The commands whose preparer may declare co-authors (people the proposal rests on besides its requester). The database lists the same ones (proposal_co_authors_guard,
-// 20261126140000), and the invariant proposal-co-authors keeps the two equal.
+// 20261126170000), and the invariant proposal-co-authors keeps the two equal.
 export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record'];
 
 // A proposal's authors for four-eyes: those written on it, then its co-authors (users only), never twice.
