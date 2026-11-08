@@ -5,8 +5,10 @@
 -- 1. A token is void for good, not suspended, when its member drops below member or the user is disabled:
 --    triggers on tenant_member (role) and user_account (disabled_at) set revoked_at on the live tokens, so restoring the
 --    role or re-enabling the user does not revive them. Removal already voided them (verify reads the membership live).
---    Each auto-revoke writes one audit row (command kernel.extension.token.auto_revoked, actor system), ids only: the
---    token, its member and the reason. Never the token, its hash or the device name.
+--    Each auto-revoke writes one audit row (command kernel.extension.token.auto_revoked), ids only: the token, its member
+--    and the reason. Never the token, its hash or the device name. The row is written as the system; audit_event_stamp then
+--    keeps that for a session with no org context (the operator's user-disable) and stamps the acting member when a member's
+--    session in that org changes the role, so the row names who caused the revoke.
 -- 2. Owner and admin revoke: revoke_extension_token_as_admin revokes any device in the org, except that an admin cannot
 --    cut off an owner's; list_extension_tokens_for_org lists the org's devices (never a hash) for them. A member and a
 --    viewer get EXTENSION_FORBIDDEN from both; revoke_extension_token still acts on the caller's own devices only.

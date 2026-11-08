@@ -464,8 +464,10 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(revoked.status).toBe(200);
     expect(revoked.body).toMatchObject({ tokenId: device.tokenId, userId: await userIdOf('recorder'), revoked: true });
     expect(await me(device.token)).toBe(401);
-    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.revoke_member' AND target_id IS NOT DISTINCT FROM $1 OR (command = 'kernel.extension.token.revoke_member' AND detail @> $2::jsonb)`, [device.tokenId, JSON.stringify({ tokenId: device.tokenId })])).rows);
-    expect(audit.length).toBeGreaterThan(0);
+    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.revoke_member' AND outcome = 'ok' AND detail->>'tokenId' = $1`, [device.tokenId])).rows as Array<{ detail: Record<string, unknown> }>);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.detail).toMatchObject({ tokenId: device.tokenId, userId: await userIdOf('recorder') });
+    expect(JSON.stringify(audit[0]!.detail)).not.toMatch(/crx_|hash|Chrome/i);
     // Again, unknown ids and another org's ids read alike; an admin may not cut off an owner's device, the owner may.
     expect((await rpc('extension/tokens/revokeMember', await asBrowser('boss'), { tokenId: device.tokenId })).status).toBe(404);
     expect((await rpc('extension/tokens/revokeMember', await asBrowser('boss'), { tokenId: randomUUID() })).status).toBe(404);

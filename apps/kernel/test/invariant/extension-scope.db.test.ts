@@ -239,12 +239,13 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     expect(await standing(users.memberB, tokens.memberB, orgA)).toBe('401 EXTENSION_TOKEN_INVALID');
     expect(await standing(users.memberB, tokens.memberB, orgB)).toBe('ok');
     expect(await standing(users.member, randomUUID())).toBe('401 EXTENSION_TOKEN_INVALID');
-    // Demoted to viewer, then restored; disabled, then enabled: each applies at once and undoes at once.
+    // Demoted to viewer, then restored; disabled, then enabled: each applies at once and, from #2740, for good.
     expect(await standing(users.other, tokens.other)).toBe('ok');
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgA, users.other]));
     expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.other]));
-    expect(await standing(users.other, tokens.other)).toBe('ok');
+    // Step 2 of #2740: the demotion voided the token for good, so restoring the role does not revive it.
+    expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
     await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.other]));
     expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
     await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.other]));
