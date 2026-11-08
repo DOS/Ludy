@@ -174,7 +174,7 @@ LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
         WHEN 'status' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['running', 'ready', 'failed'])
         WHEN 'code' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
         WHEN 'errorCode' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
-        WHEN 'rule' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^(P[0-9]{1,2}|[a-z][a-z_]{0,40})$'
+        WHEN 'rule' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['P02', 'P03', 'P05', 'P06', 'member_vy_access', 'member_vy_context', 'member_vy_role'])
         WHEN 'bodyLength' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
         WHEN 'count' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
         ELSE false
