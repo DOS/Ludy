@@ -47,8 +47,9 @@ const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView =>
 const view = (stage: 'draft' | 'published', summary: string) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions: ['Giữ giá cũ'], tainted: false });
 
 const READER = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
-function render(results: Results) {
+function render(results: Results, summaryEnabled = false) {
   client.current.setQueryData(['meetings', 'results', 'get'], results);
+  client.current.setQueryData(['meetings', 'results', 'summaryStatus'], { meetingId: 'm1', enabled: summaryEnabled });
   client.current.setQueryData(['org', 'get'], { members: [{ userId: READER, email: 'lan@example.com', displayName: 'Chị Lan', role: 'member' }] });
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
@@ -70,6 +71,7 @@ describe('MeetingResults', () => {
     expect(html).toContain('2:05');
     expect(html).toContain(en.meetings.results.delete);
     expect(html.match(/data-testid="action-item"/g)).toHaveLength(1);
+    expect(html).toContain(en.meetings.results.draftExpiry);
   });
 
   it('names people and never shows an id: the attendee picker lists names, and a member who left reads as a plain fallback', () => {
@@ -90,6 +92,7 @@ describe('MeetingResults', () => {
     expect(html).not.toContain(en.meetings.results.publish);
     expect(html).not.toContain(en.meetings.results.addItem);
     expect(html).not.toContain(en.meetings.results.draftTitle);
+    expect(html).not.toContain(en.meetings.results.draftExpiry);
     expect(html).not.toContain(en.meetings.results.delete);
   });
 
@@ -109,5 +112,27 @@ describe('MeetingResults', () => {
     expect(html).toContain(en.meetings.results.accepted);
     expect(html).not.toContain(en.meetings.results.makeTask);
     expect(render({ meetingId: 'm1', isRecorder: false, draft: null, published: null, items: [] })).toBe('');
+  });
+
+  it('shows the Vy summary box to the recorder only when the system lets Vy summarize', () => {
+    const results: Results = { meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] };
+    expect(render(results, false)).not.toContain('data-testid="vy-summary"');
+    const on = render(results, true);
+    expect(on).toContain('data-testid="vy-summary"');
+    expect(on).toContain(en.meetings.results.vy.start);
+    // A reader never sees it, whatever the switch says.
+    expect(render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'x'), items: [] }, true)).not.toContain('data-testid="vy-summary"');
+  });
+
+  it('asks the recorder to confirm what Vy wrote before sharing it: the share button waits, and a draft they wrote themselves shares at once', () => {
+    const vyDraft = { ...view('draft', 'Vy viết'), feature: 'meetings.summary' as const, tainted: true };
+    const waiting = render({ meetingId: 'm1', isRecorder: true, draft: vyDraft, published: null, items: [item('a', { stage: 'draft', tainted: true })] });
+    expect(waiting).toContain('data-testid="vy-review"');
+    expect(waiting).toContain(en.meetings.results.reviewed);
+    expect(waiting).toContain(en.meetings.results.fromVy);
+    expect(/<button[^>]*>(?:(?!<\/button>).)*Share with the attendees<\/button>/.exec(waiting)?.[0]).toMatch(/\sdisabled(=|\s|>)/);
+    const own = render({ meetingId: 'm1', isRecorder: true, draft: view('draft', 'Tôi viết'), published: null, items: [item('b', { stage: 'draft' })] });
+    expect(own).not.toContain('data-testid="vy-review"');
+    expect(/<button[^>]*>(?:(?!<\/button>).)*Share with the attendees<\/button>/.exec(own)?.[0]).not.toMatch(/\sdisabled(=|\s|>)/);
   });
 });

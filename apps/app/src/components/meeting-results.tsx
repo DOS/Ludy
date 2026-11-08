@@ -178,10 +178,70 @@ function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean 
   );
 }
 
+// A fixed code the kernel sent, in words; null for a code this screen does not know.
+function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
+  switch (code) {
+    case 'AI_BUDGET_EXHAUSTED':
+    case 'AI_STOPPED':
+    case 'SUMMARY_TIMEOUT':
+    case 'SUMMARY_FAILED':
+    case 'SUMMARY_UNPARSABLE':
+    case 'SUMMARY_EMPTY':
+    case 'SUMMARY_TOO_LONG':
+    case 'SUMMARY_NO_TRANSCRIPT':
+      return t(`vy.codes.${code}`);
+    default:
+      return null;
+  }
+}
+
+// The recorder's own Vy summarizing this meeting: ask, wait for the one answer, then copy it into the draft with a click of their own. Shown to the recorder only, and
+// only when this system lets Vy summarize (the status says so); nothing is shared from here.
+function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDraft: boolean }) {
+  const t = useTranslations('meetings.results');
+  const status = useQuery(orpc.meetings.results.summaryStatus.queryOptions({ input: { meetingId } }));
+  const ask = useMutation({ mutationFn: () => orpc.meetings.results.summarize.call({ meetingId }) });
+  const copy = useMutation({
+    mutationFn: (runId: string) => orpc.meetings.results.copySummary.call({ meetingId, runId }),
+    onSuccess: () => {
+      ask.reset();
+      refresh();
+    },
+  });
+  if (!status.data?.enabled) return null;
+  const answer = ask.data;
+  const refusal = ask.error ?? copy.error;
+  return (
+    <div className="space-y-2 rounded-lg border p-3" data-testid="vy-summary">
+      <p className="text-sm font-medium">{t('vy.title')}</p>
+      <p className="text-xs text-muted-foreground">{t('vy.desc')}</p>
+      {ask.isPending && <p role="status">{t('vy.running')}</p>}
+      {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
+      {answer?.state === 'ready' && !copy.isSuccess && (
+        <div className="space-y-2">
+          <p>{t('vy.ready')}</p>
+          {hasModelDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
+          <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(answer.runId)}>
+            {t('vy.copy')}
+          </Button>
+        </div>
+      )}
+      {answer?.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${codeText(t, answer.errorCode) ?? t('vy.codes.default')}`}</ErrorText>}
+      {refusal && <ErrorText>{errorMessage(refusal)}</ErrorText>}
+      {!ask.isPending && answer?.state !== 'ready' && (
+        <Button size="sm" variant={answer ? 'outline' : 'default'} loading={ask.isPending} onClick={() => ask.mutate()}>
+          {answer ? t('vy.restart') : t('vy.start')}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function MeetingResults({ meetingId, readers }: { meetingId: string; readers: readonly string[] }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
+  const review = useMutation({ mutationFn: (ids: string[]) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids }), onSuccess: refresh });
   const acceptClean = useMutation({ mutationFn: () => orpc.meetings.actionItems.acceptClean.call({ meetingId, confirmed: true }), onSuccess: refresh });
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
@@ -190,6 +250,10 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
   // A reader with nothing shared sees no panel at all.
   if (!isRecorder && !published && items.length === 0) return null;
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
+  // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
+  // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
+  const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
+  const unread = unreadIds.length > 0;
   const cleanCount = items.filter((i) => i.clean).length;
   return (
     <Card data-testid="meeting-results">
@@ -204,9 +268,14 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
             <SummaryText summary={published.summary} decisions={published.decisions} />
           </section>
         )}
+        {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">
-            <h3 className="text-xs font-medium text-muted-foreground">{t('draftTitle')}</h3>
+            <h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              {t('draftTitle')}
+              {draft?.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
+            </h3>
+            {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
             <SummaryEditor key={draft?.id ?? 'new'} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} />
           </section>
         )}
@@ -232,8 +301,17 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
         {isRecorder && hasDraft && (
           <div className="space-y-2 border-t pt-3">
             <p className="text-xs text-muted-foreground">{t('publishNote')}</p>
+            {unread && (
+              <div className="space-y-2" data-testid="vy-review">
+                <p className="text-sm">{t('reviewNote')}</p>
+                {review.error && <ErrorText>{errorMessage(review.error)}</ErrorText>}
+                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate(unreadIds)}>
+                  {t('reviewed')}
+                </Button>
+              </div>
+            )}
             {publish.error && <ErrorText>{errorMessage(publish.error)}</ErrorText>}
-            <Button size="sm" loading={publish.isPending} onClick={() => publish.mutate()}>
+            <Button size="sm" loading={publish.isPending} disabled={unread} onClick={() => publish.mutate()}>
               {t('publish')}
             </Button>
           </div>
