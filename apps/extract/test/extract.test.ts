@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs, zExtractResponse, type ExtractResponse } from '@crove/extract-contract';
+import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_KINDS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs, zExtractResponse, type ExtractResponse } from '@crove/extract-contract';
 import { IMAGE_MARKER, credentialVariables, enforcesAllowlist, loadExtractConfig, unexpectedVariables } from '../src/main.ts';
 import { DEFAULT_SANDBOX, PARSER_ENV, classifyExit, parserFlags, runSandboxed } from '../src/sandbox.ts';
 import { createExtractApp, createLimiter, type Runner } from '../src/server.ts';
@@ -103,6 +103,46 @@ describe('crove-extract HTTP service', () => {
     expect(Buffer.from(result.email.attachments[0]?.content ?? '', 'base64')).toEqual(FIXTURE);
   });
 
+  // #2439: the receiving server's verdict on the sender is copied out, topmost first and cut; the sandbox decides nothing about it.
+  it('copies the Authentication-Results headers of a mail, in order, unfolded and at most five', async () => {
+    const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a1@mau.test>'];
+    for (let i = 0; i < 7; i++) lines.push(`Authentication-Results: mx${i}.in.test;`, `  dmarc=pass header.from=mau.test${i}`);
+    lines.push('MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao');
+    const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
+    if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+    expect(result.email.authResults).toEqual([0, 1, 2, 3, 4].map((i) => `mx${i}.in.test; dmarc=pass header.from=mau.test${i}`));
+  });
+
+  it('reads every Auto-Submitted and Precedence header, and keeps every In-Reply-To id among the references', async () => {
+    const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a3@mau.test>', 'Auto-Submitted: no', 'Auto-Submitted: auto-replied', 'In-Reply-To: <p1@mau.test> <p2@mau.test>', 'References: <r1@mau.test>', 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
+    const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
+    if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+    expect(result.email.automated).toBe(true);
+    expect(result.email.references).toEqual(['<r1@mau.test>', '<p1@mau.test>', '<p2@mau.test>']);
+  });
+
+  it('reads a commented Precedence value, and sees a From that names more than one mailbox', async () => {
+    const mail = (extra: string[]) => ['To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a4@mau.test>', ...extra, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'].join('\r\n');
+    const read = async (extra: string[]) => {
+      const result = await answer(await post(createExtractApp(), 'mime', encode(mail(extra))));
+      if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+      return result.email;
+    };
+    expect((await read(['From: a@mau.test', 'Precedence: bulk (mailer)'])).automated).toBe(true);
+    expect((await read(['From: a@mau.test', 'Precedence: first-class'])).automated).toBe(false);
+    expect((await read(['From: a@x.test, b@y.test'])).multipleFrom).toBe(true);
+    expect((await read(['From: a@x.test', 'From: b@y.test'])).multipleFrom).toBe(true);
+    expect((await read(['From: "Hoa, Chi" <a@x.test>'])).multipleFrom).toBe(false);
+    expect((await read(['From: Hoa Chi <a@x.test> (a, comment)'])).multipleFrom).toBe(false);
+  });
+
+  it('never cuts a long Authentication-Results header: it is kept as its authserv-id and none', async () => {
+    const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a2@mau.test>', `Authentication-Results: mx.in.test; spf=pass (${'x'.repeat(1200)}); dkim=pass header.d=victim.test.evil.test`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
+    const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
+    if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+    expect(result.email.authResults).toEqual(['mx.in.test; none']);
+  });
+
   // #779: a forwarded mail's text, for an AI draft of a Social post.
   describe("a mail's text", () => {
     const mail = (contentType: string, body: string): Uint8Array<ArrayBuffer> =>
@@ -172,7 +212,10 @@ describe('crove-extract HTTP service', () => {
     const app = createExtractApp();
     const unknown = await post(app, 'docx', encode('x'));
     expect(unknown.status).toBe(400);
-    expect(await answer(unknown)).toMatchObject({ code: 'bad_request' });
+    const refusal = await answer(unknown);
+    expect(refusal).toMatchObject({ code: 'bad_request' });
+    // The message lists exactly the kinds the service takes, so it cannot fall behind EXTRACT_KINDS.
+    expect((refusal as { message: string }).message.replace(/^kind must be one of /, '').split(', ')).toEqual([...EXTRACT_KINDS]);
     const empty = await post(app, 'einvoice_xml', new Uint8Array(0));
     expect(empty.status).toBe(422);
     expect(await answer(empty)).toMatchObject({ code: 'invalid' });

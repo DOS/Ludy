@@ -4,3 +4,8 @@ export * from './invoice.ts';
 export * from './einvoice-detect.ts';
 export * from './accounting.ts';
 export * from './vat-rate.ts';
+export * from './bank-statement-sheet.ts';
+export * from './marketplace-income.ts';
+export * from './marketplace-orders.ts';
+export * from './invoice-lookup.ts';
+export * from './payroll/index.ts';

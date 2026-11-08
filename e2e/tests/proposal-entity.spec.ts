@@ -33,7 +33,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
 
   await test.step('upload it in the branch, chosen beside the upload button', async () => {
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     // The sidebar's choice carries over; the Inbox shows it where documents are uploaded.
     await expect(page.getByRole('main').getByLabel('Ghi sổ vào').locator('option:checked')).toHaveText(BRANCH);
     await page.locator('input[type=file]').setInputFiles(INVOICE);

@@ -14,7 +14,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { type ChipVariant } from '../lib/status.ts';
@@ -99,8 +99,7 @@ function AuditLog({ search }: { search: AuditSearch }) {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button size="lg" variant="outline" onClick={() => exportCsv.mutate()} disabled={exportCsv.isPending}>
-            {exportCsv.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={exportCsv.isPending} size="lg" variant="outline" onClick={() => exportCsv.mutate()}>
             {t('export')}
           </Button>
         }

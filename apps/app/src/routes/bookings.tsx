@@ -14,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { BookingFeedCard } from '../components/booking-feed.tsx';
 import { BookingSuggestCard } from '../components/booking-suggest.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { visitorTimeZone } from '../lib/booking.ts';
@@ -24,6 +24,8 @@ type Period = 'upcoming' | 'past';
 type Scope = 'mine' | 'org';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.crm.bookings.list.key() });
+// How often the list is read again while a booking's Google Meet is pending.
+const MEET_POLL_MS = 5_000;
 
 function Actions({ booking, slug, zone }: { booking: BookingItem; slug: string; zone: string }) {
   const t = useTranslations('bookings');
@@ -41,8 +43,7 @@ function Actions({ booking, slug, zone }: { booking: BookingItem; slug: string; 
       <div className="space-y-2">
         <p className="text-sm text-foreground">{t('cancelConfirm')}</p>
         <div className="flex gap-2">
-          <Button size="sm" variant="destructive" disabled={cancel.isPending} onClick={() => cancel.mutate({ bookingId: booking.id })}>
-            {cancel.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={cancel.isPending} size="sm" variant="destructive" onClick={() => cancel.mutate({ bookingId: booking.id })}>
             {t('cancelYes')}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setMode('none')}>
@@ -113,6 +114,18 @@ function BookingRow({
               .filter((n): n is string => n !== null)
               .join(', ')}
           </p>
+          {/* The Google Meet of the booking (C7): its link once made, that it is being made, or that Google could not make it (the booking stands). */}
+          {b.status === 'confirmed' && b.meeting.state === 'ready' && b.meeting.url && (
+            <a href={b.meeting.url} target="_blank" rel="noopener noreferrer" className="text-xs text-link underline-offset-4 hover:underline" data-testid="booking-meet-link">
+              {t('meet.join')}
+            </a>
+          )}
+          {b.status === 'confirmed' && b.meeting.state === 'pending' && <p className="text-xs text-muted-foreground">{t('meet.pending')}</p>}
+          {b.status === 'confirmed' && b.meeting.state === 'failed' && (
+            <Badge variant="warning" data-testid="booking-meet-failed">
+              {t('meet.failed')}
+            </Badge>
+          )}
         </TableCell>
         <TableCell className="px-4 text-sm">
           <p className="font-medium text-foreground">{b.visitor.name ?? t('erased')}</p>
@@ -160,7 +173,13 @@ export function BookingsPage() {
   const [scope, setScope] = useState<Scope>('mine');
   const org = useQuery(orpc.org.get.queryOptions());
   const manager = org.data?.role === 'owner' || org.data?.role === 'admin';
-  const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }), enabled: org.data !== undefined });
+  const bookings = useQuery({
+    ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }),
+    enabled: org.data !== undefined,
+    // A Google Meet that is still being made (C7, #1375) settles within minutes and sends no stream hint: while a listed booking waits for it, the list is read again.
+    // A cancelled booking never settles, so only confirmed ones keep the poll going.
+    refetchInterval: (query) => (query.state.data?.some((b) => b.status === 'confirmed' && b.meeting.state === 'pending') ? MEET_POLL_MS : false),
+  });
   const now = Date.now();
   const names = new Map((org.data?.members ?? []).map((m) => [m.userId, m.displayName ?? m.email]));
   const nameOf = (userId: string) => names.get(userId) ?? null;

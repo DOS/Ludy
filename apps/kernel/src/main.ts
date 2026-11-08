@@ -18,9 +18,12 @@
 //   org-purge <org slug or id> --reason <text>
 //                 apply the offboarding deletion map to an org in offboarding whose export is old enough, and close
 //                 it (issue #1024); run it in the worker's container
-//   restore-report [--reseed] [--floor <org>:<entity>:<doc type>:<period>=<next>]... [--json]
+//   restore-report [--reseed] [--floor <org>:<entity>:<doc type>:<period>=<next>]... [--floors-complete <org>]...
+//                  [--acknowledge] [--json]
 //                 after a restore: what the WORM archive holds that the database lacks, and the number series raised
 //                 above the archive (issue #2007); tools/backup/restore.sh runs it in the worker's container
+//   shred-replay  after a restore: delete again every meeting a shred reference of the archive store names, and remove the objects and file rows that
+//                 leaves (issue #2579, ADR-0017 section 8); the worker does the same at start; run it in the worker's container
 //   vapid-keys    print a new VAPID key pair for browser push (issue #1238): VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY
 //   context-token-key  print a new context token key (#1822): CROVE_CONTEXT_TOKEN_KEY, for migrate and the kernel
 // It wires the open-source default adapters into the composition root (createKernel, ADR-0030).
@@ -28,6 +31,7 @@ import { randomBytes } from 'node:crypto';
 import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@crove/db/migrate';
 import { liveAuthUrl, loadConfig, type Config } from './config.ts';
 import { resolveContextTokenKey } from './context-token-key.ts';
+import { installJsonLogs, parseLogFormat } from './log.ts';
 import { createKernel, defaultAdapters, type ServerRole } from './kernel.ts';
 import { describeMailer } from './mail.ts';
 import { runPilotCheck } from './pilot-check.ts';
@@ -36,8 +40,8 @@ import { describeStorage } from './storage.ts';
 import { runUsageReport } from './usage-report.ts';
 import { generateVapidKeys } from './web-push.ts';
 
-type Role = 'migrate' | 'auth-grants' | 'prober' | 'usage-report' | 'pilot-check' | 'exports-rebind' | 'user-disable' | 'user-enable' | 'org-purge' | 'restore-report' | 'vapid-keys' | 'context-token-key' | ServerRole;
-const ROLES: readonly Role[] = ['migrate', 'auth-grants', 'api', 'worker', 'all', 'prober', 'usage-report', 'pilot-check', 'exports-rebind', 'user-disable', 'user-enable', 'org-purge', 'restore-report', 'vapid-keys', 'context-token-key'];
+type Role = 'migrate' | 'auth-grants' | 'prober' | 'usage-report' | 'pilot-check' | 'exports-rebind' | 'user-disable' | 'user-enable' | 'org-purge' | 'restore-report' | 'shred-replay' | 'vapid-keys' | 'context-token-key' | ServerRole;
+const ROLES: readonly Role[] = ['migrate', 'auth-grants', 'api', 'worker', 'all', 'prober', 'usage-report', 'pilot-check', 'exports-rebind', 'user-disable', 'user-enable', 'org-purge', 'restore-report', 'shred-replay', 'vapid-keys', 'context-token-key'];
 
 async function runMigrate(config: Config) {
   const adminUrl = config.ADMIN_DATABASE_URL;
@@ -50,14 +54,18 @@ async function runMigrate(config: Config) {
     // Installed after the migrations, as a bind parameter (#1822): the setting, else its file, created with a fresh
     // key when missing. Neither installs none, and the API then refuses to start.
     contextTokenKey: resolveContextTokenKey(config, { create: true }) ?? null,
+    sharedDatabase: config.CROVE_SHARED_DATABASE === 'true',
+    allowModeSwitch: config.CROVE_SHARED_DATABASE_SWITCH === 'true',
   });
+  const shared = config.CROVE_SHARED_DATABASE === 'true';
   await setRolePasswords(adminUrl, {
     crove_app: config.CROVE_APP_DB_PASSWORD,
     crove_worker: config.CROVE_WORKER_DB_PASSWORD,
     crove_prober: config.CROVE_PROBER_DB_PASSWORD,
     crove_reporter: config.CROVE_REPORTER_DB_PASSWORD,
-    supabase_auth_admin: config.AUTH_DB_PASSWORD,
-  });
+    // Supabase Auth's role belongs to the other system in a shared database.
+    ...(shared ? {} : { supabase_auth_admin: config.AUTH_DB_PASSWORD }),
+  }, { sharedDatabase: shared });
   // The superuser step of the DDL watch (#1202): skipped, with a log line, where the admin role may not create event
   // triggers.
   await installDdlWatch({ adminUrl, log: (m) => console.log(`[migrate] ${m}`) });
@@ -67,12 +75,17 @@ async function runMigrate(config: Config) {
 async function runAuthGrants(config: Config) {
   const adminUrl = config.ADMIN_DATABASE_URL;
   if (!adminUrl) throw new Error('ADMIN_DATABASE_URL is required for auth-grants');
-  await applyAuthGrants({ adminUrl, log: (m) => console.log(`[auth-grants] ${m}`) });
+  await applyAuthGrants({ adminUrl, sharedDatabase: config.CROVE_SHARED_DATABASE === 'true', log: (m) => console.log(`[auth-grants] ${m}`) });
 }
 
 async function main() {
   const role = (process.argv[2] ?? 'all') as Role;
   if (!ROLES.includes(role)) throw new Error(`unknown role ${role}`);
+  // JSON log lines for the long-running roles and the prober (#2175); the CLI roles print for a person (keys, reports), so
+  // they stay as they are. Read from the environment here because the prober reads its own settings, not loadConfig().
+  if (role === 'api' || role === 'worker' || role === 'all' || role === 'prober') {
+    if (parseLogFormat(process.env['LOG_FORMAT']) === 'json') installJsonLogs({ role });
+  }
   // The prober needs only its own settings (no auth, storage or AI configuration), so it reads them itself.
   if (role === 'prober') process.exit(await runProber(process.argv.slice(3)));
   if (role === 'usage-report') process.exit(await runUsageReport(process.argv.slice(3)));
@@ -99,6 +112,7 @@ VAPID_PRIVATE_KEY=${keys.privateKey}`);
   }
   if (role === 'org-purge') process.exit(await createKernel(config, defaultAdapters(config)).purgeOrg(process.argv.slice(3)));
   if (role === 'restore-report') process.exit(await createKernel(config, defaultAdapters(config)).restoreReport(process.argv.slice(3)));
+  if (role === 'shred-replay') process.exit(await createKernel(config, defaultAdapters(config)).shredReplay());
   const live = config.AUTH_SESSION_CHECK === 'jwt' ? liveAuthUrl(config) : null;
   console.log(
     `[auth] session check: ${config.AUTH_SESSION_CHECK}, step-up for R3: ${config.AUTH_STEP_UP}` +

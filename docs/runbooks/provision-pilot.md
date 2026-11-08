@@ -71,9 +71,9 @@ Then the deploy user, its SSH key for the workflow, the stack directory `/opt/cr
 Create the bucket in the region of the server, private, with versioning on **before the first write** (ADR-0013: Ludy refuses a write that comes back without an object version) and **Object Lock enabled**, so that the worker can hold the original file of every posted invoice for 10 years (`EVIDENCE_LOCK_DAYS`, [evidence-holds.md](evidence-holds.md)). Do not set a default retention on the bucket: Ludy holds only posted files. Give Ludy its own access key, limited to this bucket:
 
 - on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetObjectRetention`, `s3:PutObjectRetention` (never `s3:BypassGovernanceRetention`);
-- on the bucket: `s3:ListBucket`, `s3:GetBucketObjectLockConfiguration`.
+- on the bucket: `s3:ListBucket`, `s3:ListBucketVersions`, `s3:GetBucketObjectLockConfiguration`. `s3:ListBucketVersions` also serves the WORM archive bucket when `ARCHIVE_STORE=s3` uses this key: its nightly verifier reads each key's versions (#2020, [worm-archive.md](worm-archive.md)), and fails with `AccessDenied` without it.
 
-Ludy never deletes object versions, so two lifecycle rules free the space its deletes leave behind, and a third removes abandoned browser uploads. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
+Ludy never deletes object versions, so three lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket: without it the noncurrent version stays), and one more removes abandoned browser uploads. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
 
 ```bash
 aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
@@ -91,7 +91,9 @@ cat > lifecycle.json <<'EOF'
     { "ID": "crove-inbound-deleted", "Status": "Enabled", "Filter": { "Prefix": "inbound/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
     { "ID": "crove-export-deleted", "Status": "Enabled", "Filter": { "Prefix": "export/" },
-      "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } }
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
+    { "ID": "crove-conversation-deleted", "Status": "Enabled", "Filter": { "Prefix": "conversation/" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } }
   ]
 }
 EOF
@@ -160,7 +162,8 @@ Write `/opt/crove/.env` (owner the deploy user, mode 600) from `.env.example`. G
 | `PUBLIC_URL` | `https://<your domain>` |
 | `CROVE_DOMAIN` | `<your domain>` (the reverse proxy's certificate) |
 | `TRUSTED_PROXY_HOPS` | `1` (the reverse proxy below) |
-| `COMPOSE_FILE` | `docker-compose.yml:docker-compose.override.yml:compose.host.yml` |
+| `COMPOSE_FILE` | `docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml` (the split API and worker, [deploy.md](deploy.md), "The pilot layout") |
+| `CROVE_MODULES` | `finance` (the pilot runs one module; empty would run every module, Social's public routes among them) |
 | `COMPOSE_PROFILES` | `prober` |
 | Every `*_PASSWORD`, `AUTH_JWT_SECRET`, `EXPORT_ENCRYPTION_KEY` (`openssl rand -base64 32`) | generated, never a sample value |
 | `AUTH_AUTOCONFIRM` | `false` |
@@ -170,9 +173,10 @@ Write `/opt/crove/.env` (owner the deploy user, mode 600) from `.env.example`. G
 | `STORAGE` and `S3_*` | `s3`, the endpoint, region, bucket and Ludy's key from section 4 |
 | `INBOUND_DOMAIN`, `INBOUND_SECRET` | section 5, "Inbound email" (#53) |
 | `ALERT_WEBHOOK_URL` and the other `ALERT_*` | the owner's Telegram or Slack (README, "Monitoring and alerts"; #309) |
-| `AI_*` | per #312; empty until then (e-invoice XML works without it) |
+| `AI_*` | per #312; empty until then (e-invoice XML works without it). With `AI_API_KEY` set, set `AI_PRICE_INPUT_PER_MTOK` or `AI_PRICE_OUTPUT_PER_MTOK` too, or the AI cost cap counts nothing |
+| `BACKUP_*` | [backup-and-restore.md](backup-and-restore.md); `BACKUP_ENCRYPTION_KEY` (`openssl rand -base64 32`, its own key) is required |
 
-The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sample `AUTH_JWT_SECRET`, `AUTH_AUTOCONFIRM=true`, `AUTH_SESSION_CHECK=off`, `AUTH_STEP_UP=off`, presigned transfers to a plain-http bucket endpoint, an email budget a few client addresses could use up, or no `EXPORT_ENCRYPTION_KEY`. Those are the production config guards of the acceptance criteria; `pnpm pilot:check` (section 10) checks the rest.
+The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sample `AUTH_JWT_SECRET`, a database URL with a password shipped in `.env.example` or the compose files, `AUTH_AUTOCONFIRM=true`, `ADS_SANDBOX=true` with the ads module on (compose falls back to true, so set `ADS_SANDBOX=false` when `CROVE_MODULES` includes `ads`), `AUTH_SESSION_CHECK=off`, `AUTH_STEP_UP=off`, presigned transfers to a plain-http bucket endpoint, an email budget a few client addresses could use up, or no `EXPORT_ENCRYPTION_KEY`. Those are the production config guards of the acceptance criteria; `pnpm pilot:check` (section 10) checks the rest.
 
 ## 8. The TLS reverse proxy
 
@@ -183,7 +187,7 @@ git clone --depth 1 --branch main https://github.com/DOS/Ludy.git /opt/crove-src
 cp /opt/crove-src/tools/deploy/caddy/compose.host.yml /opt/crove-src/tools/deploy/caddy/Caddyfile /opt/crove/
 ```
 
-Or copy the two files from your own checkout with `scp`.
+Or copy the two files from your own checkout with `scp`. The split API and worker (`compose.pilot.yml`, [deploy.md](deploy.md), "The pilot layout") need no copy: every release ships the file, and listing it in `COMPOSE_FILE` chooses the layout.
 
 - Caddy gets and renews a Let's Encrypt certificate for `CROVE_DOMAIN` and redirects plain http to https. The certificates live in the `caddy-data` volume; keep it, or every restart asks Let's Encrypt again (which rate-limits repeated requests for the same name).
 - It runs on the host's network so it sees each client's real address, and it replaces any `X-Forwarded-For` a client sends with that address. With `TRUSTED_PROXY_HOPS=1` the kernel's per-client limits (sign-in, sign-up, recovery, email) then count each client separately. Behind a published port instead, Docker shows the proxy its bridge address for IPv6 clients, and every one of them would share one budget.
@@ -197,7 +201,7 @@ Another proxy works too (nginx, a cloud load balancer): forward to `127.0.0.1:${
 
 Set up the `pilot` environment and its secrets on GitHub and push a `v*` tag ([deploy.md](deploy.md)). The deploy starts the database, migrates, starts Supabase Auth, the reverse proxy and the app, waits for `/readyz` and runs the smoke test; with `DEPLOY_PUBLIC_URL` set it runs the smoke test again through the reverse proxy.
 
-Afterwards, on the server, `docker compose ps` in `/opt/crove` lists every service running, and from outside:
+Afterwards, on the server, `docker compose ps` in `/opt/crove` lists every service running (`api` and `worker`, and no `crove`), and from outside:
 
 ```bash
 curl -sI http://<your domain>/healthz        # 308 to https

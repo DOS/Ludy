@@ -3,8 +3,9 @@ import { RPCLink } from '@orpc/client/fetch';
 import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
+import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
 import { ClientError, apiErrorFromResponse, describeError, isMfaRequired, isOrgAccessRevoked, isUnauthenticated, retryWhileBusy } from './errors.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from './org-access.ts';
@@ -23,18 +24,18 @@ async function headers(): Promise<Record<string, string>> {
   return requestHeaders(await accessToken(), currentOrg);
 }
 
-const link = new RPCLink({ url: `${window.location.origin}/api/rpc`, headers });
+const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers });
 
 export const client: ContractRouterClient<typeof contract> = createORPCClient(link);
 export const orpc = createTanstackQueryUtils(client);
 
 // The same API without the org header, whatever page this is: the user's own sign-out revoke (issue #247).
-const orglessLink = new RPCLink({ url: `${window.location.origin}/api/rpc`, headers: async () => requestHeaders(await accessToken(), null) });
+const orglessLink = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: async () => requestHeaders(await accessToken(), null) });
 export const orglessClient: ContractRouterClient<typeof contract> = createORPCClient(orglessLink);
 
 // The API for one org named here rather than by the page: onboarding sets up the org it has just created (issue #324).
 export function clientForOrg(slug: string): ContractRouterClient<typeof contract> {
-  return createORPCClient(new RPCLink({ url: `${window.location.origin}/api/rpc`, headers: async () => requestHeaders(await accessToken(), slug) }));
+  return createORPCClient(new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: async () => requestHeaders(await accessToken(), slug) }));
 }
 
 export { ClientError, isStepUpRequired, isUnauthenticated } from './errors.ts';
@@ -106,7 +107,7 @@ export function takeOrgLeftNotice() {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const response = await fetch(path, { ...init, headers: { ...(await headers()), ...(init.headers as Record<string, string> | undefined) } });
+  const response = await fetch(apiUrl(path), { ...init, headers: { ...(await headers()), ...(init.headers as Record<string, string> | undefined) } });
   if (!response.ok) throw await apiErrorFromResponse(response);
   return response;
 }
@@ -114,7 +115,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 // A one-time ticket for the invalidation stream of `slug` (issue #69): EventSource cannot send the Authorization
 // header, so the stream opens with this ticket, valid for seconds and bound to this session and org.
 export async function fetchStreamTicket(slug: string): Promise<string> {
-  const response = await fetch('/api/stream/tickets', { method: 'POST', headers: requestHeaders(await accessToken(), slug) });
+  const response = await fetch(apiUrl('/api/stream/tickets'), { method: 'POST', headers: requestHeaders(await accessToken(), slug) });
   if (!response.ok) throw await apiErrorFromResponse(response);
   return ((await response.json()) as { ticket: string }).ticket;
 }
@@ -133,15 +134,83 @@ export async function fetchFile(fileId: string): Promise<Blob> {
   return (await apiFetch(`/api/files/${fileId}`)).blob();
 }
 
+// A customer's image of a conversation message (#2357): the kernel streams it after the same authorization as the thread (a member who may
+// not read the thread gets a 404), and it is shown as an image only, from an object URL, never as a page.
+export async function fetchConversationImage(attachmentId: string): Promise<Blob> {
+  return (await apiFetch(`/api/conversations/attachments/${attachmentId}`)).blob();
+}
+
 type Uploaded = { fileId: string; duplicate: boolean };
 
 // A Social upload may be a video of up to 100 MB (#409); the server checks each type's own limit.
-// An import spreadsheet (#465) is at most 10 MB.
-const maxBytesFor = (purpose: UploadPurpose) => (purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : purpose === 'import' ? MAX_IMPORT_BYTES : MAX_UPLOAD_BYTES);
-const tooLarge = (file: File, purpose: UploadPurpose) =>
+// An import spreadsheet (#465) is at most 10 MB. Meeting audio up to 300 MB, video up to 2 GB (#2576).
+const maxBytesFor = (purpose: UploadPurpose) =>
   purpose === 'social'
+    ? MAX_SOCIAL_VIDEO_BYTES
+    : purpose === 'import'
+      ? MAX_IMPORT_BYTES
+      : purpose === 'meeting_audio'
+        ? MAX_MEETING_AUDIO_BYTES
+        : purpose === 'meeting_video'
+          ? MAX_MEETING_VIDEO_BYTES
+          : MAX_UPLOAD_BYTES;
+const tooLarge = (file: File, purpose: UploadPurpose) =>
+  purpose === 'meeting_audio' || purpose === 'meeting_video'
+    ? new ClientError('FILE_TOO_LARGE', (t) => t('kernelErrors.codes.FILE_TOO_LARGE'))
+    : purpose === 'social'
     ? new ClientError('inbox.socialFileTooLarge', (t) => t('inbox.socialFileTooLarge', { name: file.name }))
     : new ClientError('inbox.fileTooLarge', (t) => t('inbox.fileTooLarge', { name: file.name }));
+
+// Staged upload for meeting audio or video (#2576): grants uploadId and sends bytes to bucket staging.
+export async function stageMediaUpload(file: File, purpose: 'meeting_audio' | 'meeting_video'): Promise<string> {
+  if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
+  const grant = (await (await apiFetch('/api/files/uploads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ purpose }) })).json()) as {
+    uploadId: string;
+    url: string;
+    fields: Record<string, string>;
+  };
+  const form = new FormData();
+  for (const [name, value] of Object.entries(grant.fields)) form.append(name, value);
+  form.append('file', file);
+  const stored = await fetch(grant.url, { method: 'POST', body: form, credentials: 'omit' }).catch(() => null);
+  if (!stored?.ok) throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
+  return grant.uploadId;
+}
+
+// Encrypted media upload for meeting audio or video (#2576). Works on both STORAGE=s3 (staged upload) and STORAGE=local (direct multipart).
+export async function uploadMeetingMedia(
+  meetingId: string,
+  kind: 'audio' | 'video',
+  file: File,
+  lengthSeconds?: number,
+): Promise<{ fileId: string }> {
+  const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+  if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
+
+  if (getConfig().uploads === 'presigned') {
+    const uploadId = await stageMediaUpload(file, purpose);
+    const response = await retryWhileBusy(() =>
+      apiFetch(`/api/meetings/${meetingId}/media`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) }),
+      }),
+    );
+    return (await response.json()) as { fileId: string };
+  }
+
+  const form = new FormData();
+  form.append('kind', kind);
+  form.append('file', file);
+  if (lengthSeconds !== undefined) form.append('lengthSeconds', String(lengthSeconds));
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${meetingId}/media?kind=${kind}`, {
+      method: 'POST',
+      body: form,
+    }),
+  );
+  return (await response.json()) as { fileId: string };
+}
 
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.

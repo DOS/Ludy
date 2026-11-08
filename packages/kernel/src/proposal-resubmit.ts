@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand } from '@crove/kernel-runtime';
-import { actorRef, addAuthor, eligibleApprovers, parseAuthors } from './approval.ts';
+import { PROPOSAL_CO_AUTHOR_COMMANDS, actorRef, addAuthor, eligibleApprovers, parseAuthors } from './approval.ts';
 import { legalEntityMoveRefused, refuseWhileReextracting } from './extraction.ts';
 
 // Proposals a user may ask for (kernel.proposal.request), and the module command that checks the request and builds
@@ -22,6 +22,22 @@ export const PROPOSAL_PREPARERS = {
   'finance.journal_voucher.record': 'finance.journal_voucher.prepare',
   'finance.closing.record': 'finance.closing.prepare',
   'finance.depreciation.record': 'finance.depreciation.prepare',
+  // The close of a month of stock (#2513), built from the stock moves for the month named.
+  'finance.stock.close_period': 'finance.stock.prepare_close',
+  // The confirmation of a count of stock (#2513), built from the books for the count named.
+  'finance.stock.count_confirm': 'finance.stock.prepare_count',
+  // The posting of an approved pay run (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
+  'finance.payroll_posting.record': 'hr.payroll.posting.prepare',
+  // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
+  // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
+  'ads.write.enable': 'ads.write.prepare_enable',
+  'ads.account.enable_write': 'ads.account.prepare_enable_write',
+  'ads.cap.set': 'ads.cap.prepare_set',
+  'ads.launches.unblock': 'ads.launches.prepare_unblock',
+  // A drafted campaign submitted for approval (ADR-0043, #2295, W1): the owner or an admin asks, an owner or an admin approves.
+  'ads.campaign.launch': 'ads.campaign.prepare_launch',
+  // A sales e-invoice draft asked to be issued (ADR-0044 point 3, #2502): a member asks, an owner or an admin approves.
+  'finance.einvoice.issue': 'finance.einvoice.prepare_issue',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];
@@ -34,7 +50,17 @@ export const zPreparedProposal = z.object({
   title: z.string().min(1).max(300),
   payload: z.record(z.string(), z.unknown()),
   legalEntityId: zId.optional(),
+  // People whose decision the proposal rests on besides the requester (for example the approver of the pay run it posts): they count as authors in four-eyes (P10), so none of them
+  // approves it while another eligible approver exists. Only the commands in PROPOSAL_CO_AUTHOR_COMMANDS may declare them (the database holds the same list).
+  coAuthors: z.array(z.uuid()).min(1).max(10).optional(),
 });
+
+// The co-authors a preparer declared, as the column stores them: refused for a command that is not in the list, one id once, none when it declared none.
+export function preparedCoAuthors(draft: { command: string; coAuthors?: readonly string[] | undefined }): string[] | null {
+  if (!draft.coAuthors || draft.coAuthors.length === 0) return null;
+  if (!PROPOSAL_CO_AUTHOR_COMMANDS.includes(draft.command)) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+  return [...new Set(draft.coAuthors.map((id) => id.toLowerCase()))];
+}
 
 // The legal entity of a prepared proposal (#1538): the one its preparer names, else its payload's legalEntityId (the
 // entity a voucher posts into, resolved by the preparer as the requester), else none, and the database gives it the
@@ -144,10 +170,13 @@ export const resubmitProposal = defineCommand({
       duplicate_of?: string | null;
       tainted?: boolean;
     };
+    let coAuthors: string[] | null = null;
     if (source === 'request') {
       const preparer = PROPOSAL_PREPARERS[old.command as RequestableCommand];
       const draft = zPreparedProposal.parse(await ctx.run(preparer, old.request_input));
       if (draft.command !== old.command) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      // The preparer ran again: the people it declares now, as for a new request.
+      coAuthors = preparedCoAuthors(draft);
       content = {
         kind: draft.kind,
         command: draft.command,
@@ -172,7 +201,7 @@ export const resubmitProposal = defineCommand({
       if (newest?.id !== old.id) {
         throw new DomainError('PROPOSAL_SUPERSEDED', 409, 'Chứng từ này đã có đề xuất mới hơn; hãy mở đề xuất đó', { proposalId: newest?.id ?? null });
       }
-      await refuseWhileReextracting(ctx, old.source_file_id);
+      await refuseWhileReextracting(ctx, old.source_file_id, old.extraction_id);
       // A proposal moved to another entity before #1764 (its payload naming another entity than its own) is not asked
       // for again as it is: read the document again in the entity to book it in.
       const named = zId.safeParse((old.payload as { legalEntityId?: unknown } | null)?.legalEntityId);
@@ -201,11 +230,12 @@ export const resubmitProposal = defineCommand({
         // P12: who may approve it now; P10: whoever wrote the content stays an author, and so does the user asking.
         eligible_approvers: await eligibleApprovers(ctx.trx, ctx.orgId, content.command),
         authors: JSON.stringify(addAuthor(authors, actorRef(ctx.actor))),
+        ...(coAuthors ? { co_authors: coAuthors } : {}),
         resubmitted_from: old.id,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: created.id, resubmitted_from: old.id, source, proposal_command: content.command });
+    ctx.audit({ proposal_id: created.id, resubmitted_from: old.id, source, proposal_command: content.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', old.id, 'proposal.resubmitted', 'Gửi lại thành đề xuất mới');
     await ctx.activity('kernel.proposal', created.id, 'proposal.created', 'Tạo đề xuất (gửi lại)');
     await ctx.emit('kernel.proposal.created', { proposalId: created.id, kind: content.kind });

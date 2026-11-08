@@ -171,7 +171,7 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
       }
     }
     // The other commands that post a journal voucher.
-    for (const command of ['finance.closing.record', 'finance.depreciation.record']) {
+    for (const command of ['finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm', 'finance.payroll_posting.record']) {
       const id = await proposal(command, 'approved');
       await expect(as('owner', journalVoucher(id)), command).resolves.toMatchObject({ ok: true });
     }

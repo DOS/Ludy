@@ -339,7 +339,7 @@ suite('outbound mail in the kernel (#538)', () => {
           )
         ).rows,
     );
-    expect(privileges.filter((p) => p.upd).map((p) => p.col)).toEqual(['attempts', 'error_code', 'provider', 'provider_message_id', 'sent_at', 'status', 'to_address', 'updated_at']);
+    expect(privileges.filter((p) => p.upd).map((p) => p.col)).toEqual(['attempts', 'error_code', 'payload', 'provider', 'provider_message_id', 'sent_at', 'status', 'subject', 'to_address', 'updated_at']);
     expect(await admin(async (c) => (await c.query<{ d: boolean }>("SELECT has_table_privilege('crove_tenant', 'crove_kernel.mail_message', 'DELETE') AS d")).rows[0]?.d)).toBe(false);
 
     // A suppression: lifted once, then frozen; its identity never changes.

@@ -3,8 +3,9 @@
 // budgets, and "Stop AI". In an org of several legal entities, owners choose each position's entities (#1763). The
 // server enforces every rule; the screen hides what the viewer's role can never do.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
+import { defaultCoworkerName } from '@crove/kernel-contract';
 import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -13,8 +14,9 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { AiMeter } from '../components/ai-meter.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, focusFirstInvalid, ListSkeleton, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import {
   EVERY_ENTITY,
@@ -128,8 +130,8 @@ export function StopAi() {
       </label>
       <div className="flex gap-2">
         <Button
+          loading={stop.isPending}
           variant="destructive"
-          disabled={stop.isPending}
           onClick={() =>
             stop.mutate(
               { scope: 'org', target: '*', ...(reason.trim() ? { reason: reason.trim() } : {}), idempotencyKey: key },
@@ -143,7 +145,6 @@ export function StopAi() {
             )
           }
         >
-          {stop.isPending ? <Spinner /> : null}
           {t('stopConfirm')}
         </Button>
         <Button variant="ghost" disabled={stop.isPending} onClick={() => setOpen(false)}>
@@ -285,11 +286,11 @@ function PositionScope({ position, entities, manage }: { position: Position; ent
           <LeScopePicker label={t('leScope')} entities={entities} value={editing} onChange={setEditing} disabled={update.isPending || locked} />
           <div className="flex flex-wrap gap-2">
             <Button
+              loading={update.isPending}
               size="sm"
               disabled={update.isPending || locked || !scopeReady(editing)}
               onClick={() => update.mutate({ id: position.id, leScope: editing, idempotencyKey: crypto.randomUUID() })}
             >
-              {update.isPending ? <Spinner /> : null}
               {t('save')}
             </Button>
             <Button
@@ -384,8 +385,7 @@ function AssignHolder({ position, members, agents }: { position: Position; membe
         <div className="mt-2 space-y-2 rounded-lg border border-warning/30 bg-warning/10 p-2 text-xs" role="alertdialog" aria-label={t('assignConfirmTitle')}>
           <p className="text-foreground">{pending === '' ? t('assignConfirmVacate', { title: position.title }) : t('assignConfirm', { title: position.title, holder: labelOf(pending) })}</p>
           <div className="flex gap-2">
-            <Button size="sm" disabled={assign.isPending} onClick={() => send(pending)}>
-              {assign.isPending ? <Spinner /> : null}
+            <Button loading={assign.isPending} size="sm" onClick={() => send(pending)}>
               {t('assignConfirmButton')}
             </Button>
             <Button size="sm" variant="ghost" disabled={assign.isPending} onClick={() => setPending(null)}>
@@ -527,8 +527,7 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
           </div>
         )}
         <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-5">
-          <Button type="submit" disabled={create.isPending || locked || !entitiesReady || (entities.length > 1 && !scopeReady(leScope))}>
-            {create.isPending ? <Spinner /> : null}
+          <Button loading={create.isPending} type="submit" disabled={create.isPending || locked || !entitiesReady || (entities.length > 1 && !scopeReady(leScope))}>
             {t('addPosition')}
           </Button>
           {create.error && !locked && <span className="text-xs text-destructive">{errorMessage(create.error)}</span>}
@@ -684,6 +683,7 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
                   <Badge variant="secondary">{t('aiBadge')}</Badge>
                 </div>
                 <p className="text-xs text-subtle-foreground">{t('templateMeta', { module: moduleName(tpl.module), risk: tpl.maxRisk, cap: String(tpl.dailyRunCap) })}</p>
+                {defaultCoworkerName(tpl.module) && <p className="text-xs text-subtle-foreground">{t('defaultName', { name: defaultCoworkerName(tpl.module) ?? '' })}</p>}
                 {!tpl.moduleEnabled && (
                   <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                     <AlertDescription className="text-warning">{t('moduleDisabled', { module: moduleName(tpl.module) })}</AlertDescription>
@@ -725,6 +725,8 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
   );
 }
 
+type BudgetField = 'target' | 'limit' | 'warnPercent';
+
 function BudgetForm({ agents }: { agents: Agent[] }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
@@ -734,26 +736,36 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const [limit, setLimit] = useState('');
   const [warnPercent, setWarnPercent] = useState('80');
   const [hardStop, setHardStop] = useState(true);
-  const [touched, setTouched] = useState(false);
   const set = useMutation(orpc.agents.setBudget.mutationOptions({ onSuccess: refresh }));
   const targets: Array<{ value: string; label: string }> =
     scope === 'org' ? [{ value: '*', label: t('scope.org') }] : scope === 'module' ? modules.map((m) => ({ value: m, label: moduleName(m) })) : agents.map((a) => ({ value: a.id, label: a.displayName }));
   const amountOk = isBudgetAmount(limit);
   const warn = Number(warnPercent);
   const warnOk = Number.isInteger(warn) && warn >= 1 && warn <= 100;
+  // Each error sits under its field, checked on leaving it and on submit (DESIGN.md §4.2, #2004); the server checks again.
+  const ids = useId();
+  const idOf = (field: BudgetField) => `${ids}-${field}`;
+  const fields = useFieldErrors<BudgetField>((field) =>
+    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : target ? null : t('budgetTargetMissing'),
+  );
+  const control = (field: BudgetField) => fieldControl(idOf(field), { error: Boolean(fields.of(field)) });
   const pickScope = (next: (typeof SCOPES)[number]) => {
     setScope(next);
     setTarget(next === 'org' ? '*' : next === 'module' ? (modules[0] ?? '') : (agents[0]?.id ?? ''));
+    fields.edit('target');
   };
   const locked = isStepUpRequired(set.error);
   return (
     <>
       <form
         className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2 lg:grid-cols-5"
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          setTouched(true);
-          if (!amountOk || !warnOk || !target) return;
+          if (!fields.checkAll(['target', 'limit', 'warnPercent'])) {
+            focusFirstInvalid(event.currentTarget);
+            return;
+          }
           set.mutate({ scope, target, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() });
         }}
       >
@@ -767,41 +779,151 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
             ))}
           </NativeSelect>
         </label>
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('budgetTarget')}</span>
-          <NativeSelect className="mt-1 w-full" value={target} onChange={(e) => setTarget(e.target.value)} disabled={scope === 'org' || locked}>
-            {targets.map((o) => (
-              <NativeSelectOption key={o.value} value={o.value}>
-                {o.label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </label>
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('budgetLimit')}</span>
-          <Input inputMode="decimal" required value={limit} disabled={locked} onChange={(e) => setLimit(e.target.value)} className="mt-1" aria-invalid={touched && !amountOk} />
-        </label>
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('warnPercent')}</span>
-          <Input type="number" min={1} max={100} value={warnPercent} disabled={locked} onChange={(e) => setWarnPercent(e.target.value)} className="mt-1" />
-        </label>
+        <div className="text-xs">
+          <label className="block">
+            <span className="text-subtle-foreground">{t('budgetTarget')}</span>
+            <NativeSelect
+              {...control('target')}
+              className="mt-1 w-full"
+              value={target}
+              onChange={(e) => {
+                setTarget(e.target.value);
+                fields.edit('target');
+              }}
+              disabled={scope === 'org' || locked}
+            >
+              {targets.map((o) => (
+                <NativeSelectOption key={o.value} value={o.value}>
+                  {o.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+          <FieldError id={idOf('target')} className="mt-1">
+            {fields.of('target')}
+          </FieldError>
+        </div>
+        <div className="text-xs">
+          <label className="block">
+            <span className="text-subtle-foreground">{t('budgetLimit')}</span>
+            <Input
+              {...control('limit')}
+              inputMode="decimal"
+              required
+              value={limit}
+              disabled={locked}
+              onChange={(e) => {
+                setLimit(e.target.value);
+                fields.edit('limit');
+              }}
+              onBlur={(e) => fields.blur('limit', e.target.value)}
+              className="mt-1"
+            />
+          </label>
+          <FieldError id={idOf('limit')} className="mt-1">
+            {fields.of('limit')}
+          </FieldError>
+        </div>
+        <div className="text-xs">
+          <label className="block">
+            <span className="text-subtle-foreground">{t('warnPercent')}</span>
+            <Input
+              {...control('warnPercent')}
+              type="number"
+              min={1}
+              max={100}
+              value={warnPercent}
+              disabled={locked}
+              onChange={(e) => {
+                setWarnPercent(e.target.value);
+                fields.edit('warnPercent');
+              }}
+              onBlur={(e) => fields.blur('warnPercent', e.target.value)}
+              className="mt-1"
+            />
+          </label>
+          <FieldError id={idOf('warnPercent')} className="mt-1">
+            {fields.of('warnPercent')}
+          </FieldError>
+        </div>
         <label className="flex items-center gap-2 self-end pb-2 text-xs text-muted-foreground">
           <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
           {t('hardStop')}
         </label>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-5">
-          <Button type="submit" disabled={set.isPending || locked}>
-            {set.isPending ? <Spinner /> : null}
+          <Button loading={set.isPending} type="submit" disabled={set.isPending || locked}>
             {t('setBudget')}
           </Button>
-          {touched && !amountOk && <span className="text-xs text-destructive">{t('budgetAmountInvalid')}</span>}
-          {touched && !warnOk && <span className="text-xs text-destructive">{t('warnPercentInvalid')}</span>}
-          {touched && !target && <span className="text-xs text-destructive">{t('budgetTargetMissing')}</span>}
           {set.error && !locked && <span className="text-xs text-destructive">{errorMessage(set.error)}</span>}
         </div>
       </form>
       {locked && <Refusal error={set.error} variables={set.variables} retry={(v) => set.mutate(v)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" />}
     </>
+  );
+}
+
+// The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'kernel_unattributed'] as const;
+
+// This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
+function AiUse({ agents }: { agents: Agent[] }) {
+  const t = useTranslations('agents');
+  const tf = useTranslations('aiMeter.features');
+  const f = useFormat();
+  const report = useQuery(orpc.ai.usage.queryOptions());
+  // A feature a newer server added keeps its key until the app has a name for it.
+  const feature = (key: string) => {
+    const name = key.replace('.', '_');
+    return (AI_FEATURE_NAMES as readonly string[]).includes(name) ? tf(name as (typeof AI_FEATURE_NAMES)[number]) : key;
+  };
+  return (
+    <section className="mt-8" data-testid="ai-use">
+      <h2 className="text-sm font-semibold text-foreground">{t('aiUseTitle')}</h2>
+      <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('aiUseHint')}</p>
+      {report.isPending ? (
+        <TableSkeleton columns={4} rows={3} />
+      ) : report.error ? (
+        <ErrorText>{errorMessage(report.error)}</ErrorText>
+      ) : (
+        <>
+          {!report.data.aiOn && <p className="mb-3 text-xs text-muted-foreground">{t('aiUseOff')}</p>}
+          <AiMeter className="mb-3" />
+          <p className="mb-3 text-xs text-muted-foreground" data-testid="ai-use-total">
+            {t('aiUseTotal', { spent: f.aiAmount(report.data.spent), calls: report.data.calls, date: f.date(report.data.resetAt) })}
+          </p>
+          {report.data.byFeature.length === 0 ? (
+            <Empty title={t('aiUseEmpty')} />
+          ) : (
+            <DataTable head={[t('colFeature'), t('colCalls'), t('colTokens'), t('colCost')]}>
+              {report.data.byFeature.map((row) => (
+                <TableRow key={row.feature} data-testid="ai-use-feature">
+                  <TableCell className="px-4">{feature(row.feature)}</TableCell>
+                  <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
+                  <TableCell className="px-4 tabular-nums">
+                    {f.number(row.inputTokens)} / {f.number(row.outputTokens)}
+                  </TableCell>
+                  <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                </TableRow>
+              ))}
+            </DataTable>
+          )}
+          {report.data.byAgent.length > 0 && (
+            <>
+              <h3 className="mt-4 mb-2 text-xs font-semibold text-foreground">{t('byAgentTitle')}</h3>
+              <DataTable head={[t('colAiAgent'), t('colCalls'), t('colCost')]}>
+                {report.data.byAgent.map((row) => (
+                  <TableRow key={row.agentId} data-testid="ai-use-agent">
+                    <TableCell className="px-4">{agents.find((a) => a.id === row.agentId)?.displayName ?? row.name ?? row.agentId}</TableCell>
+                    <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
+                    <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -915,6 +1037,7 @@ export function AgentsPage() {
             )}
           </section>
           <Templates perms={perms} entities={entities} entitiesReady={entitiesReady} />
+          {perms.budgets && <AiUse agents={chart.data.agents} />}
           {perms.budgets && <Budgets agents={chart.data.agents} perms={perms} />}
         </>
       )}

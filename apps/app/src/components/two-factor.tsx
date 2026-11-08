@@ -232,8 +232,7 @@ export function TwoFactorCard({ onEnabled }: { onEnabled?: () => void }) {
           ))
         ) : (
           factors.isSuccess && (
-            <Button disabled={busy} onClick={() => void start()}>
-              {busy ? <Spinner /> : null}
+            <Button loading={busy} onClick={() => void start()}>
               {t('enable')}
             </Button>
           )

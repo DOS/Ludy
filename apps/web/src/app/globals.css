@@ -22,6 +22,12 @@
   --color-accent-ink: var(--accent-ink);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
+  --color-brand: var(--brand);
+  --color-brand-lip: var(--brand-lip);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-spark: var(--brand-spark);
+  --color-brand-spark-lip: var(--brand-spark-lip);
+  --color-brand-spark-ink: var(--brand-spark-ink);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
   --color-bad: var(--bad);
@@ -45,6 +51,12 @@
   --accent-ink: oklch(0.46 0.2 290);
   --ok: oklch(0.47 0.085 172);
   --ok-soft: oklch(0.95 0.025 172);
+  --brand: oklch(0.475 0.233 288.7);
+  --brand-lip: oklch(0.379 0.181 287.8);
+  --brand-ink: oklch(1 0 0);
+  --brand-spark: oklch(0.583 0.105 177.1);
+  --brand-spark-lip: oklch(0.47 0.084 178.1);
+  --brand-spark-ink: oklch(1 0 0);
   --warn: oklch(0.52 0.12 62);
   --warn-soft: oklch(0.96 0.045 80);
   --bad: oklch(0.53 0.2 25);
@@ -68,6 +80,12 @@
   --accent-ink: oklch(0.8 0.11 293);
   --ok: oklch(0.8 0.1 172);
   --ok-soft: oklch(0.29 0.045 172);
+  --brand: oklch(0.562 0.224 291.1);
+  --brand-lip: oklch(0.45 0.192 290.2);
+  --brand-ink: oklch(1 0 0);
+  --brand-spark: oklch(0.646 0.119 175.1);
+  --brand-spark-lip: oklch(0.504 0.091 176.7);
+  --brand-spark-ink: oklch(1 0 0);
   --warn: oklch(0.83 0.13 80);
   --warn-soft: oklch(0.31 0.05 75);
   --bad: oklch(0.73 0.16 20);
@@ -125,6 +143,12 @@
   h2,
   h3 {
     text-wrap: balance;
+  }
+  /* DESIGN.md 3.7: lucide icons draw at stroke 1.5. An icon that names no width gets stroke-width="2" from lucide, and a
+     stylesheet rule beats that attribute, so this one rule is the default for the whole site without a client provider
+     (the sections ship no client JavaScript). An icon that names its own width, the check marks at 2.5 and 3, keeps it. */
+  svg.lucide[stroke-width='2'] {
+    stroke-width: 1.5;
   }
   :focus-visible {
     outline: 2px solid var(--accent);

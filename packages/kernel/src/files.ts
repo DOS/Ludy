@@ -15,7 +15,8 @@ export const zIngestFile = z.object({
   generation: z.string().regex(GENERATION_PATTERN),
   // social: an image or video for a Social post (#372, #409), stored like any file but never sent to extraction.
   // import: a spreadsheet for a module's import (#465), also never sent to extraction.
-  source: z.enum(['upload', 'email', 'social', 'import']),
+  // meeting_audio, meeting_video: encrypted meeting media (issue #2576, ADR-0047), never sent to extraction.
+  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video']),
   // A video's duration, read by the server from the file (#409).
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   // An image's size as shown, read by the server from its header (#636); both or neither.
@@ -25,6 +26,9 @@ export const zIngestFile = z.object({
   // One the uploader can see; chosen once, never changed. Omitted: the uploader's own entity when limited to one, else
   // the default entity.
   legalEntityId: zId.optional(),
+  // The mail this attachment came in (#2196): set only by the receive path (kernel.inbound.receive, a system command), for
+  // a file stored from an email. Never from a member's upload, which has no mail.
+  inboundMessageId: zId.optional(),
 });
 export type IngestFile = z.infer<typeof zIngestFile>;
 
@@ -42,6 +46,11 @@ export function isArchiveType(contentType: string): boolean {
 // from command input.
 export async function ingestFileRow(ctx: CommandContext, input: IngestFile, createdBy: string | null): Promise<{ fileId: string; duplicate: boolean }> {
   if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) throw new DomainError('INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ không hợp lệ');
+  // The link to a mail is the receive path's alone: a member could otherwise name any mail of the org as the source of
+  // their upload, and the Inbox would show that mail's sender next to it.
+  if (input.inboundMessageId !== undefined && (ctx.actor.type !== 'system' || input.source !== 'email')) {
+    throw new DomainError('FORBIDDEN', 403, 'Chỉ thư gửi đến mới gắn được tệp với thư');
+  }
   if (input.generation.startsWith('content:') && input.generation !== contentGeneration(input.sha256)) {
     throw new DomainError('INVALID_GENERATION', 400, 'Phiên bản lưu trữ không khớp nội dung tệp');
   }
@@ -65,6 +74,8 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
       duration_ms: input.durationMs === undefined ? null : String(input.durationMs),
       ...(input.imageWidth !== undefined && input.imageHeight !== undefined ? { image_width: input.imageWidth, image_height: input.imageHeight } : {}),
       created_by: createdBy,
+      // A file stored again (the same bytes) keeps the mail of its first arrival: the conflict below does nothing.
+      ...(input.inboundMessageId !== undefined ? { inbound_message_id: input.inboundMessageId } : {}),
       // A file stored again (the same bytes) keeps the entity of its first upload.
       ...(input.legalEntityId !== undefined ? { upload_entity_id: input.legalEntityId } : {}),
     })

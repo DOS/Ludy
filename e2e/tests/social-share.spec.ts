@@ -44,14 +44,18 @@ test('a page shared to the installed app lands in a new draft, and the shared va
   expect(carrying.map((r) => new URL(r.url).pathname)).toEqual(['/-/share']);
 
   // The router's later navigations do not bring the fragment back: away to the channels page (past the composer's
-  // question about the unsaved draft), back to the composer, then back to where the person was.
-  page.on('dialog', (dialog) => void dialog.accept());
+  // question about the unsaved draft, asked in the app's dialog), back to the composer, then back to where the person was.
   await page.getByRole('main').getByRole('link', { name: 'Kết nối kênh', exact: true }).click();
+  const leave = page.getByRole('dialog', { name: 'Rời trang này?' });
+  await expect(leave).toBeVisible();
+  await leave.getByRole('button', { name: 'Rời trang' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/channels$`));
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/new$`));
   expect(await page.evaluate(() => location.hash)).toBe('');
   await page.goBack();
+  // The composer may ask again if it still holds the draft; answer it the same way.
+  if (await leave.isVisible()) await leave.getByRole('button', { name: 'Rời trang' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
 });
 

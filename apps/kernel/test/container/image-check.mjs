@@ -99,13 +99,13 @@ const PINNED = [
   },
   {
     pkg: 'undici',
-    version: '7.30.0',
+    version: '7.30.1',
     reason: "fetch's multipart/form-data reader (Request.formData()), the same one Node ships built in",
     files: { 'lib/web/fetch/formdata-parser.js': 'd5d048201a040865a4376e423fd78b102ad164cb51ad7b0ade56897c7318bd6b' },
   },
   {
     pkg: 'undici',
-    version: '7.30.0',
+    version: '7.30.1',
     reason: "llhttp inlined as WebAssembly, the HTTP/1.1 parser undici's fetch runs and Node's own HTTP is built on",
     files: {
       'lib/llhttp/llhttp-wasm.js': '344f7ae80c983694372d9234584a1261ef5492ab219d6e573e933f5d1c715b00',
@@ -208,6 +208,7 @@ for (const name of existsSync(tools) ? readdirSync(tools) : []) {
   if (name !== 'install-git-hooks.mjs') failures.push(`tooling is in the image: ${join(tools, name)}`);
 }
 if (existsSync(join(root, 'apps/extract'))) failures.push('apps/extract is in the kernel image');
+if (existsSync(join(root, 'apps/media'))) failures.push('apps/media is in the kernel image');
 if (!existsSync(join(root, 'apps/app/dist/index.html'))) failures.push('the web app build (apps/app/dist) is missing');
 
 // 4. exceljs carries no build that bundles or loads saxes (dist/ holds the browser and ES5 builds). Whether its
@@ -262,6 +263,7 @@ try {
   const voucher = {
     type: 'cash_receipt',
     code: 'PT00001',
+    numberPeriod: '2026',
     date: '2026-10-01',
     cashAccount: '1111',
     party: null,

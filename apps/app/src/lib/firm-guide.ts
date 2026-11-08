@@ -25,7 +25,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
     id: 'client',
     title: 'Bước 1. Thêm doanh nghiệp khách hàng',
     items: [
-      `Mỗi khách hàng là một tổ chức riêng trong {brand}, với sổ sách, hộp thư chứng từ và thành viên riêng. Bấm ${q(vi.nav.addOrg)} dưới ô chọn tổ chức ở đầu menu.`,
+      `Mỗi khách hàng là một tổ chức riêng trong {brand}, với sổ sách, chứng từ chờ duyệt và thành viên riêng. Bấm ${q(vi.nav.addOrg)} dưới ô chọn tổ chức ở đầu menu.`,
       `Thanh dọc bên trái chia theo ứng dụng: ${q(vi.nav.apps.home)} có ${q(vi.nav.inbox)}, ${q(vi.nav.tasks)} và thông báo; ${q(vi.nav.apps.accounting)} có chứng từ, sổ sách và thuế. Các màn hình kế toán nhắc tới dưới đây nằm trong ${q(vi.nav.apps.accounting)}; ${q(vi.nav.settings)} ở cuối thanh.`,
       `Nhập ${q(vi.onboarding.taxCodeLabel)} của khách hàng rồi bấm ${q(vi.onboarding.lookUp)}: {brand} điền tên và địa chỉ theo dữ liệu đăng ký thuế, bạn kiểm tra lại. Mã số thuế giúp {brand} nhận ra hóa đơn bán ra của khách hàng.`,
       `Nếu có ${q(vi.onboarding.contactLabel)}, nhập vào: sau khi bấm ${q(vi.onboarding.create)}, trang mời thành viên mở sẵn với email này. Chọn vai trò rồi bấm ${q(vi.settings.invite)}; người được mời phải chấp nhận lời mời thì mới vào tổ chức.`,
@@ -66,7 +66,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
     title: 'Bước 5. Ngân hàng và tiền mặt',
     items: [
       `Mở ${q(vi.nav.bank)}, chọn ${q(vi.bank.account)}, rồi ở ${q(vi.bank.importTitle)} chọn file sao kê Excel hoặc CSV tải từ ngân hàng. Dòng đã nhập trước đó không bị nhập lại; dòng ${q(vi.bank.status.ambiguous)} được giữ để bạn kiểm tra.`,
-      `Dòng nào có nội dung chuyển khoản ghi rõ đối tượng thì bấm ${q(fill(vi.bank.proposeAll, { count: 'N' }))}; các dòng còn lại bấm ${q(vi.bank.makeVoucher)} để lập giấy báo Có hoặc giấy báo Nợ. Dòng chưa lập chứng từ cũng hiện trong ${q(vi.nav.inbox)}.`,
+      `Dòng nào có nội dung chuyển khoản ghi rõ đối tượng thì bấm ${q(fill(vi.bank.match.cleanApprove, { count: 'N' }))}; các dòng còn lại bấm ${q(vi.bank.makeVoucher)} để lập giấy báo Có hoặc giấy báo Nợ. Dòng chưa lập chứng từ cũng hiện trong ${q(vi.nav.inbox)}.`,
       `Phiếu thu, phiếu chi tiền mặt lập ở ${q(vi.nav.vouchers)} bằng nút ${q(vi.vouchers.new)}. Mọi chứng từ thu chi được ghi sổ khi chủ sở hữu hoặc quản trị duyệt.`,
     ],
   },
@@ -84,8 +84,8 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
     id: 'handover',
     title: 'Bước 7. Đưa số liệu sang phần mềm kế toán của hãng',
     items: [
-      `Nếu hãng dùng MISA SME: ở ${q(vi.nav.journal)} bấm ${q(vi.journal.exportMisa)}, ${q(vi.journal.exportMisaGoods)} và ${q(vi.journal.exportMisaSales)}; ở ${q(vi.nav.vouchers)} bấm ${q(vi.vouchers.exportReceipts)} và ${q(vi.vouchers.exportPayments)}. Mỗi file theo mẫu nhập khẩu từ Excel của MISA.`,
-      `Hàng mua nhập kho (TK 152, 153, 156) lấy mã hàng và mã kho ở ${q(vi.nav.settings)}, mục ${q(vi.misaGoods.title)}; hãy đặt đúng mã trong danh mục MISA của hãng trước khi xuất. Với các file khác, điền mã hàng hoặc mã dịch vụ theo danh mục của hãng ({brand} để trống vì không biết mã của hãng). Trước khi nhập vào MISA, kiểm tra các dòng chưa có thuế suất. Giấy báo Có, giấy báo Nợ chưa xuất được sang MISA.`,
+      `Nếu hãng dùng MISA SME: ở ${q(vi.nav.journal)} bấm ${q(vi.journal.exportMisa)}, ${q(vi.journal.exportMisaGoods)} và ${q(vi.journal.exportMisaSales)}; ở ${q(vi.nav.vouchers)} bấm ${q(vi.vouchers.exportReceipts)}, ${q(vi.vouchers.exportPayments)}, ${q(vi.vouchers.exportBankCredits)} và ${q(vi.vouchers.exportBankDebits)}. Mỗi file theo mẫu nhập khẩu từ Excel của MISA.`,
+      `Hàng mua nhập kho (TK 152, 153, 156) lấy mã hàng và mã kho ở ${q(vi.nav.settings)}, mục ${q(vi.misaGoods.title)}; hãy đặt đúng mã trong danh mục MISA của hãng trước khi xuất. Với các file khác, điền mã hàng hoặc mã dịch vụ theo danh mục của hãng ({brand} để trống vì không biết mã của hãng). Trước khi nhập vào MISA, kiểm tra các dòng chưa có thuế suất.`,
       `Với phần mềm khác, ${q(vi.journal.export)} ở ${q(vi.nav.journal)} cho file Excel ghi từng dòng Nợ/Có.`,
     ],
   },

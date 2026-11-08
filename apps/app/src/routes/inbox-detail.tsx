@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { BLOCKING_CHECK_IDS, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
+import { BLOCKING_CHECK_IDS, UNCLASSIFIED_ACCOUNT_CODE, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
@@ -12,13 +12,17 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
+import { AdsProposalCard } from '../components/ads-proposal-card.tsx';
+import { EInvoiceIssueCard } from '../components/einvoice-issue-card.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useLegalEntity } from '../components/entity-switcher.tsx';
+import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, ProposalSkeleton, RowsSkeleton, Spinner } from '../components/ui.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, fetchFile, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { AttachedOriginalsCard } from '../components/attached-originals-card.tsx';
 import { getConfig } from '../lib/auth.ts';
 import { PROPOSAL_STATUS_VARIANT } from '../lib/status.ts';
 import { isZeroAmount, linesBalance, previewPurchaseJournal, previewSalesJournal } from '../lib/decimal.ts';
@@ -32,7 +36,7 @@ import { SM_UP, SPLIT_UP, useMediaQuery } from '../lib/media.ts';
 import { toast } from '../lib/toast.ts';
 import { previewVoucherJournal, voucherProblem } from '../lib/vouchers.ts';
 import { partySearch } from '../lib/parties.ts';
-import { checksByConcern, nextAfterDecision, nextPendingId, previousPendingId, proposalName } from '../lib/review.ts';
+import { checksByConcern, isAdsProposalKind, isEInvoiceIssueKind, nextAfterDecision, nextPendingId, previousPendingId, proposalName } from '../lib/review.ts';
 import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
@@ -160,6 +164,7 @@ function ReversalCard({ reversal, slug }: { reversal: { entryId: string; entryDa
 // on approval; code is the one it was given, once approved.
 function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVoucherProposal; code: string | null; slug: string; accountName: (code: string) => string }) {
   const t = useTranslations('inboxDetail');
+  const root = useTranslations();
   const f = useFormat();
   const journal = previewVoucherJournal(voucher);
   return (
@@ -191,6 +196,20 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
           </div>
         )}
       </div>
+      {voucher.checks && voucher.checks.length > 0 && (
+        // The warnings raised when the voucher was asked for (#2419), worded as an invoice's checks are.
+        <div data-testid="voucher-checks">
+          <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('checks')}</p>
+          <ul className="mt-3 space-y-1.5">
+            {voucher.checks.map((c) => (
+              <li key={c.id} className="flex items-start gap-2 text-sm">
+                <Badge variant={CHECK_TONE[c.status]}>{CHECK_ICON[c.status]}</Badge>
+                <span className="text-muted-foreground">{invoiceCheckMessage(c, root, { money: (value) => f.money(value), date: f.date })}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div>
         <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('journal')}</p>
         <table className="mt-3 w-full text-sm">
@@ -387,10 +406,20 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const [rejectReason, setRejectReason] = useState('');
 
   const payload = detail.data?.payload ?? null;
+  // A request to open the way to spend on an ad platform (ADR-0043 point 1, #2294): it posts nothing, so it has no invoice, no
+  // checks and no entry. It is approved as shown, like a voucher, and its card says what changes.
+  const ads = detail.data ? isAdsProposalKind(detail.data.kind) : false;
+  // A request to issue a sales e-invoice (#2502) posts nothing either; its card shows the invoice the approval would send.
+  const issue = detail.data ? isEInvoiceIssueKind(detail.data.kind) : false;
+  // The invoice the approval would send. Approving waits for it: with no view of the invoice (still loading, or the read failed) nothing can be approved.
+  const issueView = useQuery({ ...orpc.einvoice.drafts.issueRequest.queryOptions({ input: { proposalId: id } }), enabled: issue });
   const lines = useMemo(
     () => (payload?.lines ?? []).map((l) => ({ ...l, debitAccount: lineAccounts[l.lineNo] ?? l.debitAccount })),
     [payload, lineAccounts],
   );
+  // The lines no rule matched, still without an account (#2091): they carry the placeholder until a reviewer picks one,
+  // and the kernel refuses to record them.
+  const unclassified = lines.filter((l) => l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE).length;
   // A sale (issue #313): the org issued the invoice, the buyer is the customer, and the lines go to revenue.
   const sale = payload?.direction === 'sale';
   // The legal entity whose books the invoice goes to (#1542): the proposal's own, which an edit never changes (#1764).
@@ -439,9 +468,10 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     await going;
   };
   const partyName = () => (sale ? payload?.buyer.name : payload?.seller.name) || detail.data?.title || '';
-  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(t('approvedToast', { name: partyName() })) }));
+  // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
+  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
-  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(t('rejectedToast', { name: partyName() })) }));
+  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : t('rejectedToast', { name: partyName() })) }));
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
     orpc.inbox.edit.mutationOptions({
@@ -483,7 +513,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A general journal voucher (NVK, #888) is approved as shown too.
   const journalVoucher = item?.journalVoucher ?? null;
   const journalVoucherCode = (journalVoucher && item?.status === 'executed' && item.result?.voucherCode) || null;
-  const plain = reversal !== null || voucher !== null || journalVoucher !== null;
+  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue;
   const failed = payload?.checks.filter((c) => c.status === 'fail').length ?? 0;
   const blocked = payload?.checks.some((c) => c.status === 'fail' && BLOCKING_CHECK_IDS.includes(c.id)) ?? false;
   // As the kernel decides (kernel.proposal.approve): an XML invoice whose signature is not verified, including one read
@@ -497,7 +527,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     pending &&
     item.canApprove &&
     !busy &&
-    (plain ? true : !dirty && !!payload && !blocked && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
+    (plain ? !issue || !!issueView.data : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
   const submitApproval = () => {
     if (!item) return;
     if (plain) {
@@ -548,7 +578,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const reextractButton =
     item.canReextract && fileId ? (
       <ConfirmDialog
-        render={<Button variant="outline" size="lg" />}
+        render={<Button loading={reextract.isPending} variant="outline" size="lg" />}
         disabled={busy}
         title={t('rereadTitle')}
         description={
@@ -557,7 +587,6 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         confirm={t('reread')}
         onConfirm={() => reextract.mutate({ fileId, idempotencyKey: crypto.randomUUID() })}
       >
-        {reextract.isPending ? <Spinner className="text-current" /> : null}
         {t('reread')}
       </ConfirmDialog>
     ) : null;
@@ -618,8 +647,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                 {reject.error && <ErrorText>{errorMessage(reject.error)}</ErrorText>}
                 <DialogFooter>
                   <DialogClose render={<Button type="button" variant="outline" />}>{root('common.cancel')}</DialogClose>
-                  <Button type="submit" variant="destructive" disabled={reject.isPending}>
-                    {reject.isPending ? <Spinner className="text-current" /> : null}
+                  <Button loading={reject.isPending} type="submit" variant="destructive">
                     {t('reject')}
                   </Button>
                 </DialogFooter>
@@ -629,6 +657,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         )}
         {item.canEdit && dirty && (
           <Button
+            loading={edit.isPending}
             variant="outline"
             size="lg"
             disabled={busy}
@@ -641,31 +670,36 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
               })
             }
           >
-            {edit.isPending ? <Spinner className="text-current" /> : null}
             {t('saveEdit')}
           </Button>
         )}
         {item.canApprove && reversal && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveReversal')}
           </Button>
         )}
         {item.canApprove && voucher && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveVoucher')}
           </Button>
         )}
         {item.canApprove && journalVoucher && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveJournalVoucher')}
           </Button>
         )}
+        {item.canApprove && ads && (
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+            {t('approveAds')}
+          </Button>
+        )}
+        {item.canApprove && issue && (
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+            {t('approveIssue')}
+          </Button>
+        )}
         {item.canApprove && !plain && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approve')}
           </Button>
         )}
@@ -676,20 +710,19 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         {reextractButton}
         {item.canResubmit && (
           <ConfirmDialog
-            render={<Button size="lg" />}
+            render={<Button loading={resubmit.isPending} size="lg" />}
             disabled={busy}
             title={t('resubmitTitle')}
             description={t('resubmitDescription')}
             confirm={t('resubmit')}
             onConfirm={() => resubmit.mutate({ id, idempotencyKey: crypto.randomUUID() })}
           >
-            {resubmit.isPending ? <Spinner className="text-current" /> : null}
             {t('resubmit')}
           </ConfirmDialog>
         )}
         {/* Every status in words, in its one chip (DESIGN.md §4.4, #2000). */}
         <Badge variant={PROPOSAL_STATUS_VARIANT[item.status]}>
-          {item.status === 'executed' ? t('executedAt', { at: f.dateTime(item.decidedAt) }) : t(`status.${item.status}`)}
+          {item.status === 'executed' ? t(issue ? 'issueExecutedAt' : 'executedAt', { at: f.dateTime(item.decidedAt) }) : t(`status.${item.status}`)}
         </Badge>
         {item.voided && <Badge variant="destructive">{t('voidedBadge')}</Badge>}
         {/* DESIGN.md §5.1: every decision links to its audit log entry. By id alone, the log lists the decision (the
@@ -731,14 +764,22 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                     ? journalVoucherCode
                       ? t('journalVoucherSubtitlePosted', { code: journalVoucherCode, date: f.date(journalVoucher.date) })
                       : t('journalVoucherSubtitle', { date: f.date(journalVoucher.date) })
-                    : undefined
+                    : ads
+                      ? t('adsSubtitle')
+                      : issue
+                        ? t('issueSubtitle')
+                        : undefined
           }
           actions={wide || !pending ? headerActions : undefined}
         />
       </div>
       {stepUp && (
         <div className="mb-4">
-          <StepUpPrompt action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : t('stepUpApprove')} onVerified={retryApproval} onCancel={() => approve.reset()} />
+          <StepUpPrompt
+            action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : t('stepUpApprove')}
+            onVerified={retryApproval}
+            onCancel={() => approve.reset()}
+          />
         </div>
       )}
       {((approve.error && !stepUp) || reject.error || edit.error || reextract.error || resubmit.error) && (
@@ -804,11 +845,25 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       )}
       {journalVoucher && (
         <div className="mb-6">
-          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('voucherFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t(item.coAuthor ? 'journalCoAuthorFourEyes' : 'voucherFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && (
             <p className="mb-4 text-sm text-subtle-foreground">{t('voucherNotEligible')}</p>
           )}
           <JournalVoucherCard voucher={journalVoucher} code={journalVoucherCode} slug={slug} accountName={accountName} />
+        </div>
+      )}
+      {ads && (
+        <div className="mb-6">
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('adsFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('adsNotEligible')}</p>}
+          <AdsProposalCard id={item.id} title={item.title} slug={slug} />
+        </div>
+      )}
+      {issue && (
+        <div className="mb-6">
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('issueFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('issueNotEligible')}</p>}
+          <EInvoiceIssueCard view={issueView} title={item.title} slug={slug} pending={pending} />
         </div>
       )}
       {reading && (
@@ -827,6 +882,11 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       )}
       {/* A phone has no keyboard for them (#1409). */}
       {wide && pending && (item.canApprove || item.canEdit || item.canReject) && <p className="mb-4 text-xs text-subtle-foreground">{t('shortcuts')}</p>}
+      {pending && !plain && unclassified > 0 && (
+        <p className="mb-4 text-sm text-warning" data-testid="unclassified-notice">
+          {t('unclassifiedNotice', { count: unclassified })}
+        </p>
+      )}
       {pending && dirty && (
         <p className="mb-4 text-sm text-muted-foreground">{t('dirty')}</p>
       )}
@@ -847,6 +907,13 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           </ErrorText>
         </div>
       )}
+      {/* An invoice read from a PDF whose text carried the seller's lookup link and code (#2268): the original XML is a few
+          clicks away on the provider's page. Uploaded here it is read like any upload, in this proposal's legal entity. */}
+      {!plain && pending && payload && payload.extractionMethod !== 'einvoice_xml' && (payload.lookupHints?.length ?? 0) > 0 && (
+        <LookupOriginalCard hints={payload.lookupHints ?? []} sellerTaxCode={payload.seller.taxCode} legalEntityId={detail.data?.legalEntityId ?? undefined} />
+      )}
+      {/* The original XML that came after this invoice was posted (#2320): evidence beside the posting, which it never changes. */}
+      {!plain && (detail.data?.originals?.length ?? 0) > 0 && <AttachedOriginalsCard originals={detail.data?.originals ?? []} />}
       {!plain && unverified && (
         <Card className="mb-4 block space-y-2 border border-destructive/60 p-4 ring-0" data-testid="signature-unverified">
           <p className="text-sm font-medium text-foreground">{t('signatureUnverifiedTitle')}</p>
@@ -1035,8 +1102,12 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                         {l.description}
                         {/* What chose the account (#1399): a learned rule, the vendor's default, the built-in keywords or a user. */}
                         <p className="text-xs text-subtle-foreground">
-                          {l.accountRule && <Badge variant="secondary" className="mr-1.5">{t(`accountRuleSource.${l.accountRule.source}`)}</Badge>}
-                          {l.accountRule?.source === 'user' ? null : l.reason}
+                          {l.accountRule && (
+                            <Badge variant={l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? 'warning' : 'secondary'} className="mr-1.5">
+                              {t(`accountRuleSource.${l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? 'unclassified' : l.accountRule.source === 'unclassified' ? 'user' : l.accountRule.source}`)}
+                            </Badge>
+                          )}
+                          {l.accountRule?.source === 'user' || l.accountRule?.source === 'unclassified' ? null : l.reason}
                         </p>
                       </td>
                       <td className="py-2 pr-2 text-right text-foreground tabular-nums">{money(l.amount)}</td>
@@ -1046,11 +1117,17 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                           disabled={!item.canEdit || busy}
                           aria-label={sale ? t('revenueAccountFor', { line: String(l.lineNo) }) : t('debitAccountFor', { line: String(l.lineNo) })}
                           className="w-48"
-                          value={l.debitAccount}
+                          value={l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? '' : l.debitAccount}
                           onChange={(e) => setLineAccounts((prev) => ({ ...prev, [l.lineNo]: e.target.value }))}
                         >
+                          {/* No account is preselected for a line no rule matched (#2091): the reviewer must choose one. */}
+                          {l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE && (
+                            <NativeSelectOption value="" disabled>
+                              {t('pickAccount')}
+                            </NativeSelectOption>
+                          )}
                           {/* Accounts in use that fit the direction (#430), plus the line's own even if it was deactivated since (#319). */}
-                          {pickableAccounts(accounts.data ?? [], l.debitAccount, sale ? 'sale' : 'purchase').map((a) => (
+                          {pickableAccounts(accounts.data ?? [], l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? null : l.debitAccount, sale ? 'sale' : 'purchase').map((a) => (
                             <NativeSelectOption key={a.code} value={a.code}>
                               {accountLabel(a)}
                             </NativeSelectOption>
@@ -1082,7 +1159,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                   {journal.map((j) => (
                     <tr key={`${j.accountCode}-${j.debit}-${j.credit}`}>
                       <td className="py-2 text-foreground">
-                        <span className="font-mono">{j.accountCode}</span> <span className="text-subtle-foreground">{accountName(j.accountCode)}</span>
+                        <span className="font-mono">{j.accountCode}</span>{' '}
+                        <span className="text-subtle-foreground">{j.accountCode === UNCLASSIFIED_ACCOUNT_CODE ? t('unclassifiedAccount') : accountName(j.accountCode)}</span>
                       </td>
                       <td className="py-2 text-right text-foreground tabular-nums">{isZeroAmount(j.debit) ? '' : money(j.debit)}</td>
                       <td className="py-2 text-right text-foreground tabular-nums">{isZeroAmount(j.credit) ? '' : money(j.credit)}</td>

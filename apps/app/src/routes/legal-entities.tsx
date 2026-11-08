@@ -12,7 +12,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
+import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { parentChoices, parentName } from '../lib/legal-entities.ts';
 
@@ -115,8 +115,7 @@ function EntityForm({
         ))}
       </NativeSelect>
       <div className="flex gap-2">
-        <Button type="submit" variant="outline" size="sm" disabled={pending || !draft.name.trim()}>
-          {pending ? <Spinner className="text-current" /> : null}
+        <Button loading={pending} type="submit" variant="outline" size="sm" disabled={pending || !draft.name.trim()}>
           {submitLabel}
         </Button>
         {onCancel && (

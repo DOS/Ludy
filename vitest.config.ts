@@ -14,7 +14,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           env,
-          include: ['packages/*/test/**/*.test.ts', 'modules/*/test/**/*.test.ts', 'apps/kernel/test/**/*.test.ts', 'apps/extract/test/**/*.test.ts', 'apps/app/test/**/*.test.{ts,tsx}', 'apps/web/test/**/*.test.ts', 'tools/test/**/*.test.ts'],
+          include: ['packages/*/test/**/*.test.ts', 'modules/*/test/**/*.test.ts', 'apps/kernel/test/**/*.test.ts', 'apps/extract/test/**/*.test.ts', 'apps/media/test/**/*.test.ts', 'apps/app/test/**/*.test.{ts,tsx}', 'apps/web/test/**/*.test.ts', 'tools/test/**/*.test.ts'],
           exclude: ['**/*.db.test.ts', 'packages/agent/test/**/*.ai.test.ts', '**/node_modules/**'],
         },
       },
@@ -37,6 +37,8 @@ export default defineConfig({
           exclude: ['**/node_modules/**', ...DB_EXCLUDE],
           fileParallelism: false,
           testTimeout: 30_000,
+          // A suite's beforeAll builds a database from every migration, about 10 s on CI by November 2026; 60 s leaves room.
+          hookTimeout: 60_000,
         },
       },
     ],

@@ -15,8 +15,21 @@ export * from './vat-deadline.ts';
 export * from './tax-calendar.ts';
 export * from './vietnam-time.ts';
 export * from './bank-statement.ts';
+export * from './payment-reminder.ts';
+export * from './finance-overview.ts';
+export * from './einvoice.ts';
+export * from './stock.ts';
+export * from './marketplace.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
+export * from './sort-key.ts';
+export * from './crm-deals.ts';
+export * from './contact-company.ts';
+export * from './contact-import.ts';
+export * from './conversations.ts';
+export * from './mail-address.ts';
+export * from './today.ts';
+export * from './coworkers.ts';
 
 export const ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -24,7 +37,9 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // bulk intake (#314) sends a batch of 200 e-invoice XML files that way instead of opening 200 upload grants. The
 // kernel refuses larger files on that path (#432); they go through a staged upload (POST /api/files/uploads).
 export const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
-export const ACCEPTED_UPLOAD_TYPES = ['application/xml', 'text/xml', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+// text/csv: a bank statement (#2142), read into bank lines by the finance module instead of an invoice proposal; an .xlsx
+// statement arrives as a ZIP and is told from an archive of invoices when the worker reads it.
+export const ACCEPTED_UPLOAD_TYPES = ['application/xml', 'text/xml', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/csv'];
 // Bulk intake (#314): a ZIP of documents, up to MAX_UPLOAD_BYTES like any document. It is stored as a file, opened in
 // the parsing sandbox by the worker, and every entry the sandbox returns becomes a document of its own.
 export const ACCEPTED_ARCHIVE_TYPES = ['application/zip'];
@@ -48,9 +63,14 @@ export const SOCIAL_IMAGE_TYPES = [...SOCIAL_PHOTO_TYPES, ...SOCIAL_DOCUMENT_TYP
 export const SOCIAL_VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
 export const MAX_SOCIAL_VIDEO_BYTES = 100 * 1024 * 1024;
 export const MAX_SOCIAL_VIDEO_MS = 3 * 3600 * 1000;
+// Meeting audio and video (issue #2576, ADR-0047, meetings plan M2): audio up to 300 MB, video up to 2 GB.
+export const MAX_MEETING_AUDIO_BYTES = 300 * 1024 * 1024;
+export const MAX_MEETING_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
+export const MEETING_AUDIO_TYPES = ['audio/ogg', 'audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
+export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
 // never read as a document; the module that imports it has it read in the parsing sandbox.
-export const UPLOAD_PURPOSES = ['document', 'social', 'import'] as const;
+export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
 // An import spreadsheet is an .xlsx workbook (a ZIP container) of at most this size.
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -77,6 +97,16 @@ export * from './statements-htkk.ts';
 export * from './brand.ts';
 export * from './calendar.ts';
 export * from './crm.ts';
+export * from './hr.ts';
+export * from './hr-payroll.ts';
 export * from './notes.ts';
+export * from './extension.ts';
+export * from './meetings.ts';
+export * from './ads.ts';
+export * from './ads-campaign.ts';
 export * from './manifest.ts';
 export * from './screens.ts';
+export * from './saved-view.ts';
+export * from './phone.ts';
+export * from './contacts.ts';
+export * from './phone-cases.ts';

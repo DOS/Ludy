@@ -7,8 +7,10 @@ import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
+import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { serverOrigin } from '../lib/api-base.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 const calendarFeedUrl = (origin: string, token: string) => `${origin}/cal/${token}.ics`;
@@ -23,7 +25,7 @@ export function CalendarFeedCard({ canManage }: { canManage: boolean }) {
   const create = useMutation({
     mutationFn: () => client.social.calendarFeed.create({}),
     onSuccess: (r) => {
-      setMade(calendarFeedUrl(window.location.origin, r.token));
+      setMade(calendarFeedUrl(serverOrigin(), r.token));
       setCopied(false);
       refresh();
     },
@@ -59,13 +61,35 @@ export function CalendarFeedCard({ canManage }: { canManage: boolean }) {
       )}
       {canManage && feed.isSuccess && (
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={busy} onClick={() => (!live || window.confirm(t('recreateConfirm'))) && create.mutate()}>
-            {live ? t('recreate') : t('create')}
-          </Button>
-          {live && (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => window.confirm(t('revokeConfirm')) && revoke.mutate()}>
-              {t('revoke')}
+          {live ? (
+            <ConfirmDialog
+              render={<Button size="sm" />}
+              disabled={busy}
+              title={t('recreateTitle')}
+              description={t('recreateConfirm')}
+              confirm={t('recreate')}
+              destructive
+              onConfirm={() => create.mutate()}
+            >
+              {t('recreate')}
+            </ConfirmDialog>
+          ) : (
+            <Button size="sm" disabled={busy} onClick={() => create.mutate()}>
+              {t('create')}
             </Button>
+          )}
+          {live && (
+            <ConfirmDialog
+              render={<Button size="sm" variant="ghost" />}
+              disabled={busy}
+              title={t('revokeTitle')}
+              description={t('revokeConfirm')}
+              confirm={t('revoke')}
+              destructive
+              onConfirm={() => revoke.mutate()}
+            >
+              {t('revoke')}
+            </ConfirmDialog>
           )}
         </div>
       )}

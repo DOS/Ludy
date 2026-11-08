@@ -50,7 +50,7 @@ function NodeCard({ node, selected, onSelect, a }: { node: Node; selected: boole
       ) : null}
       {node.chip ? (
         <Chip tone={toneOf(node.chip.tone)} wrap className="self-start text-[11px] leading-snug hyphens-auto [overflow-wrap:anywhere] sm:text-xs">
-          {node.chip.tone === 'ok' ? <Check className="size-3 shrink-0" aria-hidden="true" /> : null}
+          {node.chip.tone === 'ok' ? <Check className="size-3 shrink-0" strokeWidth={3} aria-hidden="true" /> : null}
           {node.chip.label}
         </Chip>
       ) : null}
@@ -60,7 +60,7 @@ function NodeCard({ node, selected, onSelect, a }: { node: Node; selected: boole
 }
 
 // The agents section's org chart: people and agents in their positions. Each node is a button that opens what is
-// waiting at that position; the accounting agent is selected first.
+// waiting at that position; the accounting coworker is selected first.
 export function OrgChart({ dict }: { dict: Dictionary }) {
   const a = dict.agents;
   const [selected, setSelected] = useState<PanelId>('acc');

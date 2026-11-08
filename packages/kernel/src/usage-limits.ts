@@ -7,7 +7,7 @@
 // the auth email budget.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@crove/db';
+import { USAGE_DEFERRAL_METRICS, USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@crove/db';
 import { defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { createMailMessage } from './mail.ts';
 
@@ -26,6 +26,7 @@ export const DEFAULT_USAGE_LIMITS: UsageLimits = {
   attachment_bytes: String(1000 * 1024 * 1024),
   extraction_pages: '1500',
   ai_cost: '20',
+  conversation_emails: '300',
 };
 
 const zAmount = z.string().regex(/^\d{1,14}(\.\d{1,6})?$/);
@@ -58,6 +59,8 @@ export const usageOver = defineQuery({
                  sum(amount) OVER () AS total
           FROM crove_kernel.org_usage
           WHERE org_id = ${ctx.orgId} AND metric = ${metric}
+            -- The day's AI cost bounds the extraction queue (#675): what drafts and rewrites cost is the month's budget's (#2382).
+            AND (metric <> 'ai_cost' OR feature IS NULL OR module IN ('finance', 'conversation'))
             AND created_at > pg_catalog.now() - pg_catalog.make_interval(hours => ${USAGE_WINDOW_HOURS}::int)
         )
         SELECT (SELECT coalesce(max(total), 0)::text FROM w) AS used,
@@ -91,6 +94,7 @@ const METRIC_LABELS: Record<UsageMetric, string> = {
   attachment_bytes: 'dung lượng tệp đính kèm',
   extraction_pages: 'số trang đọc chứng từ',
   ai_cost: 'chi phí AI',
+  conversation_emails: 'số email khách gửi vào Hộp thư',
 };
 
 // An item kept for later because its org is over a limit. The owners are mailed at most once per metric in any 24
@@ -98,7 +102,7 @@ const METRIC_LABELS: Record<UsageMetric, string> = {
 export const usageDefer = defineCommand({
   name: 'kernel.usage.defer',
   input: z.strictObject({
-    metric: zMetric,
+    metric: z.enum(USAGE_DEFERRAL_METRICS),
     subjectType: z.enum(USAGE_DEFERRAL_SUBJECTS),
     subjectId: z.string().min(1).max(100),
     retryAt: z.iso.datetime({ offset: true }),
@@ -119,7 +123,10 @@ export const usageDefer = defineCommand({
       .limit(1)
       .executeTakeFirst();
     let queued = 0;
-    if (!told) {
+    // A document waiting for the AI budget (#2382) mails nobody: the budget's own notice (80% and 100%, once a month) told the
+    // owners and admins, and the Inbox shows the file as waiting.
+    const aiBudget = input.metric === 'ai_budget';
+    if (!told && !aiBudget) {
       const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
       const owners = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').orderBy('user_id').execute();
       const ids = owners.map((o) => o.user_id);
@@ -134,8 +141,8 @@ export const usageDefer = defineCommand({
           sourceId: null,
           templateKey: USAGE_DEFERRED_TEMPLATE,
           to: person.email,
-          subject: `Tổ chức đã dùng hết hạn mức ${METRIC_LABELS[input.metric]} trong ngày`,
-          payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: `/o/${org.slug}/inbox` },
+          subject: `Tổ chức đã dùng hết hạn mức ${METRIC_LABELS[input.metric as UsageMetric]} trong ngày`,
+          payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: input.metric === 'conversation_emails' ? `/o/${org.slug}/social/inbox` : `/o/${org.slug}/inbox` },
           status: 'queued',
         });
         if (mail.status === 'queued') queued++;
@@ -150,14 +157,19 @@ export const usageDefer = defineCommand({
         subject_type: input.subjectType,
         subject_id: input.subjectId,
         retry_at: input.retryAt,
-        notified: !told,
+        notified: !told && !aiBudget,
       })
       .execute();
     if (input.subjectType === 'file') {
-      await ctx.activity('kernel.file', input.subjectId, 'file.deferred', `Chờ hạn mức ngày mai: tổ chức đã dùng hết ${METRIC_LABELS[input.metric]} trong ngày`);
+      await ctx.activity(
+        'kernel.file',
+        input.subjectId,
+        'file.deferred',
+        aiBudget ? 'Chờ ngân sách AI: Vy đã hết ngân sách tháng này, tệp sẽ được đọc khi ngân sách được nâng hoặc sang tháng mới' : `Chờ hạn mức ngày mai: tổ chức đã dùng hết ${METRIC_LABELS[input.metric as UsageMetric]} trong ngày`,
+      );
     }
     ctx.audit({ metric: input.metric, subjectType: input.subjectType, retryAt: input.retryAt, mailed: queued });
-    return { notified: !told, queued };
+    return { notified: !told && !aiBudget, queued };
   },
 });
 

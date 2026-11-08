@@ -306,6 +306,66 @@ suite('evidence integrity on PostgreSQL (ADR-0013, issue #109)', () => {
     expect(rows[0]).toEqual({ held_until: new Date('2036-10-21T00:00:00.000Z'), hold_attempts: 0, hold_error: null });
   });
 
+  it('records the mail a file came in once at insert, never changes it, and clears it only when the mail is deleted (#2196)', async () => {
+    const mail = async (from: string) =>
+      (await withAdmin((a) => a.query<{ id: string }>(`INSERT INTO crove_kernel.inbound_message (org_id, message_id, from_address) VALUES ($1, $2, $3) RETURNING id`, [orgA, `<${randomUUID()}@link.test>`, from]))).rows[0]?.id as string;
+    const first = await mail('a@vendor.example');
+    const second = await mail('b@vendor.example');
+    const sha256 = sha256Hex(new TextEncoder().encode(`mail-${randomUUID()}`));
+    const id = randomUUID();
+    const insert = (messageId: string | null, fileKeyId = sha256, rowId = id) =>
+      withAdmin((a) =>
+        a.query(
+          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, inbound_message_id)
+           VALUES ($1, $2, $3, $4, $5, 'sao-ke.xlsx', 'application/zip', 10, 'email', $6)`,
+          [orgA, rowId, fileKeyId, fileKey(orgA, fileKeyId), `content:${fileKeyId}`, messageId],
+        ),
+      );
+    // A mail that does not exist (or is another org's: the key is (org_id, id)) cannot be named.
+    await expect(insert(randomUUID())).rejects.toMatchObject({ code: '23503' });
+    // Only a file received by email names a mail, and never from a member's own context.
+    const other = sha256Hex(new TextEncoder().encode(`mail-upload-${randomUUID()}`));
+    await withAdmin(async (a) => {
+      await expect(
+        a.query(
+          `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source, inbound_message_id)
+           VALUES ($1, $2, $3, $4, 'x.xlsx', 'application/zip', 10, 'upload', $5)`,
+          [orgA, other, fileKey(orgA, other), `content:${other}`, first],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: 'FILE_IMMUTABLE' });
+    });
+    await asApp(users.owner, async (c) => {
+      await expect(
+        c.query(
+          `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source, inbound_message_id)
+           VALUES ($1, $2, $3, $4, 'x.xlsx', 'application/zip', 10, 'email', $5)`,
+          [orgA, other, fileKey(orgA, other), `content:${other}`, first],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: 'FILE_IMMUTABLE' });
+    });
+    await insert(first);
+    // No role changes the link afterwards, to another mail or to none.
+    for (const set of [`inbound_message_id = '${second}'`, 'inbound_message_id = NULL']) {
+      await asApp(users.owner, async (c) => {
+        await expect(c.query(`UPDATE crove_kernel.file SET ${set} WHERE id = $1`, [id]), set).rejects.toMatchObject({ code: '42501', message: 'FILE_IMMUTABLE' });
+      });
+      await withAdmin(async (a) => {
+        await expect(a.query(`UPDATE crove_kernel.file SET ${set} WHERE id = $1`, [id]), `owner: ${set}`).rejects.toMatchObject({ message: 'FILE_IMMUTABLE' });
+      });
+    }
+    // A file with no mail may not be given one later either.
+    const plain = sha256Hex(new TextEncoder().encode(`plain-${randomUUID()}`));
+    const plainId = randomUUID();
+    await insert(null, plain, plainId);
+    await withAdmin(async (a) => {
+      await expect(a.query(`UPDATE crove_kernel.file SET inbound_message_id = $2 WHERE id = $1`, [plainId, first])).rejects.toMatchObject({ message: 'FILE_IMMUTABLE' });
+    });
+    // Deleting the mail clears the link (the foreign key's own action) and nothing else of the file.
+    await withAdmin((a) => a.query('DELETE FROM crove_kernel.inbound_message WHERE org_id = $1 AND id = $2', [orgA, first]));
+    const { rows } = await withAdmin((a) => a.query('SELECT inbound_message_id, org_id, filename FROM crove_kernel.file WHERE id = $1', [id]));
+    expect(rows[0]).toEqual({ inbound_message_id: null, org_id: orgA, filename: 'sao-ke.xlsx' });
+  });
+
   it('creates a grant with the database clock and the creator from the context, whatever the insert says', async () => {
     const other = users.member;
     const row = await asApp(users.owner, async (c) => {

@@ -19,6 +19,8 @@ export interface NavItem {
   to: `/o/$slug/${NavDecl['path']}`;
   label: NavLabel;
   module: ModuleId;
+  // Set for a screen that serves several modules (the reports, #2435): the item shows where any of them runs.
+  modules?: readonly string[] | undefined;
 }
 
 export interface App {
@@ -27,9 +29,17 @@ export interface App {
 }
 
 const MODULES = Object.entries(MODULE_SCREENS) as Array<[ModuleId, ModuleScreens]>;
-const item = (module: ModuleId, nav: { path: string; label: string }): NavItem => ({ to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module });
+const item = (module: ModuleId, screens: ModuleScreens, nav: { path: string; label: string }): NavItem => {
+  const modules = screens.routes.find((route) => route.path === nav.path)?.modules;
+  return { to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module, ...(modules ? { modules } : {}) };
+};
 
-// Every app with its groups, each in the order its first item appears in the manifests.
+// The groups of an app whose modules do not give the order: the Engage app's four groups come from three modules (#2435), so by
+// the order their items first appear Marketing would come before Khách hàng & Bán hàng. Every other app keeps the order
+// its items first appear in the manifests. module-screens.test.ts holds each group of such an app to this list.
+export const GROUP_ORDER: Partial<Record<AppId, readonly AppGroupId[]>> = { social: ['inbox', 'sales', 'marketing', 'reports'] };
+
+// Every app with its groups, each in the order its first item appears in the manifests, unless GROUP_ORDER fixes it.
 export const APPS: readonly App[] = (() => {
   const apps: Array<{ id: AppId; groups: Array<{ id: AppGroupId; items: NavItem[] }> }> = [];
   for (const [module, screens] of MODULES) {
@@ -39,19 +49,24 @@ export const APPS: readonly App[] = (() => {
       if (!app) apps.push((app = { id: nav.app as AppId, groups: [] }));
       let group = app.groups.find((g) => g.id === nav.group);
       if (!group) app.groups.push((group = { id: nav.group as AppGroupId, items: [] }));
-      group.items.push(item(module, nav));
+      group.items.push(item(module, screens, nav));
     }
+  }
+  for (const app of apps) {
+    const order = GROUP_ORDER[app.id];
+    if (order) app.groups.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   }
   return apps;
 })();
 
 // The org's own screens, under every app.
-export const ADMIN_ITEMS: readonly NavItem[] = MODULES.flatMap(([module, screens]) => screens.nav.flatMap((nav) => (nav.app === null ? [item(module, nav)] : [])));
+export const ADMIN_ITEMS: readonly NavItem[] = MODULES.flatMap(([module, screens]) => screens.nav.flatMap((nav) => (nav.app === null ? [item(module, screens, nav)] : [])));
 
-// The groups after an app's first, which carry a heading in the menu.
-export type HeadedGroupId = 'tax' | 'parties';
+// The groups that carry a heading in the menu: the Engage app's three areas of work and the accounting groups after its
+// first. The reports group is one item, and the first group of the other apps is named by the app itself.
+export type HeadedGroupId = 'inbox' | 'sales' | 'marketing';
 export function isHeadedGroup(id: AppGroupId): id is HeadedGroupId {
-  return id === 'tax' || id === 'parties';
+  return id === 'inbox' || id === 'sales' || id === 'marketing';
 }
 
 // Every screen of the menus, apps first, for the command palette (Ctrl K searches all of them, whatever the app).

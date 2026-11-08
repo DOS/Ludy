@@ -15,9 +15,10 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { Skeleton } from '@crove/ui/components/skeleton';
 import { Textarea } from '@crove/ui/components/textarea';
-import { CardSkeleton, ErrorText, Logo, Spinner } from '../components/ui.tsx';
+import { CardSkeleton, ErrorText, FieldError, fieldControl, focusFirstInvalid, isEmailAddress, Logo, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import type { Locale } from '../i18n/locale.ts';
+import { apiUrl } from '../lib/api-base.ts';
 import { getConfig } from '../lib/auth.ts';
 import { errorMessage } from '../lib/api.ts';
 import { dayLabel, manageTokenOf, slotsByDay, timeIn, visitorTimeZone, weekRange, type Slot } from '../lib/booking.ts';
@@ -29,7 +30,7 @@ const POLL_MS = 1000;
 const POLL_FOR_MS = 60_000;
 
 async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
-  const res = await fetch(path, { credentials: 'omit', referrerPolicy: 'no-referrer', ...init });
+  const res = await fetch(apiUrl(path), { credentials: 'omit', referrerPolicy: 'no-referrer', ...init });
   if (res.status === 404) return null;
   if (!res.ok) throw await apiErrorFromResponse(res);
   return (await res.json()) as T;
@@ -231,8 +232,7 @@ function Manage({ path, token, zone }: { path: string; token: string; zone: stri
       <div className="space-y-2">
         <p className="text-sm text-foreground">{t('manage.cancelConfirm')}</p>
         <div className="flex gap-2">
-          <Button type="button" variant="destructive" disabled={ask.isPending} onClick={() => ask.mutate({ action: 'cancel' })}>
-            {ask.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={ask.isPending} type="button" variant="destructive" onClick={() => ask.mutate({ action: 'cancel' })}>
             {t('manage.cancelYes')}
           </Button>
           <Button type="button" variant="ghost" onClick={() => setMode('view')}>
@@ -367,8 +367,18 @@ function Book({ path, zone }: { path: string; zone: string }) {
     document.title = page.data ? `${page.data.eventType.title} · ${page.data.orgName}` : t('title');
   }, [page.data, t]);
 
-  const submit = (event: FormEvent) => {
+  // The visitor's name and email are checked here, in the page's own words under each field, on leaving it and on submit
+  // (DESIGN.md §4.2, #2004), not by the browser; the server checks again.
+  const fields = useFieldErrors<'name' | 'email'>((field) => {
+    if (field === 'name') return form.name.trim() ? null : t('nameRequired');
+    return !form.email.trim() ? t('emailRequired') : isEmailAddress(form.email) ? null : t('emailInvalid');
+  });
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!fields.checkAll(['name', 'email'])) {
+      focusFirstInvalid(event.currentTarget);
+      return;
+    }
     if (!slot || request.isPending || (siteKey && !check)) return;
     request.mutate({
       startsAt: slot.start,
@@ -412,15 +422,40 @@ function Book({ path, zone }: { path: string; zone: string }) {
         {token && slot ? (
           <Followed path={path} token={token} when={whenOf(slot, zone, locale)} onAgain={again} />
         ) : slot ? (
-          <form className="space-y-3" onSubmit={submit} aria-label={t('formTitle')}>
+          <form className="space-y-3" noValidate onSubmit={submit} aria-label={t('formTitle')}>
             <p className="text-sm text-foreground">{t('chosen', { when: whenOf(slot, zone, locale) })}</p>
             <div className="space-y-1">
               <Label htmlFor="booking-name">{t('name')}</Label>
-              <Input id="booking-name" required maxLength={100} autoComplete="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <Input
+                {...fieldControl('booking-name', { error: Boolean(fields.of('name')) })}
+                required
+                maxLength={100}
+                autoComplete="name"
+                value={form.name}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  fields.edit('name');
+                }}
+                onBlur={(e) => fields.blur('name', e.target.value)}
+              />
+              <FieldError id="booking-name">{fields.of('name')}</FieldError>
             </div>
             <div className="space-y-1">
               <Label htmlFor="booking-email">{t('email')}</Label>
-              <Input id="booking-email" required type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              <Input
+                {...fieldControl('booking-email', { error: Boolean(fields.of('email')) })}
+                required
+                type="email"
+                maxLength={254}
+                autoComplete="email"
+                value={form.email}
+                onChange={(e) => {
+                  setForm({ ...form, email: e.target.value });
+                  fields.edit('email');
+                }}
+                onBlur={(e) => fields.blur('email', e.target.value)}
+              />
+              <FieldError id="booking-email">{fields.of('email')}</FieldError>
             </div>
             <div className="space-y-1">
               <Label htmlFor="booking-phone">{t('phone')}</Label>
@@ -431,9 +466,9 @@ function Book({ path, zone }: { path: string; zone: string }) {
               <Textarea id="booking-note" rows={3} maxLength={1000} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
             </div>
             {siteKey && <TurnstileWidget siteKey={siteKey} round={round} onToken={setCheck} />}
+            <p className="text-xs text-muted-foreground">{t('calendarNotice')}</p>
             <div className="flex gap-2">
-              <Button type="submit" disabled={request.isPending || !form.name.trim() || !form.email.trim() || Boolean(siteKey && !check)}>
-                {request.isPending ? <Spinner className="text-current" /> : null}
+              <Button loading={request.isPending} type="submit" disabled={request.isPending || Boolean(siteKey && !check)}>
                 {t('book')}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setSlot(null)}>

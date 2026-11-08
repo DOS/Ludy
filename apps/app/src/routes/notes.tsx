@@ -16,6 +16,7 @@ import { Input } from '@crove/ui/components/input';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { NoteLinks } from '../components/note-links.tsx';
+import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -24,6 +25,7 @@ import { Markdown } from '../lib/markdown.tsx';
 import { applyFormat, shortcutFormat, type MarkdownFormat } from '../lib/markdown-edit.ts';
 import { createAutosaver, type Autosaver, type NoteValues, type SaveState } from '../lib/note-autosave.ts';
 import { notesMarkdown, saveText } from '../lib/notes-export.ts';
+import { toast } from '../lib/toast.ts';
 import { listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
 
 const SAVE_AFTER_MS = 800;
@@ -73,6 +75,7 @@ function Editor({
   onTag: (tag: string) => void;
 }) {
   const t = useTranslations('notes');
+  const common = useTranslations('common');
   const f = useFormat();
   const navigate = useNavigate();
   const [values, setValues] = useState<NoteValues>(() => valuesOf(note));
@@ -165,7 +168,34 @@ function Editor({
       setConfirmShare(false);
       if (action === 'share' || action === 'unshare') saver.setRevision(done.revision);
       void refreshNotes();
-      if (action === 'delete' || action === 'archive') void navigate({ to: '/o/$slug/notes', params: { slug }, search: back });
+      if (action === 'delete' || action === 'archive') {
+        const going = navigate({ to: '/o/$slug/notes', params: { slug }, search: back });
+        // Undo (DESIGN.md §4.5, #2003) reverses only the state this action set. Restore clears the archive and the trash
+        // at once, so the other one, as the note has it when the undo runs, is set again: a note archived before it went
+        // to the trash goes back to the archive, and one moved to the trash after it was archived stays there.
+        const ref = { noteId: note.id };
+        const undo = async () => {
+          let keep: 'archive' | 'delete' | null = null;
+          try {
+            const now = await api.notes.get(ref);
+            keep = action === 'delete' ? (now.archivedAt !== null ? 'archive' : null) : now.deletedAt !== null ? 'delete' : null;
+            await api.notes.restore(ref);
+          } catch (error) {
+            toast(common('undoFailed', { reason: errorMessage(error) }), 'error');
+            void refreshNotes();
+            return;
+          }
+          try {
+            if (keep) await api.notes[keep](ref);
+            toast(t('undoneToast'));
+          } catch (error) {
+            toast(t('undonePartly', { reason: errorMessage(error) }), 'error');
+          } finally {
+            void refreshNotes();
+          }
+        };
+        toast(action === 'archive' ? t('archivedToast') : t('deletedToast'), 'success', { holdUntil: going, action: { label: common('undo'), run: () => void undo() } });
+      }
     },
   });
   const blocked = act.isPending || state === 'saving';
@@ -362,8 +392,7 @@ export function NotesPage() {
     },
   });
   const newButton = writer ? (
-    <Button onClick={() => create.mutate()} disabled={create.isPending}>
-      {create.isPending && <Spinner className="text-current" />}
+    <Button loading={create.isPending} onClick={() => create.mutate()}>
       {t('new')}
     </Button>
   ) : undefined;
@@ -408,12 +437,10 @@ export function NotesPage() {
   const actions =
     role !== undefined ? (
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled={exportMine.isPending} onClick={() => void download('md').catch(() => undefined)}>
-          {exportMine.isPending && exportMine.variables === 'md' && <Spinner className="text-current" />}
+        <Button loading={exportMine.isPending && exportMine.variables === 'md'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('md').catch(() => undefined)}>
           {t('export.markdown')}
         </Button>
-        <Button variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
-          {exportMine.isPending && exportMine.variables === 'json' && <Spinner className="text-current" />}
+        <Button loading={exportMine.isPending && exportMine.variables === 'json'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
           {t('export.json')}
         </Button>
         {newButton}
@@ -423,6 +450,7 @@ export function NotesPage() {
   return (
     <div>
       <PageHeader title={t('title')} subtitle={t('subtitle')} actions={actions} />
+      <NotesSubnav slug={slug} active="notes" />
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
       {exportMine.error && <ErrorText>{errorMessage(exportMine.error)}</ErrorText>}
       <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">

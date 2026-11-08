@@ -12,7 +12,8 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
-import { ErrorText, RowsSkeleton, Spinner } from '../components/ui.tsx';
+import { ExternalCalendars } from './calendar-connections.tsx';
+import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, timeZones, type DayHours } from '../lib/calendar.ts';
@@ -67,8 +68,7 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
       </ul>
       {invalid !== null && <ErrorText>{t('invalidDay', { day: t(`weekdays.${WEEKDAY_KEYS[invalid]}`) })}</ErrorText>}
       {canEdit && (
-        <Button type="submit" variant="outline" size="sm" disabled={save.isPending || !days.some((d) => d.on)}>
-          {save.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={save.isPending} type="submit" variant="outline" size="sm" disabled={save.isPending || !days.some((d) => d.on)}>
           {t('save')}
         </Button>
       )}
@@ -129,8 +129,7 @@ function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean
           <DateInput required className="w-44" value={from} onChange={setFrom} aria-label={t('from')} />
           <span className="text-subtle-foreground">-</span>
           <DateInput className="w-44" min={from || undefined} value={to} onChange={setTo} aria-label={t('to')} />
-          <Button type="submit" variant="outline" size="sm" disabled={add.isPending || !from}>
-            {add.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={add.isPending} type="submit" variant="outline" size="sm" disabled={add.isPending || !from}>
             {t('addDayOff')}
           </Button>
         </form>
@@ -161,6 +160,7 @@ export function WorkingHoursCard({ canEdit }: { canEdit: boolean }) {
         <>
           <HoursForm key={JSON.stringify(calendar.data.hours)} calendar={calendar.data} canEdit={canEdit} />
           <DaysOff calendar={calendar.data} canEdit={canEdit} />
+          <ExternalCalendars canEdit={canEdit} />
         </>
       ) : null}
     </Card>

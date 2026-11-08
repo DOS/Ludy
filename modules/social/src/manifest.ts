@@ -15,7 +15,6 @@ export const socialManifest = defineModule({
       brand_voice: columns(['org_id', 'id', 'channel_connection_id', 'description', 'use_words', 'avoid_words', 'emoji', 'updated_by', 'created_at', 'updated_at']),
       calendar_feed: columns(['org_id', 'id', 'token_sha256', 'created_by', 'created_at', 'revoked_at', 'revoked_by']),
       calendar_note: columns(['org_id', 'id', 'starts_on', 'ends_on', 'title', 'color', 'created_by', 'updated_by', 'created_at', 'updated_at']),
-      channel_access: columns(['org_id', 'id', 'user_id', 'channel_connection_id', 'created_by', 'created_at']),
       channel_option: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'status', 'items', 'error', 'requested_at', 'fetched_at', 'created_at']),
       channel_policy: columns(['org_id', 'id', 'channel_connection_id', 'approvals_required', 'updated_by', 'updated_at', 'review_reminders', 'short_links', 'four_eyes', 'client_approval', 'signature']),
       channel_set: columns(['org_id', 'id', 'name', 'connection_ids', 'updated_by', 'created_at', 'updated_at']),

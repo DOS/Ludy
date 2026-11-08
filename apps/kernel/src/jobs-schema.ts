@@ -53,6 +53,15 @@ export const QUEUES = {
   crmBooking: 'crm-booking',
   // Created by the crm booking manage migration (20261031250000).
   crmBookingRemind: 'crm-booking-remind',
+  // Created by the live calendar check migration (20261113090000): a visitor's booking request or manage ask, decided after the
+  // slot is checked live at the hosts' connected calendars (#2139).
+  crmBookingLive: 'crm-booking-live',
+  // Created by the booking Meet migration (crove_crm_booking_meet): the delayed job that settles a booking whose Google Meet is still pending (C7, #1375).
+  crmBookingMeet: 'crm-booking-meet',
+  // Created by the contact import expiry migration (20261116100000): the daily sweep of staged import rows past 7 days.
+  crmImportExpire: 'crm-import-expire',
+  // Created by the stale-deal next step migration (20261120110000): the daily rule that raises a next step for a stale open deal (#2381).
+  crmDealStale: 'crm-deal-stale',
   // Created by the period balance migration (20261101160000).
   periodBalanceVerify: 'finance-period-balance-verify',
   // Created by the notes core migration (20261103130000).
@@ -60,6 +69,32 @@ export const QUEUES = {
   notesTrash: 'notes-trash',
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
+  // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
+  bankFeedSync: 'finance-bank-feed-sync',
+  // Created by the e-invoice job migration (crove_finance_einvoice_job): one draft's issue, status question or evidence step (#2502).
+  einvoiceIssue: 'finance-einvoice-issue',
+  // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
+  adsSync: 'ads-sync',
+  // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
+  conversationsReply: 'kernel-conversation-reply',
+  // Created by the conversation drafts migration (20261119200000): Vy's draft of a reply to a customer's message, ids only in its data (#2310).
+  conversationsDraft: 'kernel-conversation-draft',
+  // Created by the campaign request migration (20261121180000): the AI coworker's draft of an ad campaign, ids only in its data (#2295, W1b).
+  adsCampaignDraft: 'ads-campaign-draft',
+  // Created by the token revoke migration (20261122050000): a sweep on a schedule with no data at all, that removes at the platform the permissions of a
+  // closed ads connection's token from its sealed copy, the copy being opened by a worker-only definer (#2296, W2-1).
+  adsRevoke: 'ads-revoke',
+  // Created by the launch writer migration (crove_ads_launch_writer): one approved launch, ids only (the org and the launch), run by the relay's event ads.launch.queued and
+  // by the sweep's re-queue; it creates the plan's objects at the platform, every one paused (#2296, W2-3).
+  adsLaunch: 'ads-launch',
+  // Created by the launch pause migration (crove_ads_launch_pause): one stopped launch, ids only (the org and the launch), run by the relay's event ads.pause.queued and by
+  // the sweep's re-queue; it finds what the launch made at the platform by its tag and pauses it, nothing else (#2296, W2-4a).
+  adsPause: 'ads-pause',
+  // Created by the launch activation migration (crove_ads_launch_activation): one approved launch whose objects are created and paused, ids only (the org and the launch), run by
+  // the relay's event ads.activate.queued and by the sweep's re-queue; it switches the launch's own objects on, one call at a time, the campaign last (#2296, W2-4b).
+  adsActivate: 'ads-activate',
+  // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
+  calendarWriteback: 'kernel-calendar-writeback',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -124,10 +159,44 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.yearArchive]: 'none',
   [QUEUES.crmBooking]: 'none',
   [QUEUES.crmBookingRemind]: 'none',
+  // The live check reaches the calendar adapters (channels.calendars); the decision itself is a command.
+  [QUEUES.crmBookingLive]: ['provider:channel'],
+  // The settle is a command; the Meet itself is made by the calendar write-back job.
+  [QUEUES.crmBookingMeet]: 'none',
+  [QUEUES.crmImportExpire]: 'none',
+  [QUEUES.crmDealStale]: 'none',
   [QUEUES.periodBalanceVerify]: 'none',
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
+  // provider here, and to DEPS_REACH first.
+  [QUEUES.bankFeedSync]: 'none',
+  // The e-invoice provider adapters (channels.einvoiceProviders, @crove/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
+  // own host-bound fetch. The signed XML then goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
+  [QUEUES.einvoiceIssue]: ['provider:einvoice'],
+  // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
+  // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
+  [QUEUES.adsSync]: ['provider:ad_platform'],
+  // The platform's reply and hide calls of the conversation core, through the publishers' conversation adapters (the offline sandbox reaches nothing).
+  [QUEUES.conversationsReply]: CHANNELS,
+  // The model reads a thread's text and writes the draft (packages/agent's ConversationWriter): the AI endpoint, nothing else.
+  [QUEUES.conversationsDraft]: ['provider:ai'],
+  // The model reads a member's brief and writes a campaign's creative part (packages/agent's AdsCampaignWriter): the AI endpoint, nothing else.
+  [QUEUES.adsCampaignDraft]: ['provider:ai'],
+  // The one revoking call of the ad platform's writer (DELETE /me/permissions), through the narrowed `channels.adRevokers`: nothing else is reachable.
+  [QUEUES.adsRevoke]: ['provider:ad_platform'],
+  // The calls of a launch of the ad platform's writer (create a campaign, an ad set, a creative and an ad, every one paused; find them by their tag; resolve the
+  // names of regions and interests), through the narrowed `channels.adWriters`: nothing that changes a status, revokes or deletes is reachable.
+  [QUEUES.adsLaunch]: ['provider:ad_platform'],
+  // The pause of what a stopped launch made (find the objects that carry the launch's tag, set them PAUSED), through the narrowed `channels.adPausers`: nothing that
+  // creates, activates, archives, verifies or revokes is reachable.
+  [QUEUES.adsPause]: ['provider:ad_platform'],
+  // The activation of the objects of an approved launch (switch one object on, read its status), through the narrowed `channels.adActivators`: nothing that creates, pauses,
+  // archives, verifies or revokes is reachable.
+  [QUEUES.adsActivate]: ['provider:ad_platform'],
+  // The calendar adapters (channels.calendars): the provider's events are written through them.
+  [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',
 };
 
@@ -146,7 +215,7 @@ export function queueEgress(queue: string): JobEgress {
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
 // agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately' };
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately' };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

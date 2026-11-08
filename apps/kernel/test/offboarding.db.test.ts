@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, myOrgs, upsertIdentity, type ExportRecord, type OrgExportView } from '@crove/kernel';
+import { EXPORT_TABLE_NAMES, OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, myOrgs, upsertIdentity, type ExportRecord, type OrgExportView } from '@crove/kernel';
 import { BlobNotFoundError, Runtime, defineQuery, exportKey, fileKey, readVerified, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import type { AuthUser } from '../src/auth.ts';
@@ -295,7 +295,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     });
     // The other org has no export and is untouched.
     const otherView = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: asUser(other.owner.id), orgId: other.org.orgId });
-    expect(otherView).toEqual({ status: 'active', requestedAt: null, export: null });
+    expect(otherView).toEqual({ status: 'active', requestedAt: null, ownerRunTables: [...OWNER_RUN_EXPORT_TABLE_NAMES], export: null });
     await expect(runtime.query('kernel.org.export.get', {}, { actor: asUser(other.member.id), orgId: other.org.orgId })).rejects.toMatchObject({
       status: 403,
     });

@@ -4,7 +4,7 @@
 // stored facts and inserts what this calls new or ambiguous; the database's unique key on (account, dedupe_key) is the
 // last word on duplicates.
 // Amounts go through decimal.js, never JS numbers.
-import { isCalendarDate, type BankImportPreview, type BankLineStatus, type BankRowError, type BankStatementImport } from '@crove/kernel-contract';
+import { isCalendarDate, type BankFeedLine, type BankImportPreview, type BankLineStatus, type BankRowError, type BankStatementImport } from '@crove/kernel-contract';
 import { Decimal, type DecimalValue, type Money } from '@crove/l10n-vn';
 import { AMOUNT_LIMIT } from './money.ts';
 
@@ -18,13 +18,24 @@ export interface StatementLine {
   amount: Money;
   balance: Money | null;
   reference: string | null;
+  // The other side's account number, digits only (6 to 20), when the file has the column and the cell reads as one (#2402).
+  counterpartyAccount?: string | null;
+}
+
+// The date and signed amount of a line the account holds.
+export interface StoredDateAmount {
+  date: string;
+  amount: Money;
 }
 
 // What the account already has, as the classification needs it: the dedupe keys among the file's keys, and the date
-// and amount (`${date}|${amount}`) of its stored lines in the file's date range.
+// and amount (`${date}|${amount}`) of its stored lines in the file's date range. refs (#2191): the lines it holds under
+// each bank reference among the file's, whatever their key (a line stored as a conflict has none), so a reference that
+// comes again with another date or amount is told from the same transaction coming twice.
 export interface StoredFacts {
   keys: ReadonlySet<string>;
   dateAmounts: ReadonlySet<string>;
+  refs?: ReadonlyMap<string, readonly StoredDateAmount[]>;
 }
 
 // A stored line of the account, for the running balance check.
@@ -79,7 +90,7 @@ export function parseStatementAmount(raw: string): { ok: true; value: DecimalVal
 
 const canonical = (value: DecimalValue) => value.toFixed();
 
-type Parsed = { ok: true; rowNo: number; date: string; description: string; amount: Money; balance: Money | null; reference: string | null } | { ok: false; rowNo: number; errors: BankRowError[] };
+type Parsed = { ok: true; rowNo: number; date: string; description: string; amount: Money; balance: Money | null; reference: string | null; counterpartyAccount: string | null } | { ok: false; rowNo: number; errors: BankRowError[] };
 
 function parseRow(row: BankStatementImport['rows'][number]): Parsed {
   const errors: BankRowError[] = [];
@@ -102,6 +113,9 @@ function parseRow(row: BankStatementImport['rows'][number]): Parsed {
   if (!balance.ok) errors.push('BALANCE_INVALID');
   if (errors.length > 0 || date === null || amount === null || !balance.ok) return { ok: false, rowNo: row.rowNo, errors };
   const reference = row.reference.trim();
+  // An account number is 6 to 20 digits, banks print them with spaces, dots or dashes between groups (the rule of accountNumberDigits);
+  // anything else (a name, a reference, a date, a number in exponent form) is no account.
+  const digits = (row.counterpartyAccount ?? '').replace(/[\s.-]/g, '');
   return {
     ok: true,
     rowNo: row.rowNo,
@@ -110,6 +124,7 @@ function parseRow(row: BankStatementImport['rows'][number]): Parsed {
     amount: canonical(amount),
     balance: balance.value ? canonical(balance.value) : null,
     reference: reference === '' ? null : reference,
+    counterpartyAccount: /^[0-9]{6,20}$/.test(digits) ? digits : null,
   };
 }
 
@@ -150,19 +165,55 @@ export function dedupeKeys(lines: readonly Line[]): Array<string | null> {
   });
 }
 
+// One line's verdict, with the line it clashes with when it is a conflict.
+export interface LineVerdict {
+  status: BankLineStatus;
+  clash: StoredDateAmount | null;
+}
+
 // new, duplicate (the account or the file already has the key) or ambiguous (no key, and a stored line has the same
 // date and amount). Identical lines without a key inside one file are all new: each has its own place in the file.
-export function classify(lines: readonly Line[], keys: ReadonlyArray<string | null>, stored: StoredFacts): BankLineStatus[] {
+// A line with a reference (#2191, ADR-0021 section 6 keeps the key `ref:<reference>`, without the amount, so that a
+// transaction seen from a feed and again in a file is one line) is a duplicate only when the account or the file holds
+// that reference with the same amount on the same day or within SAME_TRANSACTION_DAYS of it; with another amount, or a
+// date further off, it is a conflict, never silently dropped as a duplicate, which is what let a forged statement keep a
+// real transaction out of the books under its reference.
+// The days a bank's own dates for one transaction may differ by (a feed reports the booking day, a statement the value
+// day, and a weekend sits between them): within it, the same reference and amount is the same transaction.
+export const SAME_TRANSACTION_DAYS = 3;
+const dayNumber = (iso: string) => Math.floor(Date.parse(`${iso}T00:00:00Z`) / DAY_MS);
+const sameTransaction = (held: StoredDateAmount, line: { date: string; amount: Money }) =>
+  held.amount === line.amount && Math.abs(dayNumber(held.date) - dayNumber(line.date)) <= SAME_TRANSACTION_DAYS;
+
+export function judge(lines: readonly Line[], keys: ReadonlyArray<string | null>, stored: StoredFacts): LineVerdict[] {
   const inFile = new Set<string>();
-  return lines.map((line, i) => {
+  const refsInFile = new Map<string, StoredDateAmount[]>();
+  return lines.map((line, i): LineVerdict => {
     const key = keys[i] ?? null;
-    if (key !== null) {
-      if (stored.keys.has(key) || inFile.has(key)) return 'duplicate';
-      inFile.add(key);
-      return 'new';
+    if (key !== null && line.reference) {
+      const held = [...(stored.refs?.get(line.reference) ?? []), ...(refsInFile.get(line.reference) ?? [])];
+      if (held.some((h) => sameTransaction(h, line))) return { status: 'duplicate', clash: null };
+      const [first] = held;
+      if (first) {
+        refsInFile.set(line.reference, [...(refsInFile.get(line.reference) ?? []), { date: line.date, amount: line.amount }]);
+        return { status: 'conflict', clash: first };
+      }
+      // Stored under the key with no facts about it (a caller that gave none): the key decides, as it always did.
+      if (stored.keys.has(key)) return { status: 'duplicate', clash: null };
+      refsInFile.set(line.reference, [{ date: line.date, amount: line.amount }]);
+      return { status: 'new', clash: null };
     }
-    return stored.dateAmounts.has(`${line.date}|${line.amount}`) ? 'ambiguous' : 'new';
+    if (key !== null) {
+      if (stored.keys.has(key) || inFile.has(key)) return { status: 'duplicate', clash: null };
+      inFile.add(key);
+      return { status: 'new', clash: null };
+    }
+    return { status: stored.dateAmounts.has(`${line.date}|${line.amount}`) ? 'ambiguous' : 'new', clash: null };
   });
+}
+
+export function classify(lines: readonly Line[], keys: ReadonlyArray<string | null>, stored: StoredFacts): BankLineStatus[] {
+  return judge(lines, keys, stored).map((v) => v.status);
 }
 
 export interface BalanceBreak {
@@ -191,7 +242,8 @@ export function balanceBreaks(chain: ReadonlyArray<{ date: string; amount: Money
 
 export interface StatementCheck {
   preview: BankImportPreview;
-  // The lines to store (new and ambiguous), oldest first, with their keys.
+  // The lines to store (new, ambiguous and conflicting), oldest first, with their keys. A conflict is stored keyless and
+  // flagged (ambiguous), as the unique key would refuse a second line under its reference.
   lines: Array<StatementLine & { key: string | null; ambiguous: boolean }>;
   // Every parsed line's key, for looking up the stored ones.
   keys: string[];
@@ -207,29 +259,81 @@ export function readStatement(input: BankStatementImport) {
   return { parsed, order, lines: oldestFirst, keys };
 }
 
-// The whole check: statuses against the stored facts, and the running balance of the stored lines (`before`: the last
-// stored line before the file's first day, then the stored lines of the file's days, in order) followed, day by day, by
-// the lines this import stores.
-export function checkStatement(input: BankStatementImport, stored: StoredFacts, chain: { before: StoredChainLine | null; within: readonly StoredChainLine[] }): StatementCheck {
-  const { parsed, order, lines, keys } = readStatement(input);
-  const statuses = classify(lines, keys, stored);
-  const byRow = new Map(lines.map((line, i) => [line.rowNo, { line, key: keys[i] ?? null, status: statuses[i] as BankLineStatus }]));
-  const rows = parsed.map((p) => {
-    if (!p.ok) return { rowNo: p.rowNo, date: null, description: '', amount: null, balance: null, reference: null, status: null, errors: p.errors };
-    const found = byRow.get(p.rowNo);
-    return { rowNo: p.rowNo, date: p.date, description: p.description, amount: p.amount, balance: p.balance, reference: p.reference, status: found?.status ?? null, errors: [] };
+// The lines of a bank feed (ADR-0039, #2044), as a source of the same check as a statement's: each dated within the
+// days a statement may have, its amount at most 2 decimals, within the amount limit and not zero, a balance likewise
+// (zero allowed); put oldest first by value date.
+// Within a day the running balances decide the order, as for a statement (statementOrder): a feed that lists a day
+// newest first has that day turned round, so the balance chain and the next batch's last balance are right; without
+// balances the feed's own order stays. rowNo is the line's place in the batch, for messages. The invalid places when
+// any line is.
+export function readFeedLines(feed: readonly BankFeedLine[]): { ok: true; lines: Line[]; keys: Array<string | null> } | { ok: false; rows: number[] } {
+  const invalid: number[] = [];
+  const read = feed.map((line, i) => {
+    const amount = parseStatementAmount(line.amount);
+    const balance = line.balance === null ? ({ ok: true, value: null } as const) : parseStatementAmount(line.balance);
+    if (line.date < FIRST_DAY || line.date > LAST_DAY || !amount.ok || amount.value === null || amount.value.isZero() || !balance.ok) {
+      invalid.push(i + 1);
+      return null;
+    }
+    return {
+      rowNo: i + 1,
+      date: line.date,
+      description: line.description.trim(),
+      amount: canonical(amount.value),
+      balance: balance.value ? canonical(balance.value) : null,
+      reference: line.reference,
+    };
   });
+  if (invalid.length > 0) return { ok: false, rows: invalid };
+  const byDate = (read as Line[]).map((line, i) => ({ line, i })).sort((a, b) => (a.line.date < b.line.date ? -1 : a.line.date > b.line.date ? 1 : a.i - b.i)).map((x) => x.line);
+  const lines: Line[] = [];
+  for (let start = 0; start < byDate.length; ) {
+    let end = start;
+    while (end < byDate.length && (byDate[end] as Line).date === (byDate[start] as Line).date) end++;
+    const day = byDate.slice(start, end);
+    lines.push(...(statementOrder(day) === 'newest_first' ? day.reverse() : day));
+    start = end;
+  }
+  return { ok: true, lines, keys: dedupeKeys(lines) };
+}
+
+// What a batch of lines, oldest first with their keys, adds to an account, whatever its source (a statement file, a
+// bank feed; ADR-0039): each line's status against the stored facts, the lines to store (new and ambiguous) with their
+// place in the batch, and the breaks in the account's running balance once they are stored.
+export function checkLines(
+  lines: readonly Line[],
+  keys: ReadonlyArray<string | null>,
+  stored: StoredFacts,
+  chain: { before: StoredChainLine | null; within: readonly StoredChainLine[] },
+): { statuses: BankLineStatus[]; clashes: Array<StoredDateAmount | null>; toStore: StatementCheck['lines']; breaks: BalanceBreak[] } {
+  const verdicts = judge(lines, keys, stored);
+  const statuses = verdicts.map((v) => v.status);
   const toStore = lines
     .map((line, i) => ({ ...line, position: i + 1, key: keys[i] ?? null, status: statuses[i] as BankLineStatus }))
     .filter((line) => line.status !== 'duplicate')
-    .map(({ status, ...line }) => ({ ...line, ambiguous: status === 'ambiguous' }));
-  // Stored lines first within a day (they came earlier), then this file's, each in order.
+    .map(({ status, ...line }) => ({ ...line, key: status === 'conflict' ? null : line.key, ambiguous: status === 'ambiguous' || status === 'conflict' }));
+  // Stored lines first within a day (they came earlier), then this batch's, each in order.
   const merged = [
     ...(chain.before ? [{ ...chain.before, rowNo: null, group: 0, seq: -1 }] : []),
     ...chain.within.map((line, seq) => ({ ...line, rowNo: null, group: 0, seq })),
     ...toStore.map((line, seq) => ({ date: line.date, amount: line.amount, balance: line.balance, rowNo: line.rowNo, group: 1, seq })),
   ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.group - b.group || a.seq - b.seq));
-  const counts = { new: 0, duplicate: 0, ambiguous: 0, invalid: 0 };
+  return { statuses, clashes: verdicts.map((v) => v.clash), toStore, breaks: balanceBreaks(merged) };
+}
+
+// The whole check of a file: statuses against the stored facts, and the running balance of the stored lines (`before`:
+// the last stored line before the file's first day, then the stored lines of the file's days, in order) followed, day
+// by day, by the lines this import stores.
+export function checkStatement(input: BankStatementImport, stored: StoredFacts, chain: { before: StoredChainLine | null; within: readonly StoredChainLine[] }): StatementCheck {
+  const { parsed, order, lines, keys } = readStatement(input);
+  const { statuses, clashes, toStore, breaks } = checkLines(lines, keys, stored, chain);
+  const byRow = new Map(lines.map((line, i) => [line.rowNo, { line, key: keys[i] ?? null, status: statuses[i] as BankLineStatus, clash: clashes[i] ?? null }]));
+  const rows = parsed.map((p) => {
+    if (!p.ok) return { rowNo: p.rowNo, date: null, description: '', amount: null, balance: null, reference: null, status: null, clash: null, errors: p.errors };
+    const found = byRow.get(p.rowNo);
+    return { rowNo: p.rowNo, date: p.date, description: p.description, amount: p.amount, balance: p.balance, reference: p.reference, status: found?.status ?? null, clash: found?.clash ?? null, errors: [] };
+  });
+  const counts = { new: 0, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 };
   for (const row of rows) {
     if (row.status === null) counts.invalid++;
     else counts[row.status]++;
@@ -241,7 +345,7 @@ export function checkStatement(input: BankStatementImport, stored: StoredFacts, 
       order,
       rows,
       counts,
-      breaks: balanceBreaks(merged),
+      breaks,
       from: dates.length > 0 ? (dates.reduce((a, b) => (a < b ? a : b)) as string) : null,
       to: dates.length > 0 ? (dates.reduce((a, b) => (a > b ? a : b)) as string) : null,
       ok: counts.invalid === 0 && lines.length > 0,

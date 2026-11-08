@@ -6,14 +6,15 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
 import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, runAgentWake, sweepProposalNudges, type UsageLimits } from '@crove/kernel';
-import type { InvoiceReader } from '@crove/agent';
-import type { Publisher, Refresher } from '@crove/channel';
+import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
+import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
+import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
+import { resealSubjectKeys, unopenableSubjectKeysLog } from './subject-key-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, extractAndPropose, importPortalList, recordExtractionFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -30,18 +31,45 @@ import { MISSING_INVOICE_SWEEP_MS, sweepMissingInvoiceReminders } from './missin
 import { ExportSealer } from './export-seal.ts';
 import { AVAILABLE_MODULES } from './config.ts';
 import { JOB_SCHEMA, QUEUES, SOCIAL_PUBLISH_QUEUES, socialPublishQueue } from './jobs-schema.ts';
+import { systemMeter } from './ai-meter.ts';
 import { jobGroup, jobKey, systemJobKey } from './job-keys.ts';
 import { runLinkPreviewJob } from './link-preview.ts';
 import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
+import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
+import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
-import { ARCHIVE_VERIFY_CRON, ARCHIVE_WRITE_CRON, runArchiveVerification, writeArchive, type ArchiveStore } from './worm.ts';
+import {
+  ARCHIVE_VERIFY_CRON,
+  ARCHIVE_WRITE_CRON,
+  runNightlyVerification,
+  writeArchive,
+  type ArchiveStore,
+} from './worm.ts';
 import type { SessionRevoker, SignOutTarget } from './sessions.ts';
+import { withJobLogContext } from './log.ts';
+import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
+import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
+import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
+import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
+import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
+import { runAdsRevoke } from './ads-revoke.ts';
+import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
+import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { runLiveCheck } from './calendar-live.ts';
+import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
+import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
+import { runAdsDeletions } from './ads-deletion.ts';
+import type { BankFeedProvider } from '@crove/bank-feed';
+import type { EInvoiceProvider } from '@crove/einvoice';
+import type { AdActivator, AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -80,6 +108,7 @@ const CHAT_ALERT_TEST_SINGLETON_SECONDS = 10;
 // module this deployment does not enable are left out, so the sweep writes no refused start for them.
 export const AGENT_SWEEP_CRON = '*/10 * * * *';
 const AGENT_SWEEP_LIMIT = 200;
+const AI_BUDGET_SWEEP_LIMIT = 200;
 
 function sendAgentWake(boss: JobSender, orgId: string, agentId: string) {
   return boss.send(QUEUES.agentWake, { orgId, agentId } satisfies AgentWakeJob, {
@@ -91,6 +120,14 @@ function sendAgentWake(boss: JobSender, orgId: string, agentId: string) {
 }
 const EXTRACT_RETRY_LIMIT = 3;
 export const EXTRACT_POLL_SECONDS = 0.5;
+
+// Extract jobs this worker runs at once (#2119): the extract client's own slots toward the sandbox (EXTRACT_WORKER_CONCURRENCY,
+// capped by the sandbox's EXTRACT_CONCURRENCY in config.ts), 1 for a client that names none. pg-boss starts that many
+// workers on the queue, each taking one job at a time, so never more run at once. The AI call of a PDF or a photo is what
+// they overlap; the sandbox calls inside them wait for a slot in the client.
+export function extractWorkers(extract: ExtractClient): number {
+  return Math.max(1, Math.floor(extract.concurrency ?? 1));
+}
 const INBOUND_RETRY_LIMIT = 3;
 const MAIL_EVENT_RETRY_LIMIT = 5;
 const SIGN_OUT_RETRY_LIMIT = 5;
@@ -121,6 +158,14 @@ type BookingJob =
     }
   // A member who left the org or whose role changed (#1382): their booking feed may need revoking.
   | { orgId: string; memberEventId: string };
+
+// A booking waiting for its Google Meet (C7, #1375): settled as failed when no outcome came in time.
+interface BookingMeetJob {
+  orgId: string;
+  bookingId: string;
+}
+// How long a booking may wait for its Meet before it goes on without one (the mails wait for the outcome).
+const BOOKING_MEET_WAIT_SECONDS = 180;
 
 interface BookingRemindJob {
   orgId: string;
@@ -183,6 +228,8 @@ interface YearArchiveJob {
   requestCommandId: string | null;
 }
 const YEAR_ARCHIVE_RETRY_LIMIT = 3;
+// How often the meetings maintenance runs (#2579): shred references, and the objects and file rows of deleted meetings.
+const MEETINGS_SWEEP_MS = 60_000;
 
 interface PortalListJob {
   orgId: string;
@@ -294,12 +341,44 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
   return boss.send(QUEUES.extract, { orgId: row.org_id, fileId } satisfies ExtractJob, { ...options, singletonKey: jobKey(row.org_id, QUEUES.extract, fileId) });
 }
 
+// The daily pull of every bank feed (ADR-0039), early morning in Vietnam; a sync retries a few times, then dead-letters.
+const BANK_FEED_SYNC_CRON = '30 5 * * *';
+// The sweep that queues the e-invoices whose time to ask has come (finance.einvoice_due), every minute; the relay queues a draft the moment it is approved.
+const EINVOICE_SWEEP_CRON = '* * * * *';
+const EINVOICE_ISSUE_RETRY_LIMIT = 3;
+const BANK_FEED_SYNC_RETRY_LIMIT = 3;
+// The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
+// sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
+const ADS_SYNC_CRON = '10 * * * *';
+// The revoke at the platform of a closed ads connection's token (#2296, W2-1): every minute, since the first retry waits a minute (ads-revoke.ts).
+const ADS_REVOKE_CRON = '* * * * *';
+// The sweep that queues a waiting launch again (#2296, W2-3): the relay does it at once when a launch is approved, this is the safety net.
+const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
+// The safety net of the pause of stopped launches (#2296, W2-4a): every five minutes, a stopped launch whose objects are not paused yet and whose job was lost or is due again.
+const ADS_PAUSE_SWEEP_CRON = '*/5 * * * *';
+// The activation's sweep: a launch whose flight has begun and whose event or job was lost, or that waited for its first day, is queued again (#2296, W2-4b).
+const ADS_ACTIVATE_SWEEP_CRON = '*/10 * * * *';
+const ADS_SYNC_RETRY_LIMIT = 3;
+// A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
+// database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
+const CALENDAR_WRITEBACK_RETRY_LIMIT = 3;
+// A job that finds a connection's write-back held by the sweep or another job tries again this many times, this far apart.
+const CALENDAR_WRITEBACK_BUSY_TRIES = 4;
+const CALENDAR_WRITEBACK_BUSY_WAIT_MS = 5_000;
+// One sync a connection per slot for the signed notices that ask for one.
+const BANK_FEED_NOTICE_SLOT_SECONDS = 30;
+
 export interface WorkerDeps {
   connectionString: string;
   workerDb: Db;
   runtime: Runtime;
   store: BlobStore;
   extractor: InvoiceReader | null;
+  // Vy's reply drafts (CV8, #2310): the model that reads a conversation's text and writes a draft; null runs without AI (a draft asked for is settled as none).
+  conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
+  // The AI coworker's campaign drafts (ads W1b, #2295): the model that reads a member's brief and writes the creative part of a campaign; null runs without
+  // AI (a request is settled as none with the code AI_OFF).
+  adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
@@ -322,9 +401,43 @@ export interface WorkerDeps {
   evidenceLockDays?: number;
   // Social publishing: the credential broker that opens channel tokens, and the providers this deployment can publish
   // to. Without it, or without the social module, scheduled posts wait.
-  channels?: { broker: CredentialBroker; publishers: Readonly<Record<string, Publisher>>; refreshers?: Readonly<Record<string, Refresher>> };
+  // bankFeeds: the bank feed adapters this deployment offers (ADR-0039, #2044), by provider id; the worker alone uses
+  // them, with the credentials it opens.
+  channels?: {
+    broker: CredentialBroker;
+    // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY, CHANNEL_FACEBOOK_HISTORY).
+    conversationHistory?: boolean;
+    facebookHistory?: boolean;
+    // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
+    conversationMediaHosts?: readonly string[];
+    publishers: Readonly<Record<string, Publisher>>;
+    refreshers?: Readonly<Record<string, Refresher>>;
+    bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
+    // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
+    einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
+    // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
+    // them, with the credentials it opens.
+    adPlatforms?: Readonly<Record<string, AdPlatform>>;
+    // The one call of an ad platform's writer that removes the app's permissions at the platform (#2296, W2-1), by the provider id of the connection whose
+    // token is held: the narrowed view, never the writer. The revoke sweep alone uses it, with the sealed copy it opens.
+    adRevokers?: Readonly<Record<string, AdRevoker>>;
+    // The calls of a launch of an ad platform's writer (#2296, W2-3), by the provider id of the write connection: a frozen view with the creates (every object
+    // paused), the find by tag and the resolution of targeting names, never the writer. The launch job alone uses it, with the credential it opens. A provider
+    // without one has its launches left queued, untouched (Meta's is built only where ADS_LIVE_LAUNCH is on).
+    adWriters?: Readonly<Record<string, LaunchWriter>>;
+    // The one call of an ad platform's writer that pauses what a stopped launch made (#2296, W2-4a), by the provider id of the write connection: a frozen view that finds the
+    // objects carrying the launch's tag and sets them PAUSED, never the writer. The pause job alone uses it, with the credential it opens.
+    adPausers?: Readonly<Record<string, AdPauser>>;
+    // The calls of an ad platform that switch on what an approved launch made (#2296, W2-4b), by the provider id of the write connection: a frozen view with `activate` and
+    // `readStatus`, never the writer. The activation job alone uses it, with the credential it opens.
+    adActivators?: Readonly<Record<string, AdActivator>>;
+    // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
+    calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
+  };
   // PUBLIC_URL, where Social short links (#706) point.
   publicUrl?: string;
+  // APP_URL, where the links in mail and chat alerts open the web app (#2261). Unset: publicUrl.
+  appUrl?: string;
   // The product name users see (BRAND_NAME, #1045), for the chat alert test line.
   brand?: string;
   // Queued mail (#548): the mailer, the templates queued mail is rendered from, and the bounce domain. Unset: queued
@@ -335,14 +448,17 @@ export interface WorkerDeps {
   push?: { sender: PushSender; brand: string };
   // The WORM fact stream (worm.ts, #891): the store batches go to and how long after a row is written it is archived.
   // Unset: nothing is archived.
-  archive?: { store: ArchiveStore; lagSeconds: number };
+  // restoreAlertDays: days the verifier alerts on a restore acknowledgement after the store wrote it (#2020).
+  archive?: { store: ArchiveStore; lagSeconds: number; restoreAlertDays?: number };
   // The per-org abuse limits (#675). Unset: nothing is checked (use is still recorded).
   usageLimits?: UsageLimits;
   // Detective security alerts (#996): the alert webhook (null: the log only) and the thresholds (default
   // DEFAULT_SECURITY_THRESHOLDS).
   securityAlerts?: { target: WebhookTarget | null; thresholds?: SecurityThresholds };
-  // The AI model's price per million input and output tokens, in the unit of the ai_cost limit. Unset: AI costs 0.
-  aiPrice?: { inputPerMTok: string; outputPerMTok: string };
+  // The AI model's price per million input and output tokens, in the unit of the ai_cost limit. Unset: AI costs 0. Its
+  // defaultMonthlyBudget (AI_DEFAULT_MONTHLY_BUDGET, #2382) is the monthly AI budget an org with none of its own gets;
+  // unset: none.
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string; defaultMonthlyBudget?: string | null };
   // Back-pressure (#894): above this outbox lag the agent, bulk mail, archive and retention queues stop fetching
   // (default DEFAULT_OUTBOX_LAG_PAUSE_SECONDS).
   outboxLagPauseSeconds?: number;
@@ -491,15 +607,39 @@ export async function runSignOut(revoker: SessionRevoker | null | undefined, tar
 // what the attempt learned about the file (undefined when its lookup failed too). A file whose lookup keeps failing is
 // recorded as a document; should the file turn out to be a ZIP (#432), that refusal (ARCHIVE_NOT_READ) records the
 // failed opening of an archive instead.
-export async function recordLastAttemptFailure(runtime: Runtime, orgId: string, fileId: string, version: number | undefined, archive: ArchiveSource | null | undefined): Promise<void> {
+export async function recordLastAttemptFailure(
+  runtime: Runtime,
+  orgId: string,
+  fileId: string,
+  version: number | undefined,
+  archive: ArchiveSource | null | undefined,
+  // The last attempt's error: whether the document or the reading service failed (#1998).
+  error?: unknown,
+): Promise<void> {
   const known = archive === undefined ? await archiveSource(runtime, orgId, fileId).catch(() => undefined) : archive;
   const failArchive = () => recordArchiveFailure(runtime, orgId, fileId, 'Không mở được tệp ZIP sau nhiều lần thử; hãy tải lại tệp');
+  // A re-read someone asked for (#2142) that never ended belongs to a bank statement (only a statement's ZIP is read
+  // again): its pending run is failed, on its own version, never answered as the opening of an archive, which would find
+  // the earlier run and leave this one pending until it goes stale.
+  if (known && version !== undefined) {
+    await recordStatementReadFailure(runtime, orgId, fileId, version, 'Không đọc lại được sao kê sau nhiều lần thử; hãy bấm Đọc lại sau ít phút');
+    return;
+  }
   if (known) {
     await failArchive();
     return;
   }
   try {
-    await recordExtractionFailure(runtime, orgId, fileId, 'Không đọc được chứng từ sau nhiều lần thử; hãy kiểm tra cấu hình AI hoặc gửi tệp XML', version);
+    // Every attempt threw. The AI refusing this document itself (a request it rejects, an answer that never fits the
+    // schema) is the document's failure; anything else is the reading service's, which the prober counts (#1998).
+    await recordExtractionFailure(
+      runtime,
+      orgId,
+      fileId,
+      'Không đọc được chứng từ sau nhiều lần thử; hãy kiểm tra cấu hình AI hoặc gửi tệp XML',
+      version,
+      aiDocumentFailure(error) ? 'document' : 'service',
+    );
   } catch (error) {
     if (known === undefined && error instanceof DomainError && error.code === 'ARCHIVE_NOT_READ') {
       await failArchive();
@@ -511,6 +651,8 @@ export async function recordLastAttemptFailure(runtime: Runtime, orgId: string, 
 
 export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>> {
   const boss = new PgBoss({ connectionString: deps.connectionString, schema: JOB_SCHEMA, migrate: false, createSchema: false });
+  // Every job runs with its queue, its id and the org its payload names on its log lines (#2175).
+  withJobLogContext(boss);
   boss.on('error', (error) => console.error('[pg-boss]', error));
   await boss.start();
 
@@ -524,6 +666,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const social = deps.runtime.installed('social');
   const crm = deps.runtime.installed('crm');
   const notes = deps.runtime.installed('notes');
+  const ads = deps.runtime.installed('ads');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
   const dropCron = async (queue: string) => {
@@ -533,25 +676,76 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // Background, agent and bulk queues, paused under back-pressure (#894, plan §4.9). Registered with background.add.
   const background = new PausableWork(boss);
 
+  if (finance) console.log(`[extract] up to ${extractWorkers(deps.extract)} extract job(s) at once`);
+  // The AI budget meter of the worker's own model calls (#2382): an extraction counts against its org as the system.
+  const defaultAiBudget = deps.aiPrice?.defaultMonthlyBudget ?? null;
+  const aiMeter = systemMeter(deps.runtime, { price: deps.aiPrice, defaultMonthlyBudget: defaultAiBudget });
+  // Run with the agent sweep: gives an org with no budget the deployment's default, and tells the owners and admins once
+  // when a budget crossed its warning percentage or 100%. Documents waiting for the budget need no sweep: their own read
+  // is asked again every few minutes (extractAndPropose). Each step is best effort and never stops the other.
+  const aiBudgetSweep = async (): Promise<void> => {
+    const system = { type: 'system' as const, component: 'kernel.ai_meter' };
+    const attempt = async (what: string, step: () => Promise<number>) => {
+      try {
+        const n = await step();
+        if (n > 0) console.log(`[ai-budget] sweep: ${what} ${n}`);
+      } catch (error) {
+        console.error(`[ai-budget] sweep: ${what} failed`, error instanceof Error ? error.message : error);
+      }
+    };
+    if (defaultAiBudget) {
+      await attempt('gave the default budget to', async () => {
+        const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.ai_budget_seed_due(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+        for (const row of rows) await deps.runtime.execute('kernel.ai.budget.ensure_default', { monthlyLimit: defaultAiBudget }, { actor: system, orgId: row.org_id });
+        return rows.length;
+      });
+    }
+    await attempt('told owners of', async () => {
+      const { rows } = await sql<{ org_id: string; scope: string; target: string; level: string }>`SELECT org_id, scope, target, level FROM crove_kernel.ai_budget_crossings(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+      for (const row of rows) await deps.runtime.execute('kernel.ai.budget.notify', { scope: row.scope, target: row.target, level: row.level }, { actor: system, orgId: row.org_id });
+      return rows.length;
+    });
+  };
+
   // version: a requested re-extraction (kernel.file.reextract_requested); absent for the first read of a new file.
   // pg-boss waits the polling interval between fetches (2 s by default, less the job's run time), so a batch of 200
   // documents (bulk intake, #314) would wait about 400 s; 0.5 s, the shortest it allows, lets one sandbox call follow
   // the other. An idle worker asks for extraction jobs twice a second.
-  if (finance) await boss.work<ExtractJob>(QUEUES.extract, { batchSize: 1, pollingIntervalSeconds: EXTRACT_POLL_SECONDS }, async ([job]) => {
+  if (finance) await boss.work<ExtractJob>(QUEUES.extract, { batchSize: 1, localConcurrency: extractWorkers(deps.extract), pollingIntervalSeconds: EXTRACT_POLL_SECONDS }, async ([job]) => {
     if (!job) return;
     const { orgId, fileId, version } = job.data;
     // A ZIP archive (#314) is opened into documents of its own instead of being read; it is never read again.
     // undefined until it is known; a lookup that fails is retried with the job like any other step.
     let archive: ArchiveSource | null | undefined;
     try {
+      // A bank statement (#2142), an .xlsx (which arrives as a ZIP) or a CSV, is stored as the bank lines of its mapped
+      // account; a file the sandbox does not read as one goes on as before. A re-read someone asked for (a statement that
+      // named an account no one had mapped yet) comes with its version and is read the same way.
+      // A marketplace order report (#2515) is tried first: its headers are told apart by words only the platforms use, and a bank statement reader would take any sheet with a date and an
+      // amount. A file that is no order report goes on to the bank statement reader as before.
+      const report = await readMarketplaceFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (report.handled) {
+        console.log(`[extract] file ${fileId}: marketplace order report`);
+        return;
+      }
+      const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (statement.handled) {
+        console.log(`[extract] file ${fileId}: bank statement`);
+        return;
+      }
       archive = await archiveSource(deps.runtime, orgId, fileId);
-      if (archive && version !== undefined) return;
+      if (archive && version !== undefined) {
+        // A re-read asked for on a ZIP the sandbox no longer reads as a statement (#2142): its run ends here with the reason,
+        // not pending until it goes stale. An archive of documents is never read again, so none has a version.
+        await recordStatementReadFailure(deps.runtime, orgId, fileId, version, 'Tệp không còn được nhận ra là sao kê ngân hàng');
+        return;
+      }
       if (archive) {
         const { fileIds } = await expandArchive({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, archive, job.retryCount);
         console.log(`[extract] archive ${fileId}: ${fileIds.length} file(s)`);
       } else {
         const done = await extractAndPropose(
-          { runtime: deps.runtime, store: deps.store, extractor: deps.extractor, extract: deps.extract, limits: deps.usageLimits, aiPrice: deps.aiPrice },
+          { runtime: deps.runtime, store: deps.store, extractor: deps.extractor, extract: deps.extract, limits: deps.usageLimits, meter: aiMeter },
           orgId,
           fileId,
           version,
@@ -565,14 +759,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             retryDelay: 20,
             retryBackoff: true,
           });
-          console.log(`[extract] file ${fileId}: over the org's daily limit, deferred to ${done.deferred}`);
+          console.log(`[extract] file ${fileId}: over the org's limit or AI budget, deferred to ${done.deferred}`);
         }
       }
     } catch (error) {
       console.error(`[extract] file ${fileId}${version ? ` version ${version}` : ''} attempt ${job.retryCount + 1}`, error);
       if (job.retryCount < EXTRACT_RETRY_LIMIT) throw error;
       // The last attempt records a failed run either way, so the file never stays "being read".
-      await recordLastAttemptFailure(deps.runtime, orgId, fileId, version, archive);
+      await recordLastAttemptFailure(deps.runtime, orgId, fileId, version, archive, error);
     }
   });
 
@@ -623,7 +817,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.log(`[inbound] message ${label}: over the org's daily limit, deferred to ${result.deferred}`);
         return;
       }
-      console.log(`[inbound] message ${label}: ${'bounce' in result ? `bounce report, ${result.bounce}` : result.duplicate ? 'duplicate' : `${result.fileIds.length} file(s)`}`);
+      console.log(`[inbound] message ${label}: ${'bounce' in result ? `bounce report, ${result.bounce}` : 'conversation' in result ? `conversation mail, ${result.conversation}${result.reason ? ` (${result.reason})` : ''}` : result.duplicate ? 'duplicate' : `${result.fileIds.length} file(s)`}`);
     } catch (error) {
       // A message no org can receive (unknown or closed recipient, invalid content) is dropped, not retried.
       if (!(error instanceof DomainError && error.status !== 409 && error.status < 500)) {
@@ -652,7 +846,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // time with a gap. Without a mailer (tests, an embedder) queued mail stays queued.
   const mail = deps.mail;
   if (mail) {
-    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, publicUrl: deps.publicUrl ?? '', workerDb: deps.workerDb };
+    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, publicUrl: deps.appUrl ?? deps.publicUrl ?? '', workerDb: deps.workerDb };
     const sendMail = async (job: { data: MailJob; retryCount: number } | undefined, gap: number) => {
       if (!job) return;
       const label = job.data.messageId.slice(0, 8);
@@ -741,8 +935,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Dismissed and old dead-letter Inbox items (#1747), each org in its own system context.
       const inboxItems = await pruneInboxItems({ runtime: deps.runtime, workerDb: deps.workerDb });
       console.log(`[retention] refusal_tally=${pruned} security_event=${securityEvents} inbox_item=${inboxItems}`);
+      // Threads past their org's retention (CV6, #2305), each org in its own system context.
+      const conversations = await purgeExpiredConversations({ runtime: deps.runtime, workerDb: deps.workerDb });
+      console.log(`[retention] conversation_threads=${conversations}`);
     } finally {
       // Each catches its own errors; they run even when a database purge failed.
+      // Meeting audio, video and text past the periods stamped on them (#2579), each in its meeting's own org. It runs even when a database purge above
+      // failed (a shred is not to wait for an unrelated failure), and its own failure is alerted and never stops the rest.
+      if (deps.runtime.installed('meetings')) {
+        await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
+          opsAlert('[meetings-retention] ALERT the nightly shred failed; the error is in the worker log', error);
+        });
+      }
       await sweepStaging(deps.store);
       await sweepInboundBlobs(deps.store, deps.workerDb);
       await expireExports(deps.store, deps.runtime, exportRetentionDays);
@@ -770,20 +974,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (written > 0) console.log(`[archive] wrote ${written} batch(es)`);
     }));
     await boss.schedule(QUEUES.archiveWrite, ARCHIVE_WRITE_CRON, null, { tz: RETENTION_TZ });
-    await background.add(QUEUES.archiveVerify, () => boss.work(QUEUES.archiveVerify, { batchSize: 1 }, async () => {
-      // The verifier reads every batch and row, so its time grows with the archive: logged on every run.
-      const started = Date.now();
-      const elapsed = () => `${Math.round((Date.now() - started) / 1000)} s`;
-      try {
-        const result = await runArchiveVerification(deps.workerDb, store);
-        console.log(`[archive] verified ${result.batches} batch(es), ${result.rows} row(s) in ${elapsed()}`);
-      } catch (error) {
-        console.error(`[archive] ALERT after ${elapsed()}: ${error instanceof Error ? error.message : 'verification could not run'}`);
-        throw error;
-      }
+    await background.add(QUEUES.archiveVerify, () => boss.work<{ full?: boolean } | null>(QUEUES.archiveVerify, { batchSize: 1 }, async ([job]) => {
+      // A job queued by hand with {"full": true} reads every batch tonight (docs/runbooks/worm-archive.md): the
+      // conservative direction, so the payload needs no check beyond its value.
+      const forceFull = job?.data?.full === true;
+      // Each night reads only the batches after the last passing run, and about monthly every batch (#2121), so its time
+      // follows the new batches, not the archive: logged on every run (runNightlyVerification).
+      await runNightlyVerification({
+        db: deps.workerDb,
+        store,
+        ...(deps.archive?.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.archive.restoreAlertDays }),
+        forceFull,
+        opsAlert,
+        log: (line) => console.log(line),
+        logFailure: (elapsed, message) => console.error(`[archive] ALERT after ${elapsed}: ${message}`),
+      });
     }));
-    // An hour before pg-boss counts the run as expired (its default is 15 minutes).
-    await boss.schedule(QUEUES.archiveVerify, ARCHIVE_VERIFY_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0, expireInSeconds: 3600 });
+    // The nightly run is short now, but the monthly full pass reads the whole archive (a year is about 105,000 objects):
+    // pg-boss counts a run as expired after four hours (its default is 15 minutes) (#2121).
+    await boss.schedule(QUEUES.archiveVerify, ARCHIVE_VERIFY_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0, expireInSeconds: 14400 });
   }
 
   // The period balance reconciliation (#1284): nightly, the deltas the posting definer appended compared with the
@@ -835,6 +1044,29 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         await deps.runtime.execute('crm.booking.confirm', { bookingId: job.data.bookingId }, { actor, orgId: job.data.orgId });
       }
     });
+    // The same two jobs for a visitor's request or ask (#2139), after the slot is checked live at the hosts' connected
+    // calendars: a busy answer lands in their stored blocks, so the command below refuses the slot as taken. Any trouble with
+    // the check (no connection, a slow or failing provider) leaves the stored blocks to decide; the booking never waits on
+    // Google for more than the check's short timeout. The crm-booking queue above keeps the member events and jobs queued
+    // before this queue existed.
+    await boss.work<BookingJob>(QUEUES.crmBookingLive, { batchSize: 1 }, async ([job]) => {
+      if (!job || 'memberEventId' in job.data) return;
+      const { orgId, bookingId, requestId } = job.data;
+      if (deps.channels && Object.keys(deps.channels.calendars ?? {}).length > 0) {
+        await runLiveCheck({ runtime: deps.runtime, broker: deps.channels.broker, adapters: deps.channels.calendars ?? {} }, { orgId, bookingId, ...(requestId ? { requestId } : {}) }).catch((error: unknown) =>
+          console.error(`[calendar-live] booking ${bookingId.slice(0, 8)}: ${error instanceof Error ? error.name : 'error'}`),
+        );
+      }
+      const actor = { type: 'system' as const, component: 'crm.booking' };
+      if (requestId) await deps.runtime.execute('crm.booking.manage', { bookingId, requestId }, { actor, orgId });
+      else await deps.runtime.execute('crm.booking.confirm', { bookingId }, { actor, orgId });
+    });
+    // A booking's Google Meet that did not come in time (C7, #1375): settled as failed, so the confirmation mails the booking was
+    // holding back go out with the type's fixed link, if it has one. A booking whose Meet was settled meanwhile is left alone.
+    await boss.work<BookingMeetJob>(QUEUES.crmBookingMeet, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      await deps.runtime.execute('crm.booking.meeting_settle', { bookingId: job.data.bookingId, url: null }, { actor: { type: 'system', component: 'crm.booking' }, orgId: job.data.orgId });
+    });
     // Reminders (#1319): a job per booking, time and lead, run when it is due; the command mails only while the booking
     // is confirmed and still starts then.
     await boss.work<BookingRemindJob>(QUEUES.crmBookingRemind, { batchSize: 1 }, async ([job]) => {
@@ -842,6 +1074,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const { orgId, ...input } = job.data;
       await deps.runtime.execute('crm.booking.remind', input, { actor: { type: 'system', component: 'crm.booking' }, orgId });
     });
+    // Contact import (#2251): once a day, the staged rows past their 7 days in orgs that never imported again.
+    await boss.work(QUEUES.crmImportExpire, { batchSize: 1 }, async () => {
+      const removed = await sweepCrmImports({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (removed > 0) console.log(`[crm-import-expire] removed ${removed} staged rows`);
+    });
+    await boss.schedule(QUEUES.crmImportExpire, CRM_IMPORT_EXPIRE_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+    // Stale deals (#2381): once a day, a next step for the open deals nobody touched for N days or past their expected close.
+    await boss.work(QUEUES.crmDealStale, { batchSize: 1 }, async () => {
+      const { orgs, raised } = await raiseCrmNextSteps({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (raised > 0) console.log(`[crm-deal-stale] raised ${raised} next steps in ${orgs} orgs`);
+    });
+    await boss.schedule(QUEUES.crmDealStale, CRM_DEAL_STALE_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.crmImportExpire);
+    await dropCron(QUEUES.crmDealStale);
   }
 
   // Notes (#1671): a former member's private notes 30 days after they left, the daily trash and the to-do reminders
@@ -867,6 +1114,236 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // The member purges stay queued (they carry whose notes to purge) for when notes is installed again.
     await dropCron(QUEUES.notesTrash);
     await dropCron(QUEUES.notesRemind);
+  }
+
+  // Bank feeds (ADR-0039, #2044): a connection's sync, queued by the relay above and, once a day, for every active
+  // bank feed connection of an active org. The adapters are the deployment's; with none on, the sweep queues nothing.
+  const bankFeeds = deps.channels?.bankFeeds;
+  const bankFeedBroker = deps.channels?.broker;
+  if (finance && bankFeeds && bankFeedBroker && Object.keys(bankFeeds).length > 0) {
+    await boss.work<BankFeedSyncJob | { sweep: true }>(QUEUES.bankFeedSync, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        // Every active bank feed, a page of connections at a time by key.
+        let after: { orgId: string; connectionId: string } | null = null;
+        for (;;) {
+          const page = await bankFeedsDue(deps.workerDb, after);
+          for (const row of page.filter((r) => Object.hasOwn(bankFeeds, r.provider))) {
+            await boss.send(QUEUES.bankFeedSync, { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.bankFeedSync, row.connectionId),
+              retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < BANK_FEEDS_DUE_PAGE) break;
+          after = { orgId: last.orgId, connectionId: last.connectionId };
+        }
+        return;
+      }
+      const done = await runBankFeedSync({ runtime: deps.runtime, broker: bankFeedBroker, providers: bankFeeds }, job.data);
+      console.log(`[bank-feed] ${job.data.connectionId}: ${done.accounts} account(s), ${done.pages} page(s), ${done.stored} line(s) stored`);
+    });
+    await boss.schedule(QUEUES.bankFeedSync, BANK_FEED_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.bankFeedSync);
+  }
+
+  // E-invoices (ADR-0044, #2502): a draft a person's approved issue moved to `submitting`, queued by the relay below, and, every minute, every draft whose time to ask
+  // the provider has come (or whose signed XML is still to store). The adapters are the deployment's; with none on, nothing is queued and nothing is sent.
+  const einvoiceProviders = deps.channels?.einvoiceProviders;
+  const einvoiceBroker = deps.channels?.broker;
+  if (finance && einvoiceProviders && einvoiceBroker && Object.keys(einvoiceProviders).length > 0) {
+    await boss.work<EInvoiceIssueJob | { sweep: true }>(QUEUES.einvoiceIssue, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        let after: { orgId: string; draftId: string } | null = null;
+        for (;;) {
+          const page = await einvoiceDue(deps.workerDb, after);
+          for (const row of page) {
+            await boss.send(QUEUES.einvoiceIssue, { orgId: row.orgId, draftId: row.draftId } satisfies EInvoiceIssueJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.einvoiceIssue, row.draftId),
+              retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < EINVOICE_DUE_PAGE) break;
+          after = { orgId: last.orgId, draftId: last.draftId };
+        }
+        return;
+      }
+      const done = await runEInvoiceIssue({ runtime: deps.runtime, broker: einvoiceBroker, store: deps.store, providers: einvoiceProviders }, job.data);
+      console.log(`[einvoice] draft ${job.data.draftId.slice(0, 8)}: ${done.action}, ${done.state}`);
+    });
+    await boss.schedule(QUEUES.einvoiceIssue, EINVOICE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.einvoiceIssue);
+  }
+
+  // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
+  // for, and every hour for every active ad account of an active org. The adapters are the deployment's; with none on,
+  // the sweep queues nothing.
+  const adPlatforms = deps.channels?.adPlatforms;
+  const adsBroker = deps.channels?.broker;
+  if (ads && adPlatforms && adsBroker && Object.keys(adPlatforms).length > 0) {
+    await boss.work<AdsSyncJob | { sweep: true }>(QUEUES.adsSync, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        // Every active ad account, a page of connections at a time by key.
+        let after: { orgId: string; connectionId: string } | null = null;
+        for (;;) {
+          const page = await adsDue(deps.workerDb, after);
+          for (const row of page.filter((r) => Object.hasOwn(adPlatforms, r.provider))) {
+            await boss.send(QUEUES.adsSync, { orgId: row.orgId, connectionId: row.connectionId } satisfies AdsSyncJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.adsSync, row.connectionId),
+              retryLimit: ADS_SYNC_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < ADS_DUE_PAGE) break;
+          after = { orgId: last.orgId, connectionId: last.connectionId };
+        }
+        // The runs older than 90 days.
+        const pruned = await pruneAdsRuns(deps.workerDb, new Date());
+        if (pruned > 0) console.log(`[ads] pruned ${pruned} old sync run(s)`);
+        return;
+      }
+      const done = await runAdsSync({ runtime: deps.runtime, broker: adsBroker, platforms: adPlatforms }, job.data);
+      console.log(`[ads] ${job.data.connectionId}: ${done.slices} slice(s), ${done.rows} row(s) stored`);
+    });
+    await boss.schedule(QUEUES.adsSync, ADS_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.adsSync);
+  }
+
+  // The revoke at the platform of a closed ads connection's token (#2296, W2-1): a sweep with no data, every minute, whether or not a platform is
+  // configured: with no revoker or no credential key the copies wait (nothing is recorded, so a configuration fix restores the revoke) and the seventh day ends them.
+  if (ads) {
+    await boss.work(QUEUES.adsRevoke, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runAdsRevoke({ runtime: deps.runtime, workerDb: deps.workerDb, broker: deps.channels?.broker, revokers: deps.channels?.adRevokers ?? {} });
+      if (done.expired + done.closed + done.tried > 0) console.log(`[ads-revoke] ${done.tried} tried, ${done.done} done, ${done.closed} closed (member left), ${done.expired} past their age`);
+    });
+    // retryLimit 0: the policy retries (backoff in the database, each try counted when the copy is opened), never the queue.
+    await boss.schedule(QUEUES.adsRevoke, ADS_REVOKE_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsRevoke);
+  }
+
+  // The launch of an approved campaign at the ad platform (#2296, W2-3): ids only in the job (the org and the launch), queued by the relay below when the approval
+  // wrote ads.launch.queued, and again by a sweep every ten minutes for a launch whose event or job was lost (crove_ads.launch_requeue writes the same event for
+  // the providers this worker has a writer for; the job's begin decides what is due). The writers are the deployment's: the sandbox's offline one, and Meta's
+  // only where ADS_LIVE_LAUNCH is on; a provider without one has its launches left queued, untouched. Every object the job creates is paused.
+  const adWriters = deps.channels?.adWriters;
+  if (ads && adWriters && adsBroker && Object.keys(adWriters).length > 0) {
+    await boss.work<AdsLaunchJob | { sweep: true }>(QUEUES.adsLaunch, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.launch_requeue(${Object.keys(adWriters)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-launch] ${rows[0]?.n} waiting launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsLaunch({ runtime: deps.runtime, broker: adsBroker, writers: adWriters }, job.data);
+      console.log(`[ads-launch] ${job.data.launchId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsLaunch, ADS_LAUNCH_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsLaunch);
+  }
+
+  // The pause of what a stopped launch made at the platform (#2296, W2-4a): ids only in the job (the org and the launch), queued by the relay below when a stop wrote
+  // ads.pause.queued, and again by a sweep every five minutes for a stopped launch whose event or job was lost or whose next run is due (crove_ads.wind_down_requeue writes
+  // the same event; the job's begin decides what is due). The job finds the objects that carry the launch's tag and sets them PAUSED with the credential of the write
+  // connection, and nothing else; a connection that a switch-off closed is paused by the revoke sweep with the sealed copy of its token, before it revokes.
+  const adPausers = deps.channels?.adPausers;
+  if (ads && adPausers && adsBroker && Object.keys(adPausers).length > 0) {
+    await boss.work<AdsPauseJob | { sweep: true }>(QUEUES.adsPause, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.wind_down_requeue(200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-pause] ${rows[0]?.n} stopped launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsPause({ runtime: deps.runtime, broker: adsBroker, pausers: adPausers }, job.data);
+      console.log(`[ads-pause] ${job.data.launchId}: ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsPause, ADS_PAUSE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsPause);
+  }
+
+  // The activation of an approved launch at the ad platform (#2296, W2-4b): ids only in the job (the org and the launch), queued by the relay below when the launch job left a
+  // launch's objects created and paused (ads.activate.queued), and again by a sweep every ten minutes for a launch whose flight has begun and whose event or job was lost
+  // (crove_ads.activate_requeue writes the same event for the providers this worker has an activator for; the job's begin decides what is due, and re-checks the stop
+  // conditions, the plan and the caps before every call). The job switches the launch's own objects on with the credential of the write connection, and nothing else.
+  const adActivators = deps.channels?.adActivators;
+  if (ads && adActivators && adsBroker && Object.keys(adActivators).length > 0) {
+    await boss.work<AdsActivateJob | { sweep: true }>(QUEUES.adsActivate, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.activate_requeue(${Object.keys(adActivators)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-activate] ${rows[0]?.n} waiting launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsActivate({ runtime: deps.runtime, broker: adsBroker, activators: adActivators }, job.data);
+      console.log(`[ads-activate] ${job.data.launchId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsActivate, ADS_ACTIVATE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsActivate);
+  }
+
+  // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
+  // deployment's; the offline sandbox's reach nothing.
+  const conversationPublishers = deps.channels?.publishers;
+  const conversationBroker = deps.channels?.broker;
+  if (conversationPublishers && conversationBroker) {
+    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      // A customer's image (CV5c): fetched through the egress guard from the platform's media hosts; the log names the image by id only.
+      if (job.data.action === 'attachment') {
+        const outcome = await runConversationAttachment({ runtime: deps.runtime, store: deps.store, hosts: deps.channels?.conversationMediaHosts }, job.data);
+        console.log(`[conversations] attachment ${job.data.attachmentId}: ${outcome}`);
+        return;
+      }
+      const sendDeps = { runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) };
+      // A history read or a name lookup (CV5b) shares the queue of a reply: ids only in the job, and only the action and ids in the log.
+      if (job.data.action === 'history' || job.data.action === 'profile') {
+        const outcome = await runConversationSync(sendDeps, job.data);
+        console.log(`[conversations] ${job.data.action} ${job.data.action === 'profile' ? job.data.identityId : job.data.connectionId}: ${outcome}`);
+        return;
+      }
+      const outcome = await runConversationJob(sendDeps, job.data);
+      console.log(`[conversations] ${job.data.action} ${job.data.messageId}: ${outcome}`);
+    });
+  }
+
+  // Vy's reply drafts (CV8, #2310): the model reads a thread's text and a system command records the draft. Only where an AI endpoint is configured;
+  // elsewhere a draft asked for is settled as none by the relay below.
+  const draftWriter = deps.conversationWriter;
+  const draftBudget = new DraftBudget();
+  if (draftWriter) {
+    await boss.work<ConversationDraftJob>(QUEUES.conversationsDraft, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, meter: aiMeter, budget: draftBudget }, job.data);
+      console.log(`[conversations] draft ${job.data.draftId}: ${outcome}`);
+    });
+  }
+
+  // The AI coworker's campaign drafts (ads W1b, #2295): the model reads a member's brief and a system command records the draft. Only where an AI endpoint is
+  // configured; elsewhere a request is settled as none by the relay below.
+  const adsWriter = deps.adsCampaignWriter;
+  if (adsWriter && deps.runtime.installed('ads')) {
+    await boss.work<AdsCampaignDraftJob>(QUEUES.adsCampaignDraft, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const outcome = await runAdsCampaignDraft({ runtime: deps.runtime, writer: adsWriter, meter: aiMeter, budget: draftBudget }, job.data);
+      console.log(`[ads] campaign draft ${job.data.requestId}: ${outcome}`);
+    });
   }
 
   // In-app notifications of the kernel and finance (#671): the module's dispatch reads the event from the outbox.
@@ -921,7 +1398,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // Team chat alerts (#863): one short line in the org's Telegram or Discord chat, sent apart from the notices and
   // their mail; the sender logs a failure and never throws, so the job is never retried.
-  const chatAlerts = social && deps.channels ? new ChatAlertSender({ runtime: deps.runtime, broker: deps.channels.broker, publicUrl: deps.publicUrl ?? '', ...(deps.brand ? { brand: deps.brand } : {}) }) : null;
+  const chatAlerts = social && deps.channels ? new ChatAlertSender({ runtime: deps.runtime, broker: deps.channels.broker, publicUrl: deps.appUrl ?? deps.publicUrl ?? '', ...(deps.brand ? { brand: deps.brand } : {}) }) : null;
   if (chatAlerts) {
     await boss.work<AgentDispatchJob & { test?: true }>(QUEUES.socialChatAlert, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
@@ -951,6 +1428,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     const { rows } = await sql<{ org_id: string; agent_id: string }>`SELECT * FROM crove_kernel.agent_wakeups_due(${AGENT_SWEEP_LIMIT}::int, ${deps.runtime.modules()}::text[])`.execute(deps.workerDb);
     await Promise.all(rows.map((row) => sendAgentWake(boss, row.org_id, row.agent_id)));
     if (rows.length > 0) console.log(`[agent] sweep woke ${rows.length} agent(s) with pending wake-ups`);
+    await aiBudgetSweep();
+    // The sealed copies of closed ads connections' tokens past their seven days or their ten tries (#2296, W2-1): wiped here too, by a sweep with no
+    // egress, so the age limit does not depend on the revoke job running (ads-revoke does the same first thing). By count only.
+    // Whether or not the ads module is installed: the hold is a trigger of the database, so a copy can be made with the module switched off, and it must not
+    // outlive its seven days for that reason.
+    const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
+      console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
+      return { rows: [] as Array<{ n: number }> };
+    });
+    if ((wiped[0]?.n ?? 0) > 0) console.log(`[ads-revoke] ${wiped[0]?.n} sealed copy(ies) past their age or their tries wiped`);
   }));
   await boss.schedule(QUEUES.agentSweep, AGENT_SWEEP_CRON, null, { tz: RETENTION_TZ });
 
@@ -1136,6 +1623,24 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const digestTimer = deps.runtime.installed('social') ? setInterval(() => void digestSweep(), DIGEST_SWEEP_MS) : null;
   if (digestTimer) void digestSweep();
 
+  // The daily "Hôm nay cần bạn" mail (#2406): every ten minutes, the orgs with an opted-in member who has not had today's, from 07:30
+  // in Vietnam; each org is claimed per member and day in its own transaction. Only where the server can send mail. The log names counts.
+  let todayMailing = false;
+  const todayMailSweep = async () => {
+    if (todayMailing) return;
+    todayMailing = true;
+    try {
+      const sent = await sweepTodayMail({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (sent > 0) console.log(`[today-mail] queued the daily brief of ${sent} org(s)`);
+    } catch (error) {
+      console.error('[today-mail] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      todayMailing = false;
+    }
+  };
+  const todayMailTimer = deps.mail?.mailer.enabled ? setInterval(() => void todayMailSweep(), TODAY_MAIL_SWEEP_MS) : null;
+  if (todayMailTimer) void todayMailSweep();
+
   // Proposal reminders and escalation (#676): every half hour, the pending proposals past the days their org set.
   let nudging = false;
   const proposalNudgeSweep = async () => {
@@ -1239,6 +1744,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // After a credential key rotation (#776), envelopes still sealed with the previous key are sealed again with the
   // current one, a batch at a time, until none is left; the log says how many remain.
+  // The subject keys of people (#2643) go through the same sweep: only their wrapped data keys are wrapped again, in this worker's memory.
   let resealing = false;
   const resealSweep = async () => {
     if (resealing || !channels) return;
@@ -1255,6 +1761,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       for (const { level, line } of unopenableKeysLog(done.unopenable)) (level === 'error' ? console.error : console.warn)(line);
     } catch (error) {
       console.error('[credential-reseal] sweep', error instanceof Error ? error.name : typeof error);
+    }
+    try {
+      if (deps.runtime.subjectKeyReseal) {
+        const subjects = await resealSubjectKeys({ runtime: deps.runtime, workerDb: deps.workerDb });
+        if (subjects.resealed + subjects.failed + subjects.left > 0) {
+          console.log(`[subject-key-reseal] resealed ${subjects.resealed}, failed ${subjects.failed}; left under an older key: ${subjects.left}`);
+        }
+        for (const line of unopenableSubjectKeysLog(subjects.unopenable)) console.error(line);
+      }
+    } catch (error) {
+      console.error('[subject-key-reseal] sweep', error instanceof Error ? error.name : typeof error);
     } finally {
       resealing = false;
     }
@@ -1263,6 +1780,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (resealTimer) {
     resealTimer.unref();
     void resealSweep();
+  }
+
+  // Meetings (#2579): the shred references of meetings a person deleted are written to the archive store, and the ciphertext objects and file rows of every
+  // deleted or expired meeting are removed, every minute; after a restore, the references delete again what the restore brought back (ADR-0017 section 8).
+  // Each pass catches its own errors: a store that is down is tried again on the next one.
+  let meetingsMaintaining = false;
+  const shredRefSync = deps.archive ? createShredRefSync({ workerDb: deps.workerDb, store: deps.archive.store }) : null;
+  const meetingsMaintenance = async () => {
+    if (meetingsMaintaining) return;
+    meetingsMaintaining = true;
+    try {
+      await shredRefSync?.pass();
+      await sweepMeetingMedia({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store });
+    } catch (error) {
+      console.error('[meetings-retention] sweep', error instanceof Error ? error.name : typeof error);
+    } finally {
+      meetingsMaintaining = false;
+    }
+  };
+  const meetingsTimer = deps.runtime.installed('meetings') ? setInterval(() => void meetingsMaintenance(), MEETINGS_SWEEP_MS) : null;
+  if (meetingsTimer) {
+    meetingsTimer.unref();
+    // At start: whatever a restore brought back is deleted again before the first sweep, which then removes what that left.
+    void (async () => {
+      if (deps.archive) {
+        await replayShreds({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.archive.store }).catch((error: unknown) => {
+          opsAlert('[shred-replay] ALERT the replay of the shred references failed at worker start; run main.ts shred-replay', error);
+        });
+      }
+      // A restore also brings back what the retention shredded since its point: shred it again now, not at the next nightly run.
+      await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => console.error('[meetings-retention]', error instanceof Error ? error.name : typeof error));
+      await meetingsMaintenance();
+    })();
   }
 
   // Channel tokens are renewed before they expire (S6.4), whatever module uses the channel.
@@ -1282,6 +1832,118 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   };
   const refreshTimer = Object.keys(refreshers).length > 0 ? setInterval(() => void refreshSweep(), REFRESH_SWEEP_MS) : null;
   void refreshSweep();
+
+  // Outside calendars (#2123, #1374): the busy times of every active connection are read every 15 minutes, a sweep at a
+  // time across worker processes. The adapters are the deployment's; with none on, nothing runs.
+  const calendars = channels?.calendars ?? {};
+  const calendarWriteBackOn = Object.keys(calendars).length > 0;
+  // A session advisory lock on one connection of the worker's pool, so two worker processes never sweep at once.
+  const calendarExclusive = <T>(run: () => Promise<T>) =>
+    deps.workerDb.connection().execute(async (db) => {
+      const { rows } = await sql<{ locked: boolean }>`SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended('crove.calendar-sync', 0)) AS locked`.execute(db);
+      if (!rows[0]?.locked) return { ran: false as const };
+      try {
+        return { ran: true as const, value: await run() };
+      } finally {
+        await sql`SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended('crove.calendar-sync', 0))`.execute(db);
+      }
+    });
+  // The same, for one connection's write-back (the sweep's batch and the booking-event job's), so a write and a delete of one
+  // event never cross: the lock is taken for the plan, the provider calls and their records.
+  const calendarConnectionLock = <T>(connectionId: string, run: () => Promise<T>) =>
+    deps.workerDb.connection().execute(async (db) => {
+      const key = `crove.calendar-writeback:${connectionId}`;
+      const { rows } = await sql<{ locked: boolean }>`SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended(${key}, 0)) AS locked`.execute(db);
+      if (!rows[0]?.locked) return { ran: false as const };
+      try {
+        return { ran: true as const, value: await run() };
+      } finally {
+        await sql`SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended(${key}, 0))`.execute(db);
+      }
+    });
+  let calendarSyncing = false;
+  // 'ran', 'retry' (a connection failed passingly and the next sweep takes it up again), 'busy' (another worker process holds the sweep) or 'skipped' (this process is
+  // sweeping already, or has no calendar adapters).
+  const calendarSweep = async (): Promise<'ran' | 'retry' | 'busy' | 'skipped'> => {
+    if (calendarSyncing || !channels) return 'skipped';
+    calendarSyncing = true;
+    try {
+      const done = await syncCalendars({ runtime: deps.runtime, broker: channels.broker, workerDb: deps.workerDb, adapters: calendars, exclusive: calendarExclusive, lockConnection: calendarConnectionLock });
+      if (done.synced + done.expired + done.retry + done.disconnected > 0) console.log(`[calendar-sync] synced ${done.synced}, expired ${done.expired}, to retry ${done.retry}, disconnected ${done.disconnected}`);
+      return done.busy ? 'busy' : done.retry > 0 ? 'retry' : 'ran';
+    } catch (error) {
+      console.error('[calendar-sync] sweep', error instanceof Error ? error.name : typeof error);
+      // A sweep that threw has served no one: a booking job's request for it is kept and tried again (the periodic timer ignores the answer).
+      return 'retry';
+    } finally {
+      calendarSyncing = false;
+    }
+  };
+  // A sweep a booking job asks for (below), at most one a minute from the start of the last one. A request is kept until a sweep has run for it: one made inside the
+  // minute, or while this process (or another worker process) is sweeping, waits for its turn instead of being dropped, and any number of requests while one waits are
+  // one sweep. It gives up after about ten minutes from the latest request (each request moves the limit, so one made near it is still served), when the 15 minute
+  // sweep has come round anyway.
+  const SWEEP_ASK_MIN_MS = 60_000;
+  const SWEEP_ASK_GIVE_UP_MS = 10 * 60_000;
+  let calendarSweepAskedAt = 0;
+  let calendarSweepWanted = false;
+  let calendarSweepWaiting = false;
+  let calendarSweepUntil = 0;
+  const askCalendarSweep = () => {
+    calendarSweepWanted = true;
+    calendarSweepUntil = Date.now() + SWEEP_ASK_GIVE_UP_MS;
+    if (calendarSweepWaiting) return;
+    calendarSweepWaiting = true;
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    void (async () => {
+      try {
+        while (calendarSweepWanted && Date.now() < calendarSweepUntil) {
+          const wait = calendarSweepAskedAt + SWEEP_ASK_MIN_MS - Date.now();
+          if (wait > 0) {
+            await pause(wait);
+            continue;
+          }
+          if (calendarSyncing) {
+            await pause(2_000);
+            continue;
+          }
+          calendarSweepWanted = false;
+          calendarSweepAskedAt = Date.now();
+          const result = await calendarSweep();
+          if (result !== 'ran') {
+            calendarSweepWanted = true;
+            await pause(result === 'skipped' ? 2_000 : 10_000);
+          }
+        }
+      } finally {
+        calendarSweepWaiting = false;
+      }
+    })();
+  };
+  // Also with no adapter on: a member's disconnect is finished (the grant revoked, or given up on after three days, and the
+  // sealed token removed) whatever the server has configured.
+  const calendarTimer = channels ? setInterval(() => void calendarSweep(), CALENDAR_SYNC_SWEEP_MS) : null;
+  calendarTimer?.unref();
+  void calendarSweep();
+
+  // A booking confirmed, moved or cancelled (#2124): the events of the org's write-back connections are made to match at once,
+  // from a job the relay queues, instead of at the next sweep (which stays as the backstop and does the token renewals).
+  if (channels && calendarWriteBackOn) {
+    await boss.work<CalendarWriteBackJob>(QUEUES.calendarWriteback, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      // A connection the sweep or another job is working on is tried again a few times, so a booking that committed after their
+      // plan was read is still written; held longer than that, the sweep that holds it comes back within 15 minutes.
+      for (let attempt = 1; ; attempt++) {
+        const done = await runCalendarWriteBack({ runtime: deps.runtime, broker: channels.broker, adapters: channels.calendars ?? {}, lockConnection: calendarConnectionLock }, job.data);
+        // A connection whose token is about to run out is left to the sweep, which renews it: asked for now instead of within 15 minutes, because the write of a
+        // booking's Google Meet (C7, #1375) would otherwise miss the few minutes the booking waits for it. The sweep is the one that renews and writes, so nothing
+        // crosses it; a sweep already running is waited for first, since it may have passed the connection.
+        if (done.expiring > 0) askCalendarSweep();
+        if (done.busy === 0 || attempt >= CALENDAR_WRITEBACK_BUSY_TRIES) break;
+        await new Promise((resolve) => setTimeout(resolve, CALENDAR_WRITEBACK_BUSY_WAIT_MS));
+      }
+    });
+  }
 
   // Sizes of Social images uploaded before sizes were read at upload (#668): a batch every 10 minutes, a round a day.
   const sizes = { after: null as string | null, pausedUntil: 0 };
@@ -1545,11 +2207,131 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);
+              // A bank feed connected, or an account of one mapped (ADR-0039, #2044): its sync lists the accounts and
+              // pulls the mapped ones.
+              if (
+                finance &&
+                deps.channels?.bankFeeds &&
+                Object.keys(deps.channels.bankFeeds).length > 0 &&
+                ((row.type === 'kernel.channel.connected' && String(row.payload.provider).startsWith('bank_')) || row.type === 'finance.bank_feed.sync_requested')
+              ) {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.bankFeedSync, { orgId: row.org_id, connectionId } satisfies BankFeedSyncJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.bankFeedSync, connectionId),
+                  retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A sales e-invoice approved for issue (ADR-0044, #2502): its job begins the call, sends or asks, and records the answer. Ids only in the job.
+              if (finance && deps.channels?.einvoiceProviders && Object.keys(deps.channels.einvoiceProviders).length > 0 && row.type === 'finance.einvoice_issue_requested') {
+                const draftId = String(row.payload.draft_id);
+                await boss.send(QUEUES.einvoiceIssue, { orgId: row.org_id, draftId } satisfies EInvoiceIssueJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.einvoiceIssue, draftId),
+                  retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An ad account linked, or a refresh asked for (ADR-0040, #2217): its sync reads the platform.
+              if (ads && deps.channels?.adPlatforms && Object.keys(deps.channels.adPlatforms).length > 0 && (row.type === 'ads.account.linked' || row.type === 'ads.sync.requested')) {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.adsSync, { orgId: row.org_id, connectionId } satisfies AdsSyncJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsSync, connectionId),
+                  retryLimit: ADS_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An approved launch (#2296, W2-3): the job creates the plan's objects at the platform, every one paused, and records their ids; ids only in the job. A
+              // deployment with no writer leaves the launch queued, untouched.
+              if (ads && deps.channels?.adWriters && Object.keys(deps.channels.adWriters).length > 0 && row.type === 'ads.launch.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsLaunch, { orgId: row.org_id, launchId } satisfies AdsLaunchJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsLaunch, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A stopped launch (#2296, W2-4a): the job pauses what it made at the platform and records the answer; ids only in the job. A deployment with no pauser has
+              // nothing it could have launched, so the sweep finds nothing either.
+              if (ads && deps.channels?.adPausers && Object.keys(deps.channels.adPausers).length > 0 && row.type === 'ads.pause.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsPause, { orgId: row.org_id, launchId } satisfies AdsPauseJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsPause, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An approved launch whose objects are created and paused (#2296, W2-4b): the job switches them on and records each answer; ids only in the job. A deployment with
+              // no activator leaves the launch paused, untouched.
+              if (ads && deps.channels?.adActivators && Object.keys(deps.channels.adActivators).length > 0 && row.type === 'ads.activate.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsActivate, { orgId: row.org_id, launchId } satisfies AdsActivateJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsActivate, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A reply or a hide of the conversation core (#2303): the job begins the call (committed as started), makes it
+              // with the connection's credential and records the answer. A reply is never repeated by a job after an unclear
+              // answer, and a retry only covers a failure before the call began; a hide is idempotent.
+              if (row.type === 'kernel.conversation.sync_queued' && deps.channels?.publishers && deps.channels.broker) {
+                // A read of an account's history or a customer's name (CV5b): ids only in the job.
+                const action = row.payload.action === 'profile' ? 'profile' : 'history';
+                const syncJob: ConversationSyncJob =
+                  action === 'profile'
+                    ? { orgId: row.org_id, connectionId: String(row.payload.connectionId), action, identityId: String(row.payload.identityId) }
+                    : { orgId: row.org_id, connectionId: String(row.payload.connectionId), action };
+                await boss.send(QUEUES.conversationsReply, syncJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
+              }
+              // A customer's image to fetch (CV5c, #2357): ids only in the job, never the platform's address.
+              if (row.type === 'kernel.conversation.attachment_queued' && deps.channels?.publishers && deps.channels.broker) {
+                const attachmentJob: ConversationAttachmentJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'attachment', attachmentId: String(row.payload.attachmentId) };
+                await boss.send(QUEUES.conversationsReply, attachmentJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `attachment:${attachmentJob.attachmentId}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
+              }
+              // Vy's draft of a reply (CV8): ids only in the job; with no model here the draft is settled as none at once.
+              if (row.type === 'kernel.conversation.draft_queued') {
+                const draftJob: ConversationDraftJob = { orgId: row.org_id, draftId: String(row.payload.draftId), conversationId: String(row.payload.conversationId) };
+                if (deps.conversationWriter) {
+                  await boss.send(QUEUES.conversationsDraft, draftJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsDraft, draftJob.draftId), retryLimit: 2, retryDelay: 30, retryBackoff: true });
+                } else {
+                  await failUndraftable(deps.runtime, draftJob);
+                }
+              }
+              // The AI coworker's draft of a campaign (ads W1b): ids only in the job; with no model here the request is settled as none at once.
+              if (row.type === 'ads.campaign.draft_queued') {
+                const adsJob: AdsCampaignDraftJob = { orgId: row.org_id, requestId: String(row.payload.requestId) };
+                if (deps.adsCampaignWriter) {
+                  await boss.send(QUEUES.adsCampaignDraft, adsJob, { singletonKey: jobKey(row.org_id, QUEUES.adsCampaignDraft, adsJob.requestId), retryLimit: 2, retryDelay: 30, retryBackoff: true });
+                } else {
+                  await failUnaskable(deps.runtime, adsJob);
+                }
+              }
+              if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
+                const messageId = String(row.payload.messageId);
+                const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
+                const job = { orgId: row.org_id, messageId, connectionId: String(row.payload.connectionId), action } satisfies ConversationJob;
+                if (deps.channels?.publishers && deps.channels.broker) {
+                  await boss.send(QUEUES.conversationsReply, job, {
+                    singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${messageId}:${row.event_id}`),
+                    retryLimit: action === 'hide' ? 3 : 2,
+                    retryDelay: 5,
+                    retryBackoff: true,
+                  });
+                } else {
+                  // No channel to send through here: the message fails visibly instead of waiting for a job that will never exist.
+                  await failUnsendable(deps.runtime, job);
+                }
+              }
               // A visitor's booking (#1318): the worker confirms or refuses it as the system.
               if (crm && row.type === 'crm.booking.requested') {
                 const bookingId = String(row.payload.booking_id);
-                return boss.send(QUEUES.crmBooking, { orgId: row.org_id, bookingId } satisfies BookingJob, {
-                  singletonKey: jobKey(row.org_id, QUEUES.crmBooking, bookingId),
+                return boss.send(QUEUES.crmBookingLive, { orgId: row.org_id, bookingId } satisfies BookingJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingLive, bookingId),
                   retryLimit: BOOKING_RETRY_LIMIT,
                   retryDelay: 2,
                   retryBackoff: true,
@@ -1559,10 +2341,31 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (crm && row.type === 'crm.booking.manage_requested') {
                 const bookingId = String(row.payload.booking_id);
                 const requestId = String(row.payload.request_id);
-                return boss.send(QUEUES.crmBooking, { orgId: row.org_id, bookingId, requestId } satisfies BookingJob, {
-                  singletonKey: jobKey(row.org_id, QUEUES.crmBooking, `${bookingId}:${requestId}`),
+                return boss.send(QUEUES.crmBookingLive, { orgId: row.org_id, bookingId, requestId } satisfies BookingJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingLive, `${bookingId}:${requestId}`),
                   retryLimit: BOOKING_RETRY_LIMIT,
                   retryDelay: 2,
+                  retryBackoff: true,
+                });
+              }
+              // A booking waiting for its Google Meet (C7, #1375): the job that settles it as failed if the Meet has not come by then.
+              if (crm && row.type === 'crm.booking.meeting_pending') {
+                const bookingId = String(row.payload.booking_id);
+                return boss.send(QUEUES.crmBookingMeet, { orgId: row.org_id, bookingId } satisfies BookingMeetJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingMeet, bookingId),
+                  startAfter: BOOKING_MEET_WAIT_SECONDS,
+                  retryLimit: BOOKING_RETRY_LIMIT,
+                  retryDelay: 10,
+                  retryBackoff: true,
+                });
+              }
+              // A booking confirmed, moved or cancelled (#2124): the events of the org's write-back connections are made to
+              // match it, beside whatever else the event starts. One job per event; the jobs name the org only.
+              if (crm && calendarWriteBackOn && (row.type === 'crm.booking.scheduled' || row.type === 'crm.booking.cancelled')) {
+                await boss.send(QUEUES.calendarWriteback, { orgId: row.org_id } satisfies CalendarWriteBackJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.calendarWriteback, row.event_id),
+                  retryLimit: CALENDAR_WRITEBACK_RETRY_LIMIT,
+                  retryDelay: 10,
                   retryBackoff: true,
                 });
               }
@@ -1703,6 +2506,76 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         });
         if (sent < 100) break;
       }
+      // A bank feed provider's signed notice (ADR-0039, #2044): the connections that list an account it names get a sync.
+      // Only where an adapter is on; without one the route does not exist and nothing is waiting.
+      if (finance && deps.channels?.broker && deps.channels.bankFeeds && Object.keys(deps.channels.bankFeeds).length > 0) {
+        const adapters = deps.channels.bankFeeds;
+        for (;;) {
+          const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
+            const rows = await claimBankFeedNotices(trx);
+            const seen = new Set<string>();
+            return rows.map((row) => {
+              // A claimed account no connection lists (a row of nulls), a connection already queued in this batch, or an
+              // adapter this deployment does not have: nothing to send, but still a claimed row for the batch's count.
+              if (!row.orgId || !row.connectionId || !row.provider || !Object.hasOwn(adapters, row.provider) || seen.has(row.connectionId)) return async () => null;
+              seen.add(row.connectionId);
+              const target = { orgId: row.orgId, connectionId: row.connectionId } satisfies BankFeedSyncJob;
+              return (boss: JobSender) =>
+                boss.send(QUEUES.bankFeedSync, target, {
+                  // A standard queue's singletonKey dedupes nothing by itself; a time slot per connection does: a provider's
+                  // retries of a notice, or one replayed inside its window, are one sync a slot. A pull goes on from the
+                  // cursor, so what a deduped notice announced comes with the next pull (the next notice, or the daily one).
+                  singletonKey: jobKey(target.orgId, QUEUES.bankFeedSync, target.connectionId),
+                  singletonSeconds: BANK_FEED_NOTICE_SLOT_SECONDS,
+                  retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+            });
+          });
+          if (claimed < BANK_FEED_NOTICE_CLAIM) break;
+        }
+      }
+      // Meta's data deletion requests for the Ads connection (plan section 9, #2219): the ad accounts a request names are
+      // closed and erased in their orgs, then the request is completed. Without the callback nothing is waiting.
+      if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
+      // The notices the webhook parked (#2303): stored under their connections' orgs, then deleted. Nothing is waiting where
+      // no connection has a platform that sends them.
+      await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime });
+      // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
+      await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
+      await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
+      // What the webhook did not bring (CV5b, #2329): the recent history of an account that is due (the first read of a new or
+      // reconnected one, then hourly) and the name of a customer who has none yet, for the providers whose adapters can read them. The
+      // history read only runs where the deployment has turned it on, once its live check has settled the platform's shapes.
+      if (conversationPublishers && conversationBroker) {
+        const withMethod = (method: 'history' | 'profile') =>
+          Object.entries(conversationPublishers)
+            .filter(([id, p]) => {
+              if (typeof p.conversations?.[method] !== 'function') return false;
+              if (method !== 'history') return true;
+              if (id === 'facebook_page' || id === 'instagram') {
+                return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
+              }
+              return Boolean(deps.channels?.conversationHistory);
+            })
+            .map(([id]) => id);
+        const due = await dueConversationSync(deps.workerDb, { history: withMethod('history'), profile: withMethod('profile') });
+        await requestConversationSync(deps.runtime, due);
+        // The images customers sent that wait to be fetched (CV5c, #2357); images that will never be fetched are dropped in the same call.
+        await requestConversationAttachments(deps.runtime, await dueConversationAttachments(deps.workerDb));
+      }
+      // Drafts that outlived their time (CV8): in every deployment, with a model or without, since a live draft's text is customer-derived and
+      // does not outlive its 7 days (ADR-0041).
+      await sweepConversationDrafts({ workerDb: deps.workerDb });
+      // The expired "you are replying" markers of the Inbox (CV3).
+      await sweepConversationComposing({ workerDb: deps.workerDb });
+      // The campaign draft requests the job never answered (ads W1b): in every deployment, so a member can ask again after 15 minutes.
+      await sweepAdsCampaignRequests({ workerDb: deps.workerDb });
+      // The new conversations Vy drafts a reply for (CV8): only where a model is configured.
+      if (deps.conversationWriter) await requestDueConversationDrafts({ runtime: deps.runtime, workerDb: deps.workerDb });
+      // The blobs whose images are gone (an erased customer, a purged thread, a removed message): deleted from the store, in every deployment.
+      await sweepConversationBlobs({ workerDb: deps.workerDb, store: deps.store });
     } catch (error) {
       console.error('[relay]', error);
     } finally {
@@ -1774,6 +2647,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (reminderTimer) clearInterval(reminderTimer);
     if (queueLowTimer) clearInterval(queueLowTimer);
     if (digestTimer) clearInterval(digestTimer);
+    if (todayMailTimer) clearInterval(todayMailTimer);
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
     clearInterval(securityTimer);
@@ -1781,7 +2655,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (reportTimer) clearInterval(reportTimer);
     if (feedTimer) clearInterval(feedTimer);
     if (refreshTimer) clearInterval(refreshTimer);
+    if (calendarTimer) clearInterval(calendarTimer);
     if (resealTimer) clearInterval(resealTimer);
+    if (meetingsTimer) clearInterval(meetingsTimer);
     if (metricsTimer) clearInterval(metricsTimer);
     if (sizeTimer) clearInterval(sizeTimer);
     if (holdTimer) clearInterval(holdTimer);

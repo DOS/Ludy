@@ -9,7 +9,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { zId, type TimelineEntry } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most entries one timeline shows, and the most records it follows.
@@ -64,33 +64,70 @@ export const proposalTimeline = defineQuery({
       WHERE a.org_id = ${ctx.orgId}::uuid
       ORDER BY a.occurred_at DESC, a.id DESC
       LIMIT ${TIMELINE_LIMIT + 1}`.execute(ctx.trx);
-    const shown = rows.slice(0, TIMELINE_LIMIT).reverse();
-    // Names of the people while they are members (member_profiles answers only for members of the org), and of agents.
-    const names = new Map<string, string>();
-    const users = [...new Set(shown.map((r) => r.actor_id).filter((u): u is string => u !== null))];
-    const agents = [...new Set(shown.map((r) => r.agent_id).filter((a): a is string => a !== null))];
-    if (users.length > 0) {
-      const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
-      for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
-    }
-    if (agents.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.agent').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', agents).execute();
-      for (const a of found) names.set(a.id, a.display_name);
-    }
-    return {
-      items: shown.map((r) => ({
-        id: r.id,
-        at: r.occurred_at.toISOString(),
-        kind: r.kind,
-        recordType: r.record_type,
-        summary: r.summary,
-        actorType: r.agent_id ? 'agent' : r.actor_id ? 'user' : 'system',
-        actorName: names.get(r.agent_id ?? r.actor_id ?? '') ?? null,
-      })),
-      more: rows.length > TIMELINE_LIMIT,
-    };
+    return timelineOf(ctx, rows);
   },
 });
 
-export const timelineQueries = [proposalTimeline];
+interface ActivityRow {
+  id: string;
+  record_type: string;
+  kind: string;
+  summary: string;
+  actor_id: string | null;
+  agent_id: string | null;
+  occurred_at: Date;
+}
+
+// The newest TIMELINE_LIMIT of the rows (newest first, one more than the limit to know whether there are more), oldest
+// first, each with the name of its actor while they are in the org.
+async function timelineOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, rows: readonly ActivityRow[]): Promise<{ items: TimelineEntry[]; more: boolean }> {
+  const shown = rows.slice(0, TIMELINE_LIMIT).reverse();
+  // Names of the people while they are members (member_profiles answers only for members of the org), and of agents.
+  const names = new Map<string, string>();
+  const users = [...new Set(shown.map((r) => r.actor_id).filter((u): u is string => u !== null))];
+  const agents = [...new Set(shown.map((r) => r.agent_id).filter((a): a is string => a !== null))];
+  if (users.length > 0) {
+    const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
+      SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+    for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
+  }
+  if (agents.length > 0) {
+    const found = await ctx.trx.selectFrom('crove_kernel.agent').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', agents).execute();
+    for (const a of found) names.set(a.id, a.display_name);
+  }
+  return {
+    items: shown.map((r) => ({
+      id: r.id,
+      at: r.occurred_at.toISOString(),
+      kind: r.kind,
+      recordType: r.record_type,
+      summary: r.summary,
+      actorType: r.agent_id ? 'agent' : r.actor_id ? 'user' : 'system',
+      actorName: names.get(r.agent_id ?? r.actor_id ?? '') ?? null,
+    })),
+    more: rows.length > TIMELINE_LIMIT,
+  };
+}
+
+// A party's timeline (CRM K4, #2228): what happened to a contact, oldest first (the newest TIMELINE_LIMIT entries when
+// there are more): added, edited, marked a duplicate, linked to a legal entity, a booking made. Its activity rows only,
+// which carry fixed text and never a name or contact detail; the rows of legal entities outside the member's scope are
+// hidden by the activity table's policy (#1716). Every role reads.
+export const partyTimeline = defineQuery({
+  name: 'kernel.party.timeline',
+  input: z.object({ partyId: zId }),
+  access: ALL,
+  handler: async (ctx, input): Promise<{ items: TimelineEntry[]; more: boolean }> => {
+    const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
+    if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ');
+    const { rows } = await sql<ActivityRow>`
+      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at
+      FROM crove_kernel.activity a
+      WHERE a.org_id = ${ctx.orgId}::uuid AND a.record_type = 'kernel.party' AND a.record_id = ${party.id}::uuid
+      ORDER BY a.occurred_at DESC, a.id DESC
+      LIMIT ${TIMELINE_LIMIT + 1}`.execute(ctx.trx);
+    return timelineOf(ctx, rows);
+  },
+});
+
+export const timelineQueries = [proposalTimeline, partyTimeline];

@@ -3,6 +3,7 @@
 import { useQueries } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
+import { MAX_BATCH_FILES } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -19,11 +20,12 @@ import {
   pollGroups,
   precheck,
   summarize,
+  undecidedIds,
   uploaded,
+  withProposalStatuses,
   type IntakeItem,
-  type IntakeState,
 } from '../lib/intake.ts';
-import { FILE_STATE_VARIANT, type ChipVariant } from '../lib/status.ts';
+import { fileChipVariant, fileProposal } from '../lib/status.ts';
 import { useChosenEntity } from './entity-switcher.tsx';
 
 // Waits after a RATE_LIMITED refusal before the same upload is tried again, and how many times.
@@ -50,7 +52,9 @@ export interface Intake {
   refused: unknown;
 }
 
-export function useIntake(): Intake {
+// forcedEntityId: a document that belongs to one legal entity's books (the original of an invoice already proposed
+// there, #2268) is booked there, whatever entity the shell works in.
+export function useIntake(forcedEntityId?: string): Intake {
   const [items, setItems] = useState<IntakeItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [refused, setRefused] = useState<unknown>(null);
@@ -60,7 +64,8 @@ export function useIntake(): Intake {
   current.current = items;
   // The entity the shell works in when a batch starts: all its documents are booked there (#1764). A batch started
   // before the entities are known waits for them, so it never splits between the default entity and the chosen one.
-  const chosen = useChosenEntity();
+  const shell = useChosenEntity();
+  const chosen = forcedEntityId ? { ready: true, legalEntityId: forcedEntityId } : shell;
   const entity = useRef(chosen);
   entity.current = chosen;
   const waiting = useRef<File[]>([]);
@@ -139,6 +144,25 @@ export function useIntake(): Intake {
     if (answers.length > 0) setItems((list) => applyBatch(list, answers));
   }, [stamp]);
 
+  // Files read into a proposal still to be decided (#2009): asked about again when a proposal changes (the stream's
+  // proposal hint), not polled, so the chip follows the approval or the rejection made in the Inbox.
+  const undecided = undecidedIds(items);
+  // A key of their own: the poll's cached answer for the same ids may be older than the read, and must never come back
+  // as this one's.
+  const watched = useQueries({
+    queries: Array.from({ length: Math.ceil(undecided.length / MAX_BATCH_FILES) }, (_, i) => {
+      const options = orpc.files.batch.queryOptions({ input: { ids: undecided.slice(i * MAX_BATCH_FILES, (i + 1) * MAX_BATCH_FILES) } });
+      return { ...options, queryKey: [...options.queryKey, 'watch'] as unknown as typeof options.queryKey };
+    }),
+  });
+  const decided = watched.map((query) => query.dataUpdatedAt).join(',');
+  const watchedLatest = useRef(watched);
+  watchedLatest.current = watched;
+  useEffect(() => {
+    const answers = watchedLatest.current.flatMap((query) => query.data ?? []);
+    if (answers.length > 0) setItems((list) => withProposalStatuses(list, answers));
+  }, [decided]);
+
   const clear = useCallback(() => {
     setItems([]);
     setRefused(null);
@@ -147,11 +171,13 @@ export function useIntake(): Intake {
   return { items, uploading, start, clear, refused };
 }
 
-// The chips of the Inbox's files (lib/status.ts, #2000): the same state looks the same on both lists.
-const VARIANT: Record<IntakeState, ChipVariant> = FILE_STATE_VARIANT;
-
 function Row({ item, nested = false }: { item: IntakeItem; nested?: boolean }) {
   const t = useTranslations('inbox.intake');
+  const proposalWords = useTranslations('inboxDetail.status');
+  const fileWords = useTranslations('inbox.fileStatus');
+  // The chips of the Inbox's files (lib/status.ts, #2000): the same state looks the same on both lists, and a proposed
+  // file as its proposal (#2009).
+  const proposal = fileProposal(item.state, item.proposalStatus, item.voided);
   const why =
     item.state === 'upload_failed'
       ? errorMessage(item.uploadError)
@@ -168,8 +194,8 @@ function Row({ item, nested = false }: { item: IntakeItem; nested?: boolean }) {
         <span className="min-w-0 flex-1 truncate text-muted-foreground" title={item.name}>
           {item.name}
         </span>
-        <Badge variant={VARIANT[item.state]}>
-          {item.state === 'expanded' ? t('expandedCount', { count: item.entries.length }) : t(`states.${item.state}`)}
+        <Badge variant={fileChipVariant(item.state, item.proposalStatus, item.voided)}>
+          {item.state === 'expanded' ? t('expandedCount', { count: item.entries.length }) : proposal === 'voided' ? fileWords('voided') : proposal ? proposalWords(proposal) : t(`states.${item.state}`)}
         </Badge>
       </div>
       {why && <p className="pb-1 text-xs break-words text-destructive">{why}</p>}
@@ -201,7 +227,9 @@ export function IntakePanel({ intake }: { intake: Intake }) {
               {done ? t('done', { total: summary.total }) : t('progress', { settled: summary.settled, total: summary.total })}
             </p>
             <p className="text-xs text-subtle-foreground">
-              {t('counts', { proposed: summary.proposed, duplicate: summary.duplicate, failed: summary.failed })}
+              {summary.imported > 0
+                ? t('countsStatements', { proposed: summary.proposed, imported: summary.imported, duplicate: summary.duplicate, failed: summary.failed })
+                : t('counts', { proposed: summary.proposed, duplicate: summary.duplicate, failed: summary.failed })}
             </p>
             {done && (
               <Button variant="outline" size="sm" className="ml-auto" onClick={intake.clear}>

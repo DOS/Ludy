@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableRow } from '@crove/ui/components/tabl
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
-import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
+import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { apiFetch, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { isZeroAmount } from '../lib/decimal.ts';
@@ -118,8 +118,7 @@ function ReversalForm({ entry, slug, onClose }: { entry: Entry; slug: string; on
         </Link>
       )}
       <div className="flex gap-2">
-        <Button type="submit" disabled={request.isPending}>
-          {request.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={request.isPending} type="submit">
           {t('submit')}
         </Button>
         <Button type="button" variant="ghost" onClick={onClose} disabled={request.isPending}>
@@ -264,20 +263,16 @@ export function JournalPage() {
             keeps the row in place. */}
         {!(journal.isSuccess && nothingToExport) && (
           <div role="group" aria-label={t('exportGroup')} className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={() => startExport(exportMisa)} disabled={exportMisa.isPending}>
-              {exportMisa.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportMisa.isPending} variant="outline" onClick={() => startExport(exportMisa)}>
               {t('exportMisa')}
             </Button>
-            <Button variant="outline" onClick={() => startExport(exportMisaGoods)} disabled={exportMisaGoods.isPending}>
-              {exportMisaGoods.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportMisaGoods.isPending} variant="outline" onClick={() => startExport(exportMisaGoods)}>
               {t('exportMisaGoods')}
             </Button>
-            <Button variant="outline" onClick={() => startExport(exportMisaSales)} disabled={exportMisaSales.isPending}>
-              {exportMisaSales.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportMisaSales.isPending} variant="outline" onClick={() => startExport(exportMisaSales)}>
               {t('exportMisaSales')}
             </Button>
-            <Button onClick={() => startExport(exportXlsx)} disabled={exportXlsx.isPending}>
-              {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportXlsx.isPending} onClick={() => startExport(exportXlsx)}>
               {t('export')}
             </Button>
           </div>

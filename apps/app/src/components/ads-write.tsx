@@ -1,0 +1,462 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The switches and the spend caps of running ads on the Ads screen (ADR-0043, issue #2294, W0a). Owners and admins only: the
+// caller draws it. Nothing here calls an ad platform and nothing spends. It says whether running ads is on for the org, which
+// accounts are allowed and which caps a launch must stay inside. What opens the way to spend (the org switch, an account's
+// flag, a cap set or raised, launches opened again) is asked for here by the owner and is a proposal that an owner or an admin
+// approves in the Inbox (ADR-0043 point 1): no button on this card changes it. What only stops or reduces spend is direct:
+// the owner switches running ads off, withdraws one account and lowers a cap; owners and admins stop everything at once.
+// While the switch is on, the owner also connects each account to run ads (W0b): a second connection with its own token, kept
+// apart from the one that reads its reports. Each row says whether the account can run ads, and closing a connection says that
+// the platform still holds the permission until it is removed there.
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
+import { useState, type FormEvent } from 'react';
+import { useTranslations } from 'use-intl';
+import { ADS_CAP_PERIODS, ADS_CAP_SCOPES, type AdAccountView, type AdsCapView, type AdsWriteState } from '@crove/kernel-contract';
+import { Badge } from '@crove/ui/components/badge';
+import { Button } from '@crove/ui/components/button';
+import { Card } from '@crove/ui/components/card';
+import { Input } from '@crove/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { useFormat } from '../i18n/provider.tsx';
+import { adsChangeLine } from '../lib/ads-change.ts';
+import { toUnits } from '../lib/decimal.ts';
+import { NO_WRITE_OFFER, writeConnectWay, type AdWriteOffer } from '../lib/ads.ts';
+import { useAdOAuthStart } from '../lib/ads-oauth.ts';
+import { accountOffToastText, disableConfirmText, disabledToastText, writeConnectionStopped } from '../lib/ads-write.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { toast } from '../lib/toast.ts';
+import { ConfirmDialog } from './confirm-dialog.tsx';
+import { ErrorText, Field } from './ui.tsx';
+
+// A lowered cap changes the spend flags too.
+const refresh = () =>
+  Promise.all([
+    queryClient.invalidateQueries({ queryKey: orpc.ads.writeState.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.flags.key() }),
+  ]);
+
+// A decimal the server will accept as a cap: above zero, at most two decimals (the sandbox and Meta report in whole units and
+// cents). The server checks again.
+const AMOUNT = /^(?!0+(\.0+)?$)\d{1,15}(\.\d{1,2})?$/;
+export const isCapAmount = (text: string): boolean => AMOUNT.test(text.trim());
+
+const capKey = (cap: Pick<AdsCapView, 'scope' | 'adAccountId' | 'period'>) => `${cap.scope}:${cap.adAccountId ?? ''}:${cap.period}`;
+
+type Pending = AdsWriteState['pending'][number];
+
+// `offer` is what the deployment lets the owner connect to run ads (Meta's dialog, the offline sandbox); the screen reads it from the
+// server's config and passes it in, so the card offers no button the server could not finish.
+export function AdsWriteCard({
+  role,
+  accounts,
+  slug,
+  offer = NO_WRITE_OFFER,
+}: {
+  role: string | undefined;
+  accounts: readonly AdAccountView[];
+  slug: string;
+  offer?: AdWriteOffer | undefined;
+}) {
+  const t = useTranslations('ads.write');
+  const root = useTranslations();
+  const f = useFormat();
+  const owner = role === 'owner';
+  const state = useWriteState();
+  const requested = async () => (toast(t('requestedToast')), refresh());
+  // Asking for a change is R1: it makes a proposal in the Inbox and changes nothing, so it needs no second factor.
+  const enable = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
+  const unblock = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
+  // Switching off closes every connection that can run ads: the toast says how the platform still holds the permission.
+  const disable = useMutation(orpc.ads.writeDisable.mutationOptions({ onSuccess: async (done) => (toast(disabledToastText(root, accounts, done.connectionsClosed, done.readConnectionsClosed)), refresh()) }));
+  const pauseAll = useMutation(orpc.ads.pauseAll.mutationOptions({ onSuccess: async () => (toast(t('pausedToast')), refresh()) }));
+  if (state.error) return <ErrorText>{errorMessage(state.error)}</ErrorText>;
+  if (!state.data) return null;
+  const { writeEnabled, launchesBlocked, caps, pending, tokenRevokes } = state.data;
+  const capOf = (scope: 'org' | 'account', adAccountId: string | null, period: 'daily' | 'monthly') => caps.find((c) => capKey(c) === capKey({ scope, adAccountId, period }));
+  const orgCapCurrency = caps.find((c) => c.scope === 'org')?.currency ?? 'VND';
+  // A request of the same kind that already waits for approval: the card says so instead of offering to ask again.
+  const waiting = (kind: Pending['change']['change']) => pending.some((p) => p.change.change === kind);
+  const waitingForAccount = (adAccountId: string) => pending.some((p) => p.change.change === 'account_enable' && p.change.adAccountId.toLowerCase() === adAccountId.toLowerCase());
+  return (
+    <Card className="block space-y-5 p-4">
+      {tokenRevokes.length > 0 && <TokenRevokes items={tokenRevokes} />}
+      <section aria-labelledby="ads-write-title" className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 id="ads-write-title" className="text-base font-semibold text-foreground">
+            {t('title')}
+          </h2>
+          <Badge variant={writeEnabled ? 'warning' : 'secondary'}>{writeEnabled ? t('on') : t('off')}</Badge>
+        </div>
+        <p className="text-sm text-muted-foreground">{writeEnabled ? t('onHint') : t('offHint')}</p>
+        {!writeEnabled &&
+          (waiting('write_enable') ? (
+            <Badge variant="proposal">{t('waitingBadge')}</Badge>
+          ) : (
+            owner && (
+              <div>
+                <Button loading={enable.isPending} variant="outline" size="lg" onClick={() => enable.mutate({ change: 'write_enable', idempotencyKey: crypto.randomUUID() })}>
+                  {t('request')}
+                </Button>
+                {enable.error && <ErrorText>{errorMessage(enable.error)}</ErrorText>}
+              </div>
+            )
+          ))}
+        {owner && writeEnabled && (
+          <div>
+            <ConfirmDialog
+              render={<Button loading={disable.isPending} variant="outline" size="lg" />}
+              destructive
+              title={t('disableTitle')}
+              description={disableConfirmText(root, accounts)}
+              confirm={t('disable')}
+              onConfirm={() => disable.mutate({ idempotencyKey: crypto.randomUUID() })}
+            >
+              {t('disable')}
+            </ConfirmDialog>
+            {disable.error && <ErrorText>{errorMessage(disable.error)}</ErrorText>}
+          </div>
+        )}
+      </section>
+
+      {launchesBlocked && (
+        <section className="space-y-2" role="status">
+          <p className="text-sm text-warning">{t('blocked')}</p>
+          {waiting('launches_unblock') ? (
+            <Badge variant="proposal">{t('waitingBadge')}</Badge>
+          ) : (
+            owner && (
+              <div>
+                <Button loading={unblock.isPending} variant="outline" size="lg" onClick={() => unblock.mutate({ change: 'launches_unblock', idempotencyKey: crypto.randomUUID() })}>
+                  {t('unblockRequest')}
+                </Button>
+                {unblock.error && <ErrorText>{errorMessage(unblock.error)}</ErrorText>}
+              </div>
+            )
+          )}
+        </section>
+      )}
+
+      {writeEnabled && !launchesBlocked && (
+        <section className="space-y-2">
+          <p className="text-sm text-muted-foreground">{t('pauseAllHint')}</p>
+          <ConfirmDialog
+            render={<Button loading={pauseAll.isPending} variant="destructive" size="lg" />}
+            destructive
+            title={t('pauseAllTitle')}
+            description={t('pauseAllBody')}
+            confirm={t('pauseAll')}
+            onConfirm={() => pauseAll.mutate({ idempotencyKey: crypto.randomUUID() })}
+          >
+            {t('pauseAll')}
+          </ConfirmDialog>
+          {pauseAll.error && <ErrorText>{errorMessage(pauseAll.error)}</ErrorText>}
+        </section>
+      )}
+
+      {pending.length > 0 && (
+        <section aria-labelledby="ads-write-pending" className="space-y-2">
+          <h3 id="ads-write-pending" className="text-sm font-medium text-foreground">
+            {t('pending')}
+          </h3>
+          <p className="text-sm text-muted-foreground">{t('pendingHint')}</p>
+          <ul className="divide-y text-sm">
+            {pending.map((p) => (
+              <li key={p.proposalId} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2">
+                <span className="min-w-0 break-words text-foreground">{adsChangeLine(p.change, root, (amount, currency) => f.money(amount, currency))}</span>
+                <span className="flex flex-wrap items-baseline gap-x-3 text-xs text-subtle-foreground">
+                  <span>{t('pendingAsked', { when: f.dateTime(p.requestedAt) })}</span>
+                  <Link to="/o/$slug/inbox/$id" params={{ slug, id: p.proposalId }} className="text-link hover:underline">
+                    {t('pendingOpen')}
+                  </Link>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {writeEnabled && accounts.length > 0 && (
+        <section aria-labelledby="ads-write-accounts" className="space-y-2">
+          <h3 id="ads-write-accounts" className="text-sm font-medium text-foreground">
+            {t('accounts')}
+          </h3>
+          <ul className="divide-y text-sm">
+            {accounts.map((a) => (
+              <AccountRow key={a.id} account={a} owner={owner} waiting={waitingForAccount(a.id)} slug={slug} offer={offer} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section aria-labelledby="ads-write-caps" className="space-y-3">
+        <h3 id="ads-write-caps" className="text-sm font-medium text-foreground">
+          {t('caps')}
+        </h3>
+        <p className="text-sm text-muted-foreground">{t('capsHint')}</p>
+        <ul className="space-y-1 text-sm">
+          <CapLine label={t('capOrg')} daily={capOf('org', null, 'daily')} monthly={capOf('org', null, 'monthly')} />
+          {accounts.map((a) => (
+            <CapLine key={a.id} label={a.name} daily={capOf('account', a.id, 'daily')} monthly={capOf('account', a.id, 'monthly')} />
+          ))}
+        </ul>
+        {caps.length > 0 && <p className="text-xs text-subtle-foreground">{t('capsSet', { when: f.dateTime(caps.reduce((late, c) => (c.setAt > late ? c.setAt : late), caps[0]?.setAt ?? '')) })}</p>}
+        {owner && <CapForm owner={owner} accounts={accounts} caps={caps} pending={pending} orgCurrency={orgCapCurrency} />}
+      </section>
+    </Card>
+  );
+}
+
+// The write state of the org. The sweep that removes a closed connection's permission runs in the worker and sends no stream hint, so while one is still
+// being tried the screen asks again.
+function useWriteState() {
+  return useQuery({ ...orpc.ads.writeState.queryOptions(), refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
+}
+
+// The same notice for a screen with no ad account (the last one was erased after a disconnect): the card above is not drawn there, and a person told nothing
+// would not know to remove the app by hand. Nothing is drawn when there is nothing to say (the query is the owners' and admins').
+export function AdsRevokeNotice() {
+  const items = useWriteState().data?.tokenRevokes ?? [];
+  if (items.length === 0) return null;
+  return (
+    <Card className="block p-4">
+      <TokenRevokes items={items} />
+    </Card>
+  );
+}
+
+// The removal of the app's permission at the platform after a connection that runs ads was closed (W2-1, #2296): still being tried (an encrypted copy of
+// the token is held for seven days at most, for that alone), or given up, when the person removes the app in the platform's settings.
+function TokenRevokes({ items }: { items: AdsWriteState['tokenRevokes'] }) {
+  const t = useTranslations('ads.write');
+  const f = useFormat();
+  return (
+    <section aria-labelledby="ads-revoke-title" className="space-y-2">
+      <h3 id="ads-revoke-title" className="text-sm font-semibold text-foreground">
+        {t('revokeTitle')}
+      </h3>
+      <ul className="space-y-1 text-sm text-muted-foreground">
+        {items.map((item) => {
+          const account = item.accountName ?? t('revokeAccountFallback');
+          // The offline practice connection holds nothing at Meta: its own wording, so nobody is told to remove an app there.
+          const practice = item.provider === 'sandboxwrite_ads';
+          const given = practice ? t('revokeGaveUpSandbox', { account }) : t('revokeGaveUp', { account });
+          const trying = { account, attempts: String(item.attempts), when: item.nextAttemptAt ? f.dateTime(item.nextAttemptAt) : '' };
+          return <li key={item.id}>{item.state === 'gave_up' ? given : practice ? t('revokePendingSandbox', trying) : t('revokePending', trying)}</li>;
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function CapLine({ label, daily, monthly }: { label: string; daily: AdsCapView | undefined; monthly: AdsCapView | undefined }) {
+  const t = useTranslations('ads.write');
+  const f = useFormat();
+  const show = (cap: AdsCapView | undefined) => (cap ? f.money(cap.amount, cap.currency) : t('capNone'));
+  return (
+    <li className="flex flex-wrap items-baseline justify-between gap-2">
+      <span className="min-w-0 break-words text-foreground">{label}</span>
+      <span className="text-muted-foreground">
+        {t('capDaily')}: {show(daily)}; {t('capMonthly')}: {show(monthly)}
+      </span>
+    </li>
+  );
+}
+
+// One account's flag and its connection to run ads: everyone who reads the card sees where they stand. An account that is not
+// allowed yet can be asked for (a proposal, only while the org's switch is on, which is when the list is drawn); the owner can
+// withdraw an allowed one at once, which also closes its connection to run ads. The owner connects an account that cannot run ads
+// yet (a second connection, apart from the one that reads its reports): through the platform's own dialog, or offline for the
+// sandbox. An admin sees the badge or the note and no button.
+function AccountRow({ account, owner, waiting, slug, offer }: { account: AdAccountView; owner: boolean; waiting: boolean; slug: string; offer: AdWriteOffer }) {
+  const t = useTranslations('ads.write');
+  const root = useTranslations();
+  const off = useMutation(orpc.ads.disableAccountWrite.mutationOptions({ onSuccess: async (done) => (toast(accountOffToastText(root, account, done.connectionsClosed)), refresh()) }));
+  const ask = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: async () => (toast(t('requestedToast')), refresh()) }));
+  const connectSandbox = useMutation(orpc.ads.connectSandboxWrite.mutationOptions({ onSuccess: async () => (toast(t('accountConnectedToast')), refresh()) }));
+  const connectMeta = useAdOAuthStart(slug, 'metawrite_ads');
+  const way = writeConnectWay(account.provider, offer);
+  // An account whose own connection was closed is connected for reading again first; the server says the same (ADS_WRITE_NEEDS_READ),
+  // and Meta's dialog connects every account it reached that is linked for reading, the list in the answer says which.
+  const canConnect = owner && !account.canRunAds && way !== null && account.connectionStatus !== 'revoked';
+  const connecting = way === 'meta' ? connectMeta.isPending : connectSandbox.isPending;
+  const connect = () => (way === 'meta' ? connectMeta.mutate() : connectSandbox.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() }));
+  return (
+    <li className="space-y-1 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="min-w-0 break-words text-foreground">{account.name}</span>
+        <span className="flex flex-wrap items-center gap-2">
+          <Badge variant={account.writeEnabled ? 'warning' : 'secondary'}>{account.writeEnabled ? t('accountOn') : t('accountOff')}</Badge>
+          {account.canRunAds && <Badge variant="success">{t('accountCanRun')}</Badge>}
+          {canConnect && (
+            <Button loading={connecting} variant="outline" onClick={connect}>
+              {t('accountConnect')}
+            </Button>
+          )}
+          {account.writeEnabled
+            ? owner && (
+                <Button loading={off.isPending} variant="outline" onClick={() => off.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
+                  {t('accountDisable')}
+                </Button>
+              )
+            : waiting ? (
+                <Badge variant="proposal">{t('waitingBadge')}</Badge>
+              ) : (
+                owner && (
+                  <Button loading={ask.isPending} variant="outline" onClick={() => ask.mutate({ change: 'account_enable', adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
+                    {t('accountRequest')}
+                  </Button>
+                )
+              )}
+        </span>
+      </div>
+      {writeConnectionStopped(account) && (
+        <p className="text-sm text-warning" role="status">
+          {t('accountStopped')}
+        </p>
+      )}
+      {off.error && <ErrorText>{errorMessage(off.error)}</ErrorText>}
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {connectSandbox.error && <ErrorText>{errorMessage(connectSandbox.error)}</ErrorText>}
+      {connectMeta.error && <ErrorText>{errorMessage(connectMeta.error)}</ErrorText>}
+    </li>
+  );
+}
+
+type CapMode = 'raise' | 'lower';
+
+// Owners and admins ask to set or raise a cap (the org's, in the currency typed, or one account's, in its own currency, known
+// after its first update): a proposal for the Inbox. The owner can also lower one on the spot, which only reduces what may be
+// spent: in the cap's own currency, below the cap in force. A change is a new row, so the history stays. `initial` is where the
+// form starts (the screen never sets it; tests render the other states with it).
+export function CapForm({
+  owner,
+  accounts,
+  caps,
+  pending,
+  orgCurrency,
+  initial = {},
+}: {
+  owner: boolean;
+  accounts: readonly AdAccountView[];
+  caps: readonly AdsCapView[];
+  pending: readonly Pending[];
+  orgCurrency: string;
+  initial?: { mode?: CapMode; scope?: (typeof ADS_CAP_SCOPES)[number]; period?: (typeof ADS_CAP_PERIODS)[number]; amount?: string };
+}) {
+  const t = useTranslations('ads.write');
+  const f = useFormat();
+  const [mode, setMode] = useState<CapMode>(initial.mode ?? 'raise');
+  const [scope, setScope] = useState<(typeof ADS_CAP_SCOPES)[number]>(initial.scope ?? 'org');
+  const [adAccountId, setAdAccountId] = useState('');
+  const [period, setPeriod] = useState<(typeof ADS_CAP_PERIODS)[number]>(initial.period ?? 'daily');
+  const [amount, setAmount] = useState(initial.amount ?? '');
+  // The currency of an org cap starts from the org cap of the period chosen (each period's cap has its own currency), else from
+  // `orgCurrency`; whatever the owner types stands until the form is left.
+  const [orgCurrencyTyped, setOrgCurrencyTyped] = useState<string | null>(null);
+  const orgCurrencyInput = orgCurrencyTyped ?? caps.find((c) => c.scope === 'org' && c.period === period)?.currency ?? orgCurrency;
+  const lowering = owner && mode === 'lower';
+  // To raise, an account needs a known currency; to lower, any account (the cap in force has its own).
+  const choosable = lowering ? accounts : accounts.filter((a) => a.currency !== null);
+  const account = choosable.find((a) => a.id === adAccountId) ?? choosable[0];
+  const target = scope === 'account' ? (account?.id ?? null) : null;
+  const inForce = caps.find((c) => capKey(c) === capKey({ scope, adAccountId: target, period }));
+  const requestOpen = pending.some(
+    (p) => p.change.change === 'cap_set' && p.change.scope === scope && p.change.period === period && (p.change.adAccountId?.toLowerCase() ?? null) === (target?.toLowerCase() ?? null),
+  );
+  const currency = scope === 'org' ? orgCurrencyInput.trim().toUpperCase() : (account?.currency ?? '');
+  const targetKnown = scope === 'org' || account !== undefined;
+  // Lowering goes strictly below the cap in force (the server refuses the same amount too): compared exactly, as decimal units,
+  // never as a JS number.
+  const notBelow = lowering && inForce !== undefined && isCapAmount(amount) && toUnits(amount.trim()) >= toUnits(inForce.amount);
+  const valid = isCapAmount(amount) && targetKnown && (lowering ? inForce !== undefined && !notBelow : /^[A-Z]{3}$/.test(currency) && !requestOpen);
+  const request = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: async () => (setAmount(''), toast(t('requestedToast')), refresh()) }));
+  const lower = useMutation(orpc.ads.lowerCap.mutationOptions({ onSuccess: async () => (setAmount(''), toast(t('capLoweredToast')), refresh()) }));
+  const busy = request.isPending || lower.isPending;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!valid) return;
+    const named = scope === 'account' && account ? { adAccountId: account.id } : {};
+    if (lowering) lower.mutate({ scope, ...named, period, amount: amount.trim(), idempotencyKey: crypto.randomUUID() });
+    else request.mutate({ change: 'cap_set', scope, ...named, period, amount: amount.trim(), currency, idempotencyKey: crypto.randomUUID() });
+  };
+  const changeMode = (next: CapMode) => {
+    setMode(next);
+    request.reset();
+    lower.reset();
+  };
+  return (
+    <div>
+      <form onSubmit={submit} className="space-y-3" aria-label={t('capForm')}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {owner && (
+            <Field label={t('capAction')}>
+              {(control) => (
+                <NativeSelect {...control} className="w-full" value={mode} disabled={busy} onChange={(e) => changeMode(e.target.value as CapMode)}>
+                  {(['raise', 'lower'] as const).map((m) => (
+                    <NativeSelectOption key={m} value={m}>
+                      {t(`capActions.${m}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              )}
+            </Field>
+          )}
+          <Field label={t('capScope')}>
+            {(control) => (
+              <NativeSelect {...control} className="w-full" value={scope} disabled={busy} onChange={(e) => setScope(e.target.value as typeof scope)}>
+                {ADS_CAP_SCOPES.map((s) => (
+                  <NativeSelectOption key={s} value={s}>
+                    {t(`capScopes.${s}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+          </Field>
+          {scope === 'account' && (
+            <Field label={t('capAccount')} hint={choosable.length === 0 ? t('capNoCurrency') : undefined}>
+              {(control) => (
+                <NativeSelect {...control} className="w-full" value={account?.id ?? ''} disabled={busy || choosable.length === 0} onChange={(e) => setAdAccountId(e.target.value)}>
+                  {choosable.map((a) => (
+                    <NativeSelectOption key={a.id} value={a.id}>
+                      {a.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              )}
+            </Field>
+          )}
+          <Field label={t('capPeriod')}>
+            {(control) => (
+              <NativeSelect {...control} className="w-full" value={period} disabled={busy} onChange={(e) => setPeriod(e.target.value as typeof period)}>
+                {ADS_CAP_PERIODS.map((p) => (
+                  <NativeSelectOption key={p} value={p}>
+                    {t(`capPeriods.${p}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+          </Field>
+          <Field label={t('capAmount')} hint={amount !== '' && !isCapAmount(amount) ? t('capAmountInvalid') : notBelow ? t('capNotBelow') : undefined}>
+            {(control) => <Input {...control} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />}
+          </Field>
+          {!lowering && scope === 'org' && (
+            <Field label={t('capCurrency')} hint={t('capCurrencyHint')}>
+              {(control) => <Input {...control} maxLength={3} value={orgCurrencyInput} disabled={busy} onChange={(e) => setOrgCurrencyTyped(e.target.value)} />}
+            </Field>
+          )}
+          {!lowering && scope === 'account' && account && <p className="self-end text-sm text-muted-foreground">{t('capAccountCurrency', { currency: account.currency ?? '' })}</p>}
+        </div>
+        <p className="text-sm text-muted-foreground">{inForce ? t('capInForce', { amount: f.money(inForce.amount, inForce.currency) }) : t('capNoneYet')}</p>
+        {lowering && <p className="text-sm text-muted-foreground">{t('capLowerHint')}</p>}
+        {!lowering && requestOpen && <p className="text-sm text-muted-foreground">{t('capRequestOpen')}</p>}
+        <Button loading={busy} type="submit" size="lg" disabled={!valid}>
+          {lowering ? t('capLower') : t('capRequest')}
+        </Button>
+      </form>
+      {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
+      {lower.error && <ErrorText>{errorMessage(lower.error)}</ErrorText>}
+    </div>
+  );
+}

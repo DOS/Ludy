@@ -5,7 +5,8 @@
 // elements in every version and does not check the version. The digital signatures (the seller's and, with a tax
 // authority code, the tax authority's) are verified by einvoice-signature.ts (#674) against the national root CAs
 // shipped in apps/extract/trust; an unverified signature never stops the invoice from being read. Deterministic, no
-// LLM. Entity expansion is disabled and DOCTYPE is rejected.
+// LLM. DOCTYPE and ENTITY declarations are rejected before parsing, so no entity can be declared; the predefined
+// XML entities and character references are decoded, and HTML entity names with them (the parser options say why).
 // It runs only inside a crove-extract parser process (plan §7.6, External-tenant gate T12). The invoice types,
 // money helpers and checks it shares with the worker stay in @crove/l10n-vn, which holds no parser.
 import { XMLParser } from 'fast-xml-parser';
@@ -81,12 +82,15 @@ function findHDon(value: unknown, depth = 0): Node | null {
 }
 
 function party(node: unknown): InvoiceParty {
+  const bankAccount = text(node, 'STKNHang');
   return {
     name: text(node, 'Ten') ?? text(node, 'HVTNMHang') ?? '',
     taxCode: text(node, 'MST'),
     address: text(node, 'DChi'),
     email: text(node, 'DCTDTu'),
     phone: text(node, 'SDThoai'),
+    // The account the invoice names, left out when it names none (#2380).
+    ...(bankAccount ? { bankAccount } : {}),
   };
 }
 

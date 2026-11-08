@@ -39,7 +39,7 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
 
   await test.step('upload the e-invoice the org issued and open the sale proposal', async () => {
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });

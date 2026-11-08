@@ -10,10 +10,14 @@ const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 // The landmark and heading rules of axe (best-practice), asked for by id as in e2e/tests/layout.spec.ts.
 const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page-has-heading-one', 'heading-order'];
 
-const PAGES = [
-  { path: '/', lang: 'vi' },
-  { path: '/en', lang: 'en' },
-] as const;
+// The home page and every app page (content/site.ts APP_PAGES), each in both languages at the same address (#2360):
+// the English visit is one whose cookie says so, what the header toggle sets.
+const PAGES = ['/', '/ke-toan', '/engage', '/notes'].flatMap((path) => [
+  { path, lang: 'vi' as const },
+  { path, lang: 'en' as const },
+]);
+const chooseLanguage = (page: Page, lang: 'vi' | 'en') =>
+  page.context().addCookies([{ name: 'ludy-lang', value: lang, url: process.env.WEB_BASE_URL ?? 'http://localhost:3000' }]);
 const VIEWPORTS = [
   { name: '360px', width: 360, height: 780 },
   { name: 'desktop', width: 1280, height: 800 },
@@ -195,7 +199,8 @@ async function scan(page: Page, axe: () => AxeBuilder): Promise<string[]> {
 for (const { path, lang } of PAGES) {
   for (const theme of THEMES) {
     for (const viewport of VIEWPORTS) {
-      test(`${path} in ${theme} at ${viewport.name} passes axe and fits the screen`, async ({ page }) => {
+      test(`${path} in ${lang === 'vi' ? 'Vietnamese' : 'English'}, ${theme} at ${viewport.name} passes axe and fits the screen`, async ({ page }) => {
+        await chooseLanguage(page, lang);
         await page.setViewportSize({ width: viewport.width, height: viewport.height });
         // The theme the page applies before its first paint (root-document.tsx), as if the visitor had picked it.
         await page.addInitScript((value) => localStorage.setItem('crove-theme', value), theme);
@@ -227,21 +232,24 @@ for (const { path, lang } of PAGES) {
 // The rendered English page, so a word typed into a component instead of content/en.ts is caught too: its title, every
 // text node (also the closed FAQ answers, the closed menu and what shows at one width only) and the names and hints a
 // screen reader or a hover reads out.
-test('/en shows no Vietnamese but the allowed example names', async ({ page }) => {
-  await page.goto('/en');
-  const texts = await page.evaluate(() => {
-    const found = [document.title];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.parentElement?.closest('script, style, noscript, template')) found.push(node.textContent ?? '');
-    }
-    for (const el of document.querySelectorAll('[aria-label], [alt], [title], [placeholder]')) {
-      for (const name of ['aria-label', 'alt', 'title', 'placeholder']) {
-        const value = el.getAttribute(name);
-        if (value) found.push(value);
+for (const path of PAGES.filter((page) => page.lang === 'en').map((page) => page.path)) {
+  test(`${path} in English shows no Vietnamese but the allowed example names`, async ({ page }) => {
+    await chooseLanguage(page, 'en');
+    await page.goto(path);
+    const texts = await page.evaluate(() => {
+      const found = [document.title];
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.parentElement?.closest('script, style, noscript, template')) found.push(node.textContent ?? '');
       }
-    }
-    return found;
+      for (const el of document.querySelectorAll('[aria-label], [alt], [title], [placeholder]')) {
+        for (const name of ['aria-label', 'alt', 'title', 'placeholder']) {
+          const value = el.getAttribute(name);
+          if (value) found.push(value);
+        }
+      }
+      return found;
+    });
+    expect(vietnameseLeft(texts.join('\n'))).toEqual([]);
   });
-  expect(vietnameseLeft(texts.join('\n'))).toEqual([]);
-});
+}

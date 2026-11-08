@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { kernelCommands } from '@crove/kernel';
 import type { Db } from '@crove/db';
 import { Runtime, deriveRisk, type CommandDef } from '@crove/kernel-runtime';
+import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
 import { financeCommands } from '@crove/mod-finance';
 import { socialCommands } from '@crove/mod-social';
@@ -20,7 +21,7 @@ const POLICY_R3 = ['kernel.member.change_role', 'kernel.member.invite.create', '
 const FINANCE_POLICY = { 'finance.period.lock': 'R2', 'finance.period.unlock': 'R3' } as const;
 
 const all = (): Array<CommandDef<unknown, unknown>> =>
-  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands] as Array<CommandDef<unknown, unknown>>;
+  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands] as Array<CommandDef<unknown, unknown>>;
 
 describe('declared risk and side effects (#1563)', () => {
   it('derives R3 from financial, legal and irreversible effects, R2 from external, R1 from internal, R0 from none', () => {
@@ -117,7 +118,10 @@ describe('declared risk and side effects (#1563)', () => {
       'finance.journal.reverse',
       'finance.journal_voucher.record',
       'finance.opening_balance.post',
+      'finance.payroll_posting.record',
       'finance.purchase.record',
+      'finance.stock.close_period',
+      'finance.stock.count_confirm',
       'finance.voucher.record',
     ]) {
       expect(byName.get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial' });
@@ -144,5 +148,74 @@ describe('declared risk and side effects (#1563)', () => {
   it('keeps the membership and role commands at R3', () => {
     const byName = new Map(all().map((c) => [c.name, c.risk]));
     for (const name of POLICY_R3) expect(byName.get(name), name).toBe('R3');
+  });
+});
+
+// Running ads (ADR-0043, #2294): what only stops or reduces spend is a direct R2 command; what starts or raises it, or opens the
+// way to it, runs only as an approved proposal (R3 financial, access 'proposal') asked for through an R1 preparer. Pinned by
+// name so an annotation cannot lower the first, raise the second or make a direct command of what must be a proposal.
+describe('the risk of the commands of running ads (#2294)', () => {
+  const byName = () => new Map(all().map((c) => [c.name, c]));
+  const OPENING = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock'];
+  const PREPARERS = ['ads.write.prepare_enable', 'ads.account.prepare_enable_write', 'ads.cap.prepare_set', 'ads.launches.prepare_unblock'];
+
+  it('keeps every command that opens the way to spend an R3 financial proposal command, never a direct one', () => {
+    for (const name of OPENING) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+    }
+  });
+
+  it('asks for each of them through an R1 preparer of the owner alone that posts nothing (an owner or an admin approves)', () => {
+    for (const name of PREPARERS) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner'] });
+    }
+  });
+
+  it('keeps what only stops or lowers spend R2 external, and the switch off and the lowering the owner’s', () => {
+    expect(byName().get('ads.pause_all')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+    for (const name of ['ads.write.disable', 'ads.account.disable_write', 'ads.cap.lower']) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner'] });
+    }
+  });
+
+  it('keeps the write connection the owner’s to make and an owner’s or an admin’s to close, R2 external', () => {
+    expect(byName().get('ads.account.link_write')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner'] });
+    expect(byName().get('ads.account.disconnect')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+    // What the platform's data deletion request runs for a write grant alone is the system's.
+    expect(byName().get('ads.account.forget_write')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: 'system' });
+  });
+
+  it('keeps the launch of a drafted campaign (W1, #2295) an R3 financial proposal command asked for through an R1 preparer of owners and admins, and the drafts R1', () => {
+    expect(byName().get('ads.campaign.launch')).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+    expect(byName().get('ads.campaign.prepare_launch')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin'] });
+    for (const name of ['ads.campaign.draft_save', 'ads.campaign.draft_discard']) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
+    }
+    for (const name of ['ads.campaign.launch', 'ads.campaign.prepare_launch', 'ads.campaign.draft_save', 'ads.campaign.draft_discard']) {
+      expect(byName().get(name)?.agent, name).toBeUndefined();
+    }
+  });
+
+  it('keeps the issue of a sales e-invoice (#2502) an R3 legal proposal command asked for through an R1 preparer of owners, admins and members, and no agent either', () => {
+    expect(byName().get('finance.einvoice.issue')).toMatchObject({ risk: 'R3', sideEffect: 'legal', access: 'proposal' });
+    expect(byName().get('finance.einvoice.prepare_issue')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
+    for (const name of ['finance.einvoice.issue', 'finance.einvoice.prepare_issue']) expect(byName().get(name)?.agent, name).toBeUndefined();
+  });
+
+  it('keeps the e-invoice issue job (#2502) a system-only R2 begin that commits the provider call, and R1 records, none of them an agent', () => {
+    expect(byName().get('finance.einvoice.job_begin')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: 'system' });
+    expect(byName().get('finance.einvoice.job_files')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: 'system' });
+    expect(byName().get('finance.einvoice.job_record')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: 'system' });
+    for (const name of ['finance.einvoice.job_begin', 'finance.einvoice.job_files', 'finance.einvoice.job_record']) expect(byName().get(name)?.agent, name).toBeUndefined();
+  });
+
+  it('keeps the cancel of a launch that has not started (W2-2, #2296) an R2 command of owners and admins: it only releases what a plan holds against the caps', () => {
+    expect(byName().get('ads.launch.cancel')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+  });
+
+  it('lets no agent run any of them', () => {
+    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write', 'ads.launch.cancel']) {
+      expect(byName().get(name)?.agent, name).toBeUndefined();
+    }
   });
 });

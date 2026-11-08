@@ -17,10 +17,12 @@ describe('bulk approval item refusals', () => {
       ['SIGNATURE_UNVERIFIED', 422],
       ['DUPLICATE_INVOICE', 409],
       ['NOT_OWN_SALE', 422],
+      ['SALE_OTHER_ENTITY', 422],
       ['OWN_INVOICE', 422],
       ['PERIOD_LOCKED', 409],
       ['NOT_REVENUE_ACCOUNT', 422],
       ['REVENUE_ACCOUNT_ON_PURCHASE', 422],
+      ['ACCOUNT_UNCLASSIFIED', 422],
     ] as const) {
       expect(isBulkItemRefusal(new DomainError(code, status, 'refused'))).toBe(true);
     }

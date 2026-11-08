@@ -3,6 +3,7 @@
 import { PostgresQueryCompiler, sql, type KyselyPlugin, type RawBuilder, type Transaction } from 'kysely';
 import { createHmac, randomUUID } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
+import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
 import type { z } from 'zod';
 import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@crove/db';
 import { DomainError, toDomainError } from './errors.ts';
@@ -31,6 +32,25 @@ export function deriveRisk(sideEffect: SideEffect): Risk {
 // Authenticator assurance level of the user's access token: aal2 means the session passed MFA.
 export type Aal = 'aal1' | 'aal2';
 
+// The scopes an extension token may hold, one per feature of the Ludy extension (ADR-0047 point 10, issue #2582). A
+// command or query is reachable with an extension token only when it declares one of the token's scopes
+// (CommandDef.extension, QueryDef.extension): every other command, query and org-less call refuses the token.
+// crove_kernel.extension_token's CHECK lists the same scopes; a new one is a migration and an entry here.
+export const EXTENSION_SCOPES = Object.freeze(['meetings'] as const);
+export type ExtensionScope = (typeof EXTENSION_SCOPES)[number];
+
+// What an extension token proved at the HTTP edge: its id and the scopes it holds. It lives only on a user actor made
+// from a token, whose org the token names and the database re-checks on every transaction (checkSession).
+export interface ExtensionGrant {
+  tokenId: string;
+  scopes: readonly string[];
+}
+
+// The declaration that opens a command or query to an extension token holding `scope` (and to no other scope).
+export interface ExtensionAccess {
+  scope: ExtensionScope;
+}
+
 export interface UserActor {
   type: 'user';
   userId: string;
@@ -43,6 +63,11 @@ export interface UserActor {
   // so the token itself never travels with the actor. Resolves when Auth confirms the session's user; throws 401
   // or 503 otherwise.
   confirmLive?: () => Promise<void>;
+  // Set when the request carried a Ludy extension token instead of a browser session (issue #2582). There is no
+  // Supabase session then (no sessionId): the runtime checks the token itself in the request's transaction, and the
+  // actor reaches only the commands and queries that declare one of its scopes. The user is the token's member, so it
+  // can never do more than that member can.
+  extension?: ExtensionGrant;
 }
 
 // A position-holding agent acting in one of its runs (ADR-0029). It enters only in the worker, through
@@ -122,6 +147,12 @@ export type Access = readonly MemberRole[] | 'system' | 'proposal' | 'proposal_r
 export interface CommandDef<I = unknown, O = unknown> {
   name: string;
   input: z.ZodType<I>;
+  // Input paths that hold a personal value the org seals under its subject's key (ADR-0017, #2666): `field`, `a.b` or `list[].field`. The runtime hashes,
+  // audits and replays the command from a copy of the input where each of these holds "[sealed]", so the value is in no hash (audit_event.input_sha256,
+  // idempotency_key.request_sha256), and it refuses to let the value leave the handler in the output (idempotency_key.response), in ctx.audit, ctx.emit and
+  // ctx.activity, in a statement's parameters (a job's data, any table), in an error's message or details, or in a nested command's input. A command that
+  // creates a proposal cannot declare it (the input is the stored payload): it takes values that are already sealed.
+  sealedInput?: readonly string[];
   risk: Risk;
   // What it does beyond its transaction; register() refuses a command without one (#1637) and a declared risk below
   // deriveRisk(sideEffect) (#1563).
@@ -141,6 +172,9 @@ export interface CommandDef<I = unknown, O = unknown> {
   // permission.
   permissionScope?: 'org' | 'legal_entity';
   target?: (input: I) => { type: string; id: string } | null;
+  // Opens the command to a Ludy extension token that holds this scope (issue #2582, ADR-0047 point 10). Absent: an
+  // extension token never runs it. Only a command run by users with a role list, below R3.
+  extension?: ExtensionAccess;
   // Org-less commands (creating an org) start without an org. `bootstrap` calls a definer that creates the
   // org with the actor as a member, or returns the org an earlier request with the same idempotency key
   // created. executeOrgless() then enters that org as the actor, so membership is checked as on every other
@@ -167,12 +201,17 @@ export interface CommandDef<I = unknown, O = unknown> {
   // not have, an unknown class, a table listed twice or an empty column list, and, on a runtime given the manifests
   // (RuntimeOptions.manifests), a table no manifest has or classes that are not its manifest's (#1710). An empty list
   // says the command writes no table (only the runtime's rows for it). An agent's proposal of the command is
-  // flagged P04 when a declared column is `contact` or `payment`, and also when the command declares no writes at all
+  // flagged P04 when a declared column is `contact` or `payment` (read per table since #1785: a declared table that
+  // holds such a column counts as written there, whichever columns the command names, and the execution check compares
+  // tables, not columns), and also when the command declares no writes at all
   // (nothing says it writes none). A proposal command whose declared writes have no such column may run, as a nested
   // command at any depth, only commands that declare none either: the runtime refuses any other at execution, so a
   // nested write cannot escape P04. Events it emits are not writes: a command that handles them runs on its own, under
-  // its own declaration (a proposal command declared free of contact and payment writes must not emit one whose handler
-  // writes such a column, #1710).
+  // its own declaration, so such a proposal command emits, itself or through a nested command, only the events on
+  // P04_CLEAN_EVENTS, whose handlers were reviewed to write no contact or payment column (#1710); no command declares
+  // the outbox table (crove_kernel.outbox_event), events are the runtime's. Nor does such a proposal command, or a
+  // command run under it, declare a job table (JOB_TABLES): a job it queued would run later under its own declaration
+  // (#2107).
   writes?: readonly CommandWrite[];
   // access 'proposal' only, R1 or R2 only (ADR-0029 section 6): the role keys of positions whose agents may approve
   // a proposal of this command, within their max_risk and only when the proposal's outcome names none of P03 to
@@ -208,6 +247,27 @@ export const WRITE_DATA_CLASSES = Object.freeze(['internal', 'pii', 'contact', '
 // The classes whose write is policy P04 (plan §4.7: changing a payee, bank account or contact point).
 const P04_DATA_CLASSES: readonly string[] = ['contact', 'payment'];
 
+// The events a proposal command declared free of contact and payment writes may emit, itself or through a command it
+// runs at any depth (P04, #1710). An event is not a write of the command that emits it: its handlers (a job, the outbox
+// relay) run later under their own declarations, so nothing in the proposal's declaration says they write no contact or
+// payment column. Deny by default: such a command emits none until an event is listed here, and an event is listed only
+// with a review of every handler it reaches (the invariant suite pins this list, so a change to it is a protected-path
+// change). Empty: no proposal command declares its writes yet. A frozen array, read into a set once, so nothing can add
+// an event at run time. The list is not scoped to a command: an event listed is allowed for every such command.
+export const P04_CLEAN_EVENTS: readonly string[] = Object.freeze([]);
+const CLEAN_EVENTS: ReadonlySet<string> = new Set(P04_CLEAN_EVENTS);
+
+// The pg-boss tables a row in which starts work later (a job, a dependency between jobs, a schedule, a subscription, a
+// queue, a bulk request): a proposal command declared free of contact and payment writes, and the commands run under it,
+// do not declare them, since the job they start runs under its own declaration and the proposal's says nothing of what
+// it writes (#2107). The other crove_jobs tables start nothing: queue_stats and warning are statistics and a log, instance
+// is the workers' heartbeat, and version holds the leases of the maintenance passes (no job content). The invariant suite
+// pins the list against the manifest, so a table a pg-boss upgrade adds is classified before it is used. Which tables
+// start nothing rests on reading the vendored pg-boss schema: re-check them on every `pnpm db:vendor:pgboss` bump, a new
+// pg-boss version or a new schema version of it, before the list or the manifest is changed to match.
+const JOB_TABLES: ReadonlySet<string> = new Set(['crove_jobs.job', 'crove_jobs.job_dependency', 'crove_jobs.schedule', 'crove_jobs.subscription', 'crove_jobs.queue', 'crove_jobs.bam']);
+const jobTablesOf = (writes: readonly CommandWrite[] | undefined): string[] => (writes ?? []).filter((w) => JOB_TABLES.has(w.table)).map((w) => w.table);
+
 // What a handler may learn about a registered command (ADR-0029 section 6): enough to judge a proposal of it.
 export interface CommandInfo {
   name: string;
@@ -233,10 +293,24 @@ export interface QueryDef<I = unknown, O = unknown> {
   access: readonly MemberRole[] | 'system';
   // Agents that may read it (absent: none).
   agent?: Pick<AgentAccess, 'roles'>;
+  // Opens the query to a Ludy extension token that holds this scope (absent: an extension token never reads it).
+  // Only a query with a role list.
+  extension?: ExtensionAccess;
   // A streamed read (the org export, #212): it runs only through Runtime.stream(), which hands the handler a sink for
   // its batches and opens one REPEATABLE READ, READ ONLY transaction, so every batch comes from the same snapshot.
   // Runtime.query() and ctx.query refuse it (STREAM_ONLY) after the usual context and access checks.
   stream?: true;
+  // A read of data the org keeps narrow (a salary, an identity number): the kernel commits an audit row of the read in its
+  // own transaction BEFORE the handler runs, and a failed audit write stops the read (plan section 4.4, "Query"). The
+  // row names the actor, the query and the hash of its input, never a value. It runs only through Runtime.query() and
+  // Runtime.stream(): ctx.query refuses it (SENSITIVE_ONLY), because a nested read could not be audited first.
+  sensitive?: true;
+  // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
+  // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
+  target?: (input: I) => { type: string; id: string } | null;
+  // Facts of the read to keep in its audit row's detail, from its parsed input: names of what is read (a table), never a value or personal data. The
+  // keys of the runtime's own detail (read, stage, the actor's) are kept as they are. Ignored without `sensitive`.
+  auditDetail?: (input: I) => Record<string, string>; // keys and values are names (AUDIT_DETAIL_KEY, TARGET_TYPE), checked before the row is written
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -268,7 +342,24 @@ export interface QueryContext {
   installed(module: string): boolean;
   // A registered command's risk, access and agent approvers, or null when none is registered under that name.
   command(name: string): CommandInfo | null;
+  // Opens a personal value sealed under its subject's key (ctx.seal, ADR-0017): the value, or { erased: true } when the subject's key was
+  // shredded. Only a user's query opens one (an agent, the system and the worker never do), and the deployment needs its credential key
+  // (BROKER_NOT_CONFIGURED otherwise). `place` is where the value is stored (`<schema>.<table>.<column>`): a value read from another place does not open. `ref` is the subject the row
+  // belongs to (`employee:<id>`): a value sealed under another subject fails, so a sealed text moved to another person's row never reads as theirs.
+  open(sealed: string, place: string, ref: string): Promise<string | ErasedValue>;
+  // open() for many values at once: one key lookup for all of them, in the order given.
+  openMany(items: readonly { sealed: string; place: string; ref: string }[]): Promise<(string | ErasedValue)[]>;
 }
+
+// What a sealed value reads as once its subject's key is gone.
+export interface ErasedValue {
+  erased: true;
+}
+
+// A subject reference (`employee:<id>`) and the place of a sealed value (`<schema>.<table>.<column>`). A `contact:` reference is a keyed hash
+// (64 hex characters), never the email or number itself: the reference is stored in the clear.
+const SUBJECT_REF = /^(?:contact:[0-9a-f]{64}|(?!contact:)[a-z_]+:[A-Za-z0-9._-]{1,128})$/;
+const SEAL_PLACE = /^[a-z][a-z0-9_.:-]{2,120}$/;
 
 export interface CommandContext extends QueryContext {
   commandId: string;
@@ -291,6 +382,10 @@ export interface CommandContext extends QueryContext {
   // user let in by role or by an org-wide permission passes for any. Such a command run by an entity holder that names
   // no entity fails once its handler returns. A no-op for every other command.
   permissionEntity(legalEntityId: string): void;
+  // Seals a personal value under the key of the subject `ref` (`employee:<id>`, `member:<user_id>`, `contact:<hmac>`), creating the key when the subject has
+  // none, and answers the text to store in the column at `place` (ADR-0017). Only a user's command seals (never an agent, the system or the worker); the
+  // value is 1 byte to 4 KiB. Sealing is the command's own step, before its insert: no other path writes a sealed column.
+  seal(ref: string, place: string, value: string): Promise<string>;
   // Runs another registered command in the same transaction (audited on its own row).
   run<O>(name: string, input: unknown, options?: { proposalId?: string }): Promise<O>;
   // Runs another registered command as run() does, inside a savepoint, for a command that goes on when that one is
@@ -460,6 +555,14 @@ export interface RuntimeOptions {
   // database refuses to crove_app since step 2: a user's context is never entered without a token. The API refuses to
   // start without a key (hasContextTokenKey).
   contextTokenKey?: string | null;
+  // The key that hashes the input of a sensitive read into its audit row (QueryDef.sensitive): 32 bytes derived from a
+  // deployment secret that lives in the environment, never in the database (the server derives it from CREDENTIAL_KEY, apps/kernel
+  // serverRuntime). The hash is HMAC-SHA256 under it ('h1:<hex>'), so whoever reads the database or an archive cannot confirm a
+  // guessed input (an employee id and a month). Without a key the row stores no hash ('none'), never a plain one.
+  readAuditKey?: Buffer | null;
+  // Seals personal values under per-subject keys (ctx.seal, ctx.open; ADR-0017, #2640): the wrap keys derive from the credential key
+  // (apps/kernel serverRuntime). Absent, null: both answer 503 BROKER_NOT_CONFIGURED.
+  subjectVault?: SubjectVault | null;
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -489,14 +592,26 @@ export function hasFreshMfa(actor: UserActor, nowMs: number = Date.now()): boole
 }
 
 function sessionDetail(actor: UserActor): Record<string, unknown> {
-  return { aal: actor.aal, sessionId: actor.sessionId ?? null, mfaAt: actor.mfaAt ?? null };
+  const detail: Record<string, unknown> = { aal: actor.aal, sessionId: actor.sessionId ?? null, mfaAt: actor.mfaAt ?? null };
+  // Every audit row of a request made with an extension token names the token, so a device's acts can be listed.
+  if (actor.extension) detail.extensionToken = actor.extension.tokenId;
+  return detail;
+}
+
+// A user actor made from an extension token reaches a command or query only when it declares a scope the token holds.
+// Any other actor is not restricted here; a command or query that declares no extension scope is closed to a token.
+function authorizeExtension(access: ExtensionAccess | undefined, actor: Actor): void {
+  if (actor.type !== 'user' || !actor.extension) return;
+  if (!access || !actor.extension.scopes.includes(access.scope)) {
+    throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được thực hiện việc này', { rule: 'extension_scope' });
+  }
 }
 
 // Keys of a refusal audit row that only the runtime writes: the code, the policy rule, who refused with which
 // session and, for a refusal caught by ctx.tryRun, the command that ran it. A command's own facts (DomainError audit)
 // never set them, also when the error names no rule, the actor is a system actor, which has no session, or the
 // refusal was not caught by ctx.tryRun.
-const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
+const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'extensionToken', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
 
 // The statuses a refused command is audited for once its org was entered (executeIn, ctx.tryRun).
 const AUDITED_REFUSAL_STATUSES: ReadonlySet<number> = new Set([403, 404, 409, 422]);
@@ -527,7 +642,7 @@ export function isNeverRecovered(code: string): boolean {
 
 // Keys of an audit row only the runtime writes (a ctx.tryRun refusal's parent command, a proposal's link from a
 // command run under it, #1706), so ctx.audit never sets them.
-const RESERVED_OK_KEYS = ['parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
+const RESERVED_OK_KEYS = ['extensionToken', 'parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
 
 // A JSON copy of an error's details or audit facts, frozen all the way down (what the audit row stores is JSON), or
 // null when the value has no JSON form (a cycle, a BigInt).
@@ -622,6 +737,7 @@ interface Entered {
 function actorDetail(actor: Actor): Record<string, unknown> {
   if (actor.type === 'system') return { component: actor.component };
   if (actor.type === 'agent') return { agentRun: actor.runId };
+  if (actor.extension) return { extensionToken: actor.extension.tokenId };
   return {};
 }
 
@@ -632,6 +748,183 @@ function stableStringify(value: unknown): string {
     .filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => a.localeCompare(b));
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
+}
+
+// Sealed input (CommandDef.sealedInput, #2666): the masked copy the hashes and audit rows are made from, the values to keep out of every other record, and
+// the checks. A path is `field`, `a.b` or `list[].field`.
+const SEALED_PATH = /^[A-Za-z_][A-Za-z0-9_]*(?:\[\])?(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\])?)*$/;
+const SEALED_MARK = '[sealed]';
+const onlyDigits = (text: string): string => text.replace(/\D/g, '');
+
+function visitSealed(node: unknown, segments: readonly string[], visit: (holder: Record<string, unknown>, key: string) => void): void {
+  const [head, ...rest] = segments;
+  if (head === undefined || node === null || typeof node !== 'object') return;
+  const list = head.endsWith('[]');
+  const key = list ? head.slice(0, -2) : head;
+  const holder = node as Record<string, unknown>;
+  if (!Object.hasOwn(holder, key)) return;
+  const child = holder[key];
+  if (list) {
+    if (!Array.isArray(child)) return;
+    child.forEach((item, i) => (rest.length === 0 ? visit(child as unknown as Record<string, unknown>, String(i)) : visitSealed(item, rest, visit)));
+    return;
+  }
+  if (rest.length === 0) visit(holder, key);
+  else visitSealed(child, rest, visit);
+}
+
+// The input with every sealed path replaced by a constant: what a hash or an audit row is made from.
+function maskSealed(input: unknown, paths: readonly string[] | undefined): unknown {
+  if (!paths || paths.length === 0 || input === null || typeof input !== 'object') return input;
+  const copy = structuredClone(input);
+  for (const path of paths) visitSealed(copy, path.split('.'), (holder, key) => void (holder[key] = SEALED_MARK));
+  return copy;
+}
+
+// The sealed values of an input: each as written, its digits alone when it has four or more (an identity number typed with spaces or dots), and those digits
+// with their leading zeros stripped when eight or more remain (a national id that went through Number() or a bigint column). A value of fewer than four
+// characters is masked but not searched for (it would match unrelated text). A path that holds an object, a list or anything but a string or a number cannot
+// be searched for, so the command fails rather than run unguarded.
+function sealedSetOf(input: unknown, paths: readonly string[] | undefined, inherited?: ReadonlySet<string>): ReadonlySet<string> {
+  const values = new Set<string>(inherited ?? []);
+  for (const path of paths ?? []) {
+    visitSealed(input, path.split('.'), (holder, key) => {
+      const value = holder[key];
+      if (value === undefined || value === null) return;
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') throw new Error(`sealedInput ${path} holds a value that is not a string or a number`);
+      const text = String(value);
+      const digits = onlyDigits(text);
+      if (text.length >= 4) values.add(text);
+      if (digits.length >= 4) values.add(digits);
+      const stripped = digits.replace(/^0+/, '');
+      if (stripped.length >= 8) values.add(stripped);
+    });
+  }
+  return values;
+}
+
+// Whether a text holds a sealed value: the value as typed, or (for a value of eight or more digits) its digits within the text's digits (a number written
+// inside a longer string, a jsonb text).
+function mentionsSealed(text: string, sealed: ReadonlySet<string>): boolean {
+  if (sealed.size === 0 || text.length === 0) return false;
+  const digits = onlyDigits(text);
+  for (const value of sealed) {
+    if (text.includes(value)) return true;
+    if (value.length >= 8 && digits.length >= value.length && value === onlyDigits(value) && digits.includes(value)) return true;
+  }
+  return false;
+}
+
+// Whether a value, or anything inside it, holds a sealed value, looking at what gets stored and logged: the serialization (toJSON, toPostgres), the bytes of a
+// typed array or buffer, the keys, and everything an Error carries (message, stack, cause, errors and its own properties). Deeper than 16 levels it answers
+// yes: it fails closed.
+function leaksSealed(value: unknown, sealed: ReadonlySet<string>, depth = 0): boolean {
+  if (sealed.size === 0 || value === null || value === undefined) return false;
+  if (depth > 16) return true;
+  if (typeof value === 'string') return mentionsSealed(value, sealed);
+  if (typeof value === 'number' || typeof value === 'bigint') return mentionsSealed(String(value), sealed);
+  if (Buffer.isBuffer(value)) return mentionsSealed(value.toString('utf8'), sealed);
+  if (ArrayBuffer.isView(value)) return mentionsSealed(Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('utf8'), sealed);
+  if (value instanceof Date || typeof value !== 'object') return false;
+  const next = depth + 1;
+  const serializers = ['toJSON', 'toPostgres'] as const;
+  for (const name of serializers) {
+    const fn = (value as Record<string, unknown>)[name];
+    if (typeof fn === 'function') {
+      let produced: unknown;
+      try {
+        produced = (fn as () => unknown).call(value);
+      } catch {
+        return true;
+      }
+      if (leaksSealed(produced, sealed, next)) return true;
+    }
+  }
+  if (value instanceof Error) {
+    if (leaksSealed(value.message, sealed, next) || leaksSealed(value.stack, sealed, next) || leaksSealed((value as { cause?: unknown }).cause, sealed, next)) return true;
+    if (leaksSealed((value as { errors?: unknown }).errors, sealed, next)) return true;
+    return Object.getOwnPropertyNames(value).some((name) => leaksSealed((value as unknown as Record<string, unknown>)[name], sealed, next));
+  }
+  if (Array.isArray(value)) return value.some((item) => leaksSealed(item, sealed, next));
+  return Object.entries(value).some(([key, item]) => mentionsSealed(key, sealed) || leaksSealed(item, sealed, next));
+}
+
+// Refuses a statement of a command whose input has sealed values when one of its parameters (in its stored form), or its text (a literal inlined by sql.lit),
+// holds such a value: a job's data, a row of any table, a jsonb written as one string.
+function refuseSealedParams(command: string, sealed: ReadonlySet<string>): KyselyPlugin {
+  const compiler = new PostgresQueryCompiler();
+  return Object.freeze({
+    transformQuery: ({ node, queryId }) => {
+      const compiled = compiler.compileQuery(node, queryId);
+      if (mentionsSealed(compiled.sql, sealed) || compiled.parameters.some((p) => leaksSealed(p, sealed))) {
+        throw new Error(`command ${command}: a statement carries a sealed input value (sealedInput, #2666)`);
+      }
+      return node;
+    },
+    transformResult: async ({ result }) => result,
+  } satisfies KyselyPlugin);
+}
+
+// An error a handler threw, with no sealed value in its message, details, audit facts, cause or stack: the caller, the refusal audit row and the logs get this
+// one (a DomainError is rebuilt, so it never carries the cause).
+function cleanedError(error: unknown, command: string, sealed: ReadonlySet<string>): unknown {
+  if (sealed.size === 0) return error;
+  const dropped = new Error(`command ${command} failed: the error quoted a sealed input value and was dropped (sealedInput, #2666)`);
+  if (error instanceof DomainError) {
+    const message = mentionsSealed(error.message, sealed) || leaksSealed(error.stack, sealed) ? 'Lỗi hệ thống' : error.message;
+    const details = leaksSealed(error.details, sealed) ? undefined : error.details;
+    const audit = leaksSealed(error.audit, sealed) ? undefined : error.audit;
+    if (message === error.message && details === error.details && audit === error.audit && !leaksSealed((error as { cause?: unknown }).cause, sealed)) return error;
+    return new DomainError(error.code, error.status, message, details, audit === undefined ? {} : { audit });
+  }
+  // Any other Error (its cause and its own properties included), or a thrown value that is not an Error: logged whole.
+  return leaksSealed(error, sealed) ? dropped : error;
+}
+
+// The audit target of a command whose input has sealed values, or null when it would carry one (a uuid column's driver message quotes its value).
+function safeTarget(def: CommandDef<unknown, unknown>, input: unknown): { type: string; id: string } | null {
+  const target = def.target?.(input) ?? null;
+  if (target === null || !def.sealedInput) return target;
+  return leaksSealed(target, sealedSetOf(input, def.sealedInput)) ? null : target;
+}
+
+// register(): each sealed path resolves, through the input schema, to a string or a number (or a list of them), so a typo, an object or a transform that renames
+// the field cannot give false safety.
+function sealedPathProblem(schema: unknown, path: string): string | null {
+  const unwrap = (node: unknown, leaf: boolean): { type: string; def: Record<string, unknown> } | null => {
+    let current = node as { _zod?: { def?: Record<string, unknown> } } | undefined;
+    for (let i = 0; i < 12; i += 1) {
+      const def = current?._zod?.def;
+      if (!def) return null;
+      const type = String(def.type);
+      if (['optional', 'nullable', 'default', 'prefault', 'readonly', 'nonoptional', 'catch'].includes(type)) current = def.innerType as typeof current;
+      else if (type === 'pipe') {
+        // A transform above the leaf may rename or reshape the parsed input: the path is not there to find.
+        const out = (def.out as { _zod?: { def?: { type?: unknown } } } | undefined)?._zod?.def?.type;
+        if (out === 'transform' && !leaf) return { type: 'transform', def };
+        current = def.in as typeof current;
+      } else return { type, def };
+    }
+    return null;
+  };
+  let node: unknown = schema;
+  for (const segment of path.split('.')) {
+    const list = segment.endsWith('[]');
+    const key = list ? segment.slice(0, -2) : segment;
+    const object = unwrap(node, false);
+    if (!object || object.type !== 'object') return `${path}: ${key} is not under an object of the input schema (or a transform sits above it)`;
+    const shape = object.def.shape as Record<string, unknown> | undefined;
+    if (!shape || !Object.hasOwn(shape, key)) return `${path}: the input schema has no field ${key}`;
+    node = shape[key];
+    if (list) {
+      const array = unwrap(node, false);
+      if (!array || array.type !== 'array') return `${path}: ${key} is not a list`;
+      node = array.def.element;
+    }
+  }
+  const leaf = unwrap(node, true);
+  if (!leaf || !['string', 'number', 'bigint'].includes(leaf.type)) return `${path}: the value is not a string or a number (it is ${leaf?.type ?? 'unknown'})`;
+  return null;
 }
 
 // Idempotency keys are per user, per agent run (a key never replays another run's answer, such as an old fencing
@@ -691,6 +984,16 @@ export const STREAM_IDLE_MINUTES = 10;
 // A streamed query answers only through Runtime.stream(), which gives it a sink and a single snapshot.
 function refuseStreamed(def: QueryDef<unknown, unknown>): void {
   if (def.stream) throw new DomainError('STREAM_ONLY', 400, `Truy vấn ${def.name} chỉ đọc theo luồng`);
+}
+
+// The type a sensitive read's audit row names its record by (QueryDef.target): a name, never free text.
+const TARGET_TYPE = /^[a-z][a-z0-9_.]{0,63}$/;
+// The key of a fact a query adds to its audit row (QueryDef.auditDetail).
+const AUDIT_DETAIL_KEY = /^[a-z][a-z0-9_]{0,31}$/;
+
+// A sensitive query is audited before it reads, which only Runtime.query() and Runtime.stream() do.
+function refuseSensitiveLookup(def: QueryDef<unknown, unknown>): void {
+  if (def.sensitive) throw new DomainError('SENSITIVE_ONLY', 400, `Truy vấn ${def.name} chỉ đọc qua cổng có ghi nhật ký`);
 }
 
 function isCellResolver(value: CellResolver | Db): value is CellResolver {
@@ -772,6 +1075,8 @@ function checkedWrites(command: string, writes: readonly CommandWrite[], manifes
       refuse(`name a table as <schema>.<table> of a crove_* schema (${String((w as Partial<CommandWrite> | null)?.table)})`);
     }
     if (tables.has(w.table)) refuse(`list ${w.table} twice`);
+    // Events are the runtime's (ctx.emit): a command that declared the outbox could emit past the P04 gate on them.
+    if (w.table === 'crove_kernel.outbox_event') refuse('name crove_kernel.outbox_event: events are the runtime\'s (ctx.emit), never a command\'s declared write');
     tables.add(w.table);
     if (typeof w.classes !== 'object' || w.classes === null || Array.isArray(w.classes)) refuse(`of ${w.table} carry no column classes`);
     // One copy of the own enumerable classes, read once: every check below and the P04 answer use it, so a getter or
@@ -831,6 +1136,16 @@ function snapshotAgent(value: unknown, what: string): unknown {
   return Object.freeze(copy);
 }
 
+// What register() keeps of an extension access declaration: a frozen copy, its scope checked to be a known one.
+function snapshotExtension(value: unknown, what: string): unknown {
+  if (value === undefined) return undefined;
+  const copy = plainCopy(value, what);
+  if (typeof copy.scope !== 'string' || !(EXTENSION_SCOPES as readonly string[]).includes(copy.scope)) {
+    throw new Error(`${what}: the scope is one of ${EXTENSION_SCOPES.join(', ')}`);
+  }
+  return Object.freeze(copy);
+}
+
 // A command definition as register() checks, keeps and runs it (#1766): a frozen copy, with the policy fields it
 // holds (access, agent, agentApprovers, writes) copied and frozen as well; keys it did not have stay absent. The
 // handler and the other functions are kept as they are.
@@ -838,8 +1153,10 @@ function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown
   const label = `command ${String((def as { name?: unknown } | null)?.name)}`;
   const copy = plainCopy(def, `${label}: the definition`);
   if (Object.hasOwn(copy, 'access')) copy.access = frozenList(copy.access);
+  if (Array.isArray(copy.sealedInput)) copy.sealedInput = frozenList(copy.sealedInput);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
   if (Object.hasOwn(copy, 'agentApprovers')) copy.agentApprovers = snapshotAgent(copy.agentApprovers, `${label}: agentApprovers`);
+  if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   if (Array.isArray(copy.writes)) {
     copy.writes = Object.freeze(
       copy.writes.map((w: unknown, i: number) => {
@@ -863,6 +1180,7 @@ function snapshotQuery(def: QueryDef<any, any>): QueryDef<unknown, unknown> {
   const copy = plainCopy(def, `${label}: the definition`);
   if (Object.hasOwn(copy, 'access')) copy.access = frozenList(copy.access);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
+  if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   return Object.freeze(copy) as unknown as QueryDef<unknown, unknown>;
 }
 
@@ -1113,6 +1431,10 @@ export class Runtime {
   readonly #manifestTables: ReadonlyMap<string, Readonly<Record<string, string>>>;
   // The context token key (RuntimeOptions.contextTokenKey), or null: never logged, never in an error.
   readonly #contextTokenKey: Buffer | null;
+  // The key of the sensitive-read audit hash (RuntimeOptions.readAuditKey), or null: never logged, never in an error.
+  readonly #readAuditKey: Buffer | null;
+  // The subject vault (RuntimeOptions.subjectVault), or null.
+  readonly #subjectVault: SubjectVault | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
   readonly #cells: CellResolver;
   readonly #sessions: SessionStatusSource | null;
@@ -1150,12 +1472,23 @@ export class Runtime {
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
+    this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
+    this.#subjectVault = options.subjectVault ?? null;
     Object.freeze(this);
   }
 
   // How sessions are checked (see BootstrapEnv), for org-less reads that apply the same upstream checks as a command.
   get sessionMode(): SessionStatusSource['mode'] | null {
     return this.#sessions?.mode ?? null;
+  }
+
+  // What the reseal pass of the subject keys (#2643) may do with the subject vault, and no more: the key ids the vault opens and one wrapped key wrapped again under the current key.
+  // The vault itself stays private, so no caller gets an unwrap, an open or a data key out of this; null without a vault. The worker's runtime is built like the API's (serverRuntime),
+  // so the pass wraps under the key the API opens.
+  get subjectKeyReseal(): { keyId: string; keyIds: string[]; rewrap: (orgId: string, subjectId: string, keyId: string, wrapped: Buffer) => { keyId: string; wrapped: Buffer } } | null {
+    const vault = this.#subjectVault;
+    if (!vault) return null;
+    return { keyId: vault.keyId, keyIds: vault.keyIds, rewrap: (orgId, subjectId, keyId, wrapped) => vault.rewrap(orgId, subjectId, keyId, wrapped) };
   }
 
   // Checks each definition on its own; validate() checks how they fit together once every module is registered.
@@ -1192,6 +1525,19 @@ export class Runtime {
       if ((c.access === 'proposal_revision') !== (typeof c.revises === 'string' && c.revises.length > 0)) {
         throw new Error(`command ${c.name}: a reviser (access 'proposal_revision') names the command it revises, and only a reviser does`);
       }
+      if (c.sealedInput !== undefined) {
+        if (!Array.isArray(c.sealedInput) || c.sealedInput.length === 0 || !c.sealedInput.every((p: unknown) => typeof p === 'string' && SEALED_PATH.test(p))) {
+          throw new Error(`command ${c.name}: sealedInput lists input paths such as 'nationalId' or 'dependents[].taxCode'`);
+        }
+        if (c.access === 'proposal' || c.access === 'proposal_revision') {
+          throw new Error(`command ${c.name}: a command that runs from a proposal cannot declare sealedInput, because its input is the stored proposal payload: it takes values that are already sealed`);
+        }
+        if (c.bootstrap) throw new Error(`command ${c.name}: an org-less command runs on an unguarded connection and cannot declare sealedInput`);
+        for (const path of c.sealedInput as string[]) {
+          const problem = sealedPathProblem(c.input, path);
+          if (problem) throw new Error(`command ${c.name}: sealedInput ${problem}`);
+        }
+      }
       // The contact and payment columns it declares it writes (P04), or null when it declares no writes.
       const contactOrPayment = c.writes === undefined ? null : checkedWrites(c.name, c.writes, this.#manifestTables);
       // An agent runs it without review, so what it writes is declared and checked against P04 (#1710).
@@ -1200,6 +1546,17 @@ export class Runtime {
       }
       if (contactOrPayment && contactOrPayment.length > 0 && c.agent !== undefined) {
         throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so no agent may run it (P04: an agent asks for a proposal instead)`);
+      }
+      // A proposal command declared free of contact and payment writes starts no job of its own: the job runs under its
+      // own declaration, so nothing in the proposal's says what it writes (#2107).
+      if (c.access === 'proposal' && contactOrPayment && contactOrPayment.length === 0) {
+        const jobs = jobTablesOf(c.writes);
+        if (jobs.length > 0) {
+          throw new Error(`command ${c.name}: declares no contact or payment write (P04), so it may not declare ${jobs.join(', ')}: the job it starts runs later under its own declaration (#2107)`);
+        }
+      }
+      if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
+        throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
       }
       if (c.agentApprovers !== undefined) {
         if (c.access !== 'proposal' || (c.risk !== 'R1' && c.risk !== 'R2')) {
@@ -1240,6 +1597,9 @@ export class Runtime {
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
+      if (q.extension !== undefined && (!Array.isArray(q.access) || q.stream === true)) {
+        throw new Error(`query ${q.name}: an extension token reaches only a query with a role list as access, and no streamed one (ADR-0047 point 10)`);
+      }
       this.#queries.set(q.name, q as QueryDef<unknown, unknown>);
       this.#installedModules.add(moduleOf(q.name));
     }
@@ -1273,7 +1633,9 @@ export class Runtime {
 
   // A query context for a handler: the transaction, the entered org and role (or agent grant), ctx.query for lookups
   // and the reviser registry.
-  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered): QueryContext {
+  // `canOpen`: ctx.open and ctx.openMany work only in a sensitive query, whose read is audited before it starts; in a command, in a nested ctx.query and in
+  // any other query they refuse, so a sealed value never reaches an answer or an audit detail without that audit.
+  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered, canOpen = false): QueryContext {
     return {
       trx,
       orgId,
@@ -1284,6 +1646,8 @@ export class Runtime {
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
       command: (name) => this.commandInfo(name),
+      open: async (sealed, place, ref) => (await this.openSealed(trx, orgId, actor, [{ sealed, place, ref }], canOpen))[0] as string | ErasedValue,
+      openMany: (items) => this.openSealed(trx, orgId, actor, items, canOpen),
     };
   }
 
@@ -1306,11 +1670,13 @@ export class Runtime {
     const input = parseInput(def.input, rawInput);
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
+    refuseSensitiveLookup(def);
     const value = (await def.handler(this.queryContext(trx, orgId, actor, entered), input)) as O;
     return { status: 'ok', value };
   }
 
   private authorizeQuery(def: QueryDef<unknown, unknown>, actor: Actor, entered: Entered): void {
+    authorizeExtension(def.extension, actor);
     const { role, agent } = entered;
     if (actor.type === 'agent') {
       // Agents read only what a query declares for their role key (ADR-0029); never a system query.
@@ -1383,6 +1749,14 @@ export class Runtime {
   // The session status check, in the caller's transaction. Fails closed: a user actor without a session id is
   // refused whenever the runtime checks sessions.
   private async checkSession(trx: Transaction<Database>, actor: Actor, orgId: string | null): Promise<void> {
+    if (actor.type === 'user' && actor.extension) {
+      // An extension token has no Supabase session. Its standing (not revoked, not expired, the member still in this
+      // org, the org active, the user enabled) is read here, in the request's own transaction and before the context
+      // is entered, so a revoke or a removal applies at once. It names one org: org-less work is refused.
+      if (orgId === null) throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ dùng được trong tổ chức đã cấp', { rule: 'extension_org' });
+      await sql`SELECT crove_kernel.extension_token_check(${actor.extension.tokenId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
+      return;
+    }
     if (actor.type !== 'user' || !this.#sessions) return;
     const sessionId = actor.sessionId;
     if (!sessionId) throw new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập không hợp lệ');
@@ -1465,6 +1839,8 @@ export class Runtime {
   // Answers the legal entities the user was let in for when only an entity-scoped permission admitted them (#1507),
   // else null (their role, or the permission org-wide).
   private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): Promise<readonly string[] | null> {
+    // First of all: an extension token reaches a command only through the scope the command declares (ADR-0047 point 10).
+    authorizeExtension(def.extension, actor);
     try {
       this.authorizeRole(def, actor, entered, viaProposal);
       return null;
@@ -1580,6 +1956,8 @@ export class Runtime {
       target: { type: string; id: string } | null;
       proposalId: string | null;
       detail?: Record<string, unknown>;
+      // The hash to store instead of the command input hash: a sensitive read's (sensitiveReadHash).
+      inputHash?: string;
     },
   ): Promise<void> {
     // Only the ok row of the proposal's own command (access 'proposal', which requireProposalState admitted for this
@@ -1603,11 +1981,18 @@ export class Runtime {
         outcome: row.outcome,
         target_type: row.target?.type ?? null,
         target_id: row.target?.id ?? null,
-        input_sha256: this.inputHashOf(row.actor, row.command, row.input),
+        input_sha256: row.inputHash ?? this.inputHashOf(row.actor, row.command, row.input),
         proposal_id: ownsProposal ? proposalId : null,
         detail: JSON.stringify(detail),
       })
       .execute();
+  }
+
+  // The hash a sensitive read's audit row stores for its input: HMAC-SHA256 under the environment's key over the org, the actor
+  // key, the query and the canonical input; 'none' when no key is configured. Never a hash anyone can compute without a secret.
+  private sensitiveReadHash(orgId: string, actor: Actor, query: string, canonical: string): string {
+    if (this.#readAuditKey === null) return 'none';
+    return `h1:${createHmac('sha256', this.#readAuditKey).update(['crove.audit.read.v1', orgId, actorKey(actor), query, canonical].join(' ')).digest('hex')}`;
   }
 
   // The input hash of a command's audit or idempotency row (RuntimeOptions.inputHash): in 'keyed' mode an expression
@@ -1637,10 +2022,19 @@ export class Runtime {
       // The entities an entity-scoped permission let the user in for (#1507); null: no such limit. Required, so every
       // path that runs a command passes what its gate answered.
       permissionEntities: readonly string[] | null;
+      // The sealed values of the commands this one runs under (#2666), which its own input must not carry.
+      sealed?: ReadonlySet<string>;
     },
   ): Promise<O> {
     const commandId = uuidv7();
     const { permissionEntities } = base;
+    // The values this command's input seals, and its callers' (SealedInput, #2666): kept out of every record the command writes.
+    const sealed = sealedSetOf(input, def.sealedInput, base.sealed);
+    // The canonical input of this command's audit row, made before the handler runs (it may change the object it was given).
+    const canonicalInput = stableStringify(maskSealed(input, def.sealedInput));
+    const refuseSealed = (where: string, value: unknown) => {
+      if (leaksSealed(value, sealed)) throw new Error(`command ${def.name}: ${where} carries a sealed input value (sealedInput, #2666)`);
+    };
     // Whether the handler named the entity it acts on (ctx.permissionEntity) when an entity holder ran it.
     let entityNamed = false;
     const cleanRoot = base.cleanRoot ?? (def.access === 'proposal' && this.#contactOrPayment.get(def.name) === false ? def.name : undefined);
@@ -1771,7 +2165,8 @@ export class Runtime {
     // Transaction control is the runtime's: a handler's raw COMMIT or ROLLBACK, or a savepoint of the runtime's, could
     // end the command's atomicity or keep a refused nested command's writes past its rollback (#1831), whether or not
     // its writes are checked.
-    const guardedTrx = trx.withPlugin(refuseTransactionControl(def.name, () => closed));
+    const controlledTrx = trx.withPlugin(refuseTransactionControl(def.name, () => closed));
+    const guardedTrx = sealed.size > 0 ? controlledTrx.withPlugin(refuseSealedParams(def.name, sealed)) : controlledTrx;
     const handlerTrx = scope === null ? guardedTrx : guardedTrx.withPlugin(countWrites(counters, () => closed, def.name));
     // Whether the writes of a nested command are its own to declare (it declares writes) or this command's.
     const ownsWrites = (name: string): boolean => this.#commands.get(name)?.writes !== undefined;
@@ -1811,9 +2206,15 @@ export class Runtime {
         pending(async () => {
           refuseClosed('ctx.emit');
           if (!type.startsWith(`${def.name.split('.')[0]}.`)) throw new Error(`command ${def.name} cannot emit ${type}`);
+          // A proposal command declared free of contact and payment writes, or a command it runs, emits only the events
+          // whose handlers were reviewed to write none (P04_CLEAN_EVENTS).
+          if (cleanRoot !== undefined && !CLEAN_EVENTS.has(type)) {
+            throw new Error(`command ${cleanRoot}: declares no contact or payment write (P04), so it cannot emit ${type}, whose handlers are not reviewed to write none (P04_CLEAN_EVENTS)`);
+          }
           // Ids and codes only (#1949): an event outlives every erasure, in the outbox and its archive.
           // Checked as it will be stored: as its JSON (a value's toJSON decides what the database sees).
           const checked = normalizeEventPayload(JSON.parse(JSON.stringify(payload)));
+          refuseSealed('ctx.emit', checked);
           const problem = eventPayloadProblem(checked, type);
           if (problem) throw new Error(`command ${def.name} cannot emit ${type} with ${problem}`);
           const { rows } = await aside(() => sql<{ id: string }>`SELECT crove_kernel.emit(${type}, ${JSON.stringify(checked)}::jsonb, ${commandId}::uuid) AS id`.execute(trx));
@@ -1822,6 +2223,7 @@ export class Runtime {
       activity: (recordType, recordId, kind, summary, options) =>
         pending(async () => {
           refuseClosed('ctx.activity');
+          refuseSealed('ctx.activity', [recordType, recordId, kind, summary, options?.legalEntityId]);
           await aside(() =>
             trx
               .insertInto('crove_kernel.activity')
@@ -1839,6 +2241,13 @@ export class Runtime {
               .execute(),
           );
         }),
+      seal: (ref, place, value) =>
+        pending(async () => {
+          refuseClosed('ctx.seal');
+          // The reference is stored in the clear: a sealed value is never part of it.
+          refuseSealed('ctx.seal reference', ref);
+          return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
+        }),
       permissionEntity: (legalEntityId) => {
         refuseClosed('ctx.permissionEntity');
         if (permissionEntities === null) return;
@@ -1849,7 +2258,9 @@ export class Runtime {
       },
       audit: (detail) => {
         refuseClosed('ctx.audit');
-        const own = { ...detail };
+        refuseSealed('ctx.audit', detail);
+        // The checked copy, as it will be stored: later changes to the handler's objects change nothing.
+        const own = (sealed.size > 0 ? JSON.parse(JSON.stringify(detail)) : { ...detail }) as Record<string, unknown>;
         for (const key of RESERVED_OK_KEYS) delete own[key];
         auditDetail = { ...auditDetail, ...own };
       },
@@ -1872,6 +2283,7 @@ export class Runtime {
         allocate: (n) =>
           pending(async () => {
             refuseClosed('ctx.numbering.allocate');
+            refuseSealed('ctx.numbering.allocate', n);
             const { rows } = await aside(() => sql<{ period_key: string; number: string; allocation_id: string }>`
               SELECT a.period_key, a.number::text AS number, a.allocation_id
               FROM crove_kernel.allocate_number(${n.legalEntityId}::uuid, ${n.docType}::text, ${n.documentDate}::date, ${n.targetType}::text, ${n.targetId}::uuid) a`.execute(trx));
@@ -1883,6 +2295,7 @@ export class Runtime {
         void: (n) =>
           pending(async () => {
             refuseClosed('ctx.numbering.void');
+            refuseSealed('ctx.numbering.void', n.reason);
             const { rows } = await aside(() => sql<{ id: string }>`SELECT crove_kernel.void_number(${n.allocationId}::uuid, ${n.reason}::text) AS id`.execute(trx));
             const voidId = rows[0]?.id;
             if (!voidId) throw new Error(`command ${def.name}: void_number answered no void`);
@@ -1894,7 +2307,12 @@ export class Runtime {
     const resolveNested = (name: string, nestedInput: unknown, proposalIdOption: string | undefined): NestedRun => {
       const nested = this.#commands.get(name);
       if (!nested || nested.bootstrap) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${name}`);
-      return { def: nested, input: parseInput(nested.input, nestedInput), proposalId: proposalIdOption ?? base.proposalId };
+      const parsed = parseInput(nested.input, nestedInput);
+      // A sealed value passed down: the nested command declares it too (its own path), so its audit row and hash are masked as well.
+      if (sealed.size > 0 && leaksSealed(maskSealed(parsed, nested.sealedInput), sealed)) {
+        throw new Error(`command ${def.name}: its input of ${name} carries a sealed value of this command that ${name} does not declare in sealedInput`);
+      }
+      return { def: nested, input: parsed, proposalId: proposalIdOption ?? base.proposalId };
     };
     // counter: for a nested command that declares no writes run in this scope, the counter of this run (undoneIfRolledBack).
     const tryNested = async <R>(name: string, nestedInput: unknown, options: TryRunOptions, counter?: { n: number }): Promise<TryRunResult<R>> => {
@@ -1903,8 +2321,8 @@ export class Runtime {
       const nested = resolveNested(name, nestedInput, options.proposalId);
       // The row's input (canonical, hashed when the row is written) and target, from the input as parsed, before the
       // nested handler can change it.
-      const canonicalInput = stableStringify(nested.input);
-      const declared = nested.def.target?.(nested.input) ?? null;
+      const canonicalInput = stableStringify(maskSealed(nested.input, nested.def.sealedInput));
+      const declared = safeTarget(nested.def, nested.input);
       const target = declared ? Object.freeze({ type: String(declared.type), id: String(declared.id) }) : null;
       // Unique per call, so a tryRun nested in another one never rolls back to the outer savepoint.
       this.#savepointSeq += 1;
@@ -2000,6 +2418,11 @@ export class Runtime {
       if (cleanRoot !== undefined && this.#contactOrPayment.get(nested.def.name) !== false) {
         throw new Error(`command ${cleanRoot}: declares no contact or payment write (P04), so it cannot run ${nested.def.name}, which may write one`);
       }
+      // Nor one that declares a job table: what it starts runs under the job's own declaration (#2107).
+      const startsJobs = cleanRoot === undefined ? [] : jobTablesOf(nested.def.writes);
+      if (startsJobs.length > 0) {
+        throw new Error(`command ${cleanRoot}: declares no contact or payment write (P04), so it cannot run ${nested.def.name}, which declares ${startsJobs.join(', ')}: the job it starts runs later under its own declaration (#2107)`);
+      }
       const { proposalId } = nested;
       const permissionEntities = await this.authorize(trx, nested.def, base.actor, base.entered, proposalId !== null);
       if (proposalId !== null && (nested.def.access === 'proposal' || nested.def.access === 'proposal_revision')) {
@@ -2013,6 +2436,7 @@ export class Runtime {
         proposalId,
         // The nested command's own gate, never its caller's.
         permissionEntities,
+        ...(sealed.size > 0 ? { sealed } : {}),
         ...(cleanRoot !== undefined ? { cleanRoot } : {}),
         ...(scope !== null ? { writeScope: scope, writeCounters: counter ? [...counters, counter] : counters } : {}),
       });
@@ -2027,8 +2451,9 @@ export class Runtime {
       // them settle before the transaction (or a tryRun's savepoint) rolls back.
       await settleWriting();
       await settleRunning();
-      throw error;
+      throw cleanedError(error, def.name, sealed);
     }
+
     // Read before waiting: a nested command the handler left running may fail while the runtime's writes settle, and
     // must still fail this command.
     const leftRunning = running.size > 0;
@@ -2036,6 +2461,14 @@ export class Runtime {
     // Before the runtime writes this command's rows: a nested command still running would share the connection with
     // them, and a tryRun's rollback could undo them, so the command fails instead and commits nothing.
     if ((await settleRunning()) || leftRunning) throw new Error(`command ${def.name}: the handler returned while a nested command was still running`);
+    // The answer is stored for a replay (idempotency_key.response) and returned: it carries ids, never a sealed value. Checked as it will be stored, after the
+    // nested commands and the runtime's own writes settled (a refusal earlier would roll back a savepoint under a late statement).
+    if (sealed.size > 0) {
+      const stored = JSON.parse(JSON.stringify(output ?? null)) as unknown;
+      refuseSealed('the output', stored);
+      // What was checked is what is stored and returned: a getter or a toJSON cannot answer differently the second time.
+      output = stored as O;
+    }
     // An entity holder's command that never named its entity fails closed (#1507).
     if (permissionEntities !== null && !entityNamed) {
       throw new DomainError('FORBIDDEN', 403, 'Bạn không có quyền này với pháp nhân đó', { rule: 'permission_entity' });
@@ -2075,8 +2508,8 @@ export class Runtime {
         command: def.name,
         commandId,
         outcome: 'ok',
-        input: stableStringify(input),
-        target: def.target?.(input) ?? null,
+        input: canonicalInput,
+        target: safeTarget(def, input),
         proposalId: base.proposalId,
         ...(detail ? { detail } : {}),
       }),
@@ -2118,7 +2551,7 @@ export class Runtime {
     cell: () => Promise<Db>,
     resolveOrg: (trx: Transaction<Database>) => Promise<string>,
   ): Promise<O> {
-    const canonical = stableStringify(input);
+    const canonical = stableStringify(maskSealed(input, def.sealedInput));
     let orgId = '';
     let context: Entered = { role: null, agent: null };
     let entered = false;
@@ -2230,7 +2663,7 @@ export class Runtime {
           commandId,
           outcome,
           input: canonical,
-          target: def.target?.(input) ?? null,
+          target: safeTarget(def, input),
           proposalId: null,
           detail: refusalAuditDetail(refusal, actor),
         });
@@ -2334,13 +2767,140 @@ export class Runtime {
     }
   }
 
+  // The audit row of a sensitive read (QueryDef.sensitive), committed in its own transaction before the read starts. The
+  // transaction checks the session, enters the context and the access of the query first, so a caller who may not read
+  // leaves no row and gets the refusal; then it writes one row (the query's name, the actor, the hash of its input, no
+  // value) and commits. Any failure propagates: the handler never runs without its row.
+  // `onEntered` runs once the context is entered, so a refusal after it is not counted as a pre-membership one (as in query()).
+  private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }, onEntered: () => void): Promise<void> {
+    // Only a signed-in person reads sensitive data: an agent or the system never does (the Vy of an org reads no payroll). The
+    // refusal is noted as a security event (system actors are not), and writes no audit row.
+    if (options.actor.type !== 'user') {
+      onEntered();
+      await this.noteSecurityEvent(def.name, options.actor, options.orgId, 'FORBIDDEN');
+      throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    }
+    // The record the read is about, named by a type of a fixed shape: a query's declaration cannot carry free text into the audit row.
+    const target = def.target?.(input) ?? null;
+    if (target !== null && !TARGET_TYPE.test(target.type)) throw new Error(`query ${def.name}: ${target.type} is not a target type`);
+    // The facts a query adds to its audit row are names of fixed shape, never free text: audit rows reach the WORM archive and the org's export.
+    const extra = def.auditDetail?.(input) ?? {};
+    for (const [key, value] of Object.entries(extra)) {
+      if (!AUDIT_DETAIL_KEY.test(key) || !TARGET_TYPE.test(value)) throw new Error(`query ${def.name}: audit detail ${key} is not a name`);
+    }
+    const db = await this.#cells.resolveTenant(options.orgId);
+    const refused: { by: DomainError | null } = { by: null };
+    try {
+      await db.transaction().execute(async (trx) => {
+        const entered = await this.enter(trx, options.actor, options.orgId);
+        onEntered();
+        try {
+          this.authorizeQuery(def, options.actor, entered);
+        } catch (error) {
+          // Kept to be noted once the transaction is rolled back (below): noting needs a second connection, and a single-cell deployment
+          // shares one pool between the cell and the control plane, so a refused caller would hold one while waiting for another.
+          refused.by = toDomainError(error);
+          throw error;
+        }
+        await this.writeAudit(trx, {
+          orgId: options.orgId,
+          actor: options.actor,
+          command: def.name,
+          commandId: uuidv7(),
+          outcome: 'ok',
+          input: stableStringify(input),
+          target,
+          proposalId: null,
+          // The row says a read was started: the handler may still fail after it.
+          detail: { ...extra, ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+          inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
+        });
+      });
+    } catch (error) {
+      // A refusal of an established member is a security event (per caller, sampled), never an audit row; no input value goes with it.
+      if (refused.by !== null) await this.noteSecurityEvent(def.name, options.actor, options.orgId, refused.by.code);
+      throw error;
+    }
+  }
+
+  // The vault of the subject keys for an actor that may use it: a signed-in user, in a deployment with its credential key.
+  private subjectVaultFor(actor: Actor): SubjectVault {
+    if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng được niêm phong hoặc mở dữ liệu cá nhân', { rule: 'subject_user_only' });
+    if (!this.#subjectVault) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+    return this.#subjectVault;
+  }
+
+  // ctx.seal: the subject's key (created from a fresh data key when the org has none under the ref; two concurrent seals converge on the stored one), then the value.
+  // Messages never carry the ref or the value: a ref can name a person.
+  private async sealSubject(trx: Transaction<Database>, orgId: string, actor: Actor, ref: string, place: string, value: string): Promise<string> {
+    const vault = this.subjectVaultFor(actor);
+    if (!SUBJECT_REF.test(ref)) throw new Error('ctx.seal: the subject reference is malformed');
+    if (!SEAL_PLACE.test(place)) throw new Error(`ctx.seal: ${place} is not a place`);
+    const subjectId = uuidv7();
+    const fresh = vault.newDataKey(orgId, subjectId);
+    let dataKey = fresh.dataKey;
+    try {
+      const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer }>`
+        SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key_ensure(${subjectId}::uuid, ${ref}, ${fresh.keyId}, ${fresh.wrapped})`.execute(trx);
+      const stored = rows[0];
+      if (!stored) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      if (stored.id !== subjectId) {
+        dataKey.fill(0);
+        dataKey = vault.unwrap(orgId, stored.id, stored.key_id, stored.wrapped_key);
+      }
+      return vault.seal(dataKey, orgId, stored.id, place, value);
+    } finally {
+      dataKey.fill(0);
+    }
+  }
+
+  // ctx.open and ctx.openMany: one lookup of the wrapped keys of the subjects named, then the values opened here. A subject with no key row reads as erased.
+  // A value whose subject is not the one the caller says the row belongs to does not open.
+  private async openSealed(trx: Transaction<Database>, orgId: string, actor: Actor, items: readonly { sealed: string; place: string; ref: string }[], canOpen: boolean): Promise<(string | ErasedValue)[]> {
+    if (!canOpen) throw new DomainError('FORBIDDEN', 403, 'Chỉ truy vấn nhạy cảm (có ghi nhật ký) được mở dữ liệu cá nhân', { rule: 'open_sensitive_only' });
+    const vault = this.subjectVaultFor(actor);
+    const parsed = items.map((item) => {
+      const p = parseSealed(item.sealed);
+      if (!p) throw new Error('ctx.open: not a sealed value');
+      if (!SEAL_PLACE.test(item.place)) throw new Error(`ctx.open: ${item.place} is not a place`);
+      if (!SUBJECT_REF.test(item.ref)) throw new Error('ctx.open: the subject reference is malformed');
+      return { ...p, place: item.place, ref: item.ref };
+    });
+    const ids = [...new Set(parsed.map((p) => p.subjectId))];
+    const keys = new Map<string, { dataKey: Buffer; ref: string }>();
+    try {
+      if (ids.length > 0) {
+        const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer; ref: string }>`SELECT id, key_id, wrapped_key, ref FROM crove_kernel.subject_key_wrapped(${ids}::uuid[])`.execute(trx);
+        for (const row of rows) keys.set(row.id, { dataKey: vault.unwrap(orgId, row.id, row.key_id, row.wrapped_key), ref: row.ref });
+      }
+      return parsed.map((p) => {
+        const key = keys.get(p.subjectId);
+        if (!key) return { erased: true as const };
+        if (key.ref !== p.ref) throw new SubjectKeyError('sealed value belongs to another subject');
+        return vault.open(key.dataKey, orgId, p.subjectId, p.place, p.packed);
+      });
+    } finally {
+      for (const key of keys.values()) key.dataKey.fill(0);
+    }
+  }
+
   async query<O = unknown>(name: string, rawInput: unknown, options: { actor: Actor; orgId: string }): Promise<O> {
     const def = this.#queries.get(name);
     if (!def) throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
     const input = parseInput(def.input, rawInput);
     let reached = false;
+    // Whether the audit row of a sensitive read committed: a refusal the read itself then meets is noted too.
+    let audited = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        refuseStreamed(def);
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+        audited = true;
+        reached = false;
+      }
       return await db.transaction().execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
         await this.checkSession(trx, options.actor, options.orgId);
@@ -2349,11 +2909,12 @@ export class Runtime {
         reached = true;
         this.authorizeQuery(def, options.actor, entered);
         refuseStreamed(def);
-        return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered), input)) as O;
+        return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input)) as O;
       });
     } catch (error) {
       const domain = toDomainError(error);
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`query ${name}`, error, options);
       throw domain;
     }
@@ -2371,8 +2932,16 @@ export class Runtime {
     if (!def.stream) throw new DomainError('NOT_STREAMED', 400, `Truy vấn ${name} không đọc theo luồng`);
     const input = parseInput(def.input, rawInput);
     let reached = false;
+    let audited = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+        audited = true;
+        reached = false;
+      }
       return await db
         .transaction()
         .setIsolationLevel('repeatable read')
@@ -2385,11 +2954,12 @@ export class Runtime {
           const entered = await this.enterContext(trx, options.actor, options.orgId);
           reached = true;
           this.authorizeQuery(def, options.actor, entered);
-          return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered), input, sink)) as O;
+          return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input, sink)) as O;
         });
     } catch (error) {
       const domain = toDomainError(error);
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`stream ${name}`, error, options);
       throw domain;
     }

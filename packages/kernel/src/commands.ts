@@ -1,7 +1,10 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  ANOMALY_CHECK_PREFIX,
   MAX_IMPORT_BYTES,
+  MAX_MEETING_AUDIO_BYTES,
+  MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
   UPLOAD_PURPOSES,
@@ -12,6 +15,7 @@ import {
   zExchangeRate,
   zId,
   zLocalDate,
+  zLookupHint,
   zProposalSignature,
   zPurchaseProposal,
   zRole,
@@ -22,12 +26,15 @@ import {
   DomainError,
   defineCommand,
   newStagingKey,
+  sha256Hex,
   type CommandContext,
   type Runtime,
   type UserActor,
 } from '@crove/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
+import { extensionCommands } from './extension.ts';
+import { conversationCommands } from './conversations.ts';
 import {
   actorRef,
   addAuthor,
@@ -50,7 +57,9 @@ import { mailCommands, queueContactMail } from './mail.ts';
 import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
-import { inboxItemCommands } from './inbox-items.ts';
+import { inboxItemCommands, raiseOriginalNeeded } from './inbox-items.ts';
+import { savedViewCommands } from './saved-views.ts';
+import { todayMailCommands } from './today-mail.ts';
 import { offboardingCommands } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { setAddress, setContactEmail } from './org-address.ts';
@@ -62,9 +71,11 @@ import { numberingCommands } from './numbering.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
-import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
+import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
+import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
+import { subjectKeyCommands } from './subject-key-reseal.ts';
 import { taxCalendarCommands } from './tax-calendar.ts';
 import { lockChartChanges, positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';
 
@@ -80,6 +91,20 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.journal_voucher.record',
   'finance.closing.record',
   'finance.depreciation.record',
+  // The close of a month of stock (#2513): posts the month's cost of goods sold as a general journal voucher.
+  'finance.stock.close_period',
+  // The confirmation of a count of stock (#2513): writes the adjustment moves and posts their difference as a general journal voucher.
+  'finance.stock.count_confirm',
+  // The posting of an approved pay run (#2532): posts the month's pay, the funds and the PIT as a general journal voucher that names the run.
+  'finance.payroll_posting.record',
+  // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
+  'ads.write.enable',
+  'ads.account.enable_write',
+  'ads.cap.set',
+  'ads.launches.unblock',
+  'ads.campaign.launch',
+  // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document, posted to no ledger.
+  'finance.einvoice.issue',
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -193,9 +218,10 @@ export const changeMemberRole = defineCommand({
     );
     // Pending invites the member could no longer issue are revoked in the same transaction, after the membership locks
     // (the order every invite path uses): an admin or owner who becomes a member or viewer loses every invite, an
-    // owner who becomes an admin loses their admin invites (only owners grant admin) and their scoped invites (only
-    // owners scope an invite to legal entities, #1458). Accepting re-checks the inviter's role as well, as a backstop
-    // for any other path (#134, INVITE_SCOPE_STALE).
+    // owner who becomes an admin loses their admin invites (only owners grant admin), their scoped invites (only
+    // owners scope an invite to legal entities, #1458) and their invites with a department role (only owners give roles,
+    // #2611). Accepting re-checks the inviter's role as well, as a backstop for any other path (#134, INVITE_SCOPE_STALE,
+    // INVITE_ROLE_STALE).
     const lostRoles: Array<'admin' | 'member' | 'viewer'> = input.role === 'owner' ? [] : input.role === 'admin' ? ['admin'] : ['admin', 'member', 'viewer'];
     const losesScoped = previousRole === 'owner' && input.role !== 'owner';
     const revokedInvites =
@@ -207,7 +233,7 @@ export const changeMemberRole = defineCommand({
             .where('org_id', '=', ctx.orgId)
             .where('invited_by', '=', input.userId)
             .where('status', '=', 'pending')
-            .where((eb) => (losesScoped ? eb.or([eb('role', 'in', lostRoles), eb('legal_entity_ids', 'is not', null)]) : eb('role', 'in', lostRoles)))
+            .where((eb) => (losesScoped ? eb.or([eb('role', 'in', lostRoles), eb('legal_entity_ids', 'is not', null), eb('role_key', 'is not', null)]) : eb('role', 'in', lostRoles)))
             .returning('id')
             .execute();
     ctx.audit({ revoked_invites: revokedInvites.map((r) => r.id) });
@@ -327,11 +353,24 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
     risk: 'R1',
     sideEffect: 'internal',
     access: MEMBERS,
+    // The Ludy extension's meetings scope may ask for a grant for a meeting's audio or video, and for nothing else (#2582).
+    extension: { scope: 'meetings' },
     handler: async (ctx, input) => {
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
       const userId = ctx.actor.userId;
+      if (ctx.actor.extension && input.purpose !== 'meeting_audio' && input.purpose !== 'meeting_video') {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ tải lên được âm thanh và hình của cuộc họp', { rule: 'extension_scope' });
+      }
       // import: a spreadsheet for a module's import (#465), at most 10 MB.
-      const maxBytes = input.purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : input.purpose === 'import' ? MAX_IMPORT_BYTES : MAX_UPLOAD_BYTES;
+      const maxBytes = input.purpose === 'meeting_audio'
+        ? MAX_MEETING_AUDIO_BYTES
+        : input.purpose === 'meeting_video'
+          ? MAX_MEETING_VIDEO_BYTES
+          : input.purpose === 'social'
+            ? MAX_SOCIAL_VIDEO_BYTES
+            : input.purpose === 'import'
+              ? MAX_IMPORT_BYTES
+              : MAX_UPLOAD_BYTES;
       // Serializes begins of one user in one org, so concurrent requests cannot pass either cap together.
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.file_upload:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
       // Both counts use the database clock: the insert trigger sets created_at and expires_at from now(), the start
@@ -355,7 +394,7 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       }
       const row = await ctx.trx
         .insertInto('crove_kernel.file_upload')
-        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes) })
+        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes), purpose: input.purpose })
         .returning(['id', 'staging_key', 'max_bytes', 'expires_at'])
         .executeTakeFirstOrThrow();
       ctx.audit({ upload_id: row.id });
@@ -374,18 +413,22 @@ export const claimUpload = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
+  // The extension's meetings scope uses a grant it asked for, which is one for a meeting's audio or video (#2582).
+  extension: { scope: 'meetings' },
   target: (input) => ({ type: 'kernel.file_upload', id: input.uploadId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
     const row = await ctx.trx
       .selectFrom('crove_kernel.file_upload')
-      .select(['staging_key', 'created_by', 'max_bytes', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
+      .select(['staging_key', 'created_by', 'max_bytes', 'purpose', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .forUpdate()
       .executeTakeFirst();
     // Another user's grant reads as missing.
     if (!row || row.created_by !== ctx.actor.userId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
+    // A grant made for anything but a meeting's media reads as missing to an extension token.
+    if (ctx.actor.extension && row.purpose !== 'meeting_audio' && row.purpose !== 'meeting_video') throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
     if (row.used_at) throw new DomainError('UPLOAD_USED', 409, 'Lượt tải lên này đã được dùng');
     if (row.expired) throw new DomainError('UPLOAD_EXPIRED', 409, 'Lượt tải lên đã hết hạn; hãy tải lại tệp');
     await ctx.trx
@@ -394,7 +437,7 @@ export const claimUpload = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .execute();
-    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes) };
+    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes), purpose: row.purpose };
   },
 });
 
@@ -409,7 +452,11 @@ export const receiveInbound = defineCommand({
     subject: z.string().max(500).nullable(),
     // The mail's text (#779); absent from a worker built before it.
     text: z.string().min(1).max(INBOUND_TEXT_MAX).nullable().optional(),
-    files: z.array(zIngestFile).max(20),
+    // The seller's lookup link and code read from the mail's text (#2286), at most three; the worker sends them only for a
+    // mail with no invoice attachment, and only where the finance module runs.
+    lookupHints: z.array(zLookupHint).max(3).optional(),
+    // The link to the mail is set here, from the message this command inserts, never taken from the caller.
+    files: z.array(zIngestFile.omit({ inboundMessageId: true })).max(20),
   }),
   // Each attachment runs kernel.file.ingest nested, whose event queues the extraction job that sends the file to the
   // AI endpoint (plan §4.7: a job with egress derives R2, through a nested run too; #1698). A system command, so the
@@ -443,8 +490,17 @@ export const receiveInbound = defineCommand({
       .execute();
     const fileIds: string[] = [];
     for (const file of input.files) {
-      const result = await ctx.run<{ fileId: string }>('kernel.file.ingest', file);
+      const result = await ctx.run<{ fileId: string }>('kernel.file.ingest', { ...file, ...(file.source === 'email' ? { inboundMessageId: message.id } : {}) });
       fileIds.push(result.fileId);
+    }
+    // A mail with no invoice attachment but with the seller's lookup link or code (#2286): an Inbox item for each hint, so
+    // the mail is not lost. A mail with an attachment is read through its file; the hash is the item's key, so the
+    // Message-ID itself is not kept in it.
+    const hints = (input.lookupHints ?? []).filter((hint) => hint.url !== null || hint.code !== null);
+    if (input.files.length === 0 && hints.length > 0) {
+      // Counts only in the audit row: never a code or a link.
+      const raised = await raiseOriginalNeeded(ctx, sha256Hex(new TextEncoder().encode(input.messageId)), hints);
+      ctx.audit({ originalNeeded: raised });
     }
     return { duplicate: false, fileIds };
   },
@@ -505,6 +561,32 @@ export function inboundRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOU
 
 export const rotateInbound = inboundRotateCommand();
 
+// Rotates the org's conversation address (#2439, the Inbox's own address): the old token is tombstoned and never issued again, mail to it is dropped by the
+// worker like mail to an unknown token. R3 and owner only, as the document address's rotation is, with the same limits (the definer counts the rotations of
+// this address apart from the document address's).
+export function conversationAddressRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOUND_ROTATE_LIMITS) {
+  assertRotateLimit('perDay', limits.perDay);
+  assertRotateLimit('total', limits.total);
+  return defineCommand({
+    name: 'kernel.conversation.address_rotate',
+    input: z.object({}),
+    risk: 'R3',
+    sideEffect: 'irreversible',
+    access: ['owner'],
+    handler: async (ctx) => {
+      if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới đổi được địa chỉ email của Hộp thư');
+      await sql`SELECT set_config('crove.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
+                       set_config('crove.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
+      const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.conversation_address_rotate() AS token`.execute(ctx.trx);
+      if (!rows[0]?.token) throw new DomainError('INTERNAL', 500, 'Không đổi được địa chỉ email của Hộp thư');
+      await ctx.activity('kernel.org', ctx.orgId, 'conversation_address.rotated', 'Đổi địa chỉ email của Hộp thư; địa chỉ cũ ngừng nhận thư');
+      return { rotated: true };
+    },
+  });
+}
+
+export const rotateConversationAddress = conversationAddressRotateCommand();
+
 // A user asks for a proposal that is not read from a file, for example reversing a posted journal entry (#138). The
 // requester is its author, so with two or more eligible approvers someone else approves it (P10), and the approval
 // runs the command at its own risk level (R3 for a posting, with step-up, P11). Asking is R1 and posts nothing.
@@ -519,6 +601,7 @@ export const requestProposal = defineCommand({
     const draft = zPreparedProposal.parse(await ctx.run(PROPOSAL_PREPARERS[input.command], input.input));
     if (draft.command !== input.command) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     const entity = preparedEntity(draft);
+    const coAuthors = preparedCoAuthors(draft);
     const proposal = await ctx.trx
       .insertInto('crove_kernel.proposal')
       .values({
@@ -530,6 +613,8 @@ export const requestProposal = defineCommand({
         // P12: who may approve this command right now; approval re-checks each one's role live.
         eligible_approvers: await eligibleApprovers(ctx.trx, ctx.orgId, draft.command),
         authors: JSON.stringify([actorRef(ctx.actor)]),
+        // The people the preparer says the proposal rests on besides the requester (never from the client); they count as authors in four-eyes.
+        ...(coAuthors ? { co_authors: coAuthors } : {}),
         // Kept so the requester can ask for it again if it expires (#876); the preparer then checks it all anew.
         request_input: JSON.stringify(input.input),
         // The entity it belongs to (#1538): a member limited to other entities neither sees nor decides it.
@@ -537,7 +622,7 @@ export const requestProposal = defineCommand({
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command });
+    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', proposal.id, 'proposal.created', 'Tạo đề xuất');
     await ctx.emit('kernel.proposal.created', { proposalId: proposal.id, kind: draft.kind });
     return { proposalId: proposal.id };
@@ -643,7 +728,7 @@ export const editProposal = defineCommand({
     // A proposal stays in its legal entity (#1764): moving it would show one entity's document to another's members,
     // and its entity never changes (ADR-0021, b_legal_entity). The database refuses it too (proposal_entity_payload).
     if (input.legalEntityId !== undefined && input.legalEntityId.toLowerCase() !== proposal.legal_entity_id) throw legalEntityMoveRefused();
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     // The module's reviser for this proposal's command, from the registered definitions (their `revises`).
     const reviser = ctx.reviserOf(proposal.command);
     if (!reviser) throw new DomainError('NOT_EDITABLE', 422, 'Loại đề xuất này không chỉnh sửa được');
@@ -720,7 +805,7 @@ export const approveProposal = defineCommand({
       throw new DomainError('POSTING_DATE_NOT_ALLOWED', 422, 'Chỉ hóa đơn mua vào mới chọn được ngày ghi sổ khác ngày hóa đơn');
     }
     // A re-extraction in flight would replace this revision's content (issue #40).
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     if (!PROPOSAL_COMMANDS.has(proposal.command)) throw new DomainError('FORBIDDEN', 403, 'Loại đề xuất không được hỗ trợ');
     if (input.lineAccounts && changesContent(proposal.payload, input.lineAccounts)) {
       throw new DomainError('CONTENT_CHANGED', 409, 'Bạn đã đổi tài khoản nhưng chưa lưu; hãy lưu chỉnh sửa trước khi duyệt');
@@ -819,10 +904,13 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   'UNSUPPORTED_CURRENCY',
   // A sale no longer the org's own, or a purchase the org issued (#313): the org tax code changed since.
   'NOT_OWN_SALE',
+  'SALE_OTHER_ENTITY',
   'OWN_INVOICE',
   // A line's account against its direction (#430): revenue on a sale line only.
   'NOT_REVENUE_ACCOUNT',
   'REVENUE_ACCOUNT_ON_PURCHASE',
+  // A purchase line no rule matched, with no account chosen yet (#2091).
+  'ACCOUNT_UNCLASSIFIED',
   'UNKNOWN_ACCOUNT',
   'ACCOUNT_INACTIVE',
   'PARENT_TAGGED',
@@ -847,6 +935,11 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   'LEGAL_ENTITY_NOT_ALLOWED',
   'SOURCE_LEGAL_ENTITY',
 ]);
+
+// The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
+// #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
+// item by item with BULK_NOT_ALLOWED, without running them.
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue'];
 
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {
@@ -909,8 +1002,37 @@ export const approveProposals = defineCommand({
       .where('id', 'in', input.items.map((i) => i.id))
       .execute();
     const voucherTypes = new Map(vouchers.map((v) => [v.id, v.voucher_type ?? '']));
+    const singleOnly = new Set(
+      (
+        await ctx.trx
+          .selectFrom('crove_kernel.proposal')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('command', 'in', SINGLE_APPROVAL_COMMANDS)
+          .where('id', 'in', input.items.map((i) => i.id))
+          .execute()
+      ).map((p) => p.id),
+    );
+    // A proposal carrying an anomaly flag (#2380) is approved one by one, with its flag on the screen: refused here like the
+    // single-approval commands, whatever the client sent.
+    const flagged = new Set(
+      (
+        await sql<{ id: string }>`
+          SELECT p.id FROM crove_kernel.proposal p
+          WHERE p.org_id = ${ctx.orgId} AND p.id = ANY(${input.items.map((i) => i.id)}::uuid[])
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'checks') = 'array' THEN p.payload -> 'checks' ELSE '[]'::jsonb END) c
+              WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.execute(ctx.trx)
+      ).rows.map((p) => p.id),
+    );
     const outcomes = new Map<string, BulkApproveResult>();
     for (const item of bulkApproveOrder(input.items, voucherTypes)) {
+      // Postgres hands ids back in lower case and zod's uuid accepts upper case: compare in lower case.
+      const key = item.id.toLowerCase();
+      if (singleOnly.has(key) || flagged.has(key)) {
+        outcomes.set(item.id, { id: item.id, outcome: 'refused', code: 'BULK_NOT_ALLOWED', rule: null });
+        continue;
+      }
       // An item's confirmation of an unverified signature (#674) is passed on with its own id and revision.
       const confirm = item.acceptUnverifiedSignature === true ? { acceptUnverifiedSignature: true } : {};
       const attempt = await ctx.tryRun<Record<string, unknown>>('kernel.proposal.approve', { id: item.id, revision: item.revision, ...confirm }, { recover: isBulkItemRefusal });
@@ -949,7 +1071,7 @@ export const rejectProposal = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới từ chối được');
     const proposal = await lockPendingProposal(ctx, input.id);
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     await ctx.trx
       .updateTable('crove_kernel.proposal')
       .set({ status: 'rejected', decided_by: ctx.actor.userId, decided_at: ctx.now, decision_note: input.reason ?? null })
@@ -1068,6 +1190,8 @@ const otherKernelCommands = [
   ...fileHoldCommands,
   ...notificationCommands,
   ...inboxItemCommands,
+  ...savedViewCommands,
+  ...todayMailCommands,
   requestProposal,
   editProposal,
   approveProposal,
@@ -1078,6 +1202,8 @@ const otherKernelCommands = [
   ...offboardingCommands,
   ...agentCommands,
   ...channelCommands,
+  ...extensionCommands,
+  ...conversationCommands,
   setTaxCode,
   setVatFilingPeriod,
   setApprovalPreset,
@@ -1094,8 +1220,10 @@ const otherKernelCommands = [
   ...taxCalendarCommands,
   ...auditLogCommands,
   ...usageCommands,
+  ...aiBudgetCommands,
   ...userStatusCommands,
   ...personalDataCommands,
+  ...subjectKeyCommands,
 ];
 
 // The kernel's commands; options.orgCreateLimits sets the org creation limits (default DEFAULT_ORG_CREATE_LIMITS),
@@ -1120,6 +1248,7 @@ export function buildKernelCommands(
     ...otherKernelCommands,
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
+    options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,
   ];
 }
 
