@@ -290,7 +290,7 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
       policy: { P12: 'pass', P10: 'pass' },
       // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
       // 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; the allowance of 8 or 9 that step one gave is gone).
-      policy_version: 9,
+      policy_version: 10,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,

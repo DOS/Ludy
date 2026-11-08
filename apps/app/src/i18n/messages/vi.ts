@@ -7948,6 +7948,7 @@ export const vi = {
     duplicate: { found: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' },
     // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
     anomaly_bank: { changed: 'Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước {previous}, lần này {current}). Hãy xác nhận với nhà cung cấp trước khi thanh toán.' },
+    anomaly_cash: { payrollLimit: 'Cảnh báo: {count} người có lương thực lĩnh từ 5.000.000 đồng trở lên mà chi bằng tiền mặt; khoản chi từ 5 triệu đồng một lần cần thanh toán không dùng tiền mặt mới được tính chi phí được trừ. Hãy chuyển khoản hoặc hỏi kế toán.' },
     anomaly_amount: {
       high: 'Cảnh báo: số tiền {total} cao gấp {ratio} lần mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo từ 3 lần).',
       low: 'Cảnh báo: số tiền {total} chỉ bằng {percent}% mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo khi dưới một phần ba).',
@@ -8140,7 +8141,11 @@ export const vi = {
       HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
       HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
       HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
-      HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương, vì người duyệt phải đối chiếu được với bảng lương',
+      HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương hoặc chi lương, vì người duyệt phải đối chiếu được với bảng lương',
+      HR_PAYMENT_NOT_POSTED: 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản',
+      HR_PAYMENT_DONE: 'Khoản này của bảng lương đã được chi',
+      HR_PAYMENT_OPEN: 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt',
+      HR_PAYMENT_NOTHING_DUE: 'Bảng lương này không có khoản này để chi',
       HR_RUN_NOT_DRAFT: 'Bảng lương đã được duyệt, không sửa được nữa; sửa sai bằng dòng điều chỉnh ở tháng sau',
       HR_RUN_EXISTS: 'Tháng này đã có bảng lương',
       HR_RUN_EMPTY: 'Bảng lương chưa có dòng nào để duyệt',
@@ -9137,6 +9142,10 @@ export const vi = {
         preview: 'Xem trước số dư đầu kỳ',
       },
       overview: 'Xem tổng quan kế toán: tiền, lợi nhuận, phải thu, phải trả',
+      payroll_payment: {
+        prepare: 'Kiểm tra khoản chi lương hoặc nộp các khoản trước khi đề xuất',
+        record: 'Ghi sổ khoản chi lương hoặc nộp các khoản của bảng lương',
+      },
       payroll_posting: {
         check: 'Kiểm tra bút toán lương trước khi đề xuất',
         record: 'Ghi sổ bút toán lương tháng',
@@ -9224,6 +9233,10 @@ export const vi = {
             set: 'Nhập số liệu tháng của một nhân viên và tính lại dòng lương',
           },
           payslip: 'Xem phiếu lương của một nhân viên trong tháng',
+        },
+        payment: {
+          prepare: 'Lập đề xuất chi lương hoặc nộp các khoản của một tháng đã hạch toán',
+          verify: 'Dựng lại khoản phải chi từ bảng lương đã duyệt để đối chiếu khi ghi sổ',
         },
         posting: {
           prepare: 'Lập đề xuất hạch toán lương của một tháng đã duyệt',

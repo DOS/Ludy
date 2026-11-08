@@ -104,6 +104,13 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
        VALUES ($1, 'cash_receipt', 0, '2026-10-15', '1111', 'thu tiền', 100000, $2)`,
       [orgId, proposalId],
     );
+  // The payment of a pay run's obligation (#2532): a payment voucher that names the run and what it pays.
+  const payrollPaymentVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(
+      `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+       VALUES ($1, 'cash_payment', 0, '2026-10-15', '1111', 'chi lương', 100000, $2, $3, 'net_pay')`,
+      [orgId, proposalId, randomUUID()],
+    );
   const journalVoucher = (proposalId: string) => (c: pg.Client) =>
     c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id) VALUES ($1, '2026-10-15', 'chứng từ', $2)`, [orgId, proposalId]);
   // An entry, then its reversal ordered by the proposal (source kernel.proposal), as finance.journal.reverse posts it.
@@ -122,6 +129,7 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
   const PATHS = [
     { name: 'purchase document', command: 'finance.purchase.record', write: purchaseDocument },
     { name: 'cash voucher', command: 'finance.voucher.record', write: cashVoucher },
+    { name: 'payroll payment voucher', command: 'finance.payroll_payment.record', write: payrollPaymentVoucher },
     { name: 'journal voucher', command: 'finance.journal_voucher.record', write: journalVoucher },
     { name: 'reversal entry', command: 'finance.journal.reverse', write: reversal },
   ] as const;
@@ -184,7 +192,8 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
   it('refuses a row naming a pending, executed or rejected proposal, another command, another org or no proposal', async () => {
     for (const path of PATHS) {
       // A ledger command none of this row's writers is (a purchase may write a reversal entry, #916).
-      const other = path.command === 'finance.voucher.record' ? 'finance.purchase.record' : 'finance.voucher.record';
+      // (The cash voucher's trigger names both voucher commands, so the payment of a pay run is tried with a purchase's proposal too.)
+      const other = path.command === 'finance.voucher.record' || path.command === 'finance.payroll_payment.record' ? 'finance.purchase.record' : 'finance.voucher.record';
       const cases: Array<[string, string]> = [
         ['a pending proposal', await proposal(path.command, 'pending')],
         ['an executed proposal', await proposal(path.command, 'executed')],

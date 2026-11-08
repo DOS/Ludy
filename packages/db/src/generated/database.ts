@@ -718,6 +718,8 @@ export interface FinanceCashVoucherTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   number_period: ColumnType<string, string | undefined, NotGranted>;
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
+  payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
+  payroll_payment_kind: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.categorization_rule */

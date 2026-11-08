@@ -97,6 +97,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.stock.count_confirm',
   // The posting of an approved pay run (#2532): posts the month's pay, the funds and the PIT as a general journal voucher that names the run.
   'finance.payroll_posting.record',
+  // The payment of a pay run's net pay or a remittance (#2532): records a payment voucher that names the run and what it pays.
+  'finance.payroll_payment.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',

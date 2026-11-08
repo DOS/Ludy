@@ -271,7 +271,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -1486,6 +1486,9 @@ export const contract = {
           // The posting of an approved pay run (#2532, ADR-0046): the server builds one line per account from the frozen run, with the account map of the entity's chart; an owner or an admin
           // approves it. HR_RUN_NOT_FOUND (404), HR_RUN_NOT_APPROVED, HR_POSTING_OPEN, HR_POSTING_DONE, PERIOD_LOCKED (409), HR_POSTING_ADJUSTMENTS, HR_POSTING_MISMATCH (422).
           z.object({ command: z.literal('finance.payroll_posting.record'), input: zHrPostingRequest, idempotencyKey: zId }),
+          // The payment of a pay run's net pay or one remittance (#2532): the server builds the voucher from the frozen run; an owner or an admin approves. HR_RUN_NOT_FOUND (404),
+          // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
+          z.object({ command: z.literal('finance.payroll_payment.record'), input: zHrPaymentRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),

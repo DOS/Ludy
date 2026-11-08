@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The payment vouchers of an approved pay run (issue #2532; payroll plan docs/plan/payroll.md section 6.4, ADR-0046): a phiếu chi or a giấy báo Nợ for the net pay or for one remittance (insurance,
+// union fee, tax). The HR module's own command builds the request from the frozen run (hr.payroll.payment.prepare: the finance proposal path asks it, in the requester's context, so the lines
+// and the amount come from the run and never from the requester); the two commands here are what finance adds, and the voucher is the ordinary cash voucher (cash-voucher.ts):
+// - finance.payroll_payment.prepare: checks that the run has been posted (its voucher names it) and that this kind of payment is not already recorded, then builds the proposal as any voucher
+//   (its accounts in the entity's chart, the bank line it settles) and raises the flag of a cash payment at the 5 million limit. It writes nothing. Owners and admins only, like the proposal it serves.
+// - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context, owners and admins) and
+//   refuses a stored proposal that differs from it (the entity, the month, the chart, the lines, the total); then it records the voucher with the run and the kind on it (one per run and kind: a
+//   unique index holds it) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+// No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
+import { z } from 'zod';
+import { PAYROLL_PAYMENT_COMMAND, PAYROLL_PAYMENT_KINDS, PAYROLL_REGIMES, VOUCHER_KIND, zCashVoucherRequest, zId, zPayrollPaymentProposal } from '@crove/kernel-contract';
+import { money } from '@crove/l10n-vn';
+import type { MemberRole } from '@crove/db';
+import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { buildVoucherProposal, recordVoucherPayload } from './cash-voucher.ts';
+import { payrollCashCheck } from './domain/anomaly.ts';
+import { voucherTitle } from './domain/cash-voucher.ts';
+
+const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
+const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
+
+// The run's entry has been posted (its voucher names the run) and this kind of payment has not been recorded yet. Read under the HR module's lock on the run when a proposal is asked for, and again
+// when it is approved.
+async function checkPayable(ctx: QueryContext, runId: string, kind: string): Promise<void> {
+  const posted = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', runId).executeTakeFirst();
+  if (!posted) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
+  const paid = await ctx.trx
+    .selectFrom('crove_finance.cash_voucher')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('payroll_run_id', '=', runId)
+    .where('payroll_payment_kind', '=', kind)
+    .executeTakeFirst();
+  if (paid) throw new DomainError('HR_PAYMENT_DONE', 409, 'Khoản này của bảng lương đã được chi');
+}
+
+export const preparePayrollPayment = defineCommand({
+  name: 'finance.payroll_payment.prepare',
+  input: z.strictObject({
+    runId: zId,
+    paymentKind: z.enum(PAYROLL_PAYMENT_KINDS),
+    month: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/),
+    regime: z.enum(PAYROLL_REGIMES),
+    // How many people's net pay is at the cash limit or above (a number from the HR module, no name or figure): a cash payment of the net pay is flagged when there is one.
+    cashLarge: z.number().int().min(0).max(100000),
+    request: zCashVoucherRequest.extend({ type: z.enum(PAYMENT_TYPES) }),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  writes: [],
+  handler: async (ctx, input) => {
+    await checkPayable(ctx, input.runId, input.paymentKind);
+    // A payment of the net pay in cash while some net pay is 5 million or more: an anomaly flag (id `anomaly...`), so the proposal is approved one by one, never in bulk.
+    const flag = input.request.type === 'cash_payment' ? payrollCashCheck(input.cashLarge) : null;
+    const draft = await buildVoucherProposal(ctx, input.request, flag ? [flag] : []);
+    const payload = zPayrollPaymentProposal.parse({ ...draft.payload, payroll: { runId: input.runId, kind: input.paymentKind, month: input.month, regime: input.regime } });
+    return { kind: VOUCHER_KIND, command: PAYROLL_PAYMENT_COMMAND, title: voucherTitle(payload), payload };
+  },
+});
+
+export const recordPayrollPayment = defineCommand({
+  // A literal, not the shared constant: the job-egress analyzer follows the nested `ctx.run` calls of a command and reads its name from the source.
+  name: 'finance.payroll_payment.record',
+  input: z.object({ payload: zPayrollPaymentProposal, acceptFailedChecks: z.boolean().default(false) }),
+  risk: 'R3',
+  sideEffect: 'financial',
+  access: 'proposal',
+  proposalKind: VOUCHER_KIND,
+  handler: async (ctx, { payload }) => {
+    if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
+    const { runId, kind } = payload.payroll;
+    if (payload.type !== 'cash_payment' && payload.type !== 'bank_debit') throw new DomainError('VOUCHER_INVALID', 422, 'Chứng từ chi lương phải là phiếu chi hoặc giấy báo Nợ');
+    // A pay run's payment names no party and no person: the people are on the run, not in the books.
+    if (payload.party !== null || payload.personName !== null) throw new DomainError('VOUCHER_INVALID', 422, 'Chứng từ chi lương không ghi theo đối tượng', { problems: ['PARTY_NOT_ALLOWED'] });
+    // The payload names its entity: it is built so, and one without is refused, never read as the default.
+    if (!payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất chi lương không nêu pháp nhân', { what: 'legalEntityId' });
+    // The obligation of the run rebuilt now, in the approver's context. The HR module's commands are for owners and admins: a member who holds the approval permission is told so, not refused blindly.
+    let expected: { runId: string; kind: string; month: string; regime: string; legalEntityId: string; lines: ReadonlyArray<{ account: string; amount: string }>; total: string };
+    try {
+      expected = await ctx.run('hr.payroll.payment.verify', { runId, kind });
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'FORBIDDEN') {
+        throw new DomainError('HR_POSTING_APPROVER_ROLE', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được khoản chi lương, vì cần đối chiếu với bảng lương');
+      }
+      throw error;
+    }
+    if (expected.legalEntityId !== payload.legalEntityId) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chứng từ chi lương không cùng pháp nhân với bảng lương', { what: 'legalEntityId' });
+    if (expected.month !== payload.payroll.month || expected.regime !== payload.payroll.regime) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chứng từ chi lương không khớp tháng hoặc chế độ kế toán của bảng lương; hãy lập lại đề xuất', { what: 'month' });
+    }
+    // The lines are the run's, account by account and amount by amount (money-equal), whatever their order; so is the total.
+    const key = (l: { account: string; amount: string }) => `${l.account}:${money(l.amount).toFixed()}`;
+    const have = payload.lines.map(key).sort();
+    const want = expected.lines.map(key).sort();
+    if (have.length !== want.length || have.some((k, i) => k !== want[i]) || !money(payload.total).equals(money(expected.total))) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Số tiền của chứng từ chi không khớp bảng lương; hãy lập lại đề xuất', { what: 'lines' });
+    }
+    await checkPayable(ctx, runId, kind);
+    return recordVoucherPayload(ctx, payload, { runId, kind });
+  },
+});
+
+export const payrollPaymentCommands = [preparePayrollPayment, recordPayrollPayment];
