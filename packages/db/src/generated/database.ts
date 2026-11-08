@@ -69,6 +69,7 @@ export interface CroveFinanceSchema {
   'crove_finance.journal_line': FinanceJournalLineTable;
   'crove_finance.journal_voucher': FinanceJournalVoucherTable;
   'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
+  'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
   'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
@@ -1094,6 +1095,24 @@ export interface FinanceLegalEntityBooksTable {
   effective_from: ColumnType<string, NotGranted, NotGranted>;
   created_by: ColumnType<string | null, NotGranted, NotGranted>;
   created_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
+/** crove_finance.marketplace_connection */
+export interface FinanceMarketplaceConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  poll_cursor: string | null;
+  last_polled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_poll_state: string | null;
+  orders_waiting: ColumnType<number, number | undefined, number>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.misa_goods_code */

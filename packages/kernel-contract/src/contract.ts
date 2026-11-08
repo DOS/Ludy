@@ -189,6 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
@@ -1804,6 +1805,22 @@ export const contract = {
     incomePreview: oc.input(z.object({ fileId: zId })).output(zMarketplaceIncomePreview),
     incomeConfirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceIncomeConfirmResult),
     incomeReject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    // The org's own seller account at a marketplace (#2519, ADR-0045 point 7): the adapters this deployment enabled and, for the platforms none serves, the file the org brings.
+    // The credential is sealed in the kernel and never in an answer, a log or an audit row. Every member reads the connections; owners and admins connect, test, pull and disconnect.
+    // A pull only stages what it reads, in the Inbox, for a member to confirm exactly as for an uploaded file; it never writes an order or moves stock by itself.
+    providers: oc.output(zMarketplaceProviders),
+    connections: {
+      list: oc.output(z.array(zMarketplaceConnection)),
+      // MARKETPLACE_DISABLED (404) for an adapter this deployment does not offer, MARKETPLACE_PLATFORM (422) for a platform the adapter does not serve, MARKETPLACE_FIELDS (422) when the
+      // fields are not the adapter's, MARKETPLACE_CONNECTION_EXISTS (409), FORBIDDEN (403) unless owner or admin.
+      connect: oc.input(zMarketplaceConnect).output(z.object({ id: zId })),
+      // MARKETPLACE_PROVIDER_NOT_READY (503) for an adapter that is reached through the worker.
+      test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTested),
+      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+      // Asks for the orders now: the offline adapter only (a real one is polled by the worker on its own schedule). The job is queued; the answer is whether it was. MARKETPLACE_DISABLED (404),
+      // MARKETPLACE_PROVIDER_NOT_READY (503), CHANNEL_NOT_ACTIVE (409).
+      pollNow: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+    },
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

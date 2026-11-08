@@ -108,6 +108,8 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   [`${QUEUES.adsSync} handler`]: { command: 'ads.account.link' },
   // The sweep queues the e-invoices whose time to ask has come, each approved by an owner or admin through finance.einvoice.issue (#2502).
   [`${QUEUES.einvoiceIssue} handler`]: { command: 'finance.einvoice.issue' },
+  // The sweep queues the marketplace connections of active orgs, each connected by an owner or admin through finance.marketplace_connection.connect (#2519).
+  [`${QUEUES.marketplacePoll} handler`]: { command: 'finance.marketplace_connection.connect' },
   // The cron tick of that sweep (boss.schedule in startWorker): the sweep it starts reads only linked accounts.
   startWorker: { command: 'ads.account.link' },
 };

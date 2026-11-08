@@ -526,6 +526,16 @@ export type EInvoiceConnectionTable = Refine<
   { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
+export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
+export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
+export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
+export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
+export type MarketplaceConnectionTable = Refine<
+  G.FinanceMarketplaceConnectionTable,
+  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 
 // Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
@@ -1111,6 +1121,7 @@ type Refined = Tables<{
   'crove_finance.bank_party_rule': BankPartyRuleTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
+  'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;

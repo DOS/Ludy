@@ -98,6 +98,8 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // The e-invoice provider adapters (ADR-0044, #2502): the offline sandbox reaches nothing, and a real adapter its provider's own hosts, each bound to them by its
   // allowlisted fetch, so the field is classified for what it can reach: the providers of @crove/einvoice. Only the issue job reaches the field.
   'channels.einvoiceProviders': ['provider:einvoice'],
+  // The marketplace providers of modules/finance (#2519): the offline sandbox reaches no host, a real adapter calls its platform through guardedRequest. Only the poll job reaches the field.
+  'channels.marketplaceProviders': ['provider:marketplace'],
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
   publicUrl: [],

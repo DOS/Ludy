@@ -14,7 +14,7 @@ import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import { resealSubjectKeys, unopenableSubjectKeysLog } from './subject-key-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, MARKETPLACE_POLL_DUE_PAGE, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, marketplacePollDue, type MarketplaceProvider, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -56,6 +56,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
+import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
@@ -346,6 +347,10 @@ const BANK_FEED_SYNC_CRON = '30 5 * * *';
 // The sweep that queues the e-invoices whose time to ask has come (finance.einvoice_due), every minute; the relay queues a draft the moment it is approved.
 const EINVOICE_SWEEP_CRON = '* * * * *';
 const EINVOICE_ISSUE_RETRY_LIMIT = 3;
+// The sweep that pulls every active marketplace connection's orders (#2519), every fifteen minutes; a poll retries a few times, then dead-letters. The relay queues one the moment an owner
+// or admin asks for it. What a poll reads is only staged for a member.
+const MARKETPLACE_POLL_CRON = '*/15 * * * *';
+const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -415,6 +420,8 @@ export interface WorkerDeps {
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
     // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
     einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
+    // The marketplace providers this deployment offers (ADR-0045 point 7, #2519), by adapter id; the worker alone uses them, with the credentials it opens.
+    marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -1187,6 +1194,41 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.einvoiceIssue, EINVOICE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.einvoiceIssue);
+  }
+
+  // Marketplaces (ADR-0045 point 7, #2519): a connection's pull of orders, queued by the relay below when an owner or admin asks and, every fifteen minutes, for every active connection of an
+  // active org. The adapters are the deployment's; with none on, nothing is queued and nothing is asked. A pull only stages a file for a member; it confirms nothing.
+  const marketplaceProviders = deps.channels?.marketplaceProviders;
+  const marketplaceBroker = deps.channels?.broker;
+  if (finance && marketplaceProviders && marketplaceBroker && Object.keys(marketplaceProviders).length > 0) {
+    await boss.work<MarketplacePollJob | { sweep: true }>(QUEUES.marketplacePoll, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        let after: { orgId: string; id: string } | null = null;
+        for (;;) {
+          const page = await marketplacePollDue(deps.workerDb, after);
+          for (const row of page) {
+            const adapter = row.provider.startsWith('marketplace_') ? row.provider.slice('marketplace_'.length) : '';
+            if (!Object.hasOwn(marketplaceProviders, adapter)) continue;
+            await boss.send(QUEUES.marketplacePoll, { orgId: row.orgId, connectionId: row.id } satisfies MarketplacePollJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.marketplacePoll, row.id),
+              retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < MARKETPLACE_POLL_DUE_PAGE) break;
+          after = { orgId: last.orgId, id: last.id };
+        }
+        return;
+      }
+      const done = await runMarketplacePoll({ runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders }, job.data);
+      console.log(`[marketplace] ${job.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
+    });
+    await boss.schedule(QUEUES.marketplacePoll, MARKETPLACE_POLL_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.marketplacePoll);
   }
 
   // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
@@ -2235,6 +2277,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.einvoiceIssue, { orgId: row.org_id, draftId } satisfies EInvoiceIssueJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.einvoiceIssue, draftId),
                   retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An owner or admin asked for a marketplace connection's orders now (#2519): its poll asks the provider, writes the answer as a file and ingests it. Ids only in the job.
+              if (finance && deps.channels?.marketplaceProviders && Object.keys(deps.channels.marketplaceProviders).length > 0 && row.type === 'finance.marketplace_poll_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId } satisfies MarketplacePollJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, connectionId),
+                  retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });
