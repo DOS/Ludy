@@ -41,7 +41,7 @@ import {
 } from '@crove/kernel';
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
-import type { SuggestedSlots } from '@crove/mod-crm';
+import type { QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -49,6 +49,7 @@ import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
+import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -352,6 +353,10 @@ export function createRpcHandler(
   // The finance coworker on a sales e-invoice draft (#2505): lines, the VAT rate the text states and the buyer, from a text a person typed. The same reader and model, a budget of its own. It is
   // told the text and the names of the customers that fit it, never an address, tax code, credential or provider data, and what it answers only fills the form as proposals.
   const einvoiceCoworker = einvoiceAi(conversationReader?.einvoiceDraft ? { einvoiceDraft: conversationReader.einvoiceDraft.bind(conversationReader) } : null, suggestionBudget());
+
+  // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
+  // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
+  const quoteCoworker = quoteAi(conversationReader?.quoteLines ? { quoteLines: conversationReader.quoteLines.bind(conversationReader) } : null, suggestionBudget());
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -867,6 +872,11 @@ export function createRpcHandler(
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      transcript: {
+        get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
+        draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
+        correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
+      },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
         remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),
@@ -909,6 +919,12 @@ export function createRpcHandler(
         get: os.crm.quotes.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.get', input, { actor, orgId }))),
         byDeal: os.crm.quotes.byDeal.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.quotes', input, { actor, orgId }))),
         defaults: os.crm.quotes.defaults.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.defaults', input, { actor, orgId }))),
+        suggest: os.crm.quotes.suggest.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const source = await runtime.query<QuoteSuggestSource>('crm.quote.suggest_source', input, { actor, orgId });
+            return suggestQuoteLines(quoteCoworker, orgId, actor.userId, source);
+          }),
+        ),
         save: os.crm.quotes.save.handler(crmCommand('crm.quote.save')),
         deleteDraft: os.crm.quotes.deleteDraft.handler(crmCommand('crm.quote.delete_draft')),
         revise: os.crm.quotes.revise.handler(crmCommand('crm.quote.revise')),
@@ -2024,6 +2040,8 @@ export function createRpcHandler(
       tokens: {
         list: os.extension.tokens.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list', {}, { actor, orgId }))),
         revoke: os.extension.tokens.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.extension.token.revoke', input, { actor, orgId }))),
+        listOrg: os.extension.tokens.listOrg.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list_org', {}, { actor, orgId }))),
+        revokeMember: os.extension.tokens.revokeMember.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.extension.token.revoke_member', input, { actor, orgId }))),
       },
     },
     inbox: {

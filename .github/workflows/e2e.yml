@@ -14,10 +14,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  inbox:
-    name: Playwright on docker compose
+  # The suite ran as one job: 130 tests one after another took 22 to 24 minutes against a 25-minute timeout (#2788). It runs in
+  # four shards now, each its own job with its own docker compose stack (fresh volumes), balanced by measured file time
+  # (tools/ci/e2e-shards.mjs, times in tools/ci/e2e-test-times.json). A spec file is never split and never skipped:
+  # tools/test/e2e-shards.test.ts checks that every file is in exactly one shard. The required check "Playwright on docker
+  # compose" is the gate job below, which passes only when every shard passed.
+  shard:
+    name: Playwright shard ${{ matrix.shard }} of 4
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1', '2', '3', '4']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +50,25 @@ jobs:
         run: pnpm --filter @crove/e2e stack:up
 
       - name: Playwright
-        run: pnpm test:e2e
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          echo "E2E_SHARD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          mapfile -t files < <(node tools/ci/e2e-shards.mjs "$SHARD" 4)
+          echo "Running ${#files[@]} spec files"
+          pnpm --filter @crove/e2e exec playwright test "${files[@]}"
+
+      # Planned against actual time, so an imbalance shows in the summary before it reaches the timeout (#2788).
+      - name: Duration of this shard
+        if: always()
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          started="${E2E_SHARD_STARTED:-}"
+          [ -n "$started" ] || exit 0
+          elapsed=$(( $(date +%s) - started ))
+          planned=$(node tools/ci/e2e-shards.mjs --plan 4 | awk -F'|' -v n="$SHARD" '$2 ~ "^ "n" of" { gsub(/ /, "", $4); print $4 "s" }')
+          printf 'Playwright shard %s of 4: tests ran %dm%02ds (planned test time %s, job timeout 20m)\n' "$SHARD" $((elapsed / 60)) $((elapsed % 60)) "$planned" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stack logs
         if: failure()
@@ -53,7 +80,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.shard }}
           path: e2e/test-results/
           retention-days: 7
           if-no-files-found: ignore
@@ -61,3 +88,18 @@ jobs:
       - name: Stop the stack
         if: always()
         run: pnpm --filter @crove/e2e stack:down
+
+  # The required check keeps its name: one job that fails unless every shard passed (a cancelled or skipped shard fails it).
+  inbox:
+    name: Playwright on docker compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [shard]
+    if: always()
+    steps:
+      - name: Every shard passed
+        env:
+          SHARDS: ${{ needs.shard.result }}
+        run: |
+          echo "Playwright shards: $SHARDS"
+          test "$SHARDS" = success

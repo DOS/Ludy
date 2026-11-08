@@ -863,7 +863,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 function AiUse({ agents }: { agents: Agent[] }) {

@@ -42,6 +42,7 @@ import {
   type EInvoiceDraftRequest,
   type EInvoiceDraftResult,
 } from './einvoice-draft.ts';
+import { checkQuoteLines, quoteSuggestInstructions, quoteSuggestPrompt, type QuoteModelOutput, type QuoteSuggestRequest, type QuoteSuggestResult } from './quote-lines.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -121,6 +122,19 @@ const zEInvoiceDraftOut = z.object({
   ),
   buyer: z.number().int().nullable().describe('The number of the customer of the list that the text is about, or null'),
 });
+// The sales coworker on the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them.
+const zQuoteLinesOut = z.object({
+  lines: z.array(
+    z.object({
+      description: z.string().describe('A short description of the thing asked for, in the words of the customer or of the matching earlier line'),
+      unit: z.string().nullable().describe('The unit (hộp, cái, kg...), or null'),
+      quantity: z.string().describe('The quantity as plain digits, exactly a figure the customer wrote'),
+      unitPrice: z.string().nullable().describe('The unit price in dong as plain digits, only when it is a figure the customer wrote or the price of an earlier line, else null'),
+      vatRate: z.string().nullable().describe('The VAT rate only when the customer or an earlier line states one (10%, 8%, 5%, 0%, KCT, KKKNT), else null'),
+    }),
+  ),
+});
+export type QuoteLinesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zQuoteLinesOut> | null; usage?: AiUsage }>;
 export type EInvoiceDraftGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceDraftOut> | null; usage?: AiUsage }>;
 export type StockMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zStockMatchOut> | null; usage?: AiUsage }>;
 export type ReorderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReorderOut> | null; usage?: AiUsage }>;
@@ -182,10 +196,11 @@ export class InboxReader {
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
+  private readonly generateQuoteLines: QuoteLinesGenerator;
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -249,6 +264,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.einvoice_draft', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zEInvoiceDraftOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateQuoteLines =
+      generators.quoteLines ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('crm.quote_suggest', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zQuoteLinesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -373,5 +396,15 @@ export class InboxReader {
     const { output, usage } = await this.generateEInvoiceDraft({ system: einvoiceDraftInstructions(), prompt: einvoiceDraftPrompt(shown) });
     if (usage) onUsage?.(usage);
     return checkEInvoiceDraft(shown, output as EInvoiceDraftModelOutput | null);
+  }
+
+  /** The lines of a quote (#2698), proposed from the deal, what the customer wrote and the earlier quotes to them, or why there is none. The model is shown the deal's title and amount, the
+   * customer's name, at most QUOTE_SUGGEST_MESSAGES_MAX of the customer's messages and the earlier lines: no address, tax code, credential or other figure of the books. A figure or link the
+   * sources do not hold, a VAT rate a quote line cannot carry, or an empty line refuses the answer; a price no source holds comes back empty (quote-lines.ts). onUsage gets the tokens the call used. */
+  async quoteLines(request: QuoteSuggestRequest, onUsage?: (usage: AiUsage) => void): Promise<QuoteSuggestResult> {
+    if (request.messages.every((m) => m.trim() === '')) return { kind: 'none', code: 'NO_TEXT' };
+    const { output, usage } = await this.generateQuoteLines({ system: quoteSuggestInstructions(), prompt: quoteSuggestPrompt(request) });
+    if (usage) onUsage?.(usage);
+    return checkQuoteLines(request, output as QuoteModelOutput | null);
   }
 }
