@@ -8436,6 +8436,7 @@ export const vi = {
       QUOTE_LINK_LIMIT: 'Báo giá này đã có đủ số liên kết còn hạn; hãy thu hồi bớt',
       QUOTE_LINK_EXPIRED: 'Báo giá đã hết hạn từ lâu; hãy tạo bản sửa đổi rồi gửi lại',
       QUOTE_NOT_SENT: 'Chỉ tạo được liên kết cho báo giá đã gửi và chưa có bản mới',
+      QUOTE_NUMBER_TAKEN: 'Số báo giá này đã có trong pháp nhân; hãy thử lại',
       QUOTE_NOT_DECIDABLE: 'Chỉ ghi nhận được quyết định của khách cho báo giá đã gửi',
       QUOTE_HAS_NEWER_REVISION: 'Báo giá này đã có bản sửa đổi mới; hãy ghi nhận trên bản mới nhất',
       ORDER_NUMBER_TAKEN: 'Số đơn hàng này đã có; hãy thử lại',
