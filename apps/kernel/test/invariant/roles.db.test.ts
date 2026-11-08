@@ -179,7 +179,12 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     expect(roles.filter((r) => r.scope === 'legal_entity').map((r) => r.key)).toEqual(['external_accountant', 'finance.entity_chief_accountant']);
     // Both chief accountants mark the VAT return filed too (finance.vat.file, #1508), for their entities.
     // The Service inbox (CV3, #2306) seeds one permission for desk.agent, kernel.conversation.direct.read (reading private messages), and no other.
-    expect(permissions).toEqual([
+    // vy.use (ADR-0049 decision 10, stage A step (a)) is the one permission a viewer may hold and the one every preset role of the
+    // catalog but finance.viewer grants. The rows may be absent (before its migration) or exactly these; every other row is pinned below.
+    const VY_ROLES = ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager'];
+    const vyRows = permissions.filter((p) => p.permission === 'vy.use').map((p) => p.role_key);
+    expect(vyRows.length === 0 || JSON.stringify(vyRows) === JSON.stringify(VY_ROLES), `vy.use rows: ${vyRows.join(', ')}`).toBe(true);
+    expect(permissions.filter((p) => p.permission !== 'vy.use')).toEqual([
       { role_key: 'desk.agent', permission: 'kernel.conversation.direct.read' },
       { role_key: 'finance.chief_accountant', permission: 'finance.period.unlock' },
       { role_key: 'finance.chief_accountant', permission: 'finance.proposal.approve' },
@@ -511,14 +516,14 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     });
     const accountantRole = await o.assign(asMfa(o.owner), o.chief, 'finance.chief_accountant');
     const permissions = await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId });
-    expect(permissions.permissions).toEqual(['finance.period.unlock', 'finance.proposal.approve', 'finance.vat.file']);
+    expect(permissions.permissions.filter((p) => p !== 'vy.use')).toEqual(['finance.period.unlock', 'finance.proposal.approve', 'finance.vat.file']);
     await expect(unlock(asUser(o.chief))).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
     await expect(unlock(asMfa(o.chief))).resolves.toMatchObject({ lockedThrough: null });
     // Revoked: the next unlock is refused.
     await o.exec(asUser(o.owner), 'finance.period.lock', { month: '2026-01' });
     await o.revoke(asMfa(o.owner), accountantRole.assignmentId);
     await expect(unlock(asMfa(o.chief))).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
-    expect((await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId })).permissions).toEqual([]);
+    expect((await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId })).permissions.filter((p) => p !== 'vy.use')).toEqual([]);
     // The owner still unlocks.
     await expect(unlock(asMfa(o.owner))).resolves.toMatchObject({ lockedThrough: null });
   });
@@ -533,7 +538,7 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     await o.assign(asMfa(o.owner), o.chief, 'finance.accountant');
     await o.assign(asMfa(o.owner), o.chief, 'finance.entity_chief_accountant', o.branch);
     // No org-wide permission comes with it: not in the org's list, and no approval (P12 counts org-wide assignments).
-    expect((await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId })).permissions).toEqual([]);
+    expect((await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId })).permissions.filter((p) => p !== 'vy.use')).toEqual([]);
     expect([await unlockable(o.chief, o.branch), await unlockable(o.chief, o.defaultEntity)]).toEqual([true, false]);
     expect([await unlockable(o.owner, o.branch), await unlockable(o.owner, o.defaultEntity)]).toEqual([true, true]);
     // The other entity's month: refused by the database, through the command and raw.
@@ -762,6 +767,6 @@ suite('role assignments on PostgreSQL (#1279)', () => {
       message: 'PERIOD_LOCK_FORBIDDEN',
     });
     await expect(o.exec(asMfa(o.chief), 'kernel.proposal.approve', { id: randomUUID(), revision: 1 })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
-    expect((await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId })).permissions).toEqual([]);
+    expect((await rt.query<{ permissions: string[] }>('kernel.org.get', {}, { actor: asUser(o.chief), orgId: o.orgId })).permissions.filter((p) => p !== 'vy.use')).toEqual([]);
   });
 });
