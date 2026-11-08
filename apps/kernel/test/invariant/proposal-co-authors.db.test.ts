@@ -3,8 +3,10 @@
 // - a proposal's preparer may declare people it rests on besides the requester (the approver of the pay run a posting proposal posts); the column is `crove_kernel.proposal.co_authors`, and
 //   only a user's new pending proposal of a command in the list (finance.payroll_posting.record) may carry any: one to ten ids, none null. The system context, an agent, every other command,
 //   an approved proposal and an empty or null-holding list are refused, and nobody changes the column of a row that exists. The "no other author" rule of `authors` is untouched;
-// - the database gate (`crove_kernel.proposal_approve`) counts them as authors, as approval.ts does: none of them approves while another eligible approver exists (FOUR_EYES_REQUIRED), the
-//   one-person path and the owner override behave as for the requester, and without co-authors the same person approves;
+// - the database gate (`crove_kernel.proposal_approve`) holds them back like authors, but they never grant: none of them approves while another eligible approver exists who is neither an author
+//   nor a co-author (FOUR_EYES_REQUIRED), and never under the accountant preset; the one-person path and the owner override are judged on the written authors alone, so a co-author list
+//   forged in raw SQL cannot let the requester approve their own posting; without co-authors the same person approves;
+// - the database and approval.ts decide every such case alike;
 // - the list in the trigger is the list in approval.ts (PROPOSAL_CO_AUTHOR_COMMANDS).
 // Staff (the database owner) are not checked. Part of the invariant suite: keep it self-contained (package code under test, no helpers from outside test/invariant/). Set CROVE_TEST_ADMIN_URL to
 // a superuser URL; the run creates and drops its own database.
@@ -14,7 +16,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { PROPOSAL_CO_AUTHOR_COMMANDS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { sql } from 'kysely';
+import { PROPOSAL_CO_AUTHOR_COMMANDS, createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
@@ -41,6 +44,7 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     owner: string;
     admin: string;
     admin2: string;
+    chief: string;
   }
   let big: Org; // an owner and two admins
   let solo: Org; // an owner alone
@@ -71,6 +75,16 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
       await c.query('ROLLBACK').catch(() => {});
       await c.end();
     }
+  }
+  // A second chief accountant of the big org (a member holding the approval permission org-wide), for the recovery case.
+  async function person2(): Promise<string> {
+    const db = createDb(pools[0] as pg.Pool);
+    const id = await upsertIdentity(db, { issuer: 't2736', subject: randomUUID(), email: `chief2-${randomUUID().slice(0, 6)}@t2736.test`, name: null });
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [big.orgId, id]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [big.orgId, id, big.owner]);
+    });
+    return id;
   }
   const asUserIn = <T>(o: Org, userId: string, fn: (c: pg.Client) => Promise<T>) =>
     inContext(appUrl, (c) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(userId, o.orgId)]), fn);
@@ -130,7 +144,13 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
       await admin(async (c) => {
         for (const id of ids.slice(0, admins)) await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, id]);
       });
-      return { orgId, owner, admin: ids[0] as string, admin2: ids[1] as string };
+      // A chief accountant who is a plain member holding the ledger's approval permission org-wide.
+      const chief = await person(`${name}-chief`);
+      await admin(async (c) => {
+        await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, chief]);
+        await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [orgId, chief, owner]);
+      });
+      return { orgId, owner, admin: ids[0] as string, admin2: ids[1] as string, chief };
     };
     big = await make('big', 2);
     solo = await make('solo', 0);
@@ -154,6 +174,9 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     expect(await asUserIn(big, big.admin, (c) => c.query(insertSql, [big.orgId, 't2736.other', authorsOf(big.admin), [big.owner]]))).toMatchObject({ ok: false, ...REFUSED });
     expect(await asUserIn(big, big.admin, (c) => c.query(insertSql, [big.orgId, COMMAND, authorsOf(big.admin), []]))).toMatchObject({ ok: false, ...REFUSED });
     expect(await asUserIn(big, big.admin, (c) => c.query(`${insertSql.replace('$4::uuid[]', 'ARRAY[$4::uuid, NULL]::uuid[]')}`, [big.orgId, COMMAND, authorsOf(big.admin), big.owner]))).toMatchObject({ ok: false, ...REFUSED });
+    // An id that is no RFC 9562 uuid (as the gate reads authors), and a two-dimensional array.
+    expect(await asUserIn(big, big.admin, (c) => c.query(insertSql, [big.orgId, COMMAND, authorsOf(big.admin), ['00000000-0000-0000-0000-000000000001']]))).toMatchObject({ ok: false, ...REFUSED });
+    expect(await asUserIn(big, big.admin, (c) => c.query(insertSql, [big.orgId, COMMAND, authorsOf(big.admin), `{{${big.owner}},{${big.admin2}}}`]))).toMatchObject({ ok: false, ...REFUSED });
     const eleven = Array.from({ length: 11 }, () => randomUUID());
     expect(await asUserIn(big, big.admin, (c) => c.query(insertSql, [big.orgId, COMMAND, authorsOf(big.admin), eleven]))).toMatchObject({ ok: false, ...REFUSED });
     // The "no other author" rule of `authors` stays: another user among the authors is refused, with or without co-authors.
@@ -200,18 +223,93 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     expect(await approveAs(big, big.owner, plain)).toMatchObject({ ok: true });
   });
 
-  it('keeps the one-person path and the owner override for a co-author as for a requester', async () => {
-    // Alone: the owner is requester and co-author, and the only person who may approve, flagged self-approved.
+  it('judges the one-person path and the owner override on the written authors alone: co-authors never grant', async () => {
+    // Alone: the owner is requester and co-author, and the only person who may approve, flagged self-approved (written author).
     const alone = await pending(solo, solo.owner, [solo.owner], [solo.owner]);
     const own = await approveAs(solo, solo.owner, alone);
     expect(own).toMatchObject({ ok: true });
     expect(own.ok && own.value).toMatchObject({ selfApproved: true, fourEyes: 'self_approved' });
-    // Two eligible, both authors (an admin asked, the owner is a co-author): the owner may approve, flagged owner_override; the admin may not.
+    // Two eligible (an owner and an admin), the admin asked and the owner is a co-author: no other eligible approver exists, so the owner approves (as before co-authors existed), not flagged
+    // as an override; the admin, who wrote it, may not.
     const both = await pending(big, big.admin, [big.owner], [big.owner, big.admin]);
-    const override = await approveAs(big, big.owner, both);
-    expect(override).toMatchObject({ ok: true });
-    expect(override.ok && override.value).toMatchObject({ selfApproved: true, fourEyes: 'owner_override' });
+    const owner1 = await approveAs(big, big.owner, both);
+    expect(owner1).toMatchObject({ ok: true });
+    expect(owner1.ok && owner1.value).toMatchObject({ selfApproved: false, fourEyes: 'pass' });
     expect(await approveAs(big, big.admin, both)).toMatchObject({ ok: false, message: 'FOUR_EYES_REQUIRED' });
+  });
+
+  it('refuses the forged case: an owner who asked, with every other approver listed as a co-author, does not approve alone', async () => {
+    // Raw SQL in the owner's own context can write any co_authors a guard-passing insert accepts; they must not unlock the owner override for the requester.
+    const forged = await pending(big, big.owner, [big.admin, big.admin2], [big.owner, big.admin, big.admin2]);
+    expect(await approveAs(big, big.owner, forged)).toMatchObject({ ok: false, message: 'FOUR_EYES_REQUIRED' });
+    // The people listed are not unlocked either beyond what they could do without the list: no one else is eligible, so they approve (a second person decides, as it should be).
+    expect(await approveAs(big, big.admin, forged)).toMatchObject({ ok: true });
+    // The same through the guard: the owner's own insert of such a proposal passes the guard (it cannot know), and the gate still refuses the owner.
+    const viaGuard = await asUserIn(big, big.owner, (c) => c.query(insertSql, [big.orgId, COMMAND, authorsOf(big.owner), [big.admin, big.admin2]]));
+    expect(viaGuard).toMatchObject({ ok: true });
+  });
+
+  it('holds a co-author back under the accountant preset, as an author: if the only approver froze the run, nobody approves its posting', async () => {
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET approval_preset = 'accountant' WHERE org_id = $1`, [big.orgId]));
+    try {
+      // The chief accountant is the only eligible approver; the requester is an admin (who holds no approval right under this preset), and the chief froze the run (co-author).
+      const withCo = await pending(big, big.admin, [big.chief], [big.chief]);
+      expect(await approveAs(big, big.chief, withCo)).toMatchObject({ ok: false, message: 'FOUR_EYES_REQUIRED' });
+      // Recovery: a second approver exists (here a second chief), the posting is asked for again; the first chief is still held back, the second approves.
+      const second = await person2();
+      const asked = await pending(big, big.admin, [big.chief], [big.chief, second]);
+      expect(await approveAs(big, second, asked)).toMatchObject({ ok: true });
+      expect(await approveAs(big, big.chief, asked)).toMatchObject({ ok: false, message: 'FOUR_EYES_REQUIRED' });
+      // Without co-authors the chief approves as usual.
+      expect(await approveAs(big, big.chief, await pending(big, big.admin, null, [big.chief]))).toMatchObject({ ok: true });
+    } finally {
+      await admin((c) => c.query(`UPDATE crove_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [big.orgId]));
+    }
+  });
+
+  it('decides every co-author case in the database exactly as decideApproval does', { timeout: 300_000 }, async () => {
+    const db = createDb(pools[0] as pg.Pool);
+    const everyone = [big.owner, big.admin, big.admin2, big.chief];
+    const snapshots = [everyone, [big.owner, big.admin], [big.owner], [big.chief], [big.admin, big.admin2]];
+    const written: string[][] = [[], [big.owner], [big.admin], [big.admin, big.owner], [big.admin, big.admin2], [big.chief]];
+    const co: string[][] = [[], [big.owner], [big.admin2], [big.owner, big.admin], [big.admin, big.admin2], [big.chief], [big.owner, big.admin, big.admin2, big.chief]];
+    const user = (id: string) => ({ type: 'user' as const, id });
+    const a = new pg.Client({ connectionString: adminUrl });
+    await a.connect();
+    try {
+      let checked = 0;
+      for (const preset of ['founder', 'accountant']) {
+        await a.query('UPDATE crove_kernel.tenant SET approval_preset = $2 WHERE org_id = $1', [big.orgId, preset]);
+        for (const snapshot of snapshots) {
+          for (const w of written) {
+            for (const c of co) {
+              for (const actor of everyone) {
+                const ts = await db.transaction().execute(async (trx) => {
+                  await sql`SELECT crove_kernel.enter_user_context(${big.orgId}::uuid, ${contextToken(actor, big.orgId)}::text)`.execute(trx);
+                  return decideApproval(trx, big.orgId, asUser(actor), { command: COMMAND, status: 'pending', eligible_approvers: snapshot, authors: w.map(user), co_authors: c.length ? c : null }, { lock: false });
+                });
+                const entries = [...w.map(user), ...c.map((id) => ({ type: 'co_author', id }))];
+                const inDb = (
+                  await a.query<{ d: { reason: string; eligibleCount: number; selfApproved: boolean; fourEyes: string; preset: string; version: number } }>(
+                    'SELECT crove_kernel.proposal_approval_decide($1::uuid, $2, $3, $4::uuid[], $5::jsonb, $6::uuid, false) AS d',
+                    [big.orgId, COMMAND, 'pending', snapshot, JSON.stringify(entries), actor],
+                  )
+                ).rows[0]?.d;
+                expect(
+                  { reason: inDb?.reason, eligibleCount: inDb?.eligibleCount, selfApproved: inDb?.selfApproved, fourEyes: inDb?.fourEyes, orgPolicy: { preset: inDb?.preset, version: inDb?.version } },
+                  JSON.stringify({ preset, snapshot, written: w, co: c, actor }),
+                ).toEqual({ reason: ts.reason, eligibleCount: ts.eligibleCount, selfApproved: ts.selfApproved, fourEyes: ts.fourEyes, orgPolicy: ts.orgPolicy });
+                checked += 1;
+              }
+            }
+          }
+        }
+      }
+      expect(checked).toBe(2 * snapshots.length * written.length * co.length * everyone.length);
+    } finally {
+      await a.query(`UPDATE crove_kernel.tenant SET approval_preset = 'founder' WHERE org_id = $1`, [big.orgId]);
+      await a.end();
+    }
   });
 
   it('lists in the trigger the commands approval.ts lists', async () => {

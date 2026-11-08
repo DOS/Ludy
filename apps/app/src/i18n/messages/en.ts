@@ -4575,6 +4575,7 @@ export const en = {
     journalVoucherSubtitlePosted: 'Journal voucher {code} dated {date}, posted.',
     stepUpApproveVoucher: 'approve and post this cash or bank voucher',
     voucherFourEyes: 'Someone else must approve (you entered this voucher).',
+    journalCoAuthorFourEyes: 'Someone else must approve (you approved the pay run this entry is built from).',
     voucherNotEligible: 'Only owners and admins can approve cash and bank vouchers.',
     // A request to open the way to spend on an ad platform (#2294): it posts nothing to the books.
     adsChange: 'What changes',
@@ -9192,6 +9193,7 @@ export const en = {
         },
         posting: {
           prepare: 'Prepare the posting proposal of an approved pay month',
+          verify: 'Rebuild the pay entry from the approved pay run to compare it when it is posted',
         },
         run: {
           approve: 'Approve the month\'s pay run (second factor, freezes the figures)',

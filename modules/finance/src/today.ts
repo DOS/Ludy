@@ -85,13 +85,16 @@ export const financeToday = defineQuery({
 // The finance proposals waiting for the caller's own decision, one item per party, direction and currency in each
 // entity, with the exact total of their invoices. "Waiting for me": the caller is in the proposal's approver snapshot,
 // and either did not write it or, when every approver in the snapshot wrote it, is an owner (the four-eyes rule then lets
-// only the owner decide, P10). Money: a purchase invoice's total in its own currency, never converted. A foreign-currency
+// only the owner decide, P10). A co-author (the person a proposal rests on besides its writer, #2736) is shown it only while no
+// approver in the snapshot is neither a writer nor a co-author: co-authors only restrict, so the owner override stays on the writers. Money: a purchase invoice's total in its own currency, never converted. A foreign-currency
 // invoice booked in VND (#918) has its amounts in VND already, so it counts as VND; one still waiting for its rate has
 // the invoice's own amounts, so it is a group of its own currency. Vouchers and other proposals have no invoice total
 // and show no amount. A group list is capped, and the rest is one more item that says how many.
 async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
   const author = (who: ReturnType<typeof sql>) => sql`p.authors @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('type', 'user', 'id', ${who}))`;
   const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)})`;
+  const coAuthor = (who: ReturnType<typeof sql>) => sql`coalesce(p.co_authors @> ARRAY[${who}::uuid], false)`;
+  const someoneElseMayDecide = sql`EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)} AND NOT ${coAuthor(sql`e.u`)})`;
   const { rows } = await sql<GroupRow>`
     WITH w AS (
       SELECT p.legal_entity_id::text AS entity,
@@ -110,7 +113,9 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
         AND p.status = 'pending'
         AND p.command LIKE 'finance.%'
         AND p.eligible_approvers @> ARRAY[${userId}::uuid]
-        AND (NOT ${author(sql`${userId}::text`)} OR ${ctx.role === 'owner' ? everyApproverWrote : sql`false`})
+        AND (CASE WHEN ${author(sql`${userId}::text`)} THEN ${ctx.role === 'owner' ? everyApproverWrote : sql`false`}
+                  WHEN ${coAuthor(sql`${userId}`)} THEN NOT ${someoneElseMayDecide}
+                  ELSE true END)
     )
     SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
            pg_catalog.count(*)::text AS n,

@@ -622,7 +622,7 @@ export const requestProposal = defineCommand({
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command });
+    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', proposal.id, 'proposal.created', 'Tạo đề xuất');
     await ctx.emit('kernel.proposal.created', { proposalId: proposal.id, kind: draft.kind });
     return { proposalId: proposal.id };

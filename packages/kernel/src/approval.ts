@@ -25,16 +25,12 @@ export function parseAuthors(raw: unknown): ActorRef[] | null {
   return result.success ? result.data : null;
 }
 
-// The commands whose preparer may declare co-authors (people the proposal rests on besides its requester). The database lists the same ones (proposal_co_authors_guard,
-// 20261126170000), and the invariant proposal-co-authors keeps the two equal.
+// The commands whose preparer may declare co-authors (people the proposal rests on besides its requester, such as the approver of the pay run a posting is built from). The database lists the
+// same ones (proposal_co_authors_guard, 20261126170000), and the invariant proposal-co-authors keeps the two equal, and decideApproval equal to proposal_approval_decide case by case.
+// Co-authors only restrict, never grant: a co-author who wrote nothing is held back while another eligible approver exists who is neither an author nor a co-author, and always under the
+// accountant preset (if the only holder of the approval permission froze the run, nobody can approve its posting: reject it, add a second approver and ask again). The owner override and the
+// sole-approver exception are judged on the written authors alone, so a forged co-author list cannot let a requester approve their own posting.
 export const PROPOSAL_CO_AUTHOR_COMMANDS: readonly string[] = ['finance.payroll_posting.record'];
-
-// A proposal's authors for four-eyes: those written on it, then its co-authors (users only), never twice.
-function effectiveAuthors(authors: unknown, coAuthors: readonly string[] | null | undefined): ActorRef[] | null {
-  const written = parseAuthors(authors);
-  if (written === null) return null;
-  return (coAuthors ?? []).reduce<ActorRef[]>((acc, id) => addAuthor(acc, { type: 'user', id }), written);
-}
 
 const refKey = (a: ActorRef) => (a.type === 'system' ? `system:${a.component}` : `${a.type}:${a.id}`);
 
@@ -247,8 +243,8 @@ export interface ProposalPolicyInput {
   status: string;
   eligible_approvers: string[] | null;
   authors: unknown;
-  // The people the proposal rests on besides its requester (the preparer declared them); they count as authors.
-  co_authors?: string[] | null;
+  // The people the proposal rests on besides its requester (the preparer declared them): held back in four-eyes like an author, but they never grant anything (see decideApproval).
+  co_authors: string[] | null;
 }
 
 // Decides whether `actor` may approve the proposal's current revision.
@@ -268,7 +264,7 @@ export async function decideApproval(
   // R3 and anything a proposal executes needs a human approver (P12); system actors never approve.
   if (actor.type !== 'user') return deny('not_eligible');
   const snapshot = proposal.eligible_approvers ?? [];
-  const authors = effectiveAuthors(proposal.authors, proposal.co_authors);
+  const authors = parseAuthors(proposal.authors);
   // Under the preset in force now, not the one at creation: a switch to the accountant preset stops an owner or admin
   // in the snapshot from approving at once (fail closed); a switch back does not add anyone to the snapshot.
   const policy = policyFor(proposal.command, org);
@@ -304,7 +300,17 @@ export async function decideApproval(
   if (!eligible.has(actor.userId)) return deny('not_eligible', eligible.size);
 
   const userAuthors = new Set(authors.flatMap((a) => (a.type === 'user' ? [a.id] : [])));
-  if (!userAuthors.has(actor.userId)) return { reason: 'ok', eligibleCount: eligible.size, selfApproved: false, fourEyes: 'pass', orgPolicy };
+  if (!userAuthors.has(actor.userId)) {
+    // Co-authors (#2736) only restrict, never grant: a co-author who wrote nothing is held back while another eligible approver exists who is neither an author nor a co-author, and always
+    // under a preset that reserves the ledger to the chief accountant (as an author is). The owner override and the sole-approver exception below are judged on the written authors alone, so a
+    // co-author list, declared or forged in raw SQL, can make approval harder for the people on it and easier for nobody else.
+    const coAuthors = new Set(proposal.co_authors ?? []);
+    if (coAuthors.has(actor.userId)) {
+      if (org.ledgerChiefAccountantOnly && POLICIES[proposal.command] === LEDGER) return deny('four_eyes', eligible.size);
+      if (policy.fourEyes && [...eligible].some((id) => !userAuthors.has(id) && !coAuthors.has(id))) return deny('four_eyes', eligible.size);
+    }
+    return { reason: 'ok', eligibleCount: eligible.size, selfApproved: false, fourEyes: 'pass', orgPolicy };
+  }
   // P09 with P10: under a preset that reserves the ledger to the chief accountant, an author never approves a ledger
   // proposal, however few eligible approvers there are; neither the sole-approver exception nor owner_override applies.
   // The proposal waits for another holder, or is rejected and raised again (#1402 review).

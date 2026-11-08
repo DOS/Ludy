@@ -4569,6 +4569,7 @@ export const vi = {
     journalVoucherSubtitlePosted: 'Phiếu kế toán số {code} ngày {date}, đã ghi sổ.',
     stepUpApproveVoucher: 'duyệt và ghi sổ chứng từ thu chi này',
     voucherFourEyes: 'Cần một người khác duyệt (bạn đã lập chứng từ này).',
+    journalCoAuthorFourEyes: 'Cần một người khác duyệt (bạn là người đã duyệt bảng lương mà bút toán này dựa trên).',
     voucherNotEligible: 'Chỉ chủ sở hữu hoặc quản trị duyệt được chứng từ thu chi.',
     // A request to open the way to spend on an ad platform (#2294): it posts nothing to the books.
     adsChange: 'Thay đổi gì',
@@ -9189,6 +9190,7 @@ export const vi = {
         },
         posting: {
           prepare: 'Lập đề xuất hạch toán lương của một tháng đã duyệt',
+          verify: 'Dựng lại bút toán lương từ bảng lương đã duyệt để đối chiếu khi ghi sổ',
         },
         run: {
           approve: 'Duyệt bảng lương tháng (cần xác thực hai bước, khóa số liệu)',

@@ -1222,7 +1222,7 @@ suite('ads on PostgreSQL (#2217)', () => {
                 const ts = await appDb.transaction().execute(async (trx) => {
                   const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
                   await sql`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${token}::text)`.execute(trx);
-                  return decideApproval(trx, orgId, { type: 'user', userId: who.userId, aal: 'aal1', sessionId: randomUUID() }, { command, status: 'pending', eligible_approvers: snapshot, authors }, { lock: false });
+                  return decideApproval(trx, orgId, { type: 'user', userId: who.userId, aal: 'aal1', sessionId: randomUUID() }, { command, status: 'pending', eligible_approvers: snapshot, authors, co_authors: null }, { lock: false });
                 });
                 const inDb = (
                   await row<{ d: { reason: string; eligibleCount: number; selfApproved: boolean; fourEyes: string } }>(

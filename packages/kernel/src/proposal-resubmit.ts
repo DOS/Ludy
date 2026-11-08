@@ -235,7 +235,7 @@ export const resubmitProposal = defineCommand({
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: created.id, resubmitted_from: old.id, source, proposal_command: content.command });
+    ctx.audit({ proposal_id: created.id, resubmitted_from: old.id, source, proposal_command: content.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', old.id, 'proposal.resubmitted', 'Gửi lại thành đề xuất mới');
     await ctx.activity('kernel.proposal', created.id, 'proposal.created', 'Tạo đề xuất (gửi lại)');
     await ctx.emit('kernel.proposal.created', { proposalId: created.id, kind: content.kind });

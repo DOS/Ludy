@@ -323,6 +323,12 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     expect(await canApprove(o.owner)).toBe(false);
     expect(await canApprove(o.admin)).toBe(false);
     expect(await canApprove(o.admin2)).toBe(true);
+    // The Inbox tells the run's approver why in their own words (they are a co-author), and nobody else.
+    const coAuthorOf = async (user: string) => (await rt.query<{ coAuthor: boolean }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId })).coAuthor;
+    expect([await coAuthorOf(o.owner), await coAuthorOf(o.admin), await coAuthorOf(o.admin2)]).toEqual([true, false, false]);
+    // The request names the co-author in its audit row.
+    const [requested] = await rows<{ co: string[] | null }>(`SELECT detail -> 'co_authors' AS co FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.request' AND detail ->> 'proposal_id' = $2`, [o.orgId, proposalId]);
+    expect(requested?.co).toEqual([o.owner]);
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
@@ -346,5 +352,23 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, again.proposalId]);
     expect(stored?.co_authors).toEqual([o.owner]);
     await expect(approve(o, again.proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
+  });
+
+  it('rebuilds the entry from the frozen run when it records, and refuses a stored proposal that differs from it in any line', async () => {
+    const o = await org();
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId, o.admin);
+    // A proposal row written some other way than by the preparer (raw SQL, staff here): the first two lines swap their accounts, still balanced and valid as a voucher.
+    await rows(
+      `UPDATE crove_kernel.proposal
+          SET payload = jsonb_set(jsonb_set(payload, '{lines,0,account}', payload #> '{lines,1,account}'), '{lines,1,account}', payload #> '{lines,0,account}')
+        WHERE org_id = $1 AND id = $2`,
+      [o.orgId, proposalId],
+    );
+    const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
+    await expect(rt.execute('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+    // Nothing was posted and the proposal still waits (a new request is refused as open until it is rejected).
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
   });
 });
