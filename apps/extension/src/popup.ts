@@ -3,7 +3,7 @@
 // consent step, "Ghi cả video", start and stop). Every string is set as text, never as markup. Nothing here reads a page:
 // the one tab it touches is the active one the member clicked the icon on, and only to ask for its audio.
 import { T } from './strings.ts';
-import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress } from './ludy-address.ts';
+import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
 import { activeAccount, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
 import { visibleFeatures, FEATURES, type Me } from './features.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
@@ -64,9 +64,14 @@ function addressForm(state: State): Node[] {
             notice = typed.problem === 'insecure' ? T.addressInsecure : T.addressInvalid;
           } else {
             // The browser asks for this one address only, on this click; the default address is in the install.
-            const granted = isDefaultAddress(typed.origin) || (await chrome.permissions.request({ origins: [originPattern(typed.origin)] }));
-            if (granted) await saveState(area, withAddress(state, typed.origin));
-            else notice = T.addressDenied;
+            // A refused or failing request (the browser throws for a pattern the manifest does not list) says the same thing.
+            const granted = isDefaultAddress(typed.origin) || (await chrome.permissions.request({ origins: [originPattern(typed.origin)] }).catch(() => false));
+            if (granted) {
+              await saveState(area, withAddress(state, typed.origin));
+              // The address moved: the browser permission for the previous self-hosted one is given back.
+              const stale = stalePattern(state.address, typed.origin);
+              if (stale) await chrome.permissions.remove({ origins: [stale] }).catch(() => false);
+            } else notice = T.addressDenied;
           }
           await render();
         })(),
