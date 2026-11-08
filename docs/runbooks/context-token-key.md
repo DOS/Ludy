@@ -71,7 +71,7 @@ This is a different key from the context key that seals `crove.ctx` ([context-ke
 
    Then sign in once and open a page with data (any org): the request now enters its context through a token. A boot that stops with `CROVE_CONTEXT_TOKEN_KEY is not the key the database holds` means `migrate` did not install this value (check its logs); a log line with `CONTEXT_TOKEN_EXPIRED` means the app's clock is more than 30 seconds ahead of the database's, or 60 seconds or more behind it (fix the servers' time sync).
 
-   Rollback: empty the line in `.env` (`CROVE_CONTEXT_TOKEN_KEY=`) and run `docker compose up -d` again. Before step 2 is deployed, the app goes back to `enter_context`, as before step 1. Once step 2 is deployed, `migrate` takes the key file on the `keys` volume instead (creating it when missing) and installs that key, a rotation, and the app keeps working with it. Before step 2, the installed key stays in the table and does nothing; to remove it as well:
+   Rollback: empty the line in `.env` (`CROVE_CONTEXT_TOKEN_KEY=`) and run `docker compose up -d` again. Before step 2 is deployed, the app goes back to `enter_context`, as before step 1. Once step 2 is deployed, `migrate` takes the key file on the `context-token` volume instead (creating it when missing) and installs that key, a rotation, and the app keeps working with it. Before step 2, the installed key stays in the table and does nothing; to remove it as well:
 
    ```bash
    docker compose exec -T db psql -U postgres -c "DELETE FROM crove_kernel.context_token_key"
