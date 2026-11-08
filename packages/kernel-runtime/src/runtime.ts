@@ -178,7 +178,7 @@ export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<Age
     agentId: bound.agentId,
     runId: bound.runId,
     // No idempotency key: the stored response of a command is a value object, which the audit and key rows of member mode never hold (ADR-0049
-    // decision 4). A retried store is safe without one: it rewrites its own result with the same status.
+    // decision 4). A retried store is refused (VY_RUN_NOT_LIVE once the worker has closed the run), so a retry never writes a second result.
     execute: <O = unknown>(name: string, input: unknown) => runtime.execute<O>(name, input, { actor: bound, orgId }),
     query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
   });
@@ -1615,6 +1615,10 @@ export class Runtime {
       // Vy in member mode runs it without review, in the member's name: a role list as access (the member's role must be in it), R0 or R1, the
       // taint propagated, its writes declared and free of contact and payment columns (P04), and neither an extension command nor an org-less one.
       if (c.memberVy !== undefined) {
+        const mvJobs = jobTablesOf(c.writes);
+        if (mvJobs.length > 0) {
+          throw new Error(`command ${c.name}: Vy in member mode starts no job (${mvJobs.join(', ')} is not guarded by the member-mode write guard)`);
+        }
         const mv = c.memberVy as { taint?: unknown };
         // Only the kernel's own member_vy commands: the write guard lets a member-mode audit row name no other command (ADR-0049 decision 2: no
         // task, approval or other module's command declares it).
@@ -1671,6 +1675,9 @@ export class Runtime {
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
+      if (q.memberVy !== undefined && q.stream === true) {
+        throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
+      }
       if (q.memberVy !== undefined && (!Array.isArray(q.access) || !q.name.startsWith('kernel.member_vy.'))) {
         throw new Error(`query ${q.name}: Vy in member mode reads only a kernel.member_vy.* query with a role list as access (the member's role must be in it)`);
       }

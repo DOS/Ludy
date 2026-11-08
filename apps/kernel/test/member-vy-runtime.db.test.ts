@@ -369,6 +369,13 @@ suite("member-scoped agent actor in the runtime", () => {
         ],
       }),
     ).toThrow(/role list/);
+    expect(() =>
+      make().register({
+        queries: [
+          query("kernel.member_vy.t_qstream", { stream: true, memberVy: {} }),
+        ],
+      }),
+    ).toThrow(/streamed/);
   });
 
   it("writes the audit row of a member-mode command with ids, enums and numbers, and refuses one with text", async () => {
@@ -466,6 +473,16 @@ suite("member-scoped agent actor in the runtime", () => {
     const facade = memberVyRuntime(worker, orgId, {
       agentId,
       runId: started.runId,
+    });
+    // The store takes the run the context was sealed for and no other run, not even of the same member.
+    await expect(
+      facade.execute("kernel.member_vy.result.store", {
+        runId: randomUUID(),
+        outcome: { status: "ready", body: "x" },
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      details: { rule: "member_vy_context" },
     });
     const stored = await facade.execute<{ stored: boolean; status: string }>(
       "kernel.member_vy.result.store",
