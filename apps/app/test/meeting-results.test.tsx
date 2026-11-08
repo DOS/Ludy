@@ -46,12 +46,14 @@ const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView =>
 });
 const view = (stage: 'draft' | 'published', summary: string) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions: ['Giữ giá cũ'], tainted: false });
 
+const READER = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
 function render(results: Results) {
   client.current.setQueryData(['meetings', 'results', 'get'], results);
+  client.current.setQueryData(['org', 'get'], { members: [{ userId: READER, email: 'lan@example.com', displayName: 'Chị Lan', role: 'member' }] });
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale="en" messages={catalog('en')}>
-        <MeetingResults meetingId="m1" readers={['u1']} />
+        <MeetingResults meetingId="m1" readers={[READER, '0198a0b4-0000-7e6f-8a9b-0c1d2e3f4a5c']} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -68,6 +70,16 @@ describe('MeetingResults', () => {
     expect(html).toContain('2:05');
     expect(html).toContain(en.meetings.results.delete);
     expect(html.match(/data-testid="action-item"/g)).toHaveLength(1);
+  });
+
+  it('names people and never shows an id: the attendee picker lists names, and a member who left reads as a plain fallback', () => {
+    const html = render({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] });
+    expect(html).toContain('Chị Lan');
+    expect(html).toContain(en.meetings.results.unknownMember);
+    // The id stays in the option's value attribute; no text node shows it.
+    const text = html.replace(/<[^>]*>/g, ' ');
+    expect(text).not.toContain(READER);
+    expect(text).not.toContain('0198a0b4-0000');
   });
 
   it('shows a reader only the shared summary and items, with no editor, no add form and no share button', () => {

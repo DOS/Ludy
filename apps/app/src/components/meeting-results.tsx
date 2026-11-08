@@ -17,6 +17,12 @@ import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
+// A member as people read them: the name, else the email, else a plain fallback; never an id.
+export function memberLabel(members: ReadonlyArray<{ userId: string; displayName: string | null; email: string }>, userId: string, fallback: string): string {
+  const m = members.find((x) => x.userId === userId);
+  return m ? (m.displayName?.trim() || m.email || fallback) : fallback;
+}
+
 // Reading the results is a sensitive read that leaves an audit row: no refetch on focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
 const refresh = () => {
@@ -63,6 +69,8 @@ function SummaryText({ summary, decisions }: { summary: string; decisions: strin
 
 function NewItem({ meetingId, readers }: { meetingId: string; readers: readonly string[] }) {
   const t = useTranslations('meetings.results');
+  const org = useQuery(orpc.org.get.queryOptions());
+  const members = org.data?.members ?? [];
   const [title, setTitle] = useState('');
   const [who, setWho] = useState('');
   const [whoUserId, setWhoUserId] = useState('');
@@ -95,7 +103,7 @@ function NewItem({ meetingId, readers }: { meetingId: string; readers: readonly 
           <option value="">{t('noAttendee')}</option>
           {readers.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {memberLabel(members, r, t('unknownMember'))}
             </option>
           ))}
         </NativeSelect>
