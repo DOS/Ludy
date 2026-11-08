@@ -208,13 +208,86 @@ describe('the D02-LT of the month', () => {
   });
 
   it('does not guess a change of wage without the previous month', () => {
-    const noPrevious = buildD02Lt({ month: '2026-09', employer, persons: [raised, newHire], lines: current, previousLines: null });
-    expect(noPrevious.sheets[0]?.rows.map((r) => r.name)).toEqual(['An']);
+    const noPrevious = buildD02Lt({ month: '2026-09', employer, persons: [newHire, raised, same, leaver, probation], lines: current, previousLines: null });
+    expect(noPrevious.sheets[0]?.rows.map((r) => r.name)).toEqual(['An', 'Dũng']);
     expect(noPrevious.notes.join(' ')).toContain('Chưa có bảng lương đã duyệt của tháng trước');
   });
 
   it('flags a missing birth date or insurance number instead of inventing one', () => {
-    const bare = buildD02Lt({ month: '2026-09', employer, persons: [{ ...newHire, birthDate: null }], lines: current, previousLines: previous });
+    const bare = buildD02Lt({ month: '2026-09', employer, persons: [{ ...newHire, birthDate: null }, raised, same, leaver, probation], lines: current, previousLines: previous });
     expect(bare.sheets[0]?.rows[0]?.note).toContain('Thiếu ngày sinh');
+  });
+});
+
+describe('corrections and edge cases a reviewer found', () => {
+  const adj = (employeeId: string, month: string, pit: string): DeclarationLine => ({ ...line(employeeId, month, pit), kind: 'adjustment', gross: '0', employeeInsurance: '0', employerInsurance: '0', unionFee: '0', taxableIncome: '0', breakdown: null });
+
+  it('certifies the whole year of a person withheld only in some months, net of corrections', () => {
+    const an = person('1', 'An');
+    const lines = [line('1', '2026-01', '0'), line('1', '2026-02', '0'), line('1', '2026-07', '1000000'), adj('1', '2026-08', '-400000')];
+    const row = buildCertificates({ year: 2026, employer, persons: [an], lines }).sheets[0]?.rows[0];
+    expect(row?.period).toBe('2026-01 đến 2026-08');
+    expect(row?.pit).toBe('600000.00');
+    expect(row?.gross).toBe('75000000.00');
+    // A fully refunded person has nothing to certify.
+    expect(buildCertificates({ year: 2026, employer, persons: [an], lines: [line('1', '2026-07', '1000000'), adj('1', '2026-08', '-1000000')] }).sheets[0]?.rows).toEqual([]);
+  });
+
+  it('gives a certificate to an authorizer the finalization does not take (left before year end)', () => {
+    const mai = person('1', 'Mai', { finalizationAuthorizedYears: [2026], endedOn: '2026-10-31' });
+    const doc = buildCertificates({ year: 2026, employer, persons: [mai], lines: ['2026-01', '2026-02'].map((m) => line('1', m, '1000000')) });
+    expect(doc.sheets[0]?.rows.map((r) => r.name)).toEqual(['Mai']);
+    expect(doc.sheets[1]?.rows).toEqual([]);
+  });
+
+  it('keeps the quarter summary and the schedules in step when a correction has no breakdown', () => {
+    const an = person('1', 'An');
+    const doc = buildQuarterly({ quarter: '2026-Q3', employer, persons: [an], lines: [adj('1', '2026-09', '-500000')], approvedMonths: ['2026-09'] });
+    const [summary, progressive] = doc.sheets;
+    expect(summary?.rows.find((r) => r.item?.startsWith('Tổng số thuế'))?.value).toBe('-500000.00');
+    expect(progressive?.totals?.pit).toBe('-500000.00');
+    expect(progressive?.rows).toHaveLength(1);
+  });
+
+  it('says both a leaver note and a missing tax code, and a leaver in the last month of the quarter is a leaver too', () => {
+    const binh = person('2', 'Bình', { endedOn: '2026-09-30', taxCode: null });
+    const doc = buildQuarterly({ quarter: '2026-Q3', employer, persons: [binh], lines: [line('2', '2026-09', '1')], approvedMonths: ['2026-09'] });
+    expect(doc.sheets[1]?.rows[0]?.note).toBe('Nghỉ việc ngày 2026-09-30; Thiếu mã số thuế');
+  });
+
+  it('does not take a person with corrections only into the annual schedule', () => {
+    const an = person('1', 'An', { finalizationAuthorizedYears: [2026] });
+    const doc = buildAnnual({ year: 2026, employer, persons: [an], lines: [adj('1', '2026-03', '100')], approvedMonths: ['2026-03'] });
+    expect(doc.sheets[1]?.rows).toEqual([]);
+    expect(doc.sheets[2]?.rows).toEqual([]);
+  });
+
+  it('counts the paid months of a scheduled person, not months with a correction only', () => {
+    const an = person('1', 'An', { finalizationAuthorizedYears: [2026] });
+    const doc = buildAnnual({ year: 2026, employer, persons: [an], lines: [line('1', '2026-01', '1'), adj('1', '2026-05', '1')], approvedMonths: ['2026-01'] });
+    expect(doc.sheets[1]?.rows[0]?.months).toBe('1');
+  });
+
+  it('lists a leaver by the wage of the month before when the last month has no insured pay, and refuses a line for an unknown person', () => {
+    const dung = person('4', 'Dũng', { endedOn: '2026-09-20' });
+    const doc = buildD02Lt({ month: '2026-09', employer, persons: [dung], lines: [line('4', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'not_insured') })], previousLines: [line('4', '2026-08', '0', { breakdown: breakdown('10000000') })] });
+    expect(doc.sheets[0]?.rows.map((r) => [r.movement, r.wageHealth])).toEqual([['Giảm lao động', '10000000.00']]);
+    expect(() => buildD02Lt({ month: '2026-09', employer, persons: [], lines: [line('9', '2026-09', '0')], previousLines: null })).toThrow(/not in the list/);
+    expect(() => buildAnnual({ year: 2026, employer, persons: [], lines: [line('9', '2026-09', '0')], approvedMonths: [] })).toThrow(/not in the list/);
+    expect(() => buildCertificates({ year: 2026, employer, persons: [], lines: [line('9', '2026-09', '1')] })).toThrow(/not in the list/);
+  });
+
+  it('lists a person who starts and ends in the same month twice, and counts a person on unpaid leave in a note', () => {
+    const short = person('1', 'An', { startedOn: '2026-09-02', endedOn: '2026-09-20' });
+    const leave = person('2', 'Bình');
+    const doc = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [short, leave],
+      lines: [line('1', '2026-09', '0', { breakdown: breakdown('8000000') }), line('2', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'not_insured') })],
+      previousLines: [line('2', '2026-08', '0', { breakdown: breakdown('10000000') })],
+    });
+    expect(doc.sheets[0]?.rows.map((r) => r.movement)).toEqual(['Tăng lao động', 'Giảm lao động']);
+    expect(doc.notes.join(' ')).toContain('1 người tạm dừng đóng');
   });
 });

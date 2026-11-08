@@ -143,6 +143,20 @@ const zero = (): Decimal => money(0);
 const byName = <T extends { name: string; employeeId: string }>(a: T, b: T): number => a.name.localeCompare(b.name, 'vi') || a.employeeId.localeCompare(b.employeeId);
 const monthOf = (day: string): string => day.slice(0, 7);
 
+/** A line naming a person who is not in the list is a bug in the caller: a person must never be silently missing from a declaration. */
+function assertKnown(persons: readonly DeclarationPerson[], lines: readonly DeclarationLine[]): void {
+  const known = new Set(persons.map((p) => p.employeeId));
+  for (const line of lines) if (!known.has(line.employeeId)) throw new Error(`a payroll line names an employee that is not in the list: ${line.employeeId}`);
+}
+
+/**
+ * How a line was withheld. A pay line says so in its breakdown; an adjustment line may carry none and follows the mode of the person's pay lines (the first one in the list),
+ * or the monthly brackets when the person has none in the lines given.
+ */
+function modeOfLine(line: DeclarationLine, lines: readonly DeclarationLine[]): WithholdingMode {
+  return line.breakdown?.tax.mode ?? lines.find((l) => l.employeeId === line.employeeId && l.kind === 'pay' && l.breakdown !== null)?.breakdown?.tax.mode ?? 'progressive';
+}
+
 const exemptOf = (b: DeclarationBreakdown | null): Decimal => (b === null ? zero() : money(b.tax.exemptMealCash).plus(b.tax.exemptOvertime).plus(b.tax.exemptNightWork));
 const deductionsOf = (b: DeclarationBreakdown | null): Decimal => (b === null ? zero() : money(b.tax.personalDeduction).plus(b.tax.dependentDeduction).plus(b.tax.pensionDeduction));
 const fundWage = (b: DeclarationBreakdown | null, fund: InsuranceFundKey): Decimal => money(b?.insurance.funds.find((f) => f.fund === fund)?.wage);
@@ -204,48 +218,51 @@ const sameWages = (a: DeclarationLine, b: DeclarationLine): boolean => INSURANCE
  */
 export function buildD02Lt(input: D02LtInput): DeclarationDocument {
   const lineOf = (lines: readonly DeclarationLine[] | null, id: string) => lines?.find((l) => l.employeeId === id && l.kind === 'pay');
+  assertKnown(input.persons, [...input.lines, ...(input.previousLines ?? [])]);
   const rows: (Record<string, string> & { _order: string; _name: string; _id: string })[] = [];
   let skipped = 0;
+  let suspended = 0;
   for (const person of input.persons) {
     const line = lineOf(input.lines, person.employeeId);
-    if (!line) continue;
-    const wage = insuredWage(line);
     const previous = lineOf(input.previousLines, person.employeeId);
+    if (!line && !previous) continue;
+    const wage = insuredWage(line);
     const startsHere = monthOf(person.startedOn) === input.month;
     const endsHere = person.endedOn !== null && monthOf(person.endedOn) === input.month;
-    let movement: D02Movement | null = null;
-    let effective = `${input.month}-01`;
-    if (startsHere && wage !== null) {
-      movement = 'increase';
-      effective = person.startedOn;
-    } else if (endsHere && wage !== null) {
-      movement = 'decrease';
-      effective = person.endedOn as string;
-    } else if (!startsHere && !endsHere && wage !== null && input.previousLines !== null && (previous === undefined || insuredWage(previous) === null || !sameWages(previous, line))) {
-      movement = 'adjust';
+    const movements: { movement: D02Movement; effective: string; source: DeclarationLine }[] = [];
+    if (startsHere && line && wage !== null) movements.push({ movement: 'increase', effective: person.startedOn, source: line });
+    // The wage a leaver was insured on: this month's, or the previous month's when the last month has no insured pay.
+    if (endsHere) {
+      const source = wage !== null && line ? line : insuredWage(previous) !== null ? previous : undefined;
+      if (source) movements.push({ movement: 'decrease', effective: person.endedOn as string, source });
+    } else if (!startsHere && line && wage !== null && input.previousLines !== null && (previous === undefined || insuredWage(previous) === null || !sameWages(previous, line))) {
+      movements.push({ movement: 'adjust', effective: `${input.month}-01`, source: line });
     }
-    if (movement === null) {
-      skipped += wage === null ? 1 : 0;
+    if (movements.length === 0) {
+      if (wage === null && insuredWage(previous) !== null) suspended += 1;
+      else if (wage === null) skipped += 1;
       continue;
     }
-    rows.push({
-      _order: String(MOVEMENT_ORDER[movement]),
-      _name: person.name,
-      _id: person.employeeId,
-      seq: '',
-      movement: MOVEMENT_LABEL[movement],
-      name: person.name,
-      birthDate: text(person.birthDate),
-      identityNumber: text(person.identityNumber),
-      insuranceNumber: text(person.insuranceNumber),
-      effectiveOn: effective,
-      wageRetirement: fixed(fundWage(line.breakdown, 'retirement_death')),
-      wageSickness: fixed(fundWage(line.breakdown, 'sickness_maternity')),
-      wageAccident: fixed(fundWage(line.breakdown, 'work_accident')),
-      wageHealth: fixed(fundWage(line.breakdown, 'health')),
-      wageUnemployment: fixed(fundWage(line.breakdown, 'unemployment')),
-      note: person.birthDate && person.insuranceNumber ? '' : 'Thiếu ngày sinh hoặc số sổ BHXH: bổ sung trước khi khai',
-    });
+    for (const { movement, effective, source } of movements) {
+      rows.push({
+        _order: String(MOVEMENT_ORDER[movement]),
+        _name: person.name,
+        _id: person.employeeId,
+        seq: '',
+        movement: MOVEMENT_LABEL[movement],
+        name: person.name,
+        birthDate: text(person.birthDate),
+        identityNumber: text(person.identityNumber),
+        insuranceNumber: text(person.insuranceNumber),
+        effectiveOn: effective,
+        wageRetirement: fixed(fundWage(source.breakdown, 'retirement_death')),
+        wageSickness: fixed(fundWage(source.breakdown, 'sickness_maternity')),
+        wageAccident: fixed(fundWage(source.breakdown, 'work_accident')),
+        wageHealth: fixed(fundWage(source.breakdown, 'health')),
+        wageUnemployment: fixed(fundWage(source.breakdown, 'unemployment')),
+        note: person.birthDate && person.insuranceNumber ? '' : 'Thiếu ngày sinh hoặc số sổ BHXH: bổ sung trước khi khai',
+      });
+    }
   }
   rows.sort((a, b) => Number(a._order) - Number(b._order) || byName({ name: a._name, employeeId: a._id }, { name: b._name, employeeId: b._id }));
   const numbered = rows.map(({ _order, _name, _id, ...rest }, index) => ({ ...rest, seq: String(index + 1) }));
@@ -271,6 +288,7 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
   ];
   if (input.previousLines === null) notes.push('Chưa có bảng lương đã duyệt của tháng trước nên không liệt kê được những người đổi mức đóng.');
   if (skipped > 0) notes.push(`${skipped} người không đóng bảo hiểm trong tháng nên không có trong danh sách.`);
+  if (suspended > 0) notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (nghỉ không lương từ 14 ngày): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
   return documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes);
 }
 
@@ -364,6 +382,7 @@ export interface QuarterlyInput {
  */
 export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
   const months = new Set(quarterMonths(input.quarter));
+  assertKnown(input.persons, input.lines.filter((l) => months.has(l.month)));
   const people = new Map(input.persons.map((p) => [p.employeeId, p]));
   const progressive = new Map<string, PersonTotals>();
   const flat = new Map<string, PersonTotals>();
@@ -372,17 +391,16 @@ export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
   const grand = { gross: zero(), exempt: zero(), insurance: zero(), taxable: zero(), pit: zero(), withheldBase: zero() };
   for (const line of input.lines) {
     if (!months.has(line.month)) continue;
-    const person = people.get(line.employeeId);
-    if (!person) throw new Error(`a payroll line names an employee that is not in the list: ${line.employeeId}`);
+    const person = people.get(line.employeeId) as DeclarationPerson;
     headcount.add(line.employeeId);
     grand.gross = grand.gross.plus(line.gross);
     grand.exempt = grand.exempt.plus(exemptOf(line.breakdown));
     grand.insurance = grand.insurance.plus(line.employeeInsurance);
     grand.taxable = grand.taxable.plus(line.taxableIncome);
     grand.pit = grand.pit.plus(line.pit);
-    if (money(line.pit).gt(0)) grand.withheldBase = grand.withheldBase.plus(line.taxableIncome);
+    if (!money(line.pit).isZero()) grand.withheldBase = grand.withheldBase.plus(line.taxableIncome);
     if (line.kind === 'adjustment') adjustmentTax = adjustmentTax.plus(line.pit);
-    const mode = line.breakdown?.tax.mode;
+    const mode = modeOfLine(line, input.lines);
     const target = mode === 'flat' ? flat : mode === 'progressive' ? progressive : null;
     if (target) {
       const t = target.get(line.employeeId) ?? newTotals(person);
@@ -390,7 +408,8 @@ export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
       target.set(line.employeeId, t);
     }
   }
-  const noteOf = (t: PersonTotals): string => (t.person.endedOn && t.months.size > 0 && monthOf(t.person.endedOn) <= [...months].sort().at(-1)! && months.has(monthOf(t.person.endedOn)) ? `Nghỉ việc ngày ${t.person.endedOn}` : t.person.taxCode ? '' : 'Thiếu mã số thuế');
+  const noteOf = (t: PersonTotals): string =>
+    [t.person.endedOn && months.has(monthOf(t.person.endedOn)) ? `Nghỉ việc ngày ${t.person.endedOn}` : '', t.person.taxCode ? '' : 'Thiếu mã số thuế'].filter(Boolean).join('; ');
   const progressiveList = sortTotals([...progressive.values()]);
   const flatList = sortTotals([...flat.values()]);
   const summary: DeclarationSheet = {
@@ -463,11 +482,12 @@ export interface AnnualInput {
 
 /** Why a person is not in the annual schedule, or null when they are: they authorized this year, were paid, were withheld by the monthly brackets, and still worked at year end. */
 export function annualExclusion(person: DeclarationPerson, year: number, lines: readonly DeclarationLine[]): AnnualExclusion | null {
-  const mine = lines.filter((l) => l.employeeId === person.employeeId && l.month.startsWith(`${year}-`));
+  // Only a pay line shows the person was paid: a correction alone (an adjustment line) is not a month of work.
+  const mine = lines.filter((l) => l.employeeId === person.employeeId && l.month.startsWith(`${year}-`) && l.kind === 'pay');
   if (mine.length === 0) return 'not_paid';
   if (!person.finalizationAuthorizedYears.includes(year)) return 'not_authorized';
   if (person.endedOn !== null && person.endedOn < `${year}-12-31`) return 'left_before_year_end';
-  if (mine.some((l) => l.kind === 'pay' && l.breakdown?.tax.mode !== 'progressive')) return 'not_progressive';
+  if (mine.some((l) => modeOfLine(l, lines) !== 'progressive')) return 'not_progressive';
   return null;
 }
 
@@ -478,7 +498,9 @@ export function annualExclusion(person: DeclarationPerson, year: number, lines: 
  */
 export function buildAnnual(input: AnnualInput): DeclarationDocument {
   const prefix = `${input.year}-`;
+  assertKnown(input.persons, input.lines.filter((l) => l.month.startsWith(prefix)));
   const scheduled: PersonTotals[] = [];
+  const payMonths = new Map<string, Set<string>>();
   const excluded: { person: DeclarationPerson; reason: AnnualExclusion }[] = [];
   for (const person of input.persons) {
     const reason = annualExclusion(person, input.year, input.lines);
@@ -489,13 +511,14 @@ export function buildAnnual(input: AnnualInput): DeclarationDocument {
     const t = newTotals(person);
     for (const line of input.lines) if (line.employeeId === person.employeeId && line.month.startsWith(prefix)) add(t, line);
     scheduled.push(t);
+    payMonths.set(person.employeeId, new Set(input.lines.filter((l) => l.employeeId === person.employeeId && l.kind === 'pay' && l.month.startsWith(prefix)).map((l) => l.month)));
   }
   const sorted = sortTotals(scheduled);
   const schedule: DeclarationSheet = {
     name: 'Quyết toán',
     title: `Bảng kê cá nhân ủy quyền quyết toán năm ${input.year}`,
     columns: scheduleColumns.map((c) => (c.key === 'months' ? { ...c, header: 'Số tháng có chi trả' } : c)),
-    rows: sorted.map((t, index) => ({ ...scheduleRow(t, index + 1, t.person.taxCode ? '' : 'Thiếu mã số thuế'), months: String(t.months.size) })),
+    rows: sorted.map((t, index) => ({ ...scheduleRow(t, index + 1, t.person.taxCode ? '' : 'Thiếu mã số thuế'), months: String(payMonths.get(t.person.employeeId)?.size ?? 0) })),
     totals: scheduleTotals(sorted),
   };
   const summary: DeclarationSheet = {
@@ -573,18 +596,29 @@ export function buildCertificates(input: CertificateInput): DeclarationDocument 
       note,
     };
   };
+  const yearLines = input.lines.filter((l) => l.month.startsWith(prefix));
+  assertKnown(input.persons, yearLines);
   for (const person of [...input.persons].sort((a, b) => byName({ name: a.name, employeeId: a.employeeId }, { name: b.name, employeeId: b.employeeId }))) {
-    const mine = input.lines.filter((l) => l.employeeId === person.employeeId && l.month.startsWith(prefix) && money(l.pit).gt(0));
-    if (mine.length === 0) continue;
-    const progressiveLines = mine.filter((l) => l.breakdown?.tax.mode !== 'flat');
-    const flatLines = mine.filter((l) => l.breakdown?.tax.mode === 'flat');
-    if (person.finalizationAuthorizedYears.includes(input.year) && progressiveLines.length > 0) {
+    const mine = yearLines.filter((l) => l.employeeId === person.employeeId);
+    // A certificate is for tax actually withheld in the year, net of corrections: a refunded or never withheld person has nothing to certify.
+    if (mine.length === 0 || mine.reduce((acc, l) => acc.plus(l.pit), zero()).lte(0)) continue;
+    // Whoever the finalization schedule takes (the same rule as the annual document) is not given a certificate.
+    if (annualExclusion(person, input.year, yearLines) === null) {
       authorized.push(person);
-    } else if (progressiveLines.length > 0) {
+      continue;
+    }
+    const progressiveLines = mine.filter((l) => modeOfLine(l, yearLines) !== 'flat');
+    const flatLines = mine.filter((l) => modeOfLine(l, yearLines) === 'flat');
+    if (progressiveLines.length > 0 && progressiveLines.reduce((acc, l) => acc.plus(l.pit), zero()).gt(0)) {
       const months = progressiveLines.map((l) => l.month).sort();
       rows.push(mk(person, `${months[0]} đến ${months.at(-1)}`, progressiveLines, person.taxCode ? '' : 'Thiếu mã số thuế'));
     }
-    for (const line of flatLines.sort((a, b) => a.month.localeCompare(b.month))) rows.push(mk(person, line.month, [line], 'Khấu trừ 10% theo từng lần chi trả'));
+    const byMonth = new Map<string, DeclarationLine[]>();
+    for (const line of flatLines) byMonth.set(line.month, [...(byMonth.get(line.month) ?? []), line]);
+    for (const month of [...byMonth.keys()].sort()) {
+      const group = byMonth.get(month) as DeclarationLine[];
+      if (group.reduce((acc, l) => acc.plus(l.pit), zero()).gt(0)) rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+    }
   }
   rows.forEach((row, index) => {
     row.seq = String(index + 1);
