@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The customer's decision on a sent quote and the deal's sales orders (#2696, ADR-0050, docs/plan/crm-quotes.md step Q4). A person records that the customer agreed
-// (which makes one sales order from the quote as it was sent) or declined; nothing here invoices or moves stock. "Lập hóa đơn" is Kế toán's command, called on a click
+// (which makes one sales order from the quote as it was sent) or declined; nothing here invoices or moves stock. A person marks each goods line of an order delivered (#2697,
+// Q4b); the stock move is Kế toán's own command and is shown as "Chưa ghi kho", off, until it exists. "Lập hóa đơn" is Kế toán's command, called on a click
 // with the order's facts: it is shown disabled with a note until that command exists, and the screen never writes a finance table. The core works with AI off; the sales
 // coworker may suggest moving the deal, but never records a decision.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrderSummary } from '@crove/kernel-contract';
+import { QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrder, type SalesOrderSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -159,10 +160,85 @@ function CancelPanel({ order, onDone }: { order: SalesOrderSummary; onDone: () =
   );
 }
 
+// The goods lines of one order and whether each was delivered (Q4b, #2697). "Đã giao" records the delivery of a whole line (today, or the day the goods left), "Hoàn giao"
+// takes it back; a service line has none. Stock moves only through Kế toán's own command, which does not exist yet: the line says so and the screen never pretends it did.
+function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesOrder['lines'][number]; canEdit: boolean }) {
+  const t = useTranslations('quotes.orders.delivery');
+  const { locale } = useLocaleSetting();
+  const delivery = order.deliveries.find((d) => d.lineNo === line.lineNo);
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: orpc.crm.salesOrders.key() });
+  };
+  const deliver = useMutation(orpc.crm.salesOrders.deliver.mutationOptions({ onSuccess: refresh, onError: refresh }));
+  const undeliver = useMutation(orpc.crm.salesOrders.undeliver.mutationOptions({ onSuccess: refresh, onError: refresh }));
+  const error = deliver.error ?? undeliver.error;
+  const live = delivery !== undefined && !delivery.reversed;
+  return (
+    <li className="space-y-1 rounded-md border border-border px-3 py-2 text-sm" data-testid="order-delivery-line">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">{t('line', { no: String(line.lineNo), description: line.description })}</p>
+          <p className="text-xs text-muted-foreground">{t('quantity', { quantity: line.quantity ?? '', unit: line.unit ?? '' }).trim()}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {delivery === undefined ? (
+            <Badge variant="outline">{t('notDelivered')}</Badge>
+          ) : delivery.reversed ? (
+            <Badge variant="outline">{t('reversed', { date: formatDate(delivery.deliveredOn, locale) })}</Badge>
+          ) : (
+            <Badge variant="success">{t('delivered', { date: formatDate(delivery.deliveredOn, locale) })}</Badge>
+          )}
+          {canEdit && delivery === undefined && (
+            <Button size="sm" variant="outline" loading={deliver.isPending} onClick={() => deliver.mutate({ orderId: order.id, lineNo: line.lineNo })} data-testid="order-delivery-mark">
+              {t('mark')}
+            </Button>
+          )}
+          {canEdit && live && (
+            <Button size="sm" variant="ghost" loading={undeliver.isPending} onClick={() => undeliver.mutate({ orderId: order.id, lineNo: line.lineNo })} data-testid="order-delivery-undo">
+              {t('takeBack')}
+            </Button>
+          )}
+        </div>
+      </div>
+      {live && (
+        <p className="text-xs text-muted-foreground" data-testid="order-delivery-stock">
+          {t('stockPending')}: {t('stockSoon')}
+        </p>
+      )}
+      {error && <ErrorText>{errorMessage(error)}</ErrorText>}
+    </li>
+  );
+}
+
+export function DeliveryPanel({ orderId, canEdit }: { orderId: string; canEdit: boolean }) {
+  const t = useTranslations('quotes.orders.delivery');
+  const order = useQuery(orpc.crm.salesOrders.get.queryOptions({ input: { orderId } }));
+  const goods = order.data?.lines.filter((l) => l.kind === 'item') ?? [];
+  return (
+    <section className="w-full space-y-2 rounded-md border border-border p-3" aria-label={t('title')} data-testid="order-delivery">
+      <h4 className="text-sm font-medium text-foreground">{t('title')}</h4>
+      <p className="text-xs text-muted-foreground">{t('hint')}</p>
+      {order.error ? (
+        <ErrorText>{errorMessage(order.error)}</ErrorText>
+      ) : order.data && goods.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t('noGoods')}</p>
+      ) : (
+        <ul className="space-y-2">
+          {order.data &&
+            goods.map((l) => (
+              <DeliveryRow key={l.lineNo} order={order.data} line={l} canEdit={canEdit} />
+            ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boolean }) {
   const t = useTranslations('quotes.orders');
   const { locale } = useLocaleSetting();
   const [cancelling, setCancelling] = useState(false);
+  const [delivering, setDelivering] = useState(false);
   const confirmed = order.status === 'confirmed';
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" data-testid="order-row">
@@ -181,6 +257,11 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
             {t('invoice')}
           </Button>
         )}
+        {confirmed && (
+          <Button size="sm" variant="outline" onClick={() => setDelivering((v) => !v)} aria-expanded={delivering} data-testid="order-delivery-open">
+            {t('delivery.open')}
+          </Button>
+        )}
         {confirmed && canEdit && (
           <Button size="sm" variant="ghost" onClick={() => setCancelling((v) => !v)} aria-expanded={cancelling} data-testid="order-cancel-open">
             {t('cancelOrder')}
@@ -192,6 +273,7 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
           {t('invoiceSoon')}
         </p>
       )}
+      {delivering && confirmed && <DeliveryPanel orderId={order.id} canEdit={canEdit} />}
       {cancelling && confirmed && canEdit && <CancelPanel order={order} onDone={() => setCancelling(false)} />}
     </li>
   );

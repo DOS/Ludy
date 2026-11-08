@@ -36,7 +36,7 @@ export { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, renderQuoteMail, zQuoteMail } f
 export { quoteSuggestSource, type QuoteSuggestSource } from './quote-suggest.ts';
 export { quoteReport } from './quote-report.ts';
 
-export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrderCommands, salesOrderGet, salesOrderHandoff, salesOrderList, salesOrderQueries } from './sales-orders.ts';
+export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrderCommands, salesOrderDeliver, salesOrderGet, salesOrderHandoff, salesOrderList, salesOrderQueries, salesOrderUndeliver } from './sales-orders.ts';
 
 export { crmToday } from './today.ts';
 
