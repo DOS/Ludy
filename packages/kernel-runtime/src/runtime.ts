@@ -76,6 +76,10 @@ export interface AgentActor {
   type: 'agent';
   agentId: string;
   runId: string;
+  // Set for the Vy of one member working in the background (ADR-0049): the run enters through
+  // crove_kernel.enter_member_vy_context, whose seal carries the member's rights and no position. The database refuses an
+  // org-chart agent here and a member's Vy in the org-chart entry, so a wrong flag opens nothing.
+  memberVy?: true;
 }
 
 export type SystemActor = { type: 'system'; component: string };
@@ -85,6 +89,26 @@ export type Actor = UserActor | AgentActor | SystemActor;
 // What enter_agent_context derived for this transaction: the agent's position, its role key (permissions come from
 // it, never from tenant_member), the effective max_risk (the lower of the agent's and its template's) and whether
 // the run is tainted. Never taken from the caller.
+// What enter_member_vy_context derived for a member-scoped run: the member the run acts for, their base role (as
+// enter_user_context seals it), the effective max_risk (R1 at most) and whether the run is tainted. Never taken from the caller.
+export interface MemberVyGrant {
+  agentId: string;
+  runId: string;
+  memberUserId: string;
+  role: MemberRole;
+  module: string;
+  maxRisk: 'R0' | 'R1';
+  tainted: boolean;
+}
+
+// Which commands and queries Vy in member mode may run (ADR-0049 decision 2): declared in addition to `access`, which must admit the
+// member's base role as well. The command is R0 or R1 and, for a tainted run (every member-mode run is), only propagates the taint.
+// `reads` names the queries it may read through ctx.query, for the review of the feature (the database holds the ceiling).
+export interface MemberVyAccess {
+  taint: 'propagate';
+  reads?: readonly string[];
+}
+
 export interface AgentGrant {
   agentId: string;
   runId: string;
@@ -130,6 +154,32 @@ export function agentRuntime(runtime: Runtime, orgId: string, actor: AgentActor)
     runId: bound.runId,
     execute: <O = unknown>(name: string, input: unknown, options?: { idempotencyKey?: string }) =>
       runtime.execute<O>(name, input, { actor: bound, orgId, ...(options?.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}) }),
+    query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
+  });
+}
+
+// What the background run of one member's Vy gets (ADR-0049): commands and queries bound to its member-scoped agent actor, org and run, as
+// AgentRuntime is for an org-chart agent. It holds no Runtime, so the run cannot act as another actor, in another org or as another run.
+// The facade of a member's background run: AgentRuntime without an idempotency key (the stored response of a command is a value object, which the
+// audit and key rows of member mode never hold; ADR-0049 decision 4).
+export interface MemberVyRuntime {
+  readonly orgId: string;
+  readonly agentId: string;
+  readonly runId: string;
+  execute<O = unknown>(name: string, input: unknown): Promise<O>;
+  query<O = unknown>(name: string, input: unknown): Promise<O>;
+}
+
+// The MemberVyRuntime of one run: a frozen object whose methods close over the runtime and a copy of the actor, always flagged memberVy.
+export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<AgentActor, 'agentId' | 'runId'>): MemberVyRuntime {
+  const bound: AgentActor = Object.freeze({ type: 'agent', agentId: actor.agentId, runId: actor.runId, memberVy: true as const });
+  return Object.freeze({
+    orgId,
+    agentId: bound.agentId,
+    runId: bound.runId,
+    // No idempotency key: the stored response of a command is a value object, which the audit and key rows of member mode never hold (ADR-0049
+    // decision 4). A retried store is refused (VY_RUN_NOT_LIVE once the worker has closed the run), so a retry never writes a second result.
+    execute: <O = unknown>(name: string, input: unknown) => runtime.execute<O>(name, input, { actor: bound, orgId }),
     query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
   });
 }
@@ -193,6 +243,8 @@ export interface CommandDef<I = unknown, O = unknown> {
   // that declares writes of a `contact` or `payment` column never declares it (P04: an agent's change of a contact
   // point, payee or bank account is reviewed, so it asks for a proposal instead); register() refuses both.
   agent?: AgentAccess;
+  // Opens the command to Vy in member mode (absent: it never runs for it). The `access` roles must also admit the member's base role.
+  memberVy?: MemberVyAccess;
   // What it writes (plan §4.7 "Derived risk", #1697): one entry per table its statements write, directly, through a
   // definer it calls or a trigger they fire, with the columns they set (database defaults and the columns triggers
   // derive aside). The rows the runtime writes for it (ctx.emit, ctx.activity, ctx.audit, ctx.numbering, its audit row)
@@ -293,6 +345,8 @@ export interface QueryDef<I = unknown, O = unknown> {
   access: readonly MemberRole[] | 'system';
   // Agents that may read it (absent: none).
   agent?: Pick<AgentAccess, 'roles'>;
+  // Opens the query to Vy in member mode (absent: never). The `access` roles must also admit the member's base role.
+  memberVy?: Pick<MemberVyAccess, 'reads'>;
   // Opens the query to a Ludy extension token that holds this scope (absent: an extension token never reads it).
   // Only a query with a role list.
   extension?: ExtensionAccess;
@@ -336,8 +390,10 @@ export interface QueryContext {
   // The registered reviser of a proposal command (the one command whose `revises` names it), or null when there is
   // none or more than one (Runtime.validate() refuses the latter at startup).
   reviserOf(command: string): string | null;
-  // Set exactly when the actor is an agent.
+  // Set exactly when the actor is an org-chart agent.
   agent: AgentGrant | null;
+  // Set exactly when the actor is the Vy of one member in the background.
+  memberVy: MemberVyGrant | null;
   // Whether this runtime registered the module (CROVE_MODULES, ADR-0031), as Runtime.installed().
   installed(module: string): boolean;
   // A registered command's risk, access and agent approvers, or null when none is registered under that name.
@@ -727,6 +783,7 @@ export function defineQuery<I, O>(def: QueryDef<I, O>): QueryDef<I, O> {
 interface Entered {
   role: MemberRole | null;
   agent: AgentGrant | null;
+  memberVy: MemberVyGrant | null;
 }
 
 // The detail an audit row of this actor carries when the command adds none: the system component, or the agent's
@@ -1133,6 +1190,14 @@ function snapshotAgent(value: unknown, what: string): unknown {
   return Object.freeze(copy);
 }
 
+// What register() keeps of a member-Vy access declaration: a frozen copy, its reads list copied too.
+function snapshotMemberVy(value: unknown, what: string): unknown {
+  if (value === undefined) return undefined;
+  const copy = plainCopy(value, what);
+  if (Object.hasOwn(copy, 'reads')) copy.reads = frozenList(copy.reads);
+  return Object.freeze(copy);
+}
+
 // What register() keeps of an extension access declaration: a frozen copy, its scope checked to be a known one.
 function snapshotExtension(value: unknown, what: string): unknown {
   if (value === undefined) return undefined;
@@ -1153,6 +1218,7 @@ function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown
   if (Array.isArray(copy.sealedInput)) copy.sealedInput = frozenList(copy.sealedInput);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
   if (Object.hasOwn(copy, 'agentApprovers')) copy.agentApprovers = snapshotAgent(copy.agentApprovers, `${label}: agentApprovers`);
+  if (Object.hasOwn(copy, 'memberVy')) copy.memberVy = snapshotMemberVy(copy.memberVy, `${label}: memberVy`);
   if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   if (Array.isArray(copy.writes)) {
     copy.writes = Object.freeze(
@@ -1177,6 +1243,7 @@ function snapshotQuery(def: QueryDef<any, any>): QueryDef<unknown, unknown> {
   const copy = plainCopy(def, `${label}: the definition`);
   if (Object.hasOwn(copy, 'access')) copy.access = frozenList(copy.access);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
+  if (Object.hasOwn(copy, 'memberVy')) copy.memberVy = snapshotMemberVy(copy.memberVy, `${label}: memberVy`);
   if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   return Object.freeze(copy) as unknown as QueryDef<unknown, unknown>;
 }
@@ -1545,6 +1612,27 @@ export class Runtime {
           throw new Error(`command ${c.name}: declares no contact or payment write (P04), so it may not declare ${jobs.join(', ')}: the job it starts runs later under its own declaration (#2107)`);
         }
       }
+      // Vy in member mode runs it without review, in the member's name: a role list as access (the member's role must be in it), R0 or R1, the
+      // taint propagated, its writes declared and free of contact and payment columns (P04), and neither an extension command nor an org-less one.
+      if (c.memberVy !== undefined) {
+        const mvJobs = jobTablesOf(c.writes);
+        if (mvJobs.length > 0) {
+          throw new Error(`command ${c.name}: Vy in member mode starts no job (${mvJobs.join(', ')} is not guarded by the member-mode write guard)`);
+        }
+        const mv = c.memberVy as { taint?: unknown };
+        // Only the kernel's own member_vy commands: the write guard lets a member-mode audit row name no other command (ADR-0049 decision 2: no
+        // task, approval or other module's command declares it).
+        if (!c.name.startsWith('kernel.member_vy.')) {
+          throw new Error(`command ${c.name}: only a kernel.member_vy.* command declares memberVy (ADR-0049 decision 2)`);
+        }
+        if (!Array.isArray(c.access) || (c.risk !== 'R0' && c.risk !== 'R1') || mv.taint !== 'propagate' || c.extension !== undefined || c.bootstrap !== undefined) {
+          throw new Error(`command ${c.name}: Vy in member mode runs only a command with a role list as access, at R0 or R1, that propagates the taint (memberVy.taint 'propagate'), is no extension command and creates no org (ADR-0049 decision 2)`);
+        }
+        if (contactOrPayment === null) throw new Error(`command ${c.name}: Vy in member mode may run it, so it declares its writes (P04)`);
+        if (contactOrPayment.length > 0) {
+          throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so Vy in member mode may not run it (P04: it asks for a proposal instead)`);
+        }
+      }
       if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
         throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
       }
@@ -1587,6 +1675,12 @@ export class Runtime {
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
+      if (q.memberVy !== undefined && q.stream === true) {
+        throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
+      }
+      if (q.memberVy !== undefined && (!Array.isArray(q.access) || !q.name.startsWith('kernel.member_vy.'))) {
+        throw new Error(`query ${q.name}: Vy in member mode reads only a kernel.member_vy.* query with a role list as access (the member's role must be in it)`);
+      }
       if (q.extension !== undefined && (!Array.isArray(q.access) || q.stream === true)) {
         throw new Error(`query ${q.name}: an extension token reaches only a query with a role list as access, and no streamed one (ADR-0047 point 10)`);
       }
@@ -1632,6 +1726,7 @@ export class Runtime {
       actor,
       role: entered.role,
       agent: entered.agent,
+      memberVy: entered.memberVy,
       query: (name, input) => this.lookup(trx, orgId, actor, entered, name, input),
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
@@ -1667,7 +1762,14 @@ export class Runtime {
 
   private authorizeQuery(def: QueryDef<unknown, unknown>, actor: Actor, entered: Entered): void {
     authorizeExtension(def.extension, actor);
-    const { role, agent } = entered;
+    const { role, agent, memberVy } = entered;
+    if (actor.type === 'agent' && actor.memberVy === true) {
+      // Vy in member mode reads only what a query declares for it, and only what the member's own base role may read (ADR-0049 decision 1).
+      if (!memberVy || def.access === 'system' || !def.memberVy || !def.access.includes(memberVy.role)) {
+        throw new DomainError('FORBIDDEN', 403, 'Vy không được xem nội dung này', { rule: 'member_vy_access' });
+      }
+      return;
+    }
     if (actor.type === 'agent') {
       // Agents read only what a query declares for their role key (ADR-0029); never a system query.
       const roles = def.agent?.roles;
@@ -1749,7 +1851,20 @@ export class Runtime {
   private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string): Promise<Entered> {
     if (actor.type === 'system') {
       await sql`SELECT crove_kernel.enter_system_context(${orgId}::uuid)`.execute(trx);
-      return { role: null, agent: null };
+      return { role: null, agent: null, memberVy: null };
+    }
+    if (actor.type === 'agent' && actor.memberVy === true) {
+      // Worker only. The database checks the run is live, the member is active now, no kill switch or spent budget covers it, and derives the
+      // member's rights; the answer carries them (ADR-0049 decision 1).
+      const { rows } = await sql<{ entered: { role: string; member: string; module: string; maxRisk: string; tainted: boolean } }>`
+        SELECT crove_kernel.enter_member_vy_context(${orgId}::uuid, ${actor.agentId}::uuid, ${actor.runId}::uuid) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const risk = got?.maxRisk;
+      const role = got?.role;
+      if (!got || (risk !== 'R0' && risk !== 'R1') || (role !== 'owner' && role !== 'admin' && role !== 'member' && role !== 'viewer')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role: null, agent: null, memberVy: { agentId: actor.agentId, runId: actor.runId, memberUserId: got.member, role, module: got.module, maxRisk: risk, tainted: got.tainted !== false } };
     }
     if (actor.type === 'agent') {
       // Worker only; the database checks the run is live and derives the rest (ADR-0029 section 2).
@@ -1769,16 +1884,17 @@ export class Runtime {
           maxRisk,
           tainted: entered.tainted !== false,
         },
+        memberVy: null,
       };
     }
     if (this.#contextTokenKey !== null) {
       // Signed right before it is used, as a bind parameter (never in a statement's text).
       const token = mintContextToken(this.#contextTokenKey, { userId: actor.userId, sessionId: actor.sessionId ?? null, orgId, aal: actor.aal, mfaAt: actor.mfaAt ?? null });
       const { rows } = await sql<{ role: MemberRole }>`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${token}::text) AS role`.execute(trx);
-      return { role: rows[0]?.role ?? null, agent: null };
+      return { role: rows[0]?.role ?? null, agent: null, memberVy: null };
     }
     const { rows } = await sql<{ role: MemberRole }>`SELECT crove_kernel.enter_context(${actor.userId}::uuid, ${orgId}::uuid) AS role`.execute(trx);
-    return { role: rows[0]?.role ?? null, agent: null };
+    return { role: rows[0]?.role ?? null, agent: null, memberVy: null };
   }
 
   // An agent runs a command only when the command declares agent access for its position's role key, the command is
@@ -1832,7 +1948,28 @@ export class Runtime {
     return rows[0]?.held === true ? null : false;
   }
 
+  // Vy in member mode runs a command only when the command declares memberVy, its `access` roles also admit the member's base role (a
+  // viewer who was given vy.use runs no command a viewer cannot run), it is below R2 and within the run's max_risk, and a tainted run
+  // (every member-mode run is) only runs a command that propagates the taint (P03). Never a system or proposal-only command.
+  private authorizeMemberVy(def: { access: Access; risk: Risk; memberVy?: MemberVyAccess | undefined }, grant: MemberVyGrant | null): void {
+    const refuse = (rule: string) => {
+      throw new DomainError('FORBIDDEN', 403, 'Vy không được thực hiện việc này', { rule });
+    };
+    if (!grant) refuse('member_vy_context');
+    const g = grant as MemberVyGrant;
+    if (typeof def.access === 'string' || !def.memberVy) refuse('member_vy_access');
+    if (!(def.access as readonly MemberRole[]).includes(g.role)) refuse('member_vy_role');
+    if (def.risk === 'R3') refuse('P05');
+    if (def.risk === 'R2') refuse('P06');
+    if (RISK_RANK[def.risk] > RISK_RANK[g.maxRisk]) refuse('P02');
+    if (g.tainted && RISK_RANK[def.risk] >= 1 && def.memberVy?.taint !== 'propagate') refuse('P03');
+  }
+
   private authorizeRole(def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): void {
+    if (actor.type === 'agent' && actor.memberVy === true) {
+      this.authorizeMemberVy(def, entered.memberVy);
+      return;
+    }
     if (actor.type === 'agent') {
       this.authorizeAgent(def, entered.agent);
       return;
@@ -2518,7 +2655,7 @@ export class Runtime {
   ): Promise<O> {
     const canonical = stableStringify(maskSealed(input, def.sealedInput));
     let orgId = '';
-    let context: Entered = { role: null, agent: null };
+    let context: Entered = { role: null, agent: null, memberVy: null };
     let entered = false;
     // An org-less command's org was created by this transaction (not a replay into an org that already existed):
     // the tenant row's xmin is this transaction's id (the definer inserts it outside any subtransaction).
@@ -2708,6 +2845,8 @@ export class Runtime {
   ): Promise<boolean> {
     const limits = this.refusalAudit;
     if (limits === 'unbounded') return true;
+    // The tally is a table member mode never writes (a00_member_vy_forbid): its refusals are not counted, and the audit row is written as without a bound.
+    if (actor.type === 'agent' && actor.memberVy === true) return true;
     const code = refusal.code;
     await sql`SAVEPOINT refusal_tally`.execute(trx);
     try {
@@ -2866,7 +3005,11 @@ export class Runtime {
         audited = true;
         reached = false;
       }
-      return await db.transaction().execute(async (trx) => {
+      // A query of Vy in member mode reads one snapshot (REPEATABLE READ, as a streamed query does), so the member's rights it entered with
+      // and the rows it reads belong to the same instant: a result or a note changed between two reads of one query is never half seen.
+      const memberMode = options.actor.type === 'agent' && options.actor.memberVy === true;
+      const tx = memberMode ? db.transaction().setIsolationLevel('repeatable read') : db.transaction();
+      return await tx.execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
         await this.checkSession(trx, options.actor, options.orgId);
         await sql`SET TRANSACTION READ ONLY`.execute(trx);
