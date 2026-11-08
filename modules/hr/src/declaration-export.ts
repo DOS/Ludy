@@ -65,12 +65,19 @@ export const declarationGet = defineQuery({
       ? []
       : await ctx.trx
           .selectFrom('crove_hr.payroll_line')
-          .select(['run_id', 'employee_id', 'kind', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'breakdown'])
+          .select(['run_id', 'employee_id', 'kind', 'adjusts_run_id', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'breakdown'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', entity.id)
           .where('run_id', 'in', [...monthOfRun.keys()])
           .where('status', '=', 'calculated')
           .execute();
+    // The pay month an adjustment line corrects (its run may lie outside the period read), so a correction is grouped by that month's withholding mode.
+    const adjustedIds = [...new Set(rows.flatMap((r) => (r.adjusts_run_id ? [r.adjusts_run_id] : [])))];
+    const adjustedMonths = new Map<string, string>();
+    if (adjustedIds.length > 0) {
+      const adjusted = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjustedIds).execute();
+      for (const r of adjusted) adjustedMonths.set(r.id, r.month);
+    }
     const lines: DeclarationLine[] = rows.map((r) => ({
       month: monthOfRun.get(r.run_id) as string,
       employeeId: r.employee_id,
@@ -82,6 +89,7 @@ export const declarationGet = defineQuery({
       taxableIncome: r.taxable_income as string,
       pit: r.pit as string,
       breakdown: breakdownOf(r.breakdown),
+      adjustsMonth: r.adjusts_run_id ? (adjustedMonths.get(r.adjusts_run_id) ?? null) : null,
     }));
     const ids = [...new Set(lines.map((l) => l.employeeId))];
     if (ids.length > HR_DECLARATION_MAX_PEOPLE) {
