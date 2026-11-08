@@ -75,6 +75,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     kind: false,
     permission: false,
     memberEntry: false,
+    resultBind: false,
+    catalog: false,
   };
   const asUser = (userId: string) => ({
     type: "user" as const,
@@ -166,10 +168,11 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
   const outcome = <T>(p: Promise<T>) =>
     p.then(
       (value) => ({ ok: true as const, value }),
-      (error: { code?: string; message: string }) => ({
+      (error: { code?: string; message: string; hint?: string }) => ({
         ok: false as const,
         code: error.code ?? "",
         message: error.message,
+        hint: error.hint ?? "",
       }),
     );
   const permitted = async (user: string, permission: string) =>
@@ -260,7 +263,9 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         UNION ALL SELECT 'override', to_regclass('crove_kernel.member_permission_override') IS NOT NULL
         UNION ALL SELECT 'kind', EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'crove_kernel.agent'::regclass AND attname = 'kind' AND NOT attisdropped)
         UNION ALL SELECT 'permission', to_regprocedure('crove_kernel.member_has_permission(uuid,uuid,text)') IS NOT NULL
-        UNION ALL SELECT 'memberEntry', to_regprocedure('crove_kernel.enter_member_vy_context(uuid,uuid,uuid)') IS NOT NULL`);
+        UNION ALL SELECT 'memberEntry', to_regprocedure('crove_kernel.enter_member_vy_context(uuid,uuid,uuid)') IS NOT NULL
+        UNION ALL SELECT 'resultBind', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = to_regclass('crove_kernel.member_vy_result') AND tgname = 'member_vy_result_bind' AND NOT tgisinternal)
+        UNION ALL SELECT 'catalog', to_regclass('crove_kernel.permission_catalog') IS NOT NULL AND to_regclass('crove_kernel.permission_default') IS NOT NULL`);
       for (const row of found.rows) has[row.r as keyof typeof has] = row.w;
     });
     const installed = await api.runtime.execute<{
@@ -1241,6 +1246,220 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
             ).rows[0]?.ok,
         );
         expect(held === true, `${actor.name} holding vy.use`).toBe(false);
+      }
+    });
+  });
+
+  // A result belongs to its member's own run and lives at most 31 days (ADR-0049 decisions 3 and 4). The cases run once the
+  // BEFORE INSERT trigger member_vy_result_bind exists; they insert as the admin login so the trigger, not the policy, is what refuses.
+  describe("a result is bound to its member's own run", () => {
+    const DAY = 24 * 60 * 60;
+    // Seeds an agent and a run with the binding triggers set aside, then inserts a result with the triggers on.
+    async function insertResult(opts: {
+      agentKind: "member_vy" | "org_chart";
+      agentMember?: string;
+      resultMember: string;
+      expiresInSeconds: number;
+      // Seconds from now for the written created_at (default 0): the writer sets it, so the cap must not trust it.
+      createdOffsetSeconds?: number;
+    }) {
+      return admin(async (c) => {
+        const runId = randomUUID();
+        let agentId = agent.agentId;
+        await c.query("SET session_replication_role = replica");
+        try {
+          if (opts.agentKind === "member_vy") {
+            agentId = randomUUID();
+            await c.query(
+              `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+              [orgId, agentId, opts.agentMember as string],
+            );
+          }
+          await c.query(
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
+             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+            [orgId, runId, agentId],
+          );
+        } finally {
+          await c.query("SET session_replication_role = DEFAULT");
+        }
+        const resultId = randomUUID();
+        const inserted = await outcome(
+          c.query(
+            `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'x', true, true, now() + make_interval(secs => $7), now() + make_interval(secs => $6))`,
+            [
+              orgId,
+              resultId,
+              opts.resultMember,
+              runId,
+              randomUUID(),
+              opts.expiresInSeconds,
+              opts.createdOffsetSeconds ?? 0,
+            ],
+          ),
+        );
+        await c.query("SET session_replication_role = replica");
+        try {
+          await c.query(
+            "DELETE FROM crove_kernel.member_vy_result WHERE org_id = $1 AND id = $2",
+            [orgId, resultId],
+          );
+          await c.query(
+            "DELETE FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2",
+            [orgId, runId],
+          );
+          if (opts.agentKind === "member_vy")
+            await c.query(
+              "DELETE FROM crove_kernel.agent WHERE org_id = $1 AND id = $2",
+              [orgId, agentId],
+            );
+        } finally {
+          await c.query("SET session_replication_role = DEFAULT");
+        }
+        return inserted;
+      });
+    }
+
+    it("takes a result only for the member whose own Vy made the run", async () => {
+      if (!has.resultBind || !has.kind) return;
+      // Positive control: the same shape for the run's own member is accepted, so the refusals below are about the binding.
+      expect(
+        (
+          await insertResult({
+            agentKind: "member_vy",
+            agentMember: users.vyUser,
+            resultMember: users.vyUser,
+            expiresInSeconds: 30 * DAY,
+          })
+        ).ok,
+        "the run's own member",
+      ).toBe(true);
+      const refusedMismatch = {
+        ok: false,
+        code: "42501",
+        hint: "MEMBER_VY_RESULT_RUN_MISMATCH",
+      };
+      expect(
+        await insertResult({
+          agentKind: "member_vy",
+          agentMember: users.vyUser,
+          resultMember: users.member,
+          expiresInSeconds: 30 * DAY,
+        }),
+        "another member named on the result",
+      ).toMatchObject(refusedMismatch);
+      expect(
+        await insertResult({
+          agentKind: "org_chart",
+          resultMember: users.vyUser,
+          expiresInSeconds: 30 * DAY,
+        }),
+        "a run of an org-chart agent",
+      ).toMatchObject(refusedMismatch);
+    });
+
+    it("caps a result at 31 days from the earlier of its written creation and now", async () => {
+      if (!has.resultBind || !has.kind) return;
+      const base = {
+        agentKind: "member_vy" as const,
+        agentMember: users.vyUser,
+        resultMember: users.vyUser,
+      };
+      const tooLong = { ok: false, code: "23514" };
+      expect(
+        (await insertResult({ ...base, expiresInSeconds: 31 * DAY })).ok,
+        "exactly 31 days",
+      ).toBe(true);
+      expect(
+        await insertResult({ ...base, expiresInSeconds: 31 * DAY + 60 }),
+        "a minute past 31 days",
+      ).toMatchObject(tooLong);
+      expect(
+        await insertResult({ ...base, expiresInSeconds: 3650 * DAY }),
+        "ten years",
+      ).toMatchObject(tooLong);
+      // A writer-set created_at in the future buys no extra time.
+      expect(
+        await insertResult({
+          ...base,
+          createdOffsetSeconds: 100 * 365 * DAY,
+          expiresInSeconds: 100 * 365 * DAY + DAY,
+        }),
+        "a created_at a century ahead",
+      ).toMatchObject(tooLong);
+      expect(
+        await insertResult({
+          ...base,
+          createdOffsetSeconds: 60,
+          expiresInSeconds: 31 * DAY + 30,
+        }),
+        "a created_at a minute ahead, expiring past 31 days from now",
+      ).toMatchObject(tooLong);
+      // A created_at in the past counts from itself: ten days back allows 21 more, not 31.
+      expect(
+        (
+          await insertResult({
+            ...base,
+            createdOffsetSeconds: -10 * DAY,
+            expiresInSeconds: 21 * DAY - 60,
+          })
+        ).ok,
+        "ten days back, expiring inside its 31 days",
+      ).toBe(true);
+      expect(
+        await insertResult({
+          ...base,
+          createdOffsetSeconds: -10 * DAY,
+          expiresInSeconds: 25 * DAY,
+        }),
+        "ten days back, expiring after its 31 days",
+      ).toMatchObject(tooLong);
+    });
+  });
+
+  // The two tables that say who may hold vy.use hold exactly the rows of ADR-0049 decision 10 (absent before slice 2).
+  describe("the permission catalog and its defaults", () => {
+    it("hold exactly vy.use and its three base-role defaults, and no tenant login may write them", async () => {
+      if (!has.catalog) return;
+      const rows = await admin(async (c) => ({
+        catalog: (
+          await c.query<{
+            permission: string;
+            grantable_to_viewer: boolean;
+            entity_roles_count: boolean;
+          }>(
+            "SELECT permission, grantable_to_viewer, entity_roles_count FROM crove_kernel.permission_catalog ORDER BY 1",
+          )
+        ).rows,
+        defaults: (
+          await c.query<{ base_role: string; permission: string }>(
+            "SELECT base_role, permission FROM crove_kernel.permission_default ORDER BY 1, 2",
+          )
+        ).rows,
+      }));
+      expect(rows.catalog, "the catalog").toEqual([
+        {
+          permission: "vy.use",
+          grantable_to_viewer: true,
+          entity_roles_count: true,
+        },
+      ]);
+      expect(rows.defaults, "the defaults").toEqual([
+        { base_role: "admin", permission: "vy.use" },
+        { base_role: "member", permission: "vy.use" },
+        { base_role: "owner", permission: "vy.use" },
+      ]);
+      for (const actor of [author, ...others]) {
+        for (const sql of [
+          `INSERT INTO crove_kernel.permission_catalog (permission, grantable_to_viewer, entity_roles_count) VALUES ('x.y', true, true)`,
+          `UPDATE crove_kernel.permission_catalog SET grantable_to_viewer = false`,
+          `INSERT INTO crove_kernel.permission_default (base_role, permission) VALUES ('viewer', 'vy.use')`,
+          `DELETE FROM crove_kernel.permission_default`,
+        ]) {
+          const r = await outcome(run(actor, (c) => c.query(sql)));
+          expect(r.ok, `${actor.name}: ${sql}`).toBe(false);
+        }
       }
     });
   });
