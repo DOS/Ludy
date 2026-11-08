@@ -52,6 +52,10 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   let orgId = '';
   let meetingId = '';
   let segmentId = '';
+  let resultId = '';
+  let itemId = '';
+  let sharedMeetingId = '';
+  let sharedSegmentId = '';
   const users = { owner: '', admin: '', recorder: '', member: '', viewer: '' };
   let agent = { agentId: '', runId: '' };
   let api: Runtime;
@@ -142,6 +146,10 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
     orgId = (await createOrg(api, asUser(users.owner), 'Họp có dữ liệu cá nhân')).orgId;
     meetingId = randomUUID();
     segmentId = randomUUID();
+    resultId = randomUUID();
+    itemId = randomUUID();
+    sharedMeetingId = randomUUID();
+    sharedSegmentId = randomUUID();
     await admin(async (c) => {
       await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [
         orgId,
@@ -154,21 +162,26 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
       await c.query(
         `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, $3, 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $4, 'attendees', 'ready', 'told_at_start', $4, now(), '1.0', current_date + 30, current_date + 365)`,
-        [orgId, meetingId, TITLE, users.recorder],
+        [orgId, meetingId, `${TITLE} ${EMAIL}`, users.recorder],
       );
       await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Tuấn', $4, 'published')`, [orgId, segmentId, meetingId, LINE]);
-      await c.query(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, $3, $4::jsonb, 'manual', 'draft')`, [orgId, meetingId, SUMMARY, JSON.stringify([`Gửi ${EMAIL}`])]);
-      await c.query(`INSERT INTO crove_meetings.action_item (org_id, meeting_id, title, who_drafted, when_drafted, stage) VALUES ($1, $2, $3, 'Tuấn', 'thứ sáu', 'draft')`, [orgId, meetingId, `Gửi báo giá tới ${EMAIL}`]);
+      await c.query(`INSERT INTO crove_meetings.meeting_result (org_id, id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, $3, $4, $5::jsonb, 'manual', 'draft')`, [orgId, resultId, meetingId, SUMMARY, JSON.stringify([`Gửi ${EMAIL}`])]);
+      await c.query(`INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, when_drafted, stage) VALUES ($1, $2, $3, $4, 'Tuấn', 'thứ sáu', 'draft')`, [orgId, itemId, meetingId, `Gửi báo giá tới ${EMAIL}`]);
+    });
+    // The admin is no reader of the hidden meeting, and not its recorder: row security gives them none of it.
+    await admin(async (c) => {
+      expect((await c.query('SELECT 1 FROM crove_meetings.meeting_reader WHERE org_id = $1 AND meeting_id = $2 AND user_id = $3', [orgId, meetingId, users.admin])).rowCount).toBe(0);
+      expect((await c.query('SELECT 1 FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2 AND recorder_user_id = $3', [orgId, meetingId, users.admin])).rowCount).toBe(0);
     });
     // A meeting shared with the whole org, which an owner and an admin read: its line is what the row ids may name.
     await admin(async (c) => {
-      const shared = randomUUID();
+      const shared = sharedMeetingId;
       await c.query(
         `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, 'Họp chung', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'org', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
         [orgId, shared, users.recorder],
       );
-      await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, 'Hà', $3, 'published')`, [orgId, shared, `Gửi về ${EMAIL}`]);
+      await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', $4, 'published')`, [orgId, sharedSegmentId, shared, `Gửi về ${EMAIL}`]);
     });
     const installed = await api.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: 'finance.chief_accountant', reportsTo: null }, { actor: asMfa(users.owner), orgId });
     await api.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: installed.positionId }, { actor: asUser(users.owner), orgId });
@@ -295,7 +308,11 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
           expect(checked, `${row.sig} for ${actor.name}`).toMatchObject({ ok: true });
           if (!checked.ok) continue;
           expect(checked.value.visible.every(Boolean), `${row.sig} names a row ${actor.name} cannot read`).toBe(true);
-          expect(checked.value.ids.map((r) => r.id), `${row.sig} names a row of the hidden meeting`).not.toContain(segmentId);
+          const named = checked.value.ids.map((r) => r.id);
+          // It finds what it should: the shared meeting's line, for the owner and for the admin alike (not a pass because it names nothing).
+          expect(named, `${row.sig} finds the shared meeting's line for ${actor.name}`).toContain(sharedSegmentId);
+          // And nothing of the hidden meeting: not its meeting row (title), its line, its draft result or its draft item.
+          for (const hidden of [meetingId, segmentId, resultId, itemId]) expect(named, `${row.sig} names a row of the hidden meeting for ${actor.name}`).not.toContain(hidden);
         }
       }
     }
