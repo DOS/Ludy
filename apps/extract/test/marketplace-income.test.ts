@@ -84,6 +84,22 @@ describe('readMarketplaceIncome', () => {
     expect(readMarketplaceIncome(new TextEncoder().encode('not a report')).recognized).toBe(false);
   });
 
+  it('keys an order split over two rows by what each row says, the same in another file, and gives identical rows an ordinal', () => {
+    const split = (rows: XlsxCell[][]) => readMarketplaceIncome(buildXlsx([['Báo cáo thu nhập'], INCOME_HEAD, ...rows])).lines.map((l) => l.lineKey);
+    const partOne = incomeRow('2611S1', '2026-11-03', 60000, 0, 3000, 0, 0, 0, 0, 57000);
+    const partTwo = incomeRow('2611S1', '2026-11-03', 40000, 0, 2000, 0, 0, 0, 0, 38000);
+    const both = split([partOne, partTwo]);
+    expect(new Set(both).size).toBe(2);
+    // Paid again in another report: the part that is the same row has the same key, the new part another.
+    const later = split([incomeRow('2611S0', '2026-11-20', 1000, 0, 0, 0, 0, 0, 0, 1000), partTwo, incomeRow('2611S1', '2026-11-21', 5000, 0, 0, 0, 0, 0, 0, 5000)]);
+    expect(later[1]).toBe(both[1]);
+    expect(new Set(later).size).toBe(3);
+    // Rows identical to each other are told apart by an ordinal only.
+    const twice = split([partOne, partOne]);
+    expect(twice[1]).toBe(`${twice[0]}~2`);
+    for (const key of [...both, ...later, ...twice]) expect(key.length).toBeLessThanOrEqual(120);
+  });
+
   it('names what it could not read by its row and stores no guess', () => {
     const rows = incomeRows();
     rows.splice(2, 0, ['2611Z9', '', '', '', 'không phải ngày', 100000, 0, 0, 0, 0, 0, 0, 100000]);
