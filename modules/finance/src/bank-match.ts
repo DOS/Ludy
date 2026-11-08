@@ -25,6 +25,10 @@ import {
   type BankLineVoucher,
   type BankMatchReason,
   type BankOpenLines,
+  type BankPayrollCandidate,
+  type BankPayrollMatch,
+  type HrRunPaymentAmounts,
+  type PayrollPaymentKind,
   type VoucherType,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -34,6 +38,7 @@ import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
+import { payrollPaymentMention } from './domain/bank-payroll.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
 
@@ -385,5 +390,66 @@ export const bankOpenLines = defineQuery({
     return {
       accounts: rows.map((r) => ({ bankAccount: r.bank_account, open: Number(r.open), ambiguous: Number(r.ambiguous), oldest: r.oldest })),
     };
+  },
+});
+
+// The payroll payments a money-out line may be (#2532): the payments of the legal entity's posted pay runs that are neither recorded nor asked for and whose amount equals the line's. Code decides, by
+// the amount and the direction; the words of the description only rank. For owners and admins, who ask for a payment. The amounts come from the HR module's totals by cost department (hr.payroll.payment.amounts):
+// nothing per person is read here, and a deployment without the HR module answers no candidates. Read only: the payment is asked for and approved as any other.
+export const bankPayrollMatch = defineQuery({
+  name: 'finance.bank.payroll_match',
+  input: z.object({ bankLineId: zId }),
+  access: ['owner', 'admin'] as const,
+  handler: async (ctx, input): Promise<BankPayrollMatch> => {
+    const line = await findBankLine(ctx, input.bankLineId);
+    if (!line) throw new DomainError('BANK_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng sao kê; hãy tải lại trang ngân hàng');
+    const none: BankPayrollMatch = { bankLineId: line.id, candidates: [] };
+    // Only money out of the bank, and only a line nothing settles or waits on.
+    const out = new Decimal(line.amount);
+    if (!out.isNegative() || out.isZero()) return none;
+    if (((await bankLineStates(ctx, [line.id])).get(line.id)?.status ?? 'open') !== 'open') return none;
+    const posted = await ctx.trx
+      .selectFrom('crove_finance.journal_voucher')
+      .select('payroll_run_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('legal_entity_id', '=', line.legalEntityId)
+      .where('payroll_run_id', 'is not', null)
+      .orderBy('voucher_date', 'desc')
+      .limit(24)
+      .execute();
+    const runIds = posted.map((r) => r.payroll_run_id as string);
+    if (runIds.length === 0) return none;
+    // What is paid or asked for already, by run and kind.
+    const taken = new Set<string>();
+    const paid = await ctx.trx
+      .selectFrom('crove_finance.cash_voucher')
+      .select(['payroll_run_id', 'payroll_payment_kind'])
+      .where('org_id', '=', ctx.orgId)
+      .where('payroll_run_id', 'in', runIds)
+      .execute();
+    for (const v of paid) taken.add(`${v.payroll_run_id}:${v.payroll_payment_kind}`);
+    const open = await ctx.trx
+      .selectFrom('crove_kernel.proposal')
+      .select(sql<string>`request_input ->> 'runId'`.as('run_id'))
+      .select(sql<string>`request_input ->> 'kind'`.as('kind'))
+      .where('org_id', '=', ctx.orgId)
+      .where('command', '=', PAYROLL_PAYMENT_COMMAND)
+      .where('status', '=', 'pending')
+      .execute();
+    for (const p of open) taken.add(`${p.run_id.toLowerCase()}:${p.kind}`);
+    const amounts = await ctx.query<HrRunPaymentAmounts[]>('hr.payroll.payment.amounts', { runIds });
+    if (amounts.status !== 'ok') return none;
+    const wanted = out.abs();
+    const candidates: BankPayrollCandidate[] = [];
+    for (const run of amounts.value) {
+      for (const kind of Object.keys(run.amounts) as PayrollPaymentKind[]) {
+        const amount = run.amounts[kind];
+        if (amount === undefined || taken.has(`${run.runId.toLowerCase()}:${kind}`) || !new Decimal(amount).equals(wanted)) continue;
+        candidates.push({ runId: run.runId, month: run.month, kind, amount, reason: payrollPaymentMention(line.description, kind) ? 'amount_note' : 'amount' });
+      }
+    }
+    // The description's words first, then the newest month.
+    candidates.sort((a, b) => Number(b.reason === 'amount_note') - Number(a.reason === 'amount_note') || (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
+    return { bankLineId: line.id, candidates };
   },
 });

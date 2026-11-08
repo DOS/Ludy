@@ -2714,6 +2714,9 @@ export function createRpcHandler(
       lineVoucher: os.bank.lineVoucher.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.line_voucher', input, { actor, orgId })),
       ),
+      payrollMatch: os.bank.payrollMatch.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.payroll_match', input, { actor, orgId })),
+      ),
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),
       ),

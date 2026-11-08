@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
+import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
 import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@crove/l10n-vn';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
@@ -369,4 +369,75 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId, o.admin2)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'coAuthors' } });
     expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
   });
+
+  // The matching of a bank statement line with a payment of a posted run (#2532): the amount decides, the words only rank, and nothing names a person.
+  const vn = (value: string) => money(value).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  let rowNo = 1;
+  async function statement(o: Org, lines: { out?: string; in?: string; description: string }[]): Promise<string[]> {
+    const rowsIn: BankStatementRow[] = lines.map((l) => ({ rowNo: rowNo++, date: '31/03/2026', description: l.description, moneyIn: normalizeStatementAmount(l.in ?? ''), moneyOut: normalizeStatementAmount(l.out ?? ''), balance: '', reference: `FT${rowNo}` }));
+    const before = new Set((await rows<{ id: string }>('SELECT id FROM crove_finance.bank_line WHERE org_id = $1', [o.orgId])).map((r) => r.id));
+    await o.exec(o.owner, 'finance.bank.import', { bankAccount: '1121', filename: 'sao-ke-03.xlsx', rows: rowsIn });
+    const after = await rows<{ id: string; position: number }>('SELECT id, position FROM crove_finance.bank_line WHERE org_id = $1 ORDER BY import_id, position', [o.orgId]);
+    return after.filter((r) => !before.has(r.id)).map((r) => r.id);
+  }
+  const matchOf = (o: Org, bankLineId: string, user = o.owner) => o.query<BankPayrollMatch>(user, 'finance.bank.payroll_match', { bankLineId });
+
+  it('shows the payment a money-out line equals: by the amount, the words of the description only rank it, and no person is named', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const insurance = money(totals.employeeInsurance).plus(totals.employerInsurance).toFixed(0);
+    const [net, wording, plain, other, inbound] = await statement(o, [
+      { out: vn(totals.net), description: 'CK TRA LUONG THANG 03' },
+      { out: vn(insurance), description: 'Nop BHXH T03' },
+      { out: vn(totals.pit), description: 'Giao dich' },
+      { out: '1.234.567', description: 'Chuyen khoan' },
+      { in: vn(totals.net), description: 'Hoan tien' },
+    ]) as [string, string, string, string, string];
+    expect(await matchOf(o, net)).toEqual({ bankLineId: net, candidates: [{ runId, month: MONTH, kind: 'net_pay', amount: money(totals.net).toFixed(0), reason: 'amount_note' }] });
+    expect((await matchOf(o, wording)).candidates).toEqual([{ runId, month: MONTH, kind: 'insurance', amount: insurance, reason: 'amount_note' }]);
+    // No words that name the payment: the amount alone is the reason.
+    expect((await matchOf(o, plain)).candidates).toEqual([{ runId, month: MONTH, kind: 'tax', amount: money(totals.pit).toFixed(0), reason: 'amount' }]);
+    // An amount nothing owes, and a money-in line, have no candidate.
+    expect((await matchOf(o, other)).candidates).toEqual([]);
+    expect((await matchOf(o, inbound)).candidates).toEqual([]);
+    expect(JSON.stringify(await matchOf(o, net))).not.toContain('Canary');
+  });
+
+  it('stops offering a payment once it is asked for or recorded, and a member, a viewer and another org see nothing of it', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const [line, second] = await statement(o, [{ out: vn(totals.net), description: 'Tra luong' }, { out: vn(totals.net), description: 'Tra luong lan 2' }]) as [string, string];
+    expect((await matchOf(o, line)).candidates).toHaveLength(1);
+    // Asked for with the line: the line is proposed, and the same payment is not offered to the other line either.
+    const { proposalId } = await pay(o, runId, 'net_pay', { bankLineId: line });
+    expect((await matchOf(o, line)).candidates).toEqual([]);
+    expect((await matchOf(o, second)).candidates).toEqual([]);
+    await approve(o, proposalId);
+    expect((await matchOf(o, line)).candidates).toEqual([]);
+    expect((await matchOf(o, second)).candidates).toEqual([]);
+    // Only owners and admins ask for a payment, so only they are shown the candidates.
+    // (a standard org keeps its admin and member; the owner alone is the whole of a solo one)
+    const team = await org('tt133', 'standard');
+    await expect(matchOf(team, randomUUID(), team.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(matchOf(team, line)).rejects.toMatchObject({ code: 'BANK_LINE_NOT_FOUND' });
+  });
+
+  it('offers amounts equal to the obligations of the run\'s entry, by kind: what the query adds up is what the payment will ask for', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    const [got] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [runId] });
+    expect(got?.month).toBe(MONTH);
+    for (const kind of ['net_pay', 'insurance', 'union', 'tax'] as const) {
+      const { proposalId } = await pay(o, runId, kind);
+      await approve(o, proposalId);
+      const [voucher] = await voucherOf(o, runId, kind);
+      expect(got?.amounts[kind], kind).toBe(voucher?.amount);
+    }
+    // A draft run and another org's run are not offered.
+    const draft = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-04' });
+    expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [draft.runId as string, randomUUID()] })).toEqual([]);
+    const team = await org('tt133', 'standard');
+    await expect(team.query(team.member, 'hr.payroll.payment.amounts', { runIds: [runId] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
 });
