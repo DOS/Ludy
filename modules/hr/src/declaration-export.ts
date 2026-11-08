@@ -13,7 +13,7 @@
 import type { MemberRole } from '@crove/db';
 import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
-import { annualExclusion, buildAnnual, buildCertificates, buildD02Lt, buildD02LtListing, buildQuarterly, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
+import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { IDENTITY_PLACE, INSURANCE_PLACE, TAX_CODE_PLACE, subjectOf } from './employees.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -172,9 +172,24 @@ export const declarationGet = defineQuery({
       persons = personsOf(await openFor(listed, ['identityNumber', 'insuranceNumber']));
       document = buildD02Lt(d02Input(persons));
     } else {
-      // 05/QTT prints only the authorizers who qualify (the list of everyone else shows a name and a reason), so only they are opened; 05/KK and 03/TNCN list everyone paid in the period.
-      const who = input.kind === 'qtt' ? new Set(personsOf(new Map()).filter((p) => annualExclusion(p, Number(input.period), lines) === null).map((p) => p.employeeId)) : null;
-      const clear = await openFor(who, ['identityNumber', 'taxCode']);
+      // Each form opens only what it prints, worked out first from data that is not sealed. 05/KK prints the people its schedules list (not those counted in the headcount only), 05/QTT the
+      // authorizers who qualify, 03/TNCN the people it certifies (tax code and identity number) and, on its second sheet, the tax code of the authorizers. A person with no tax code of their own is
+      // printed under the identity number, so the identity number of such a person is opened too, after the tax codes are known.
+      const blank = personsOf(new Map());
+      let identityFor: ReadonlySet<string>;
+      let taxCodeFor: ReadonlySet<string>;
+      if (input.kind === 'kk') {
+        identityFor = taxCodeFor = buildQuarterlyListing({ quarter: input.period, employer, persons: blank, lines, approvedMonths }).printed;
+      } else if (input.kind === 'qtt') {
+        identityFor = taxCodeFor = buildAnnualListing({ year: Number(input.period), employer, persons: blank, lines, approvedMonths }).printed;
+      } else {
+        const listing = buildCertificatesListing({ year: Number(input.period), employer, persons: blank, lines });
+        identityFor = listing.certified;
+        taxCodeFor = new Set([...listing.certified, ...listing.authorizers]);
+      }
+      const clear = await openFor(taxCodeFor, ['taxCode']);
+      const needsIdentity = new Set([...identityFor, ...[...taxCodeFor].filter((id) => clear.get(id)?.taxCode === undefined)]);
+      for (const [id, c] of await openFor(needsIdentity, ['identityNumber'])) clear.set(id, { ...clear.get(id), ...c });
       for (const c of clear.values()) if (c.taxCode === undefined && c.identityNumber !== undefined) taxCodeFromIdentity += 1;
       persons = personsOf(clear);
       if (input.kind === 'kk') document = buildQuarterly({ quarter: input.period, employer, persons, lines, approvedMonths });

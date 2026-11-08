@@ -26,6 +26,7 @@ import {
   accountParents,
   type FixedAsset,
   type HrDeclarationDocument,
+  zHrDeclarationDocument,
   type MisaGoodsCode,
   type StockCard,
   type StockReportRow,
@@ -2696,7 +2697,7 @@ export function createHttpApp(deps: HttpDeps) {
           await runtime.execute('hr.payroll.declaration.export', { ...query, rows, via: asView ? 'view' : 'xlsx', months: document.used.months, ...document.used.authorizedYear === undefined ? {} : { authorizedYear: document.used.authorizedYear, authorizedPeople: document.used.authorizedPeople } }, { actor: actorOf(user), orgId });
           if (bytes === null) {
             release();
-            return c.json(document, 200, { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' });
+            return c.json(zHrDeclarationDocument.parse(document), 200, { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' });
           }
           return new Response(held(new Uint8Array(bytes), release), {
             headers: {
