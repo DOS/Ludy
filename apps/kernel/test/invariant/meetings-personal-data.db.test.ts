@@ -7,8 +7,8 @@
 // - The one matcher of every finder (crove_kernel.text_redact) replaces a value only as a whole number or address: digits inside a longer number, an amount, a date
 //   and a phone number that only contains the value are left alone; a value that equals the probe exactly goes, with its usual separators.
 // - The meeting text columns stay in the registry with handling erase (as a kind other today, free text once the finder searches them).
-// - A personal-data definer of crove_meetings, once it exists, pins search_path, is granted to no PUBLIC, refuses every caller but an owner's
-//   user context (member, admin, viewer, agent, system), and answers numbers and ids, never text.
+// - A personal-data definer of crove_meetings, once it exists, pins search_path, is granted to no PUBLIC, refuses every caller but an owner's user context (or, for the row ids the
+//   finder reads, an owner's or an admin's: member, viewer, agent, system refused), and answers numbers and ids, never text; the row ids are of rows the caller can read anyway.
 // While a definer does not exist yet, the walk over the functions that exist passes with nothing to check. Part of the invariant suite; imports package code under test only.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
@@ -32,8 +32,16 @@ const EMAIL = 'khach.hang@congty.example';
 const TITLE = 'Họp báo giá cho anh Tuấn';
 const LINE = `Anh Tuấn nói gửi hợp đồng về ${EMAIL} nhé`;
 const SUMMARY = `Chốt giá, gửi báo giá tới ${EMAIL}`;
-// The definers the personal-data step adds (plan L5): the exact signatures are checked once they exist.
-const PERSONAL_DEFINERS = ['crove_meetings.personal_matches(text,text)', 'crove_meetings.personal_notice_items(text,text)', 'crove_meetings.personal_erase(text,text)'];
+// The definers the personal-data step adds (plan L5), by exact signature, with who may call each: the owner's counts, notice and erase are an owner's alone (the counts are an
+// oracle for a guessed value, #1972); the row ids the finder reads only an owner or an admin may ask for, and they are ids of rows the caller can read anyway.
+const PERSONAL_DEFINERS: Record<string, 'owner' | 'admin'> = {
+  'crove_meetings.personal_matches(text, text)': 'owner',
+  'crove_meetings.personal_notice_items(text, text)': 'owner',
+  'crove_meetings.personal_erase(text, text)': 'owner',
+  'crove_meetings.personal_row_ids(text, text)': 'admin',
+};
+// What the kind code of a personal_row_ids answer stands for.
+const ROW_KIND_TABLE: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
 
 suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   const dbName = `crove_test_meetings_personal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -152,6 +160,16 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
       await c.query(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, $3, $4::jsonb, 'manual', 'draft')`, [orgId, meetingId, SUMMARY, JSON.stringify([`Gửi ${EMAIL}`])]);
       await c.query(`INSERT INTO crove_meetings.action_item (org_id, meeting_id, title, who_drafted, when_drafted, stage) VALUES ($1, $2, $3, 'Tuấn', 'thứ sáu', 'draft')`, [orgId, meetingId, `Gửi báo giá tới ${EMAIL}`]);
     });
+    // A meeting shared with the whole org, which an owner and an admin read: its line is what the row ids may name.
+    await admin(async (c) => {
+      const shared = randomUUID();
+      await c.query(
+        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+         VALUES ($1, $2, 'Họp chung', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'org', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+        [orgId, shared, users.recorder],
+      );
+      await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, 'Hà', $3, 'published')`, [orgId, shared, `Gửi về ${EMAIL}`]);
+    });
     const installed = await api.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: 'finance.chief_accountant', reportsTo: null }, { actor: asMfa(users.owner), orgId });
     await api.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: installed.positionId }, { actor: asUser(users.owner), orgId });
     const started = await worker.execute<{ runId: string | null }>('kernel.agent.run.start', { agentId: installed.agentId }, { actor: SYSTEM, orgId });
@@ -245,21 +263,39 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
     );
     // The names are part of the contract: a personal-data definer under another name than the listed ones is a new surface to review.
     for (const row of present) {
-      const listed = PERSONAL_DEFINERS.map((s) => s.replace(/,/g, ', '));
-      expect(listed, `an unlisted personal-data definer ${row.sig}`).toContain(row.sig);
+      expect(Object.keys(PERSONAL_DEFINERS), `an unlisted personal-data definer ${row.sig}`).toContain(row.sig);
       expect(row.secdef, `${row.sig} is SECURITY DEFINER`).toBe(true);
       expect(row.config?.some((s) => s === 'search_path=pg_catalog, pg_temp'), `${row.sig} pins search_path`).toBe(true);
       expect(row.public_exec, `${row.sig} granted to PUBLIC`).toBe(false);
+      const who = PERSONAL_DEFINERS[row.sig] as 'owner' | 'admin';
       const call = `SELECT * FROM ${row.sig.replace(/\(.*/, '')}('email', '${EMAIL}')`;
-      const refused = [member('the recorder', () => users.recorder), member('an admin', () => users.admin), member('another member', () => users.member), member('a viewer', () => users.viewer), agentActor, system];
+      const refused = [member('the recorder', () => users.recorder), member('another member', () => users.member), member('a viewer', () => users.viewer), agentActor, system];
+      if (who === 'owner') refused.push(member('an admin', () => users.admin));
       for (const actor of refused) expect(await outcome(run(actor, (c) => c.query(call))), `${row.sig} for ${actor.name}`).toMatchObject({ ok: false, code: '42501' });
-      const answered = await outcome(run(owner, (c) => c.query(call)));
-      expect(answered, `${row.sig} for an owner`).toMatchObject({ ok: true });
-      if (answered.ok) {
-        // Numbers, ids and flags: no column that could hold text.
-        // text (25), varchar (1043) and jsonb (3802) are the types a line of meeting text would travel in.
+      const allowed = who === 'owner' ? [owner] : [owner, member('an admin', () => users.admin)];
+      for (const actor of allowed) {
+        const answered = await outcome(run(actor, (c) => c.query(call)));
+        expect(answered, `${row.sig} for ${actor.name}`).toMatchObject({ ok: true });
+        if (!answered.ok) continue;
+        // Numbers, ids and flags: no column that could hold text. text (25), varchar (1043) and jsonb (3802) are the types a line of meeting text would travel in.
         for (const field of answered.value.fields) expect([25, 1043, 3802], `${row.sig} column ${field.name}`).not.toContain(field.dataTypeID);
         expect(JSON.stringify(answered.value.rows), row.sig).not.toContain(TITLE);
+      }
+      if (row.sig.startsWith('crove_meetings.personal_row_ids')) {
+        // Ids of rows the caller can read anyway, and never one of a meeting they cannot: asked for again under row security, every id is there, and none is the hidden meeting's.
+        for (const actor of allowed) {
+          const checked = await outcome(
+            run(actor, async (c) => {
+              const ids = (await c.query<{ kind: number; id: string }>(call)).rows;
+              const visible = await Promise.all(ids.map(async (r) => (await c.query(`SELECT 1 FROM crove_meetings.${ROW_KIND_TABLE[r.kind] ?? 'unknown'} WHERE id = $1`, [r.id])).rowCount === 1));
+              return { ids, visible };
+            }),
+          );
+          expect(checked, `${row.sig} for ${actor.name}`).toMatchObject({ ok: true });
+          if (!checked.ok) continue;
+          expect(checked.value.visible.every(Boolean), `${row.sig} names a row ${actor.name} cannot read`).toBe(true);
+          expect(checked.value.ids.map((r) => r.id), `${row.sig} names a row of the hidden meeting`).not.toContain(segmentId);
+        }
       }
     }
   });
