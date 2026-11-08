@@ -8944,6 +8944,7 @@ export const vi = {
       VOUCHER_INVALID: 'Chứng từ chưa hợp lệ; hãy kiểm tra tài khoản tiền, đối tượng và các dòng hạch toán',
       JOURNAL_VOUCHER_INVALID: 'Phiếu kế toán không hợp lệ; hãy kiểm tra các dòng hạch toán',
       PERSONAL_DATA_QUERY: 'Hãy nhập một địa chỉ email, một số điện thoại, hoặc một mã số thuế hay số căn cước',
+      PERSONAL_DATA_TOO_BIG: 'Tổ chức có quá nhiều nội dung họp để tìm trong một lần. Hãy thử lại sau hoặc liên hệ hỗ trợ.',
       PERSONAL_DATA_NOTICE_TOO_MANY: 'Có quá nhiều ghi chú riêng và việc nhắc đến giá trị này để báo một lần. Hãy liên hệ bộ phận hỗ trợ.',
       YEAR_NOT_ENDED: 'Năm này chưa kết thúc nên chưa kết chuyển được',
       YEAR_CLOSED: 'Năm này đã kết chuyển; muốn làm lại thì đảo bút toán kết chuyển với ngày 31/12 của năm đó trước',

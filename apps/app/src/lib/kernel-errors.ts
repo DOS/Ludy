@@ -641,6 +641,8 @@ export const KERNEL_ERROR_CODES = [
   'JOURNAL_VOUCHER_INVALID',
   // The personal-data finder (#923).
   'PERSONAL_DATA_QUERY',
+  // The search of meeting text stopped by the statement timeout (#2594).
+  'PERSONAL_DATA_TOO_BIG',
   // The notice to the authors of private items before an erasure (#1678).
   'PERSONAL_DATA_NOTICE_TOO_MANY',
   // Year-end closing (#889).

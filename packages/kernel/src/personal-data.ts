@@ -442,6 +442,19 @@ function requireProbe(value: string): Probe {
   return probe;
 }
 
+// A scan of meeting text that the connection's statement timeout stopped (SQLSTATE 57014) is answered plainly, not as a server fault: the org holds more meeting text than one
+// search reads in time. The search changed nothing, so the owner can ask the support to run it, or search again for a narrower value.
+async function tooBigIfSlow<T>(scan: Promise<T>): Promise<T> {
+  try {
+    return await scan;
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === '57014') {
+      throw new DomainError('PERSONAL_DATA_TOO_BIG', 503, 'Tổ chức có quá nhiều nội dung họp để tìm trong một lần; hãy thử lại sau hoặc liên hệ hỗ trợ');
+    }
+    throw error;
+  }
+}
+
 // The tables of crove_meetings.personal_row_ids's kind codes.
 const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
 
@@ -453,7 +466,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
   // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
   const meetingRows = new Map<string, string[]>();
-  for (const { kind, id } of (await sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows) {
+  for (const { kind, id } of (await tooBigIfSlow(sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx))).rows) {
     const table = MEETING_ROW_TABLES[kind];
     if (table) meetingRows.set(table, [...(meetingRows.get(table) ?? []), id]);
   }
@@ -494,8 +507,10 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   // Meeting text the owner cannot read (an attendees-only meeting, a draft that is not theirs): counted per recorder, never listed (#2594, ADR-0047 point 11).
   const meetingText = privateCounts
     ? (
-        await sql<{ recorder_user_id: string; meetings: string; lines: string; results: string; items: string; titles: string }>`
-          SELECT recorder_user_id, meetings, lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+        await tooBigIfSlow(
+          sql<{ recorder_user_id: string; meetings: string; lines: string; results: string; items: string; titles: string }>`
+          SELECT recorder_user_id, meetings, lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx),
+        )
       ).rows.map((m) => ({ recorderUserId: m.recorder_user_id, meetings: Number(m.meetings), lines: Number(m.lines), results: Number(m.results), items: Number(m.items), titles: Number(m.titles) }))
     : null;
   return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, truncated };
