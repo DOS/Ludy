@@ -201,8 +201,8 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     for (const f of rows) {
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
-      // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the permission reader.
-      if (f.definer && f.fn !== 'crove_kernel.member_has_permission(uuid,uuid,text)') expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the permission reader and the counts (an owner or admin's removal warning: ids and numbers, never text).
+      if (f.definer && !/member_has_permission|member_vy_private_counts/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
