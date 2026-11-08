@@ -9120,6 +9120,9 @@ export const vi = {
           add: 'Thêm nhân viên cùng dòng hợp đồng và lương đầu tiên',
           edit: 'Sửa thông tin cá nhân của nhân viên',
           end: 'Cho nhân viên nghỉ việc',
+          finalization: {
+            set: 'Ghi nhận nhân viên ủy quyền (hoặc thôi ủy quyền) cho đơn vị quyết toán thuế thu nhập cá nhân một năm',
+          },
           erase: 'Xóa hồ sơ nhân viên đã nghỉ sau thời hạn lưu trữ',
           get: 'Xem hồ sơ một nhân viên, kể cả số căn cước và số tài khoản',
           list: 'Xem danh sách nhân viên và lương cơ bản',

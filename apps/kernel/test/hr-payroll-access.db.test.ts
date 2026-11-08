@@ -260,7 +260,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: '1990-05-17', taxCode: '3141592653', insuranceNumber: 'SI-2718281828', finalizationAuthorizedYears: [] });
     // The audit row of the add holds flags, never a value.
     const [added] = await o.audits('hr.payroll.employee.add');
-    expect(added?.detail).toMatchObject({ hasTaxCode: true, hasInsuranceNumber: true, hasBirthDate: true });
+    expect(added?.detail).toMatchObject({ hasTaxNumber: true, hasInsuranceNo: true, birth: { redacted: 'pii' } });
     expect(JSON.stringify(added?.detail)).not.toContain('3141592653');
     // An edit changes and clears them; the authorization is a list of years, each once, sorted, and an admin may set it, a member may not.
     await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: 'SI-1732050807' });
