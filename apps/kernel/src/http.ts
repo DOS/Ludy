@@ -96,7 +96,7 @@ import {
   type VatDeclaration,
   type VatReport,
 } from '@crove/mod-finance';
-import { renderQuotePdf, type QuoteDocument } from '@crove/mod-crm';
+import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
 import { buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
@@ -143,7 +143,7 @@ import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
-import { quoteView, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
+import { quoteLogo, quoteView, readLogoFile, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
@@ -253,6 +253,8 @@ export interface HttpDeps {
   reportLimit?: RateLimiter;
   // The public quote page's budget per client (#2694). Unset: QUOTE_VIEWS_PER_MINUTE.
   quoteLimit?: RateLimiter;
+  // The public quote page's logo budget per client (#2814), apart from the page's. Unset: QUOTE_VIEWS_PER_MINUTE.
+  quoteLogoLimit?: RateLimiter;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -1061,6 +1063,27 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const view = await quoteView(runtime, await c.req.json().catch(() => null));
         return view ? c.json(view) : c.json({ code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+    // The logo of that quote's letterhead (#2814), for the page to show: the token in the body again, the one refusal for a bad link or a quote with no logo, never cached.
+    const quoteLogoLimit = deps.quoteLogoLimit ?? new RateLimiter({ perMinute: QUOTE_VIEWS_PER_MINUTE });
+    app.post('/api/quote/logo', bodyLimit({ maxSize: 1024 }), async (c) => {
+      const decision = quoteLogoLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      c.header('cache-control', 'no-store');
+      c.header('referrer-policy', 'no-referrer');
+      try {
+        const image = await quoteLogo(runtime, store, await c.req.json().catch(() => null));
+        if (!image) return c.json({ code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
+        return new Response(body(image.bytes), {
+          headers: { 'content-type': image.contentType, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" },
+        });
       } catch (error) {
         return problem(c, error);
       }
@@ -2441,8 +2464,18 @@ export function createHttpApp(deps: HttpDeps) {
         }
         const orgSlug = c.req.header(ORG_HEADER) ?? null;
         const orgId = await resolveOrg(runtime, user, orgSlug);
-        const document = await runtime.query<QuoteDocument>('crm.quote.document', { quoteId: c.req.param('id') }, { actor: actorOf(user), orgId });
-        const bytes = renderQuotePdf(document);
+        const { logoFile, ...document } = await runtime.query<QuoteDocumentData>('crm.quote.document', { quoteId: c.req.param('id') }, { actor: actorOf(user), orgId });
+        // The letterhead's logo (#2814): read from the store and checked, then by the writer's own reader; a logo that cannot be read leaves it out and never fails the document.
+        let logo = null;
+        if (logoFile) {
+          try {
+            const file = await readLogoFile(store, logoFile);
+            logo = file ? readLogoImage(file.bytes, file.contentType) : null;
+          } catch (error) {
+            console.warn('[quote-pdf] logo left out:', error instanceof Error ? error.message : error);
+          }
+        }
+        const bytes = renderQuotePdf({ ...document, logo });
         // The number is the org's own text: only what a filename can safely hold goes into it.
         const named = (document.quote.number ?? '').replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         return new Response(body(bytes), {

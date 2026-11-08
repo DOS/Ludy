@@ -2213,6 +2213,14 @@ export const vi = {
       email: 'Email in trên báo giá',
       bankNote: 'Thông tin chuyển khoản',
       bankNoteHint: 'In nguyên văn trên báo giá, ví dụ số tài khoản và tên ngân hàng.',
+      logo: 'Logo in trên đầu báo giá',
+      logoHint: 'Ảnh PNG hoặc JPEG, tối đa {max} KB. Logo hiện trên trang khách mở và trên bản PDF; ảnh cũng nằm trong thư viện ảnh của bạn.',
+      logoChoose: 'Chọn logo',
+      logoReplace: 'Đổi logo',
+      logoRemove: 'Gỡ logo',
+      logoCurrent: 'Logo hiện tại của báo giá',
+      logoType: 'Logo chỉ nhận ảnh PNG hoặc JPEG.',
+      logoTooLarge: 'Ảnh lớn hơn {max} KB; hãy thu nhỏ rồi chọn lại.',
       defaultTerms: 'Điều khoản mặc định',
       save: 'Lưu',
       cancel: 'Hủy',
@@ -9315,6 +9323,8 @@ export const vi = {
       },
       quote_setting: {
         get: 'Xem mặc định và thông tin in trên báo giá',
+        logo_remove: 'Gỡ logo khỏi đầu báo giá',
+        logo_set: 'Đặt logo in trên đầu báo giá',
         set: 'Đặt số ngày hiệu lực, thuế suất và điều khoản mặc định của báo giá',
       },
       stage: {

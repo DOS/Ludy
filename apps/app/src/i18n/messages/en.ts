@@ -2215,6 +2215,14 @@ export const en = {
       email: 'Email printed on the quote',
       bankNote: 'Payment details',
       bankNoteHint: 'Printed as written on the quote, for example the account number and the bank.',
+      logo: 'Logo at the top of quotes',
+      logoHint: 'A PNG or JPEG image, at most {max} KB. The logo shows on the page the customer opens and on the PDF; the image also sits in your photo library.',
+      logoChoose: 'Choose a logo',
+      logoReplace: 'Change the logo',
+      logoRemove: 'Remove the logo',
+      logoCurrent: "The quotes' current logo",
+      logoType: 'A logo must be a PNG or a JPEG image.',
+      logoTooLarge: 'The image is larger than {max} KB; make it smaller and choose it again.',
       defaultTerms: 'Default terms',
       save: 'Save',
       cancel: 'Cancel',
@@ -9318,6 +9326,8 @@ export const en = {
       },
       quote_setting: {
         get: 'See the defaults and the details printed on quotes',
+        logo_remove: 'Take the logo off the top of quotes',
+        logo_set: 'Put a logo on the top of quotes',
         set: "Set the quote validity days, VAT rate and default terms",
       },
       stage: {

@@ -32,6 +32,9 @@ export const QUOTE_LINK_DAYS_AFTER_VALID = 30;
 export const QUOTE_LINKS_MAX = 20;
 export const QUOTE_BANK_NOTE_MAX = 500;
 export const QUOTE_PHONE_MAX = 40;
+// The logo on the letterhead (#2814): a PNG or a JPEG of an image the org uploaded, at most this many bytes (the page and the PDF read it on every view).
+export const QUOTE_LOGO_TYPES = ['image/png', 'image/jpeg'] as const;
+export const QUOTE_LOGO_MAX_BYTES = 512 * 1024;
 // Earlier lines offered as price hints for a customer.
 export const QUOTE_HINTS_MAX = 50;
 
@@ -194,8 +197,13 @@ export const zQuoteSetting = z.strictObject({
   phone: z.string().nullable(),
   email: z.string().nullable(),
   bankNote: z.string().nullable(),
+  // The kernel file of the letterhead's logo, or null; the image itself is read by the public page and the PDF, never from this id.
+  logoFileId: z.string().nullable(),
 });
 export type QuoteSetting = z.infer<typeof zQuoteSetting>;
+// An owner or admin puts an uploaded PNG or JPEG on the letterhead, or takes it off (#2814); each answers the setting as it now stands.
+export const zQuoteLogoSet = z.strictObject({ fileId: zId });
+export type QuoteLogoSet = z.infer<typeof zQuoteLogoSet>;
 
 // What a send answers: the quote as it now stands, and whether a mail was queued (by email only; a suppressed address refuses the whole send).
 export const zQuoteSent = z.strictObject({ quote: zQuote, mail: z.literal('queued').nullable() });
@@ -220,6 +228,8 @@ export interface QuoteDocument {
   vatAmount: string;
   total: string;
   seller: { name: string; taxCode: string | null; address: string | null; phone: string | null; email: string | null; bankNote: string | null };
+  // Whether the letterhead has a logo; the image is asked for apart, by the same token (#2814).
+  hasLogo: boolean;
   buyer: { name: string; taxCode: string | null; address: string | null };
   lines: { lineNo: number; kind: QuoteLineKind; description: string; unit: string | null; quantity: string | null; unitPrice: string | null; discountPercent: string; vatRate: string | null; amount: string; vatAmount: string }[];
 }

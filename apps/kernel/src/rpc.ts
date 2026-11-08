@@ -932,6 +932,8 @@ export function createRpcHandler(
         accept: os.crm.quotes.accept.handler(crmCommand('crm.quote.accept')),
         decline: os.crm.quotes.decline.handler(crmCommand('crm.quote.decline')),
         setSetting: os.crm.quotes.setSetting.handler(crmCommand('crm.quote_setting.set')),
+        setLogo: os.crm.quotes.setLogo.handler(crmCommand('crm.quote_setting.logo_set')),
+        removeLogo: os.crm.quotes.removeLogo.handler(crmCommand('crm.quote_setting.logo_remove')),
         send: os.crm.quotes.send.handler(crmCommand('crm.quote.send')),
         createLink: os.crm.quotes.createLink.handler(crmCommand('crm.quote.create_link')),
         revokeLink: os.crm.quotes.revokeLink.handler(crmCommand('crm.quote.revoke_link')),

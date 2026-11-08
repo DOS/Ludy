@@ -14,6 +14,8 @@ import { z } from 'zod';
 import {
   QUOTE_DEFAULT_VAT,
   QUOTE_HINTS_MAX,
+  QUOTE_LOGO_MAX_BYTES,
+  QUOTE_LOGO_TYPES,
   QUOTE_LINKS_MAX,
   QUOTE_LINK_DAYS_AFTER_VALID,
   QUOTE_PAGE_PATH,
@@ -24,6 +26,7 @@ import {
   zDealQuotesQuery,
   zQuoteDefaultsQuery,
   zQuoteLinkRevoke,
+  zQuoteLogoSet,
   zQuoteListQuery,
   zQuoteRef,
   zQuoteSave,
@@ -81,10 +84,14 @@ const MAX_AMOUNT_DIGITS = 15;
 // ---------------------------------------------------------------------------------------------------------------
 
 async function loadSetting(ctx: Reader): Promise<QuoteSetting> {
-  const row = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['valid_days', 'default_vat', 'default_terms', 'phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const row = await ctx.trx
+    .selectFrom('crove_crm.quote_setting')
+    .select(['valid_days', 'default_vat', 'default_terms', 'phone', 'email', 'bank_note', 'logo_file_id'])
+    .where('org_id', '=', ctx.orgId)
+    .executeTakeFirst();
   return row
-    ? { validDays: row.valid_days, defaultVat: row.default_vat, defaultTerms: row.default_terms, phone: row.phone, email: row.email, bankNote: row.bank_note }
-    : { validDays: QUOTE_VALID_DAYS_DEFAULT, defaultVat: QUOTE_DEFAULT_VAT, defaultTerms: null, phone: null, email: null, bankNote: null };
+    ? { validDays: row.valid_days, defaultVat: row.default_vat, defaultTerms: row.default_terms, phone: row.phone, email: row.email, bankNote: row.bank_note, logoFileId: row.logo_file_id }
+    : { validDays: QUOTE_VALID_DAYS_DEFAULT, defaultVat: QUOTE_DEFAULT_VAT, defaultTerms: null, phone: null, email: null, bankNote: null, logoFileId: null };
 }
 
 function addDays(date: string, days: number): string {
@@ -120,7 +127,51 @@ export const quoteSettingSet = defineCommand({
       .onConflict((oc) => oc.column('org_id').doUpdateSet(values))
       .execute();
     ctx.audit({ validDays: input.validDays });
-    return { validDays: input.validDays, defaultVat: vat, defaultTerms: terms, phone, email, bankNote };
+    return loadSetting(ctx);
+  },
+});
+
+// The logo of the letterhead (#2814). It is an image of the org's own library (a file uploaded for a Social post, as the watermark's and the report brand's logos are, so it is never
+// sent to extraction), a PNG or a JPEG, small. The settings row may not exist yet (every default applies): setting a logo makes it with those defaults. The audit holds the file id only.
+export const quoteLogoSet = defineCommand({
+  name: 'crm.quote_setting.logo_set',
+  input: zQuoteLogoSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<QuoteSetting> => {
+    const userId = userOf(ctx.actor);
+    const file = await ctx.trx
+      .selectFrom('crove_kernel.file')
+      .select(['content_type', 'size_bytes', 'source'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.fileId)
+      .executeTakeFirst();
+    if (!file || file.source !== 'social') throw new DomainError('QUOTE_LOGO_NOT_FOUND', 404, 'Không tìm thấy ảnh này');
+    if (!(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type)) throw new DomainError('QUOTE_LOGO_TYPE', 422, 'Logo chỉ nhận ảnh PNG hoặc JPEG');
+    if (Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) throw new DomainError('QUOTE_LOGO_TOO_LARGE', 422, `Logo lớn hơn ${QUOTE_LOGO_MAX_BYTES / 1024} KB; hãy thu nhỏ ảnh rồi chọn lại`);
+    const values = { logo_file_id: input.fileId, set_by: userId, updated_at: ctx.now };
+    await ctx.trx
+      .insertInto('crove_crm.quote_setting')
+      .values({ org_id: ctx.orgId, created_at: ctx.now, ...values })
+      .onConflict((oc) => oc.column('org_id').doUpdateSet(values))
+      .execute();
+    ctx.audit({ fileId: input.fileId });
+    return loadSetting(ctx);
+  },
+});
+
+export const quoteLogoRemove = defineCommand({
+  name: 'crm.quote_setting.logo_remove',
+  input: z.strictObject({}),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx): Promise<QuoteSetting> => {
+    const userId = userOf(ctx.actor);
+    await ctx.trx.updateTable('crove_crm.quote_setting').set({ logo_file_id: null, set_by: userId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).execute();
+    ctx.audit({ removed: true });
+    return loadSetting(ctx);
   },
 });
 
@@ -845,5 +896,5 @@ export async function dealHasQuotes(ctx: Pick<CommandContext, 'trx' | 'orgId'>, 
   return row !== undefined;
 }
 
-export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteMailData, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet];
+export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteMailData, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet, quoteLogoSet, quoteLogoRemove];
 export const quoteQueries = [quoteGet, quoteList, dealQuotes, quoteDefaults, quoteSettingGet];

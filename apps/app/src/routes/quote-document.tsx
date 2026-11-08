@@ -3,7 +3,7 @@
 // with the seller's letterhead, the buyer as they were when the quote was sent, the lines, the totals, the notes and the terms, and prints on A4 (the browser's
 // "Save as PDF" is the PDF until the server one of Q3). The token stays after the # and goes to the API in a POST body only. Every text is shown as text.
 import { useQuery } from '@tanstack/react-query';
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
 import { vietnamToday, type QuoteDocument } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -22,6 +22,30 @@ async function load(token: string): Promise<QuoteDocument | null> {
   return (await res.json()) as QuoteDocument;
 }
 
+// The logo of the letterhead (#2814), asked for apart by the same token in a POST body (never the URL) and shown from an object URL; null when there is none or it cannot be read,
+// and the page is the same without it.
+async function loadLogo(token: string): Promise<Blob | null> {
+  const res = await fetch(apiUrl('/api/quote/logo'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'omit', referrerPolicy: 'no-referrer' }).catch(() => null);
+  if (!res?.ok) return null;
+  const blob = await res.blob();
+  return blob.type === 'image/png' || blob.type === 'image/jpeg' ? blob : null;
+}
+
+function useLogoUrl(token: string | null, wanted: boolean): string | null {
+  const logo = useQuery({ queryKey: ['quote-logo', token], queryFn: () => loadLogo(token as string), enabled: token !== null && wanted, retry: false, staleTime: Infinity });
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!logo.data) {
+      setUrl(null);
+      return;
+    }
+    const next = URL.createObjectURL(logo.data);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [logo.data]);
+  return wanted ? url : null;
+}
+
 // A line's quantity without trailing zeros of the six decimals the column keeps.
 const plain = (value: string | null): string => (value === null ? '' : value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value);
 
@@ -33,6 +57,7 @@ export function QuoteDocumentPage() {
   const page = useQuery({ queryKey: ['quote-document', token], queryFn: () => load(token as string), enabled: token !== null, retry: false });
   usePrintInLight();
   const doc = page.data;
+  const logoUrl = useLogoUrl(token, doc?.hasLogo === true);
   const loading = token !== null && page.isLoading;
   const money = (value: string) => f.money(value, 'VND');
   return (
@@ -52,6 +77,7 @@ export function QuoteDocumentPage() {
         <article className="space-y-6 text-sm" aria-label={t('title', { number: doc.number })}>
           <header className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-0.5">
+              {logoUrl && <img src={logoUrl} alt="" className="mb-2 max-h-16 w-auto max-w-48 object-contain" data-testid="quote-logo" />}
               <h1 className="text-lg font-semibold text-foreground">{doc.seller.name}</h1>
               {doc.seller.taxCode && <p className="text-muted-foreground">{t('taxCode', { code: doc.seller.taxCode })}</p>}
               {doc.seller.address && <p className="text-muted-foreground">{doc.seller.address}</p>}

@@ -681,6 +681,7 @@ export interface CrmQuoteSettingTable {
   phone: string | null;
   email: string | null;
   bank_note: string | null;
+  logo_file_id: string | null;
 }
 
 /** crove_crm.quote */

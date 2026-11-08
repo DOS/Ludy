@@ -5,11 +5,14 @@
 // the margins, and the same document must give the same bytes.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { extractText, getDocumentProxy } from 'unpdf';
+import { extractImages, extractText, getDocumentProxy } from 'unpdf';
 import { quoteFonts } from '../../../modules/crm/src/pdf/fonts.ts';
+import { readLogoImage } from '../../../modules/crm/src/pdf/image.ts';
+import { gradient, jpeg, png } from '../../../modules/crm/test/png-fixture.ts';
 import { renderQuotePdf, vnDate, vnNumber, wrap, type QuoteDocument } from '../../../modules/crm/src/pdf/quote-document.ts';
-import { A4_WIDTH, PdfDocument } from '../../../modules/crm/src/pdf/writer.ts';
+import { A4_HEIGHT, A4_WIDTH, PdfDocument } from '../../../modules/crm/src/pdf/writer.ts';
 
 const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
 const bare = (text: string) => text.replace(/\s+/g, '');
@@ -373,5 +376,112 @@ describe('the quote document', () => {
     const text = squash(pages[0] as string);
     expect(text.split(squash(hostile).slice(0, 30)).length - 1).toBeGreaterThanOrEqual(3);
     expect(Buffer.from(renderQuotePdf(document)).toString('latin1')).not.toContain('app.alert');
+  });
+});
+
+// The logo of the letterhead (#2814): an image the document is handed already read; it goes on the first page at the top left inside the margins, as an image object with its own
+// alpha plane when it has one, and a quote without one is the file it always was.
+describe('the letterhead logo', () => {
+  const rgba = gradient(40, 14, 4).map((v, i) => (i % 4 === 3 ? (v < 100 ? 0 : 255) : v));
+  const logoPng = readLogoImage(png({ width: 40, height: 14, colorType: 6, samples: rgba, filters: [0, 1, 2, 3, 4] }), 'image/png');
+  const jpegFile = jpeg({ width: 400, height: 100 });
+  const logoJpeg = readLogoImage(jpegFile, 'image/jpeg');
+
+  // Every xref entry points at its object and every stream's length is the bytes between the keywords.
+  function wellFormed(bytes: Uint8Array): string {
+    const text = Buffer.from(bytes).toString('latin1');
+    const start = Number(/startxref\n(\d+)\n%%EOF\n$/.exec(text)?.[1]);
+    const table = /^xref\n0 (\d+)\n((?:\d{10} \d{5} [nf] \n)+)trailer/.exec(text.slice(start));
+    const entries = (table?.[2] ?? '').match(/[\s\S]{20}/g) ?? [];
+    expect(entries).toHaveLength(Number(table?.[1]));
+    entries.slice(1).forEach((entry, i) => {
+      const at = Number(entry.slice(0, 10));
+      expect(text.slice(at, at + `${i + 1} 0 obj\n`.length), `object ${i + 1}`).toBe(`${i + 1} 0 obj\n`);
+    });
+    for (const m of text.matchAll(/\/Length (\d+) >>\nstream\n/g)) {
+      const from = (m.index as number) + m[0].length;
+      expect(text.slice(from + Number(m[1]), from + Number(m[1]) + '\nendstream'.length)).toBe('\nendstream');
+    }
+    return text;
+  }
+
+  // The drawing operator of the image: its box, read from the page's own content stream.
+  function box(bytes: Uint8Array, name = 'Im1') {
+    const text = Buffer.from(bytes).toString('latin1');
+    for (const m of text.matchAll(/stream\n/g)) {
+      const from = (m.index as number) + m[0].length;
+      const end = text.indexOf('\nendstream', from);
+      let content = '';
+      try {
+        content = inflateSync(Buffer.from(text.slice(from, end), 'latin1')).toString('latin1');
+      } catch {
+        continue;
+      }
+      const found = new RegExp(`q ([\\d.]+) 0 0 ([\\d.]+) ([\\d.]+) ([\\d.]+) cm /${name} Do Q`).exec(content);
+      if (found) return { width: Number(found[1]), height: Number(found[2]), x: Number(found[3]), y: Number(found[4]) };
+    }
+    return null;
+  }
+
+  it('is read as the two files that the tests use', () => {
+    expect(logoPng).toMatchObject({ width: 40, height: 14, space: 'DeviceRGB' });
+    expect(logoPng?.alpha).not.toBeNull();
+    expect(logoJpeg).toMatchObject({ width: 400, height: 100, colour: { kind: 'jpeg' } });
+  });
+
+  it('draws a PNG with its alpha as one image and its soft mask, at the top left of the first page, in its own proportions and inside the margins', async () => {
+    const bytes = renderQuotePdf({ ...sample(), logo: logoPng });
+    const text = wellFormed(bytes);
+    expect(text.match(/\/Subtype \/Image/g)).toHaveLength(2);
+    expect(text).toContain('/SMask ');
+    expect(text).toContain('/ColorSpace /DeviceGray');
+    expect(text).toContain('/XObject << /Im1 ');
+    const at = box(bytes);
+    expect(at).not.toBeNull();
+    expect(at?.x).toBe(40);
+    expect(at?.width).toBeLessThanOrEqual(150);
+    expect(at?.height).toBeLessThanOrEqual(54);
+    expect((at?.width as number) / (at?.height as number)).toBeCloseTo(40 / 14, 1);
+    expect((at?.y as number) + (at?.height as number)).toBeLessThanOrEqual(A4_HEIGHT - 40 + 0.01);
+    const { pdf, totalPages } = await read(bytes);
+    expect(totalPages).toBe(1);
+    const images = await extractImages(pdf, 1);
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({ width: 40, height: 14 });
+  });
+
+  it('embeds a JPEG file as it is', () => {
+    const bytes = renderQuotePdf({ ...sample(), logo: logoJpeg });
+    const text = wellFormed(bytes);
+    expect(text).toContain('/Filter /DCTDecode');
+    expect(text).not.toContain('/SMask');
+    expect(Buffer.from(bytes).indexOf(jpegFile)).toBeGreaterThan(0);
+    // 400 by 100 is wider than the box: the width limits it.
+    expect(box(bytes)).toMatchObject({ width: 150, height: 37.5 });
+  });
+
+  it('puts the logo above the seller and moves nothing of the words: the text is the text of the quote without one', async () => {
+    const without = await read(renderQuotePdf(sample()));
+    const withLogo = await read(renderQuotePdf({ ...sample(), logo: logoPng }));
+    expect(squash(withLogo.pages[0] as string)).toBe(squash(without.pages[0] as string));
+    const seller = renderQuotePdf({ ...sample(), logo: logoJpeg });
+    expect(box(seller)?.y).toBeGreaterThan(A4_HEIGHT - 40 - 54 - 0.01);
+  });
+
+  it('gives the same bytes for the same quote and logo, and the file it always was without one', () => {
+    expect(Buffer.from(renderQuotePdf({ ...sample(), logo: logoPng })).equals(Buffer.from(renderQuotePdf({ ...sample(), logo: logoPng })))).toBe(true);
+    const plain = Buffer.from(renderQuotePdf(sample()));
+    expect(Buffer.from(renderQuotePdf({ ...sample(), logo: null })).equals(plain)).toBe(true);
+    expect(plain.toString('latin1')).not.toContain('/XObject');
+    expect(Buffer.from(renderQuotePdf({ ...sample(), logo: logoPng })).equals(plain)).toBe(false);
+  });
+
+  it('shows it on the first page only, also when the quote goes on to more pages', async () => {
+    const bytes = renderQuotePdf({ ...sample({}, 30), logo: logoPng });
+    wellFormed(bytes);
+    const { pdf, totalPages } = await read(bytes);
+    expect(totalPages).toBeGreaterThan(1);
+    expect(await extractImages(pdf, 1)).toHaveLength(1);
+    expect(await extractImages(pdf, 2)).toHaveLength(0);
   });
 });

@@ -45,6 +45,7 @@ const PUBLIC: Record<string, string> = {
   '/api/review/file': 'the same review link, for one file of the post under review',
   '/api/review/answer': "the reviewer's answer, through the same review link",
   '/api/quote/view': "a sent quote's page (#2694): a signed, expiring, revocable quote link is the credential; rate limited per client, it answers one quote document and nothing else",
+  '/api/quote/logo': "the logo of a sent quote's letterhead (#2814): the quote link's token is the credential, as for /api/quote/view; rate limited per client, it answers that one quote's seller logo and nothing else",
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',

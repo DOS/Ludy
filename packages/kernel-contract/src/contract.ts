@@ -255,7 +255,7 @@ import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts'
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary } from './crm-sales-orders.ts';
-import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -661,6 +661,8 @@ export const contract = {
       accept: oc.input(zQuoteAccept).output(zQuoteDecided),
       decline: oc.input(zQuoteDecline).output(zQuoteDecided),
       setSetting: oc.input(zQuoteSettingSet).output(zQuoteSetting),
+      setLogo: oc.input(zQuoteLogoSet).output(zQuoteSetting),
+      removeLogo: oc.input(z.strictObject({})).output(zQuoteSetting),
     },
     // Sales orders of accepted quotes (#2696, ADR-0050): everyone reads; owners, admins and members cancel one that nothing was invoiced or delivered for. `handoff` is
     // the facts Kế toán takes to make an e-invoice draft (it refuses a cancelled order).
