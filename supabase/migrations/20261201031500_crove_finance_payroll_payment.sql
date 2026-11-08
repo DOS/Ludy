@@ -7,7 +7,7 @@
 --                                               Both or neither, and a voucher that names a run names the proposal that approved it.
 -- crove_finance.effect_proposal_check          the cash voucher's trigger lists the new command, so a voucher may name a proposal only when that proposal is executing one of the commands that record vouchers.
 -- crove_finance.ledger_effect_recorded         the body of 20261126120000 with the branch for the new command: its effect is a voucher naming the run, with its entry, stored in this transaction.
--- The approval policy of the new command is in 20261129212500 (the kernel's own migration: a finance migration touches no crove_kernel object).
+-- The approval policy of the new command is in 20261201032500 (the kernel's own migration: a finance migration touches no crove_kernel object).
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_finance.cash_voucher ADD COLUMN IF NOT EXISTS payroll_run_id uuid;
