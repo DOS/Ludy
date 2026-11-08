@@ -4,7 +4,7 @@
 --   crove_meetings.meeting_draft_purge(p_org_id, p_meeting_id)  deletes those draft rows of one meeting in the org's own system context
 -- Only rows of stage 'draft' go, each by one statement that tests the stage and the age itself, so a row the recorder published a moment before (or while)
 -- the statement runs is never deleted: in READ COMMITTED a statement that meets a row another transaction just changed re-reads it and drops it from the
--- match. Published rows follow the meeting's text date (meetings_due). The 30 days count from the row's created_at (an edit does not restart them).
+-- match. Published rows follow the meeting's text date (meetings_due). The 30 days count from the row's created_at; an edit of a row in place does not move it, while a new transcription or a saved summary replaces rows and so starts the count again. An accepted draft item is deleted too, and the task made from it keeps a link to an item that is gone.
 -- Nothing here edits an applied function: both are new. No index: the scan runs once a night over small tables.
 
 SET LOCAL lock_timeout = '2s';
