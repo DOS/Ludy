@@ -316,7 +316,7 @@ export function MeetingDetailPage() {
             </div>
             <div>
               <span className="font-semibold text-muted-foreground">{t('detail.textRetention')}: </span>
-              <span>{meeting.textRetentionDate}</span>
+              <span>{meeting.textRetentionDate ?? t('detail.untilDeleted')}</span>
             </div>
           </CardContent>
         </Card>

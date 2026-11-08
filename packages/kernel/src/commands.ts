@@ -33,6 +33,7 @@ import {
 } from '@crove/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
+import { extensionCommands } from './extension.ts';
 import { conversationCommands } from './conversations.ts';
 import {
   actorRef,
@@ -70,7 +71,7 @@ import { numberingCommands } from './numbering.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
-import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
+import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
 import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
@@ -94,6 +95,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.stock.close_period',
   // The confirmation of a count of stock (#2513): writes the adjustment moves and posts their difference as a general journal voucher.
   'finance.stock.count_confirm',
+  // The posting of an approved pay run (#2532): posts the month's pay, the funds and the PIT as a general journal voucher that names the run.
+  'finance.payroll_posting.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',
@@ -350,9 +353,14 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
     risk: 'R1',
     sideEffect: 'internal',
     access: MEMBERS,
+    // The Ludy extension's meetings scope may ask for a grant for a meeting's audio or video, and for nothing else (#2582).
+    extension: { scope: 'meetings' },
     handler: async (ctx, input) => {
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
       const userId = ctx.actor.userId;
+      if (ctx.actor.extension && input.purpose !== 'meeting_audio' && input.purpose !== 'meeting_video') {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ tải lên được âm thanh và hình của cuộc họp', { rule: 'extension_scope' });
+      }
       // import: a spreadsheet for a module's import (#465), at most 10 MB.
       const maxBytes = input.purpose === 'meeting_audio'
         ? MAX_MEETING_AUDIO_BYTES
@@ -405,6 +413,8 @@ export const claimUpload = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
+  // The extension's meetings scope uses a grant it asked for, which is one for a meeting's audio or video (#2582).
+  extension: { scope: 'meetings' },
   target: (input) => ({ type: 'kernel.file_upload', id: input.uploadId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
@@ -417,6 +427,8 @@ export const claimUpload = defineCommand({
       .executeTakeFirst();
     // Another user's grant reads as missing.
     if (!row || row.created_by !== ctx.actor.userId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
+    // A grant made for anything but a meeting's media reads as missing to an extension token.
+    if (ctx.actor.extension && row.purpose !== 'meeting_audio' && row.purpose !== 'meeting_video') throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
     if (row.used_at) throw new DomainError('UPLOAD_USED', 409, 'Lượt tải lên này đã được dùng');
     if (row.expired) throw new DomainError('UPLOAD_EXPIRED', 409, 'Lượt tải lên đã hết hạn; hãy tải lại tệp');
     await ctx.trx
@@ -589,6 +601,7 @@ export const requestProposal = defineCommand({
     const draft = zPreparedProposal.parse(await ctx.run(PROPOSAL_PREPARERS[input.command], input.input));
     if (draft.command !== input.command) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     const entity = preparedEntity(draft);
+    const coAuthors = preparedCoAuthors(draft);
     const proposal = await ctx.trx
       .insertInto('crove_kernel.proposal')
       .values({
@@ -600,6 +613,8 @@ export const requestProposal = defineCommand({
         // P12: who may approve this command right now; approval re-checks each one's role live.
         eligible_approvers: await eligibleApprovers(ctx.trx, ctx.orgId, draft.command),
         authors: JSON.stringify([actorRef(ctx.actor)]),
+        // The people the preparer says the proposal rests on besides the requester (never from the client); they count as authors in four-eyes.
+        ...(coAuthors ? { co_authors: coAuthors } : {}),
         // Kept so the requester can ask for it again if it expires (#876); the preparer then checks it all anew.
         request_input: JSON.stringify(input.input),
         // The entity it belongs to (#1538): a member limited to other entities neither sees nor decides it.
@@ -607,7 +622,7 @@ export const requestProposal = defineCommand({
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command });
+    ctx.audit({ proposal_id: proposal.id, proposal_command: draft.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', proposal.id, 'proposal.created', 'Tạo đề xuất');
     await ctx.emit('kernel.proposal.created', { proposalId: proposal.id, kind: draft.kind });
     return { proposalId: proposal.id };
@@ -1187,6 +1202,7 @@ const otherKernelCommands = [
   ...offboardingCommands,
   ...agentCommands,
   ...channelCommands,
+  ...extensionCommands,
   ...conversationCommands,
   setTaxCode,
   setVatFilingPeriod,

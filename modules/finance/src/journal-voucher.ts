@@ -46,7 +46,7 @@ const PROBLEM_MESSAGES: Record<JournalVoucherProblem, string> = {
 
 // Every check of a voucher, when it is asked for and again when it is posted: its shape, its accounts (in the org's
 // chart and in use) and its parties (found in the org; read FOR SHARE when posting, so they stay as read until commit).
-async function checkVoucher(ctx: QueryContext, lines: ReadonlyArray<{ account: string; partyId: string | null; debit: string; credit: string }>, lock: boolean) {
+export async function checkJournalVoucherLines(ctx: QueryContext, lines: ReadonlyArray<{ account: string; partyId: string | null; debit: string; credit: string }>, lock: boolean) {
   const problems = journalVoucherProblems(lines);
   const first = problems[0];
   if (first) throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, PROBLEM_MESSAGES[first], { problems });
@@ -70,7 +70,7 @@ export const prepareJournalVoucher = defineCommand({
   access: REQUESTERS,
   handler: async (ctx, input) => {
     const lines = input.lines.map((l) => ({ ...l, partyId: l.partyId ?? null }));
-    const parties = await checkVoucher(ctx, lines, false);
+    const parties = await checkJournalVoucherLines(ctx, lines, false);
     // The legal entity whose books the voucher goes to (#1280), stored with the proposal so the approver posts it there.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     // A month already locked (in that entity) is refused now, while the user is still on the form; the posting guard
@@ -117,7 +117,14 @@ export const prepareJournalVoucher = defineCommand({
 // general journal voucher, of a year-end closing (year-closing.ts, closingYear set) and of the close of a month of stock (stock-close.ts, stockClosingMonth set) and of a count of stock (stock-count.ts, stockCountId set). The payload has been checked.
 // The voucher is numbered and posted in the payload's legal entity (#1280), resolved again for the approver (absent on
 // a proposal made before #1280: the entity resolved for the approver).
-export async function postJournalVoucher(ctx: CommandContext, payload: JournalVoucherProposal, closingYear: number | null = null, stockClosingMonth: string | null = null, stockCountId: string | null = null) {
+export async function postJournalVoucher(
+  ctx: CommandContext,
+  payload: JournalVoucherProposal,
+  closingYear: number | null = null,
+  stockClosingMonth: string | null = null,
+  stockCountId: string | null = null,
+  payrollRunId: string | null = null,
+) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
   const total = journalVoucherTotal(payload.lines);
@@ -135,6 +142,8 @@ export async function postJournalVoucher(ctx: CommandContext, payload: JournalVo
       // The columns of a close and of a count are written only for one, so a database before their migrations (the tests that start there) takes any other voucher.
       ...(stockClosingMonth === null ? {} : { stock_closing_month: `${stockClosingMonth}-01` }),
       ...(stockCountId === null ? {} : { stock_count_id: stockCountId }),
+      // The column of a pay run's posting is written only for one, as the others.
+      ...(payrollRunId === null ? {} : { payroll_run_id: payrollRunId }),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
@@ -156,7 +165,7 @@ export async function postJournalVoucher(ctx: CommandContext, payload: JournalVo
       memo: j.memo,
     })),
   });
-  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}) });
+  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}) });
   await ctx.activity('finance.journal_voucher', voucher.id, 'journal_voucher.recorded', `Ghi sổ ${JOURNAL_VOUCHER_LABEL.toLowerCase()} ${code}`);
   await ctx.emit('finance.journal_voucher.recorded', { voucherId: voucher.id, journalEntryId, number: voucher.number });
   return { voucherId: voucher.id, journalEntryId, code };
@@ -174,7 +183,7 @@ export const recordJournalVoucher = defineCommand({
     const lines = payload.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit }));
     // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
     // refused here. The total is the lines' sum, never taken from the payload as is.
-    await checkVoucher(ctx, lines, true);
+    await checkJournalVoucherLines(ctx, lines, true);
     if (journalVoucherTotal(lines) !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }

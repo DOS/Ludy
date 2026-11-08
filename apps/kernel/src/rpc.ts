@@ -47,8 +47,9 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
-import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
+import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -77,6 +78,8 @@ export function toORPCError(error: unknown): ORPCError<string, unknown> {
 }
 
 export async function resolveMembership(runtime: Runtime, user: AuthUser, slug: string | null): Promise<OrgSummary> {
+  // An extension token has one org and no org list to look it up in: the routes it reaches use resolveOrg (below).
+  if (user.extension) throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
   if (!slug) throw new DomainError('ORG_REQUIRED', 400, 'Thiếu tổ chức (header x-crove-org)');
   const orgs = await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId));
   const org = orgs.find((o) => o.slug === slug);
@@ -87,6 +90,12 @@ export async function resolveMembership(runtime: Runtime, user: AuthUser, slug: 
 }
 
 export async function resolveOrg(runtime: Runtime, user: AuthUser, slug: string | null): Promise<string> {
+  // An extension token names its one org (issue #2582). It is not a claim to trust: the runtime re-checks, in the
+  // transaction of every command and query, that this token belongs to this member and this org.
+  if (user.extension) {
+    setLogContext({ orgId: user.extension.orgId });
+    return user.extension.orgId;
+  }
   return (await resolveMembership(runtime, user, slug)).orgId;
 }
 
@@ -332,6 +341,9 @@ export function createRpcHandler(
       : null,
     suggestionBudget(),
   );
+  // The finance coworker on a sales e-invoice draft (#2505): lines, the VAT rate the text states and the buyer, from a text a person typed. The same reader and model, a budget of its own. It is
+  // told the text and the names of the customers that fit it, never an address, tax code, credential or provider data, and what it answers only fills the form as proposals.
+  const einvoiceCoworker = einvoiceAi(conversationReader?.einvoiceDraft ? { einvoiceDraft: conversationReader.einvoiceDraft.bind(conversationReader) } : null, suggestionBudget());
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -769,6 +781,7 @@ export function createRpcHandler(
           get: os.hr.payroll.employees.get.handler(hrQuery('hr.payroll.employee.get')),
           add: os.hr.payroll.employees.add.handler(hrCommand('hr.payroll.employee.add')),
           edit: os.hr.payroll.employees.edit.handler(hrCommand('hr.payroll.employee.edit')),
+          finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
         },
@@ -827,9 +840,14 @@ export function createRpcHandler(
     meetings: {
       list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
       get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
+      extensionStatus: os.meetings.extensionStatus.handler(meetingsQuery('meetings.meeting.extension_status')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
+      settings: {
+        get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
+        set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
+      },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
         remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),
@@ -1983,6 +2001,12 @@ export function createRpcHandler(
           : inOrg(context, (orgId, actor) => runtime.execute('kernel.session.revoke', input, { actor, orgId })),
       ),
     },
+    extension: {
+      tokens: {
+        list: os.extension.tokens.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list', {}, { actor, orgId }))),
+        revoke: os.extension.tokens.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.extension.token.revoke', input, { actor, orgId }))),
+      },
+    },
     inbox: {
       list: os.inbox.list.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.list', input, { actor, orgId })),
@@ -2388,6 +2412,13 @@ export function createRpcHandler(
         save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
+        // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
+        suggest: os.einvoice.drafts.suggest.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const source = await runtime.query<EInvoiceSuggestSource>('finance.einvoice_draft.suggest_source', input, { actor, orgId });
+            return suggestEInvoiceDraft(einvoiceCoworker, orgId, actor.userId, source, input);
+          }),
+        ),
       },
     },
     marketplace: {

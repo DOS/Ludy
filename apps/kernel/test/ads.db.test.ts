@@ -1222,7 +1222,7 @@ suite('ads on PostgreSQL (#2217)', () => {
                 const ts = await appDb.transaction().execute(async (trx) => {
                   const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
                   await sql`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${token}::text)`.execute(trx);
-                  return decideApproval(trx, orgId, { type: 'user', userId: who.userId, aal: 'aal1', sessionId: randomUUID() }, { command, status: 'pending', eligible_approvers: snapshot, authors }, { lock: false });
+                  return decideApproval(trx, orgId, { type: 'user', userId: who.userId, aal: 'aal1', sessionId: randomUUID() }, { command, status: 'pending', eligible_approvers: snapshot, authors, co_authors: null }, { lock: false });
                 });
                 const inDb = (
                   await row<{ d: { reason: string; eligibleCount: number; selfApproved: boolean; fourEyes: string } }>(
@@ -1652,7 +1652,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call WHERE org_id = $1`, [orgId]))[0]?.n).toBe('0');
           // The approval ran under the approval rules of version 4, judged on the people of the org now: two eligible people, so the approver is not the author.
           const approval = (await row<{ detail: { policy_version: number; eligible_approvers: number; self_approved: boolean; policy: Record<string, string> } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]))[0]?.detail;
-          expect(approval).toMatchObject({ policy_version: 7, self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
+          expect(approval).toMatchObject({ policy_version: 9, self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
           expect(approval?.eligible_approvers).toBeGreaterThanOrEqual(2);
         });
 

@@ -107,7 +107,7 @@ describe('personal-data registry: payroll people (#2530)', () => {
   });
 
   it('seals the two numbers, and clears the names and the address with the employee erasure', () => {
-    expect(Object.keys(SEALED_COLUMNS).sort()).toEqual(['crove_hr.payroll_employee.bank_account_sealed', 'crove_hr.payroll_employee.national_id_sealed']);
+    expect(Object.keys(SEALED_COLUMNS).sort()).toEqual(['crove_hr.payroll_employee.bank_account_sealed', 'crove_hr.payroll_employee.insurance_number_sealed', 'crove_hr.payroll_employee.national_id_sealed', 'crove_hr.payroll_employee.tax_code_sealed']);
     for (const key of ['crove_hr.payroll_employee.display_name', 'crove_hr.payroll_employee.address', 'crove_hr.payroll_dependent.display_name']) {
       expect(entries[key]?.handling, key).toBe('erase');
     }

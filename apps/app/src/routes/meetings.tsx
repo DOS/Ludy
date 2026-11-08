@@ -3,9 +3,19 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { ConsentMethod, MeetingLanguage, MeetingSummary, MeetingVisibility } from '@crove/kernel-contract';
+import {
+  MEETING_AUDIO_RETENTION_CHOICES,
+  MEETING_TEXT_RETENTION_CHOICES,
+  MEETING_VIDEO_RETENTION_CHOICES,
+  type ConsentMethod,
+  type MeetingLanguage,
+  type MeetingSettings,
+  type MeetingSummary,
+  type MeetingVisibility,
+} from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Input } from '@crove/ui/components/input';
@@ -23,6 +33,98 @@ const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'des
   processing: 'secondary',
   error: 'destructive',
 };
+
+// The org's three retention periods (ADR-0047 point 7, plan section 9). Everyone who reads meetings sees them; an owner or admin changes them. A change
+// applies to meetings recorded afterwards. The AI coworker has no part here: the periods are the org's own, and the core works with AI off.
+function RetentionSettingsCard() {
+  const t = useTranslations('meetings.settings');
+  const settingsQuery = useQuery(orpc.meetings.settings.get.queryOptions({ input: {} }));
+  const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const canEdit = orgQuery.data?.role === 'owner' || orgQuery.data?.role === 'admin';
+  const [draft, setDraft] = useState<MeetingSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const current = draft ?? settingsQuery.data ?? null;
+
+  const change = (patch: Partial<MeetingSettings>) => {
+    if (!current) return;
+    const next = { ...current, ...patch };
+    // A kept video is never longer than the audio (a choice of "right after the transcript" counts as 7 days).
+    if (next.videoRetentionDays > Math.max(next.audioRetentionDays, 7)) next.videoRetentionDays = 7;
+    setDraft(next);
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await orpc.meetings.settings.set.call(draft);
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.settings.key() });
+      setDraft(null);
+      toast(t('saved'), 'success');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (settingsQuery.isPending || !current) return null;
+  const audioLabel = (n: number) => (n === 0 ? t('audioChoice.0') : n === 7 ? t('audioChoice.7') : n === 30 ? t('audioChoice.30') : t('audioChoice.90'));
+  const videoLabel = (n: number) => (n === 7 ? t('videoChoice.7') : t('videoChoice.30'));
+  const textLabel = (n: number) => (n === 0 ? t('textChoice.0') : n === 90 ? t('textChoice.90') : n === 365 ? t('textChoice.365') : t('textChoice.730'));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('title')}</CardTitle>
+        <CardDescription>{t('hint')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-1">
+            <Label htmlFor="retention-audio">{t('audio')}</Label>
+            <NativeSelect id="retention-audio" disabled={!canEdit} value={String(current.audioRetentionDays)} onChange={(e) => change({ audioRetentionDays: Number(e.target.value) as MeetingSettings['audioRetentionDays'] })}>
+              {MEETING_AUDIO_RETENTION_CHOICES.map((n) => (
+                <NativeSelectOption key={n} value={String(n)}>
+                  {audioLabel(n)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="retention-video">{t('video')}</Label>
+            <NativeSelect id="retention-video" disabled={!canEdit} value={String(current.videoRetentionDays)} onChange={(e) => change({ videoRetentionDays: Number(e.target.value) as MeetingSettings['videoRetentionDays'] })}>
+              {MEETING_VIDEO_RETENTION_CHOICES.filter((n) => n <= Math.max(current.audioRetentionDays, 7)).map((n) => (
+                <NativeSelectOption key={n} value={String(n)}>
+                  {videoLabel(n)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="retention-text">{t('text')}</Label>
+            <NativeSelect id="retention-text" disabled={!canEdit} value={String(current.textRetentionDays)} onChange={(e) => change({ textRetentionDays: Number(e.target.value) as MeetingSettings['textRetentionDays'] })}>
+              {MEETING_TEXT_RETENTION_CHOICES.map((n) => (
+                <NativeSelectOption key={n} value={String(n)}>
+                  {textLabel(n)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        </div>
+        {error ? <ErrorText>{error}</ErrorText> : null}
+        {canEdit ? (
+          <Button onClick={() => void save()} disabled={!draft || saving}>
+            {t('save')}
+          </Button>
+        ) : (
+          <p className="text-xs text-muted-foreground">{t('adminOnly')}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function MeetingsPage() {
   const t = useTranslations('meetings');
@@ -138,9 +240,14 @@ export function MeetingsPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button onClick={() => setModalOpen(true)}>
-            {t('new')}
-          </Button>
+          <div className="flex gap-2">
+            <Link to="/o/$slug/meetings/record" params={{ slug }} className={buttonVariants({ variant: 'outline' })}>
+              {t('record.open')}
+            </Link>
+            <Button onClick={() => setModalOpen(true)}>
+              {t('new')}
+            </Button>
+          </div>
         }
       />
       <NotesSubnav slug={slug} active="meetings" />
@@ -200,6 +307,8 @@ export function MeetingsPage() {
           ))}
         </div>
       )}
+
+      <RetentionSettingsCard />
 
       {/* New Meeting Modal with Mandatory Consent Gate */}
       <Dialog open={modalOpen} onOpenChange={(open) => {

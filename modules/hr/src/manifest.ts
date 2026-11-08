@@ -11,14 +11,20 @@ export const hrManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_hr: {
+      // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
+      payroll_bank_template: columns(['org_id', 'id', 'legal_entity_id', 'name', 'layout', 'created_by', 'created_at', 'updated_at']),
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
-      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'created_by', 'created_at', 'updated_at'], {
+      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
+        birth_date: 'pii',
+        // The tax code and the social insurance number are in most cases the identity number (since 2025-07-01): sealed and classified like it (#2533).
+        tax_code_sealed: 'national_id',
+        insurance_number_sealed: 'national_id',
         address: 'contact',
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
       }),
-      payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
+      payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'pay_function', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
       // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the
       // approval record holds the totals, so it is too. The ids, the status and the dates are internal.
       payroll_line: columns(['org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'checks', 'rules_used', 'refusal', 'adjusts_run_id', 'note', 'created_by', 'created_at', 'updated_at'], {

@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand } from '@crove/kernel-runtime';
-import { actorRef, addAuthor, eligibleApprovers, parseAuthors } from './approval.ts';
+import { PROPOSAL_CO_AUTHOR_COMMANDS, actorRef, addAuthor, eligibleApprovers, parseAuthors } from './approval.ts';
 import { legalEntityMoveRefused, refuseWhileReextracting } from './extraction.ts';
 
 // Proposals a user may ask for (kernel.proposal.request), and the module command that checks the request and builds
@@ -26,6 +26,8 @@ export const PROPOSAL_PREPARERS = {
   'finance.stock.close_period': 'finance.stock.prepare_close',
   // The confirmation of a count of stock (#2513), built from the books for the count named.
   'finance.stock.count_confirm': 'finance.stock.prepare_count',
+  // The posting of an approved pay run (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
+  'finance.payroll_posting.record': 'hr.payroll.posting.prepare',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',
@@ -48,7 +50,17 @@ export const zPreparedProposal = z.object({
   title: z.string().min(1).max(300),
   payload: z.record(z.string(), z.unknown()),
   legalEntityId: zId.optional(),
+  // People whose decision the proposal rests on besides the requester (for example the approver of the pay run it posts): they count as authors in four-eyes (P10), so none of them
+  // approves it while another eligible approver exists. Only the commands in PROPOSAL_CO_AUTHOR_COMMANDS may declare them (the database holds the same list).
+  coAuthors: z.array(z.uuid()).min(1).max(10).optional(),
 });
+
+// The co-authors a preparer declared, as the column stores them: refused for a command that is not in the list, one id once, none when it declared none.
+export function preparedCoAuthors(draft: { command: string; coAuthors?: readonly string[] | undefined }): string[] | null {
+  if (!draft.coAuthors || draft.coAuthors.length === 0) return null;
+  if (!PROPOSAL_CO_AUTHOR_COMMANDS.includes(draft.command)) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+  return [...new Set(draft.coAuthors.map((id) => id.toLowerCase()))];
+}
 
 // The legal entity of a prepared proposal (#1538): the one its preparer names, else its payload's legalEntityId (the
 // entity a voucher posts into, resolved by the preparer as the requester), else none, and the database gives it the
@@ -158,10 +170,13 @@ export const resubmitProposal = defineCommand({
       duplicate_of?: string | null;
       tainted?: boolean;
     };
+    let coAuthors: string[] | null = null;
     if (source === 'request') {
       const preparer = PROPOSAL_PREPARERS[old.command as RequestableCommand];
       const draft = zPreparedProposal.parse(await ctx.run(preparer, old.request_input));
       if (draft.command !== old.command) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      // The preparer ran again: the people it declares now, as for a new request.
+      coAuthors = preparedCoAuthors(draft);
       content = {
         kind: draft.kind,
         command: draft.command,
@@ -215,11 +230,12 @@ export const resubmitProposal = defineCommand({
         // P12: who may approve it now; P10: whoever wrote the content stays an author, and so does the user asking.
         eligible_approvers: await eligibleApprovers(ctx.trx, ctx.orgId, content.command),
         authors: JSON.stringify(addAuthor(authors, actorRef(ctx.actor))),
+        ...(coAuthors ? { co_authors: coAuthors } : {}),
         resubmitted_from: old.id,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ proposal_id: created.id, resubmitted_from: old.id, source, proposal_command: content.command });
+    ctx.audit({ proposal_id: created.id, resubmitted_from: old.id, source, proposal_command: content.command, ...(coAuthors ? { co_authors: coAuthors } : {}) });
     await ctx.activity('kernel.proposal', old.id, 'proposal.resubmitted', 'Gửi lại thành đề xuất mới');
     await ctx.activity('kernel.proposal', created.id, 'proposal.created', 'Tạo đề xuất (gửi lại)');
     await ctx.emit('kernel.proposal.created', { proposalId: created.id, kind: content.kind });

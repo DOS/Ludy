@@ -517,6 +517,8 @@ export const lineAdjust = defineCommand({
 interface StoredLine {
   id: string;
   employee_id: string;
+  // The terms the figures were computed from (a `pay` line): what the posting reads the function of the person's work through.
+  employment_id: string | null;
   kind: 'pay' | 'adjustment';
   status: 'calculated' | 'refused';
   inputs: unknown;
@@ -533,7 +535,7 @@ interface StoredLine {
   refusal: string | null;
 }
 
-const LINE_COLUMNS = ['id', 'employee_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'checks', 'rules_used', 'refusal'] as const;
+const LINE_COLUMNS = ['id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'checks', 'rules_used', 'refusal'] as const;
 
 const figuresOfLine = (l: StoredLine): HrRunFigures | null =>
   l.status === 'refused' || l.gross === null
@@ -569,7 +571,7 @@ const checksOf = (value: unknown): HrCheck[] => (Array.isArray(value) ? (value a
 function fingerprintOf(run: { id: string; month: string; working_days: string }, lines: readonly StoredLine[]): string {
   const rows = [...lines]
     .sort((a, b) => (a.id < b.id ? -1 : 1))
-    .map((l) => [l.id, l.employee_id, l.kind, l.status, JSON.stringify(l.inputs), l.gross, l.employee_insurance, l.employer_insurance, l.union_fee, l.taxable_income, l.pit, l.net, l.employer_cost, l.refusal, refsOf(l.rules_used).map((r) => r.id)]);
+    .map((l) => [l.id, l.employee_id, l.employment_id, l.kind, l.status, JSON.stringify(l.inputs), l.gross, l.employee_insurance, l.employer_insurance, l.union_fee, l.taxable_income, l.pit, l.net, l.employer_cost, l.refusal, refsOf(l.rules_used).map((r) => r.id)]);
   return createHash('sha256').update(JSON.stringify({ run: [run.id, run.month, run.working_days], rows })).digest('hex');
 }
 
@@ -610,13 +612,15 @@ export const runApprove = defineCommand({
     if (lines.length === 0) throw new DomainError('HR_RUN_EMPTY', 422, 'Bảng lương chưa có dòng nào để duyệt');
     const refused = lines.filter((l) => l.status === 'refused').length;
     if (refused > 0) throw new DomainError('HR_RUN_HAS_REFUSED', 422, `${refused} dòng chưa tính được; sửa số liệu của các dòng đó rồi mới duyệt`, { refused });
-    // The lines must still be what the calculator gives for the people, terms, dependents and rules as they are now: a raise, a dependent or a hire added since the month was opened,
+    // The lines must still be what the calculator gives for the people, terms, dependents and rules as they are now (and rest on the terms in force): a raise, a new function, a dependent or a hire added since the month was opened,
     // or a rule that moved, would otherwise be frozen into the month unseen. The person recalculates and looks again.
     const people = await peopleOf(ctx, run.legal_entity_id, run.month);
     const payLines = new Map(lines.filter((l) => l.kind === 'pay').map((l) => [l.employee_id, l]));
     const stale = people.filter((person) => {
       const l = payLines.get(person.employeeId);
       if (!l) return true;
+      // The line must rest on the terms in force for the month: a change that leaves the figures alone (a new function of the work, which picks the expense account of the posting) is still a change.
+      if (l.employment_id !== person.terms.id) return true;
       const f = figuresOf(person, parseInputs(l.inputs), run.month, run.working_days);
       const same = (a: string | null, b: string | null) => (a === null || b === null ? a === b : money(a).equals(money(b)));
       return !(same(f.gross, l.gross) && same(f.employee_insurance, l.employee_insurance) && same(f.employer_insurance, l.employer_insurance) && same(f.union_fee, l.union_fee) && same(f.taxable_income, l.taxable_income) && same(f.pit, l.pit) && same(f.net, l.net) && same(f.employer_cost, l.employer_cost));
@@ -724,7 +728,7 @@ export const runSheet = defineQuery({
     if (!run) throw runNotFound();
     const lines = (await ctx.trx
       .selectFrom('crove_hr.payroll_line')
-      .select([...LINE_COLUMNS, 'breakdown', 'note', 'adjusts_run_id', 'employment_id'])
+      .select([...LINE_COLUMNS, 'breakdown', 'note', 'adjusts_run_id'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
       .orderBy('kind')

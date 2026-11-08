@@ -3,7 +3,7 @@
 // the month's inputs (typed, or copied from last month where they recur) and the figures and breakdown the calculator of @crove/l10n-vn produced from them, stored as facts. A draft run
 // changes; an approved one never does (a correction is an adjustment line in a later run). Owners and admins only, and every read is a sensitive query.
 import { z } from 'zod';
-import { zId } from './schemas.ts';
+import { zId, zJournalVoucherProposal } from './schemas.ts';
 import { zHrWage } from './hr.ts';
 
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
@@ -188,3 +188,20 @@ export const zHrPayslip = z.object({
   inputs: z.record(z.string(), z.unknown()),
 });
 export type HrPayslip = z.infer<typeof zHrPayslip>;
+
+// The posting of an approved run (#2532, payroll plan 6.4 and row 18): one proposal per run through the finance proposal path. A person asks for it with the run's id
+// (kernel.proposal.request with command `finance.payroll_posting.record`); the server builds every line from the frozen run, so the request carries nothing else. An owner or an admin
+// approves it like any posting (R3, four-eyes, fresh second factor).
+export const PAYROLL_POSTING_COMMAND = 'finance.payroll_posting.record';
+export const PAYROLL_REGIMES = ['tt133', 'tt99'] as const;
+export const zHrPostingRequest = z.strictObject({ runId: zId });
+export type HrPostingRequest = z.infer<typeof zHrPostingRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the run it posts, the month, the chart it follows and whether the accountant has confirmed the account map yet.
+// Its lines are one per account, never per person: the detail stays on the run.
+export const zPayrollPostingProposal = zJournalVoucherProposal.extend({
+  payrollRunId: zId,
+  month: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/),
+  regime: z.enum(PAYROLL_REGIMES),
+  mapStatus: z.enum(['confirmed', 'commentary']),
+});
+export type PayrollPostingProposal = z.infer<typeof zPayrollPostingProposal>;

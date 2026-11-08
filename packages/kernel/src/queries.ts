@@ -31,6 +31,7 @@ import { archiveQueries } from './archives.ts';
 import { fileStatuses, seesEveryEntity as unscoped } from './file-status.ts';
 import { agentQueries } from './agents.ts';
 import { channelQueries } from './channels.ts';
+import { extensionQueries } from './extension.ts';
 import { conversationQueries } from './conversations.ts';
 import { inviteQueries } from './invites.ts';
 import { mailQueries } from './mail.ts';
@@ -478,6 +479,7 @@ export const inboxGet = defineQuery({
       voided,
       canApprove: approval.reason === 'ok' && !reading,
       approveReason: approval.reason,
+      coAuthor: ctx.actor.type === 'user' && (row.co_authors ?? []).includes(ctx.actor.userId),
       // The same checks kernel.proposal.edit makes before it edits (NOT_EDITABLE otherwise).
       canEdit: canChange && proposalEditable(ctx, row),
       canReject: canChange,
@@ -639,5 +641,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries];
+  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries];
 }

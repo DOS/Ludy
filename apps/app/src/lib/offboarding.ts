@@ -7,6 +7,7 @@ import { describeError } from './errors.ts';
 export interface OrgExportState {
   status: 'active' | 'offboarding' | 'closed';
   requestedAt: string | null;
+  ownerRunTables?: readonly string[];
   export: { createdAt: string; expiresAt: string; expired: boolean } | null;
 }
 
@@ -21,6 +22,20 @@ export function exportPhase(state: OrgExportState): { phase: ExportPhase; downlo
   if (ready) return { phase: 'ready', downloadable: true };
   if (state.export) return { phase: 'expired', downloadable: false };
   return { phase: 'none', downloadable: false };
+}
+
+// A file of the owner-run export (staff and pay data, #2676) is read live and not stored, so it is the owner's only copy: its last line is
+// {"_end":true,"rows":N}, and the file is complete only when that line is there and N is the number of rows before it.
+export function ownerRunFileComplete(text: string): boolean {
+  const lines = text.split('\n').filter((line) => line !== '');
+  const last = lines.pop();
+  if (last === undefined) return false;
+  try {
+    const end = JSON.parse(last) as { _end?: unknown; rows?: unknown };
+    return end._end === true && end.rows === lines.length;
+  } catch {
+    return false;
+  }
 }
 
 // The confirm button stays off until the owner typed the slug exactly (the server checks it again).

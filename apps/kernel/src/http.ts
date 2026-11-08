@@ -21,6 +21,7 @@ import {
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
   SOCIAL_IMAGE_TYPES,
+  zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
   type FixedAsset,
@@ -36,6 +37,7 @@ import {
   BlobTooLargeError,
   DomainError,
   archiveKey,
+  EXTENSION_SCOPES,
   fileKey,
   putFile,
   readVerified,
@@ -50,12 +52,13 @@ import {
   type BlobMediaBinding,
   type BlobStore,
   type CredentialBroker,
+  type ExtensionScope,
   type MediaKeyBinding,
   type Runtime,
   type UserActor,
 } from '@crove/kernel-runtime';
 import { detectMediaContainer } from '@crove/mod-meetings';
-import type { OrgExportView } from '@crove/kernel';
+import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
   MISA_SME_BANK_CREDIT,
@@ -111,11 +114,13 @@ import {
   type SignupRules,
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
+import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
 import { corsMiddleware } from './cors.ts';
 import { exportAad, exportSealer } from './export-seal.ts';
+import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
@@ -176,6 +181,12 @@ import {
   type TicketBinding,
   type TicketStore,
 } from './stream.ts';
+
+// Exchanges of a one-time extension code for a token per minute per client address (#2582): a person signs in a few times.
+const EXTENSION_TOKEN_EXCHANGES_PER_MINUTE = 10;
+// Requests with an extension token per minute per client address, taken before the token is looked up: a flood of random
+// well-formed tokens must not cost a database round trip each. One browser makes a few requests while recording.
+const EXTENSION_BEARER_PER_MINUTE = 600;
 
 // A uuid in text form, any case.
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -242,6 +253,10 @@ export interface HttpDeps {
   turnstile?: TurnstileVerifier | null;
   // The per-client budget of short link redirects (#706), replaceable in tests.
   shortLinkLimit?: RateLimiter;
+  // Exchanges of a one-time code for an extension token per minute per client address (#2582), replaceable in tests.
+  extensionTokenLimit?: RateLimiter;
+  // Requests per minute per client address that carry an extension token, counted before the token is looked up.
+  extensionBearerLimit?: RateLimiter;
   // Staged upload completions running at once in this process (issue #223). Default: UPLOAD_COMPLETE_CONCURRENCY.
   uploadCompletes?: ConcurrencyLimiter;
   // Uploads that may be larger than MAX_UPLOAD_BYTES (Social videos, #409) running at once. Default: 2 per process.
@@ -1305,18 +1320,72 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // The Ludy extension trades the one-time code the signed-in member approved in the app for its token (issue #2582,
+  // ADR-0047 point 10). Public by necessity: the extension holds no session, and the credential is the code, 256 random
+  // bits that live five minutes, work once and are bound by PKCE (S256) to the verifier only the extension holds. A
+  // body of at most 1 KB; a budget per client address; the code and the verifier checked for shape before the database
+  // is asked; one answer, 400, for every refusal (unknown, used, expired or wrong code or verifier, a member who left),
+  // which says nothing of any org. Only hashes reach SQL. The answer is never cached.
+  const extensionTokenLimit = deps.extensionTokenLimit ?? new RateLimiter({ perMinute: EXTENSION_TOKEN_EXCHANGES_PER_MINUTE });
+  app.post('/api/extension/token', bodyLimit({ maxSize: 1024 }), async (c) => {
+    c.header('cache-control', 'no-store');
+    const decision = extensionTokenLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+    if (!decision.allowed) {
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    }
+    const refused = () => c.json({ code: 'EXTENSION_CODE_INVALID', message: 'Mã đăng nhập tiện ích không hợp lệ hoặc đã hết hạn, hãy đăng nhập lại' }, 400);
+    try {
+      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown } | null;
+      if (!input || typeof input !== 'object' || !wellFormedExtensionCode(input.code) || !wellFormedVerifier(input.codeVerifier)) return refused();
+      const code = input.code;
+      const verifier = input.codeVerifier;
+      const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier));
+      if (!done) return refused();
+      // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
+      const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
+      await runtime.execute(
+        'kernel.extension.token.exchanged',
+        { codeId: done.exchange.codeId },
+        { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
+      );
+      return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
   // Everything below requires a signed-in user, and is limited per user (plan §4.4 step 0) before any command or
   // query runs. The token is verified first, so the key is a user the token proves; authenticate() writes to the
   // database only when its identity cache misses (once per user and process every few minutes), never per request.
+  const extensionBearerLimit = deps.extensionBearerLimit ?? new RateLimiter({ perMinute: EXTENSION_BEARER_PER_MINUTE });
   app.use('/api/*', async (c, next) => {
     let user: AuthUser;
     try {
       const authHeader = c.req.header('authorization');
+      // Read as authenticate() reads it (a scheme, then the token trimmed), so extra spaces do not skip the count.
+      if (authHeader?.startsWith('Bearer ') && authHeader.slice(7).trim().startsWith('crx_')) {
+        const decision = extensionBearerLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+      }
       user = await authenticate(authHeader);
     } catch (error) {
       return problem(c, error);
     }
-    const decision = limiter?.take(user.userId);
+    // A Ludy extension token (issue #2582) reaches only the routes its scopes open, listed in auth-extension.ts: refused
+    // here, before any handler, body read or database call, on every other route. The raw path is the one checked, so
+    // nothing a router decodes later can name a route the list does not.
+    if (user.extension) {
+      const refusal = refuseOutsideScopes(user.extension.scopes, c.req.method, new URL(c.req.url).pathname);
+      if (refusal) return problem(c, refusal);
+    }
+    // A token's requests count against its own budget, so a stolen token cannot use up its member's.
+    const decision = limiter?.take(user.extension ? `extension:${user.extension.tokenId}` : user.userId);
     if (decision && !decision.allowed) {
       c.header('retry-after', String(decision.retryAfterSeconds));
       return c.json(
@@ -1361,6 +1430,47 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   }
+
+  // The member approves the Ludy extension for the org of the request (issue #2582): the sign-in page of the app calls this
+  // with the member's own session after they chose the org and pressed "Cho phép". The code is made here and returned
+  // here only; the command gets its hash, the PKCE challenge, the scopes and a device name. Never with an extension token.
+  app.post('/api/extension/authorize', bodyLimit({ maxSize: 2 * 1024 }), async (c) => {
+    c.header('cache-control', 'no-store');
+    try {
+      const user = c.get('user');
+      if (user.extension) throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      const parsed = zExtensionAuthorize.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
+      const input = parsed.data;
+      // Only features this deployment runs: a scope of a module that is left out is not offered.
+      if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const code = newExtensionCode();
+      const issued = await runtime.execute<{ expiresInSeconds: number }>(
+        'kernel.extension.code.issue',
+        { codeHash: code.hash.toString('hex'), codeChallenge: input.codeChallenge, scopes: input.scopes, deviceName: input.deviceName },
+        { actor: actorOf(user), orgId },
+      );
+      return c.json({ code: code.value, expiresInSeconds: issued.expiresInSeconds });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // What the extension shell asks right after sign-in: whose token this is and which features this deployment runs.
+  // Answered from the verified token alone, with no tenant data. A browser session has no use for it.
+  app.get('/api/extension/me', (c) => {
+    c.header('cache-control', 'no-store');
+    const { extension } = c.get('user');
+    if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
+    return c.json({
+      tokenId: extension.tokenId,
+      orgId: extension.orgId,
+      scopes: extension.scopes,
+      expiresAt: extension.expiresAt,
+      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings') },
+    });
+  });
 
   app.all('/api/rpc/*', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
     const { matched, response } = await rpc.handle(c.req.raw, {
@@ -1469,6 +1579,9 @@ export function createHttpApp(deps: HttpDeps) {
 
   async function uploader(c: Context<{ Variables: { user: AuthUser } }>) {
     const user = c.get('user');
+    // An extension token's one org is its own; its member's role is checked by the command that records the file, and by
+    // the token's standing, which the database reads on every request (a viewer's token is void).
+    if (user.extension) return { user, orgId: await resolveOrg(runtime, user, null) };
     const membership = await resolveMembership(runtime, user, c.req.header(ORG_HEADER) ?? null);
     if (membership.role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Vai trò chỉ xem không tải được chứng từ');
     return { user, orgId: membership.orgId };
@@ -1871,9 +1984,11 @@ export function createHttpApp(deps: HttpDeps) {
             armIdleTimer();
             // Each window first asks again whether the meeting and its key still exist: the query fails once the meeting or its
             // key is deleted, so the stream stops and the key copy is cleared. A reseal changes only the wrapping key id, not
-            // the media key this stream holds, so the id is not compared.
+            // the media key this stream holds, so the id is not compared. The file is compared: retention deletes the media
+            // rows (#2579), so the segment or video the meeting names now may not be the object this stream reads.
             if (streamOffset > 0) {
-              await runtime.query('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              if (current.fileId !== media.fileId) throw new DomainError('MEDIA_REPLACED', 409, 'The meeting media changed while it was playing');
             }
             if (streamOffset >= totalPlaintextLength) {
               controller.close();
@@ -1935,6 +2050,16 @@ export function createHttpApp(deps: HttpDeps) {
   // body (a staged upload's id) is tiny; a file larger than its cap is refused from the declared Content-Length, and the body
   // limit below stops a chunked one at the same cap, with at most two such transfers in the process at once.
   const META_BODY_MAX_BYTES = 16 * 1024;
+  // What the media routes need of a meeting: whether the caller recorded it and whether it keeps video. An extension
+  // token (#2582) reads it through the status query, which answers 404 for any meeting the token did not create and
+  // returns no title, reader or content; the token's member is then the recorder, as the query checks.
+  const meetingFacts = async (user: AuthUser, orgId: string, meetingId: string): Promise<{ isRecorder: boolean; keepVideo: boolean }> => {
+    if (user.extension) {
+      const status = await runtime.query<{ keepVideo: boolean }>('meetings.meeting.extension_status', { meetingId }, { actor: actorOf(user), orgId });
+      return { isRecorder: true, keepVideo: status.keepVideo };
+    }
+    return runtime.query<{ isRecorder: boolean; keepVideo: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
+  };
   const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
     let release: (() => void) | null = null;
     let releaseVideo: (() => void) | null = null;
@@ -1942,7 +2067,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      const meeting = await runtime.query<{ isRecorder: boolean; keepVideo: boolean }>('meetings.meeting.get', { meetingId: c.req.param('id') ?? '' }, { actor: actorOf(user), orgId });
+      const meeting = await meetingFacts(user, orgId, c.req.param('id') ?? '');
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
       const json = (c.req.header('content-type') ?? '').includes('application/json');
       // The body cap comes from the declared kind (the `kind` query parameter) before one byte is read: audio is capped at 300 MB.
@@ -1999,11 +2124,7 @@ export function createHttpApp(deps: HttpDeps) {
         let plaintext: Buffer | null = null;
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
-          const meeting = await runtime.query<{ isRecorder: boolean; keepVideo: boolean }>(
-            'meetings.meeting.get',
-            { meetingId },
-            { actor: actorOf(user), orgId },
-          );
+          const meeting = await meetingFacts(user, orgId, meetingId);
           if (!meeting.isRecorder) {
             throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
           }
@@ -2205,6 +2326,13 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
+  // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
+  // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
+  // is held until the handler is done, the audit row included.
+  const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
+  // The org export's owner-run tables (#2676) take a slot too, held until their response has ended.
+
   // Finance routes exist only when the finance module is installed (CROVE_MODULES); otherwise they are 404 below.
   if (runtime.installed('finance')) {
     // The legal entity whose books an export is of (#1280): ?legalEntityId=<uuid>, as in zLegalEntityChoice; omitted,
@@ -2214,11 +2342,6 @@ export function createHttpApp(deps: HttpDeps) {
       const id = c.req.query('legalEntityId');
       return id ? { legalEntityId: id } : {};
     };
-    // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
-    // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
-    // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
-    // is held until the handler is done, the audit row included.
-    const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
     app.use('/api/export/*', async (c, next) => {
       const release = exportSlots.tryAcquire(c.get('user').userId);
       if (!release) {
@@ -2664,8 +2787,33 @@ export function createHttpApp(deps: HttpDeps) {
       const user = c.get('user');
       const orgSlug = c.req.header(ORG_HEADER) ?? null;
       const orgId = await resolveOrg(runtime, user, orgSlug);
-      const view = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
       const part = c.req.param('part');
+      // The tables of the owner-run path (#2676, payroll people and pay runs) are read live by the owner's own session, never by the export job: a
+      // sensitive stream, audited before it reads (it names the table), served only while the org is closing, which carries the fresh second factor
+      // of kernel.org.offboard. The sealed identity and account numbers are not in it. The response streams, under a slot of the export limiter.
+      if (Object.hasOwn(OWNER_RUN_EXPORT_TABLES, part)) {
+        // A HEAD request would run the whole audited read and throw the body away.
+        if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
+        const table = part as OwnerRunExportTable;
+        const state = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
+        if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất dữ liệu; hãy thử lại sau vài giây');
+        }
+        // streamedBody lets go of the slot on every path (the query settling, a pre-aborted request), so no catch releases it here.
+        const body = await streamedBody((sink) => runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, sink), release, c.req.raw.signal);
+        return new Response(body, {
+          headers: {
+            'content-type': 'application/x-ndjson; charset=utf-8',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), ORG_SLUG, part], 'ndjson'),
+            'x-content-type-options': 'nosniff',
+            'cache-control': 'private, no-store',
+          },
+        });
+      }
+      const view = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
       const exported = view.export;
       const missing = () => new DomainError('NOT_FOUND', 404, 'Chưa có bản xuất dữ liệu này');
       if (!exported) throw missing();

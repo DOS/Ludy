@@ -22,6 +22,11 @@ export const KERNEL_ERROR_CODES = [
   'AUTH_NOT_READY',
   'ORG_REQUIRED',
   'ORG_CLOSED',
+  // The Ludy extension's sign-in and token (#2582).
+  'EXTENSION_CODE_INVALID',
+  'EXTENSION_TOKEN_INVALID',
+  'EXTENSION_TOKEN_NOT_FOUND',
+  'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',
   'NOT_FOUND',
@@ -175,6 +180,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_EMPLOYEE_ENDED',
   'HR_EMPLOYEE_NOT_ENDED',
   'HR_EMPLOYEE_ERASED',
+  'HR_YEAR_NOT_BEGUN',
   'HR_RETENTION_NOT_PASSED',
   'HR_EMPLOYMENT_NOT_NEWER',
   'HR_END_BEFORE_START',
@@ -186,6 +192,14 @@ export const KERNEL_ERROR_CODES = [
   'HR_RUN_NOT_FOUND',
   'HR_LINE_NOT_FOUND',
   'HR_RUN_NOT_DRAFT',
+  // The posting of an approved run (#2532).
+  'HR_RUN_NOT_APPROVED',
+  'HR_POSTING_OPEN',
+  'HR_POSTING_DONE',
+  'HR_POSTING_ADJUSTMENTS',
+  'HR_POSTING_MISMATCH',
+  'HR_POSTING_MAP_UNCONFIRMED',
+  'HR_POSTING_APPROVER_ROLE',
   'HR_RUN_EXISTS',
   'HR_RUN_EMPTY',
   'HR_RUN_HAS_REFUSED',
@@ -214,6 +228,9 @@ export const KERNEL_ERROR_CODES = [
   'INVALID_READER',
   'INVALID_MEDIA_CONTAINER',
   'VIDEO_NOT_ENABLED',
+  // Retention (#2579).
+  'MEDIA_RETENTION_PASSED',
+  'MEETING_SETTINGS_INVALID',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
@@ -867,6 +884,10 @@ export const KERNEL_ERROR_RULES = {
   before_opening_posting_date: 'BEFORE_OPENING_BALANCE',
   before_opening_fixed: 'BEFORE_OPENING_BALANCE',
   before_opening_later_date: 'BEFORE_OPENING_BALANCE',
+  // A Ludy extension token run outside its scopes, org or routes (#2582).
+  extension_scope: 'FORBIDDEN',
+  extension_org: 'FORBIDDEN',
+  extension_only: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;

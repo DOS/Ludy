@@ -385,6 +385,8 @@ export const zOrgStatus = z.enum(['active', 'offboarding', 'closed']);
 export const zOrgExport = z.object({
   status: zOrgStatus,
   requestedAt: z.string().nullable(),
+  // The tables the owner downloads live while the org is closing (#2676), apart from the export job's tables.
+  ownerRunTables: z.array(z.string()),
   export: z
     .object({
       createdAt: z.string(),
@@ -725,6 +727,9 @@ export const zInboxDetail = zInboxItem.extend({
   // part of this revision and another eligible approver must approve it.
   canApprove: z.boolean(),
   approveReason: z.enum(['ok', 'not_pending', 'not_eligible', 'four_eyes']),
+  // The caller is a co-author of this proposal (#2736): the person it rests on besides its writer, such as the approver of the pay run a posting is built from. Four-eyes holds them back too, so the
+  // screen says why in its own words, not "you entered this voucher".
+  coAuthor: z.boolean(),
   canEdit: z.boolean(),
   canReject: z.boolean(),
   // An expired proposal (#876): whether the caller may ask for it again (inbox.resubmit), the proposal asked for again

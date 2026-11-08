@@ -845,7 +845,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       )}
       {journalVoucher && (
         <div className="mb-6">
-          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('voucherFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t(item.coAuthor ? 'journalCoAuthorFourEyes' : 'voucherFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && (
             <p className="mb-4 text-sm text-subtle-foreground">{t('voucherNotEligible')}</p>
           )}

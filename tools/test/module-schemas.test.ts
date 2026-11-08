@@ -72,16 +72,16 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
   'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/offboarding.ts': {
-    modules: ['ads', 'crm', 'finance', 'notes', 'social'],
-    why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says',
+    modules: ['ads', 'crm', 'finance', 'hr', 'notes', 'social'],
+    why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says; hr is read only by the owner-run people export (#2676)',
   },
   'packages/kernel/src/parties.ts': {
     modules: ['crm', 'finance'],
     why: "a party's kind changes only while nothing points at it (#2438): the check reads the books and the deals, bookings and rules that name the party, whatever is installed now, because an earlier install of finance or crm left rows that still read its kind (PARTY_KIND_HOLDERS; a database test lists every foreign key to party)",
   },
   'packages/kernel/src/personal-data.ts': {
-    modules: ['crm', 'finance', 'hr', 'notes', 'social'],
-    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed',
+    modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'social'],
+    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
@@ -96,6 +96,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/calendar-feed.ts': { modules: ['social'], why: 'the post calendar feed, served only when social is installed (http.ts)' },
   'apps/kernel/src/crm-worker.ts': { modules: ['crm'], why: 'the contact import staging sweep, worked and scheduled only when crm is installed (worker.ts)' },
   'apps/kernel/src/credential-reseal.ts': { modules: ['meetings', 'social'], why: 'the chat alert targets are resealed only when social is installed; media keys are resealed only when meetings is installed; the channel credentials are kernel work' },
+  'apps/kernel/src/meetings-retention.ts': { modules: ['meetings'], why: "the nightly shred of meeting audio, video and text and the sweep of their objects, the shred references and their replay (#2579): the worker-only crove_meetings definers, worked, timed and replayed only when meetings is installed (worker.ts, kernel.ts)" },
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
