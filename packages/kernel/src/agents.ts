@@ -386,6 +386,8 @@ export const installAgentTemplate = defineCommand({
     const userId = requireUser(ctx);
     const template = await ctx.trx.selectFrom('crove_kernel.agent_template').selectAll().where('key', '=', input.templateKey).executeTakeFirst();
     if (!template) throw new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không có mẫu tác tử AI này');
+    // The template of a member's own Vy (ADR-0049) is made by that member's first run, never installed into the chart.
+    if (template.key === 'kernel.member_vy') throw new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không có mẫu tác tử AI này');
     if (!ctx.installed(template.module)) {
       throw new DomainError('MODULE_DISABLED', 409, 'Phân hệ của mẫu tác tử AI này chưa được bật', { module: template.module });
     }
@@ -1420,6 +1422,8 @@ export const chartGet = defineQuery({
       .selectFrom('crove_kernel.agent')
       .select(['id', 'template_key', 'display_name', 'status', 'max_risk', 'daily_run_cap'])
       .where('org_id', '=', ctx.orgId)
+      // A member's own Vy (ADR-0049) is no part of the org's chart or its counts.
+      .where('kind', '=', 'org_chart')
       .orderBy('created_at')
       .execute();
     const owners = await ctx.trx
@@ -1594,6 +1598,8 @@ export const templateList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_kernel.agent_template')
       .select(['key', 'module', 'title', 'role_key', 'max_risk', 'daily_run_cap', 'job_description'])
+      // The template of a member's own Vy (ADR-0049) is no part of the chart's catalog.
+      .where('key', '<>', 'kernel.member_vy')
       .orderBy('key')
       .execute();
     return {

@@ -263,12 +263,17 @@ export type AgentTemplateTable = Refine<
 
 export const AGENT_STATUSES = ['active', 'paused', 'retired'] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
+export const AGENT_KINDS = ['org_chart', 'member_vy'] as const;
+export type AgentKind = (typeof AGENT_KINDS)[number];
+export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
+export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
 
 export type AgentTable = Refine<
   G.KernelAgentTable,
   {
     runtime: Generated<(typeof AGENT_RUNTIMES)[number]>;
+    kind: Generated<AgentKind>;
     status: Generated<AgentStatus>;
     max_risk: Generated<AgentRisk>;
   }
@@ -778,6 +783,15 @@ export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
 export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+// A quote of a deal (#2693): a draft until a person sends it (Q2); the status and how it was sent are written by those steps, not by the editor's commands.
+export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
+export const QUOTE_SENT_VIA = ['link', 'email'] as const;
+export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
+export type CrmQuoteTable = Refine<
+  G.CrmQuoteTable,
+  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: ColumnType<(typeof QUOTE_SENT_VIA)[number] | null, (typeof QUOTE_SENT_VIA)[number] | null, G.NotGranted> }
+>;
+export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
 export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
@@ -843,6 +857,7 @@ export type ConversationDraftTable = Refine<
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
+export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
 export type ConversationAttachmentTable = Refine<
   G.KernelConversationAttachmentTable,
@@ -1010,6 +1025,17 @@ export type MeetingsMeetingTable = Refine<
   }
 >;
 
+// The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
+export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
+export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
+
+export type MeetingsTranscriptSegmentTable = Refine<
+  G.MeetingsTranscriptSegmentTable,
+  {
+    stage: ColumnType<TranscriptStageValue, TranscriptStageValue | undefined, never>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1027,12 +1053,15 @@ type Refined = Tables<{
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_crm.quote': CrmQuoteTable;
+  'crove_crm.quote_line': CrmQuoteLineTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
@@ -1074,6 +1103,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;
+  'crove_kernel.member_vy_result': MemberVyResultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;
   'crove_kernel.mail_event': MailEventTable;

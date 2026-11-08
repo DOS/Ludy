@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
+import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
@@ -348,6 +349,10 @@ const schema = z.object({
   CHANNEL_META_APP_SECRET: optional,
   // The secret CHANNEL_META_APP_SECRET replaces while Meta may still sign webhook notices with it during a rotation (conversation core CV2, #2307).
   CHANNEL_META_APP_SECRET_PREVIOUS: optional,
+  // A separate Meta app for Instagram (#2212), for an operator whose Pages app cannot carry the Instagram use case. Both or neither;
+  // unset, Instagram keeps using the Meta app above. Its valid OAuth redirect URI is APP_URL/channels/oauth/instagram/callback.
+  CHANNEL_INSTAGRAM_APP_ID: optional,
+  CHANNEL_INSTAGRAM_APP_SECRET: optional,
   // The verify token Meta sends on GET /api/channels/facebook/webhook when subscribing the app's Page webhook (conversation core CV2, #2307).
   // Set alongside CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, the route /api/channels/facebook/webhook exists and Page comment notices are taken in.
   CHANNEL_META_WEBHOOK_VERIFY_TOKEN: optional,
@@ -513,6 +518,17 @@ const schema = z.object({
       .refine((value) => !value.toLowerCase().startsWith('mailto:') || new URL(value).pathname.trim() !== '', {
         message: 'a mailto: link needs an address',
       })
+      .optional(),
+  ),
+  // The Ludy browser extension ids that may receive a sign-in code (#2740): the host of the extension's redirect address
+  // (https://<id>.chromiumapp.org/), 32 letters a to p, separated by commas or spaces. Unset: the store's id
+  // (DEFAULT_EXTENSION_IDS, empty until the store listing exists, which refuses every extension). A self-hosted or development install lists its own unpacked extension's id here. The app and
+  // /api/extension/authorize both refuse any other. Browsers read the list from /api/config; it holds nothing secret.
+  EXTENSION_IDS: optional.pipe(
+    z
+      .string()
+      .transform((value) => value.split(/[\s,]+/).filter(Boolean))
+      .pipe(z.array(zExtensionId, { error: 'EXTENSION_IDS lists extension ids: 32 letters a to p each, separated by commas or spaces' }).min(1).max(20))
       .optional(),
   ),
   // The product name users see (#1040): in the app, the page title and the product's own mails (sender name and texts). Code,
@@ -681,13 +697,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('set both CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or neither');
   }
   if (config.CHANNEL_META_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_APP_ID)) throw new Error('CHANNEL_META_APP_ID is the numeric id of the Meta app');
+  if (Boolean(config.CHANNEL_INSTAGRAM_APP_ID) !== Boolean(config.CHANNEL_INSTAGRAM_APP_SECRET)) {
+    throw new Error('set both CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET, or neither');
+  }
+  if (config.CHANNEL_INSTAGRAM_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_INSTAGRAM_APP_ID)) throw new Error('CHANNEL_INSTAGRAM_APP_ID is the numeric id of the Meta app');
+  // One Meta app has one secret: the Instagram app with the id of the Pages app is that app (a person's data deletion request is matched
+  // by a hash keyed with the secret, and the webhook is signed with it).
+  if (config.CHANNEL_INSTAGRAM_APP_ID && config.CHANNEL_INSTAGRAM_APP_ID === config.CHANNEL_META_APP_ID && config.CHANNEL_INSTAGRAM_APP_SECRET !== config.CHANNEL_META_APP_SECRET) {
+    throw new Error('CHANNEL_INSTAGRAM_APP_ID is the id of CHANNEL_META_APP_ID but its secret is not CHANNEL_META_APP_SECRET; one Meta app has one secret');
+  }
   if (config.CHANNEL_META_APP_SECRET_PREVIOUS !== undefined) {
-    if (config.CHANNEL_META_APP_SECRET === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
+    // It goes with the primary webhook secret: the Pages app's, or the Instagram app's when that is the only Meta app set (#2212).
+    const primary = config.CHANNEL_META_APP_SECRET ?? config.CHANNEL_INSTAGRAM_APP_SECRET;
+    if (primary === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_META_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
-    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === config.CHANNEL_META_APP_SECRET) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
+    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === primary) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
   }
   if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
-    if (!config.CHANNEL_META_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET');
+    if (!config.CHANNEL_META_APP_ID && !config.CHANNEL_INSTAGRAM_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN)) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN is the verify token for the Meta Page webhook: 8 to 200 characters, no spaces');
   }
   if (Boolean(config.CHANNEL_META_ADS_APP_ID) !== Boolean(config.CHANNEL_META_ADS_APP_SECRET)) {
@@ -703,6 +730,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   for (const [name, id, secret] of [
     ['CHANNEL_META_ADS_APP', config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_APP_SECRET],
     ['CHANNEL_META_APP', config.CHANNEL_META_APP_ID, config.CHANNEL_META_APP_SECRET],
+    ['CHANNEL_INSTAGRAM_APP', config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_INSTAGRAM_APP_SECRET],
   ] as const) {
     if (config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_ID === id && config.CHANNEL_META_ADS_WRITE_APP_SECRET !== secret) {
       throw new Error(`CHANNEL_META_ADS_WRITE_APP_ID is the id of ${name}_ID but its secret is not ${name}_SECRET; one Meta app has one secret`);
@@ -710,8 +738,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   // An app that serves the Pages and the writing but not the reads: the person's Pages and Instagram tokens would hold the permission to
   // change campaigns, and the close at the switch-off covers the reading connections only. Use the read ads app, or an app of its own.
-  if (config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_ID === config.CHANNEL_META_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_ID !== config.CHANNEL_META_ADS_APP_ID) {
-    throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the Pages app but not the read ads app: the Pages and Instagram tokens of the person who grants it could then change campaigns; use the read ads app or a Meta app of its own');
+  if (config.CHANNEL_META_ADS_WRITE_APP_ID && [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID].includes(config.CHANNEL_META_ADS_WRITE_APP_ID) && config.CHANNEL_META_ADS_WRITE_APP_ID !== config.CHANNEL_META_ADS_APP_ID) {
+    throw new Error(`CHANNEL_META_ADS_WRITE_APP_ID is the ${config.CHANNEL_META_ADS_WRITE_APP_ID === config.CHANNEL_META_APP_ID ? 'Pages' : 'Instagram'} app but not the read ads app: the Pages and Instagram tokens of the person who grants it could then change campaigns; use the read ads app or a Meta app of its own`);
   }
   if (Boolean(config.CHANNEL_THREADS_APP_ID) !== Boolean(config.CHANNEL_THREADS_APP_SECRET)) throw new Error('set both CHANNEL_THREADS_APP_ID and CHANNEL_THREADS_APP_SECRET, or neither');
   if (config.CHANNEL_THREADS_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_THREADS_APP_ID)) throw new Error('CHANNEL_THREADS_APP_ID is the numeric id of the Threads app');
@@ -834,7 +862,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // deployment others reach runs ads with a Meta app of its own.
     if (
       config.CHANNEL_META_ADS_WRITE_APP_ID &&
-      ([config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_APP_ID].includes(config.CHANNEL_META_ADS_WRITE_APP_ID) || [config.CHANNEL_META_ADS_APP_SECRET, config.CHANNEL_META_APP_SECRET].includes(config.CHANNEL_META_ADS_WRITE_APP_SECRET))
+      ([config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID].includes(config.CHANNEL_META_ADS_WRITE_APP_ID) || [config.CHANNEL_META_ADS_APP_SECRET, config.CHANNEL_META_APP_SECRET, config.CHANNEL_INSTAGRAM_APP_SECRET].includes(config.CHANNEL_META_ADS_WRITE_APP_SECRET))
     ) {
       throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the read ads app or the Pages app: a public deployment runs ads with a Meta app of its own, so no reading token can hold the permission to change campaigns');
     }
@@ -849,7 +877,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }

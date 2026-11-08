@@ -12,10 +12,10 @@ export const kernelManifest = defineModule({
   tables: {
     crove_kernel: {
       activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id'], { summary: 'pii' }),
-      agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at']),
+      agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
-      ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error']),
+      ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error', 'private_read']),
       approval_preset: columns(['key', 'ledger_chief_accountant_only']),
       archive_batch: columns(['seq', 'window_from', 'window_to', 'row_count', 'batch_sha256', 'chain_sha256', 'object_key', 'written_at']),
       archive_verification: columns(['id', 'ok', 'batches', 'rows_checked', 'problems', 'verified_at', 'excused', 'restore_ack']),
@@ -71,6 +71,8 @@ export const kernelManifest = defineModule({
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
+      member_vy_memory: columns(['org_id', 'id', 'member_user_id', 'created_at', 'updated_at'], { body: 'pii' }),
+      member_vy_result: columns(['org_id', 'id', 'member_user_id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'tainted', 'private_read', 'created_at', 'expires_at'], { body: 'pii' }),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
       notification_mute: columns(['org_id', 'user_id', 'kind', 'created_at']),
       number_allocation: columns(['org_id', 'id', 'series_id', 'legal_entity_id', 'number', 'target_type', 'target_id', 'allocated_by', 'allocated_at']),

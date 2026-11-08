@@ -88,6 +88,7 @@ import { PaymentRemindersPage } from './routes/payment-reminders.tsx';
 import { AccountingOverviewPage } from './routes/accounting-overview.tsx';
 import { SalesInvoicesPage } from './routes/sales-invoices.tsx';
 import { HrEmployeesPage } from './routes/hr-employees.tsx';
+import { HrDeclarationsPage } from './routes/hr-declarations.tsx';
 import { HrPayrollPage } from './routes/hr-payroll.tsx';
 import { StockPage } from './routes/stock.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
@@ -189,7 +190,7 @@ const indexRoute = createRoute({
     // An invite opened before signing in (or signing up) is answered first.
     if (pendingInvite()) throw redirect({ to: '/-/invite' });
     // So is the Ludy extension's sign-in (#2582), opened in a window before the member signed in.
-    if (pendingConnect()) throw redirect({ to: CONNECT_PATH });
+    if (pendingConnect(getConfig().extensionIds ?? [])) throw redirect({ to: CONNECT_PATH });
     // So is a page shared before signing in (#1235), where social runs; elsewhere it is dropped.
     if (pendingShare()) {
       if (outsideInstalled(getConfig().modules, SHARE_PATH)) throw redirect({ to: SHARE_PATH });
@@ -260,7 +261,7 @@ const extensionConnectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: CONNECT_PATH,
   beforeLoad: async () => {
-    const request = parseConnectRequest(window.location.search);
+    const request = parseConnectRequest(window.location.search, getConfig().extensionIds ?? []);
     if (request) rememberConnect(request);
     if (window.location.search) window.history.replaceState(window.history.state, '', window.location.pathname);
     await requireAuth();
@@ -398,6 +399,8 @@ const stockRoute = createRoute({ getParentRoute: () => orgRoute, path: 'stock', 
 const hrEmployeesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/employees', component: HrEmployeesPage });
 // The HR app's pay run (#2531): the months, the sheet, the approval and the payslips.
 const hrPayrollRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/payroll', component: HrPayrollPage });
+// The HR app's declaration lists (#2533): the D02-LT, the quarterly and annual PIT data and the certificate data, to print, save as a PDF or download as xlsx.
+const hrDeclarationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/declarations', component: HrDeclarationsPage });
 const journalRoute = createRoute({ getParentRoute: () => orgRoute, path: 'journal', validateSearch: parseJournalSearch, component: JournalPage });
 // Cash and bank vouchers (issue #327); ?type=&from=&to= keep the list's filters (#1513).
 const vouchersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'vouchers', validateSearch: parseVouchersSearch, component: VouchersPage });
@@ -570,7 +573,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrPayrollRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrPayrollRoute, hrDeclarationsRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
