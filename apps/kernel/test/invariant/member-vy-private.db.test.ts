@@ -168,10 +168,11 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
   const outcome = <T>(p: Promise<T>) =>
     p.then(
       (value) => ({ ok: true as const, value }),
-      (error: { code?: string; message: string }) => ({
+      (error: { code?: string; message: string; hint?: string }) => ({
         ok: false as const,
         code: error.code ?? "",
         message: error.message,
+        hint: error.hint ?? "",
       }),
     );
   const permitted = async (user: string, permission: string) =>
@@ -1259,6 +1260,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
       agentMember?: string;
       resultMember: string;
       expiresInSeconds: number;
+      // Seconds from now for the written created_at (default 0): the writer sets it, so the cap must not trust it.
+      createdOffsetSeconds?: number;
     }) {
       return admin(async (c) => {
         const runId = randomUUID();
@@ -1284,7 +1287,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         const inserted = await outcome(
           c.query(
             `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, created_at, expires_at)
-             VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'x', true, true, now(), now() + make_interval(secs => $6))`,
+             VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'x', true, true, now() + make_interval(secs => $7), now() + make_interval(secs => $6))`,
             [
               orgId,
               resultId,
@@ -1292,6 +1295,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
               runId,
               randomUUID(),
               opts.expiresInSeconds,
+              opts.createdOffsetSeconds ?? 0,
             ],
           ),
         );
@@ -1331,64 +1335,86 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         ).ok,
         "the run's own member",
       ).toBe(true);
+      const refusedMismatch = {
+        ok: false,
+        code: "42501",
+        hint: "MEMBER_VY_RESULT_RUN_MISMATCH",
+      };
       expect(
-        (
-          await insertResult({
-            agentKind: "member_vy",
-            agentMember: users.vyUser,
-            resultMember: users.member,
-            expiresInSeconds: 30 * DAY,
-          })
-        ).ok,
+        await insertResult({
+          agentKind: "member_vy",
+          agentMember: users.vyUser,
+          resultMember: users.member,
+          expiresInSeconds: 30 * DAY,
+        }),
         "another member named on the result",
-      ).toBe(false);
+      ).toMatchObject(refusedMismatch);
       expect(
-        (
-          await insertResult({
-            agentKind: "org_chart",
-            resultMember: users.vyUser,
-            expiresInSeconds: 30 * DAY,
-          })
-        ).ok,
+        await insertResult({
+          agentKind: "org_chart",
+          resultMember: users.vyUser,
+          expiresInSeconds: 30 * DAY,
+        }),
         "a run of an org-chart agent",
-      ).toBe(false);
+      ).toMatchObject(refusedMismatch);
     });
 
-    it("caps a result at 31 days from its creation", async () => {
+    it("caps a result at 31 days from the earlier of its written creation and now", async () => {
       if (!has.resultBind || !has.kind) return;
+      const base = {
+        agentKind: "member_vy" as const,
+        agentMember: users.vyUser,
+        resultMember: users.vyUser,
+      };
+      const tooLong = { ok: false, code: "23514" };
       expect(
-        (
-          await insertResult({
-            agentKind: "member_vy",
-            agentMember: users.vyUser,
-            resultMember: users.vyUser,
-            expiresInSeconds: 31 * DAY,
-          })
-        ).ok,
+        (await insertResult({ ...base, expiresInSeconds: 31 * DAY })).ok,
         "exactly 31 days",
       ).toBe(true);
       expect(
-        (
-          await insertResult({
-            agentKind: "member_vy",
-            agentMember: users.vyUser,
-            resultMember: users.vyUser,
-            expiresInSeconds: 31 * DAY + 60,
-          })
-        ).ok,
+        await insertResult({ ...base, expiresInSeconds: 31 * DAY + 60 }),
         "a minute past 31 days",
-      ).toBe(false);
+      ).toMatchObject(tooLong);
+      expect(
+        await insertResult({ ...base, expiresInSeconds: 3650 * DAY }),
+        "ten years",
+      ).toMatchObject(tooLong);
+      // A writer-set created_at in the future buys no extra time.
+      expect(
+        await insertResult({
+          ...base,
+          createdOffsetSeconds: 100 * 365 * DAY,
+          expiresInSeconds: 100 * 365 * DAY + DAY,
+        }),
+        "a created_at a century ahead",
+      ).toMatchObject(tooLong);
+      expect(
+        await insertResult({
+          ...base,
+          createdOffsetSeconds: 60,
+          expiresInSeconds: 31 * DAY + 30,
+        }),
+        "a created_at a minute ahead, expiring past 31 days from now",
+      ).toMatchObject(tooLong);
+      // A created_at in the past counts from itself: ten days back allows 21 more, not 31.
       expect(
         (
           await insertResult({
-            agentKind: "member_vy",
-            agentMember: users.vyUser,
-            resultMember: users.vyUser,
-            expiresInSeconds: 3650 * DAY,
+            ...base,
+            createdOffsetSeconds: -10 * DAY,
+            expiresInSeconds: 21 * DAY - 60,
           })
         ).ok,
-        "ten years",
-      ).toBe(false);
+        "ten days back, expiring inside its 31 days",
+      ).toBe(true);
+      expect(
+        await insertResult({
+          ...base,
+          createdOffsetSeconds: -10 * DAY,
+          expiresInSeconds: 25 * DAY,
+        }),
+        "ten days back, expiring after its 31 days",
+      ).toMatchObject(tooLong);
     });
   });
 

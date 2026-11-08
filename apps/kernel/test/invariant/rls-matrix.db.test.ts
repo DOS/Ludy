@@ -97,6 +97,8 @@ const PENDING_TABLES = new Set<string>([
 // here. Sorted, one table per line.
 // Tables the system context reads in part only, and writes as any other table (so not AUTHOR_ONLY): the SQL, over alias t, that
 // picks the rows it reads. Sorted, one table per line.
+// The only tables a factory may seed with triggers set aside (the member Vy agent and its run, whose guards need a member's own context).
+const UNGUARDED_TABLES = new Set(['crove_kernel.agent', 'crove_kernel.ai_run']);
 const SYSTEM_READS = new Map<string, string>([
   // A run of a member's own Vy (ADR-0049 decision 3) is read by that member alone; every other run is read as before.
   ['crove_kernel.ai_run', `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy')`],
@@ -1741,8 +1743,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           body: 'RLS matrix result',
           tainted: 'true',
           private_read: 'true',
-          created_at: '2036-09-20T00:00:00Z',
-          expires_at: '2036-10-01T00:00:00Z',
+          // Relative to now, with created_at left to its default: the 31-day cap counts from the earlier of the two.
+          expires_at: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
         },
       };
     },
@@ -2557,6 +2559,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     try {
       for (const row of rows) {
         const q = insertSql(row);
+        if (row.unguarded && !UNGUARDED_TABLES.has(row.table)) throw new Error(`${row.table} may not be seeded with its triggers set aside`);
         if (row.unguarded) await admin.query('SET LOCAL session_replication_role = replica');
         await admin.query(q.text, q.values);
         if (row.unguarded) await admin.query('SET LOCAL session_replication_role = DEFAULT');
@@ -2828,6 +2831,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(authorOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'AUTHOR_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(authorOnly.filter((t) => !ROW_FACTORIES[t]), 'AUTHOR_ONLY lists tables with no row factory').toEqual([]);
     expect(authorOnly, 'AUTHOR_ONLY is kept sorted, one table per line').toEqual([...authorOnly].sort());
+    // SYSTEM_READS hides rows from the system context, so a new entry is a decision to review: pinned to the one ADR-0049 asks for.
+    expect([...SYSTEM_READS.keys()], 'SYSTEM_READS tables').toEqual(['crove_kernel.ai_run']);
     const appendOnly = [...APPEND_ONLY];
     expect(appendOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'APPEND_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
