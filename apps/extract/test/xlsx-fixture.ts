@@ -13,6 +13,8 @@ export interface XlsxOptions {
   // The date style: a built-in format (14, d/m/yyyy) or a custom one like the portal's dd/MM/yyyy.
   dateFormat?: 'builtin' | 'custom';
   date1904?: boolean;
+  // Sheets after the first (a marketplace income report keeps its per-order table behind a summary); their text cells are inline strings.
+  moreSheets?: Array<{ name: string; rows: XlsxCell[][] }>;
   // Extra parts (for hostile workbooks).
   extra?: ZipEntrySpec[];
   // Replace a generated part's content.
@@ -30,6 +32,26 @@ function columnName(index: number): string {
     n = Math.floor((n - 1) / 26);
   }
   return name;
+}
+
+// One sheet's rows with inline strings (a sheet written after the first one needs no shared string table).
+function inlineSheetXml(rows: XlsxCell[][]): string {
+  const sheetRows = rows
+    .map((row, r) => {
+      const cells = row
+        .map((cell, c) => {
+          if (cell === null || cell === '') return '';
+          const ref = `${columnName(c)}${r + 1}`;
+          if (typeof cell === 'number') return `<c r="${ref}"><v>${cell}</v></c>`;
+          if (typeof cell === 'object' && 'date' in cell) return `<c r="${ref}" s="1"><v>${cell.date}</v></c>`;
+          if (typeof cell === 'object') return `<c r="${ref}" t="str"><f>${escape(cell.formula)}</f><v>${escape(cell.cached)}</v></c>`;
+          return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escape(cell)}</t></is></c>`;
+        })
+        .join('');
+      return `<row r="${r + 1}">${cells}</row>`;
+    })
+    .join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`;
 }
 
 export function buildXlsx(rows: XlsxCell[][], options: XlsxOptions = {}): Uint8Array<ArrayBuffer> {
@@ -61,15 +83,22 @@ export function buildXlsx(rows: XlsxCell[][], options: XlsxOptions = {}): Uint8A
   const dateFmt = options.dateFormat === 'custom' ? 164 : 14;
   const parts: Record<string, string> = {
     '[Content_Types].xml':
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      (options.moreSheets ?? []).map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 2}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') +
+      '</Types>',
     '_rels/.rels':
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
-    'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${options.date1904 ? '<workbookPr date1904="1"/>' : ''}<sheets><sheet name="${escape(options.sheetName ?? 'Sheet1')}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${options.date1904 ? '<workbookPr date1904="1"/>' : ''}<sheets><sheet name="${escape(options.sheetName ?? 'Sheet1')}" sheetId="1" r:id="rId1"/>${(options.moreSheets ?? []).map((m, i) => `<sheet name="${escape(m.name)}" sheetId="${i + 2}" r:id="rId${i + 10}"/>`).join('')}</sheets></workbook>`,
     'xl/_rels/workbook.xml.rels':
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      (options.moreSheets ?? []).map((_, i) => `<Relationship Id="rId${i + 10}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 2}.xml"/>`).join('') +
+      '</Relationships>',
     'xl/styles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${options.dateFormat === 'custom' ? '<numFmts count="1"><numFmt numFmtId="164" formatCode="dd/MM/yyyy"/></numFmts>' : ''}<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="${dateFmt}" applyNumberFormat="1"/></cellXfs></styleSheet>`,
     'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`,
   };
+  (options.moreSheets ?? []).forEach((m, i) => {
+    parts[`xl/worksheets/sheet${i + 2}.xml`] = inlineSheetXml(m.rows);
+  });
   if (!inline) {
     parts['xl/sharedStrings.xml'] =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${shared.length}" uniqueCount="${shared.length}">${shared.map((s) => `<si><t xml:space="preserve">${escape(s)}</t></si>`).join('')}</sst>`;

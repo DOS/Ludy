@@ -9,20 +9,21 @@
 // archive of invoices is still opened as one. Only a statement past the line cap is flagged apart (tooMany).
 import { EXTRACT_LIMITS, type ExtractedBankStatement } from '@crove/extract-contract';
 import { findAccountNumber, findColumns, parseCsv, statementLines, type StatementCell } from '@crove/l10n-vn';
-import { readFirstSheet, serialToDate, XlsxError } from './xlsx.ts';
+import { readSheetAt, serialToDate, XlsxError } from './xlsx.ts';
 
 const NONE: ExtractedBankStatement = { recognized: false, accountNumber: null, tooMany: false, rows: [] };
 
-// The cells of the file's first sheet, a date cell as its calendar day (the sheet's own date system decides it), every
-// other cell as the text it holds. null when the bytes are not a workbook.
-function workbookGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>> | null {
+// The cells of the workbook's sheet at a 0-based position, a date cell as its calendar day (the sheet's own date system decides it), every
+// other cell as the text it holds. null when the bytes are not a workbook or it has no such sheet.
+function workbookSheet(bytes: Uint8Array, index: number): { name: string; grid: Map<number, Map<number, StatementCell>> } | null {
   let sheet;
   try {
-    sheet = readFirstSheet(bytes);
+    sheet = readSheetAt(bytes, index);
   } catch (error) {
     if (error instanceof XlsxError) return null;
     throw error;
   }
+  if (!sheet) return null;
   const grid = new Map<number, Map<number, StatementCell>>();
   for (const row of sheet.rows) {
     const cells = new Map<number, StatementCell>();
@@ -32,7 +33,11 @@ function workbookGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>
     }
     grid.set(row.rowNo, cells);
   }
-  return grid;
+  return { name: sheet.name, grid };
+}
+
+function workbookGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>> | null {
+  return workbookSheet(bytes, 0)?.grid ?? null;
 }
 
 // UTF-8, or UTF-16 with its byte order mark (Excel's "Unicode text"); null for bytes that are not text.
@@ -54,6 +59,23 @@ const cellOut = (cell: StatementCell | undefined) =>
 export function readSheetGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>> | null {
   const zip = bytes[0] === 0x50 && bytes[1] === 0x4b;
   return zip ? workbookGrid(bytes) : csvGrid(bytes);
+}
+
+// The grids of a workbook's first sheets (at most maxSheets), or the one grid of a CSV file; empty when the bytes are neither. A marketplace's income report keeps its per-order table on a
+// later sheet, behind a summary.
+export function readSheetGrids(bytes: Uint8Array, maxSheets: number): Array<{ name: string | null; grid: Map<number, Map<number, StatementCell>> }> {
+  const zip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+  if (!zip) {
+    const grid = csvGrid(bytes);
+    return grid ? [{ name: null, grid }] : [];
+  }
+  const sheets: Array<{ name: string | null; grid: Map<number, Map<number, StatementCell>> }> = [];
+  for (let index = 0; index < maxSheets; index += 1) {
+    const sheet = workbookSheet(bytes, index);
+    if (!sheet) break;
+    sheets.push(sheet);
+  }
+  return sheets;
 }
 
 export function readBankStatement(bytes: Uint8Array): ExtractedBankStatement {
