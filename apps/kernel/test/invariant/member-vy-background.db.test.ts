@@ -973,6 +973,33 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(seal.tainted, "the seal of a member-mode run").toBe(true);
   });
 
+  it("keeps the 4-hour bound of a member Vy run when expires_at or started_at is updated later", async () => {
+    if (!has.kind) return;
+    const run = await liveRun("vyUser");
+    const update = (set: string) =>
+      outcome(
+        admin((a) =>
+          a.query(
+            `UPDATE crove_kernel.ai_run SET ${set} WHERE org_id = $1 AND id = $2`,
+            [orgId, run.runId],
+          ),
+        ),
+      );
+    // Positive control: a later expiry inside the bound is accepted, so the refusals below are about the bound.
+    expect(
+      (await update("expires_at = started_at + interval '3 hours'")).ok,
+      "expires_at inside 4 hours",
+    ).toBe(true);
+    for (const [why, set] of [
+      ["expires_at a day after the start", "expires_at = started_at + interval '1 day'"],
+      ["the start moved a day back", "started_at = started_at - interval '1 day'"],
+    ] as const) {
+      const refused = await update(set);
+      // Before the clean-up migration the trigger watched agent_id alone; the bound is expected from it on.
+      expect(refused, why).toMatchObject({ ok: false, code: "23514" });
+    }
+  });
+
   // ---- Writes ----------------------------------------------------------------------------------------------------------------
   it("refuses a member-mode context every guarded table that is not a catalog 'write' table, enumerated from the catalog (AGENT_FORBIDDEN)", async () => {
     if (!has.entry || !has.kind || !has.catalog) return;

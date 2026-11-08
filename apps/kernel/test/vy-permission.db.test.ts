@@ -206,6 +206,17 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
         await expect(askAs(asUserCtx(who), appUrl, about), 'a member asking about someone else').rejects.toMatchObject({ code: '42501' });
       }
+      // The same after SET ROLE crove_tenant, where current_user is the role and session_user the login: the guard still applies, and the
+      // controls answer as before (the person themselves, an owner about anyone).
+      const switched = (who: string) => async (c: pg.Client) => {
+        await asUserCtx(who)(c);
+        await c.query('SET LOCAL ROLE crove_tenant');
+      };
+      expect(await askAs(switched(users.member), appUrl, users.member), 'a role-switched member about themselves').toBe(false);
+      expect(await askAs(switched(users.owner), appUrl, users.member), 'a role-switched owner about a denied member').toBe(false);
+      for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
+        await expect(askAs(switched(who), appUrl, about), 'a role-switched member asking about someone else').rejects.toMatchObject({ code: '42501' });
+      }
       await expect(askAs(async () => {}, appUrl, users.member), 'no context').rejects.toMatchObject({ code: '42501' });
     } finally {
       await set(users.owner, users.member, null);
