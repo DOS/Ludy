@@ -7,7 +7,7 @@ import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type EInvoiceDraftRe
 import { enterpriseCheckDigit } from '@crove/l10n-vn';
 import type { EInvoiceSuggestSource } from '@crove/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { buyerOf, einvoiceAi, suggestEInvoiceDraft, usualRate, type EInvoiceAi } from '../src/einvoice-ai.ts';
+import { buyerOf, einvoiceAi, suggestEInvoiceDraft, usualRate, withInvoice, type EInvoiceAi } from '../src/einvoice-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -158,5 +158,22 @@ describe('usualRate', () => {
     expect(usualRate([{ vatRate: '10%', n: 3 }, { vatRate: '5%', n: 3 }], ['5%', '10%'])).toBe('10%');
     expect(usualRate([], ['10%'])).toBeNull();
     expect(usualRate([{ vatRate: 'KHAC:3%', n: 4 }], ['10%'])).toBeNull();
+  });
+});
+
+describe('withInvoice', () => {
+  const invoice = 'Hóa đơn trước gửi cùng khách:\n- Bánh A, số lượng 10, đơn giá 120000\n- Trà B, số lượng 2, đơn giá 1200000';
+  it('adds the invoice after the typed text', () => {
+    expect(withInvoice('giống lần trước', invoice)).toBe(`giống lần trước\n\n${invoice}`);
+    expect(withInvoice('x', '')).toBe('x');
+  });
+  it('adds only whole lines that fit under the cut, never a figure cut in the middle, and nothing when not even one fits', () => {
+    const header = 'Hóa đơn trước gửi cùng khách:';
+    const one = '- Bánh A, số lượng 10, đơn giá 120000';
+    const typed = 'a'.repeat(2000 - 2 - header.length - 1 - one.length - 1);
+    const text = withInvoice(typed, invoice);
+    expect(text.length).toBeLessThanOrEqual(2000);
+    expect(text.endsWith(one)).toBe(true);
+    expect(withInvoice('a'.repeat(1990), invoice)).toBe('a'.repeat(1990));
   });
 });

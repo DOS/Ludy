@@ -20,6 +20,7 @@ import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
+import { applyPrevious } from '../lib/invoice-copy.ts';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
@@ -89,28 +90,15 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
   };
 }
 
-// The previous invoice to the same customer copied into the form by code, with no model (#2721): its lines take the place of the blank ones, the buyer is filled while the form has none of its
-// own, and a VAT rate the form's date no longer allows is set to the default so a person chooses it again. Returns how many lines took the default rate.
-function applyPrevious(s: FormState, invoice: NonNullable<EInvoicePrevious['invoice']>): { state: FormState; rateChanged: number } {
-  const proposed: LineState[] = invoice.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatAllowed ? l.vatRate : '10%', ai: null }));
-  const kept = s.lines.filter((l) => !isBlankLine(l));
-  const lines = [...kept, ...proposed].slice(0, EINVOICE_DRAFT_MAX_LINES);
-  const b = s.buyer;
-  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
-  const from = invoice.buyer;
-  const buyer = buyerEmpty && b.kind !== 'consumer' ? { kind: from.kind as BuyerKind, partyId: from.partyId, taxCode: from.taxCode ?? '', name: from.name ?? '', address: from.address ?? '', email: from.email ?? '' } : b;
-  return { state: { ...s, lines: lines.length > 0 ? lines : s.lines, buyer }, rateChanged: invoice.lines.filter((l) => !l.vatAllowed).length };
-}
-
 /** The "previous invoice" source of the draft form (#2721): a person picks a customer, sees the last invoice issued to them, and either copies its lines (by code, works with AI off) or lets the coworker
  * read those lines together with the text. Reading goes through the person's own finance permission; nothing is saved or issued here. */
-function PreviousInvoice({ date, onCopy, onPicked }: { date: string; onCopy: (invoice: NonNullable<EInvoicePrevious['invoice']>) => number; onPicked: (draftId: string | null) => void }) {
+function PreviousInvoice({ date, onCopy, onPicked }: { date: string; onCopy: (invoice: NonNullable<EInvoicePrevious['invoice']>) => { added: number; rateChanged: number }; onPicked: (draftId: string | null) => void }) {
   const t = useTranslations('salesInvoices.ai.previous');
   const f = useFormat();
   const [customerId, setCustomerId] = useState('');
-  const [copied, setCopied] = useState<{ count: number; rateChanged: number } | null>(null);
+  const [copied, setCopied] = useState<{ draftId: string; count: number; rateChanged: number } | null>(null);
   const customers = useQuery(orpc.parties.customers.queryOptions({ input: {} }));
-  const previous = useQuery({ ...orpc.einvoice.drafts.previousInvoice.queryOptions({ input: { buyerPartyId: customerId, date } }), enabled: customerId !== '' });
+  const previous = useQuery({ ...orpc.einvoice.drafts.previousInvoice.queryOptions({ input: { buyerPartyId: customerId, date } }), enabled: customerId !== '' && date !== '' });
   const invoice = previous.data?.invoice ?? null;
   // The coworker reads the invoice only while it is the one on screen.
   const draftId = customerId !== '' && invoice ? invoice.draftId : null;
@@ -147,12 +135,22 @@ function PreviousInvoice({ date, onCopy, onPicked }: { date: string; onCopy: (in
           <p className="text-xs text-foreground" data-testid="invoice-previous-found">
             {invoice.number ? t('found', { number: invoice.number, date: f.date(invoice.date), count: String(invoice.lines.length) }) : t('foundNoNumber', { date: f.date(invoice.date), count: String(invoice.lines.length) })}
           </p>
-          <Button type="button" variant="outline" size="sm" onClick={() => setCopied({ count: invoice.lines.length, rateChanged: onCopy(invoice) })} data-testid="invoice-previous-copy">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={copied?.draftId === invoice.draftId}
+            onClick={() => {
+              const done = onCopy(invoice);
+              setCopied({ draftId: invoice.draftId, count: done.added, rateChanged: done.rateChanged });
+            }}
+            data-testid="invoice-previous-copy"
+          >
             {t('copy')}
           </Button>
         </div>
       )}
-      {copied && (
+      {copied && copied.draftId === invoice?.draftId && (
         <p className="text-xs text-foreground" role="status" data-testid="invoice-previous-copied">
           {t('copied', { count: String(copied.count) })} {copied.rateChanged > 0 && t('rateChanged', { count: String(copied.rateChanged) })}
         </p>
@@ -212,6 +210,8 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   const f = useFormat();
   const [form, setForm] = useState(initial);
   const [sourceInvoice, setSourceInvoice] = useState<string | null>(null);
+  // The buyer of the invoice copied last: a second copy replaces that buyer, never one a person typed or a proposal brought.
+  const copiedBuyer = useRef<string | null>(null);
   const deferred = useDeferredValue(form);
   const input = useMemo(() => toInput(deferred), [deferred]);
   const check = useQuery({ ...orpc.einvoice.drafts.check.queryOptions({ input }), placeholderData: (previous) => previous });
@@ -265,9 +265,12 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
         date={form.date}
         onPicked={setSourceInvoice}
         onCopy={(invoice) => {
-          const done = applyPrevious(form, invoice);
-          setForm(done.state);
-          return done.rateChanged;
+          // The counts come from the form as it is now; the form itself changes through the updater, so a proposal that lands in the same tick is not overwritten.
+          const replaceBuyerOf = copiedBuyer.current;
+          const done = applyPrevious(form, invoice, replaceBuyerOf);
+          copiedBuyer.current = invoice.buyer.partyId;
+          setForm((s) => applyPrevious(s, invoice, replaceBuyerOf).state);
+          return { added: done.added, rateChanged: done.rateChanged };
         }}
       />
       <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} invoiceDraftId={sourceInvoice} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />

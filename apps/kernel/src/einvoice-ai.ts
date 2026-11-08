@@ -15,7 +15,7 @@
 // - amounts are not here at all: the draft's own check computes them from the quantities and prices a person saves.
 // When the model is off, the AI budget is spent, the member's calls are too frequent, the call fails or its answer is refused, the answer names the state (`ai`) and gives nothing to fill in,
 // so the form works as it does with AI off. A failure is named, never quoted: neither the text nor the model's answer is logged.
-import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type InboxReader } from '@crove/agent';
+import { AiBudgetExhaustedError, EINVOICE_DRAFT_TEXT_MAX, type EInvoiceDraftRequest, type InboxReader } from '@crove/agent';
 import type { EInvoiceSuggestInput, EInvoiceSuggested } from '@crove/kernel-contract';
 import { parseTaxCode, salesVatRatesOn } from '@crove/l10n-vn';
 import type { EInvoiceSuggestParty, EInvoiceSuggestSource, RateCount } from '@crove/mod-finance';
@@ -46,6 +46,21 @@ export function buyerOf(party: EInvoiceSuggestParty): NonNullable<EInvoiceSugges
   return { kind: party.kind === 'organization' ? 'business' : 'individual', partyId: party.id, taxCode, name: within(party.name, 400), address: within(party.address, 500), email: within(party.email, 254) };
 }
 
+// The typed text, then as many whole lines of the invoice text as fit in what the model reads and the checks cut at (EINVOICE_DRAFT_TEXT_MAX).
+export function withInvoice(typed: string, invoice: string): string {
+  if (invoice === '') return typed;
+  const kept: string[] = [];
+  let length = typed.length;
+  for (const line of invoice.split('\n')) {
+    length += 1 + line.length + (kept.length === 0 ? 1 : 0);
+    if (length > EINVOICE_DRAFT_TEXT_MAX) break;
+    kept.push(line);
+  }
+  // The header line alone is no source.
+  return kept.length > 1 ? `${typed}\n\n${kept.join('\n')}` : typed;
+}
+
+
 export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId: string, source: EInvoiceSuggestSource, input: EInvoiceSuggestInput): Promise<EInvoiceSuggested> {
   const answer = (state: EInvoiceSuggested['ai'], lines: EInvoiceSuggested['lines'] = [], buyer: EInvoiceSuggested['buyer'] = null): EInvoiceSuggested => ({ ai: state, lines, buyer });
   const ask = ai.reader?.einvoiceDraft;
@@ -55,7 +70,8 @@ export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId
   try {
     // What the model reads and what its figures are checked against are one text (packages/agent cuts both at the same length): what the person typed, then the lines of the invoice they picked as
     // a source (#2721). A figure the invoice holds is a figure the source holds; one that neither holds refuses the proposal, as before.
-    const text = source.invoice && source.invoice.text !== '' ? `${input.text}\n\n${source.invoice.text}` : input.text;
+    // Only whole invoice lines that fit under the cut are added: a cut inside a figure would make the model and the check read a different number.
+    const text = withInvoice(input.text, source.invoice?.text ?? '');
     const request: EInvoiceDraftRequest = { text, date: input.date, parties: source.parties.map((p) => ({ name: p.name })) };
     const result = await ask(request);
     if (result.kind === 'none') {

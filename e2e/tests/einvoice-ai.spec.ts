@@ -28,10 +28,9 @@ test('with AI off the coworker says so, fills nothing, and the draft form works 
     await expect(page.getByTestId('invoice-buyer-ai')).toHaveCount(0);
   });
 
-  await test.step('the previous-invoice source is there, offers no copy while no customer has an issued invoice, and needs no model (#2721)', async () => {
+  await test.step('the previous-invoice source is there, offers no copy until a customer with an issued invoice is chosen, and needs no model (#2721)', async () => {
     const picker = page.getByTestId('invoice-previous-customer');
     await expect(picker).toBeVisible();
-    await expect(picker.locator('option')).toHaveCount(1);
     await expect(page.getByTestId('invoice-previous-copy')).toHaveCount(0);
     await expect(page.getByTestId('invoice-ai-source')).toHaveCount(0);
   });
