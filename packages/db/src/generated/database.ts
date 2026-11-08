@@ -144,6 +144,7 @@ export interface CroveKernelSchema {
   'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
   'crove_kernel.member_vy_memory': KernelMemberVyMemoryTable;
   'crove_kernel.member_vy_result': KernelMemberVyResultTable;
+  'crove_kernel.member_vy_table': KernelMemberVyTableTable;
   'crove_kernel.notification': KernelNotificationTable;
   'crove_kernel.notification_mute': KernelNotificationMuteTable;
   'crove_kernel.number_allocation': KernelNumberAllocationTable;
@@ -2235,6 +2236,13 @@ export interface KernelMemberVyResultTable {
   private_read: Generated<boolean>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   expires_at: ColumnType<Date, Date | string, NotGranted>;
+}
+
+/** crove_kernel.member_vy_table */
+export interface KernelMemberVyTableTable {
+  table_name: ColumnType<string, NotGranted, NotGranted>;
+  mode: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
 /** crove_kernel.notification_mute */
