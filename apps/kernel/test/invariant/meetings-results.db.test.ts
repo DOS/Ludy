@@ -27,6 +27,7 @@ suite('meeting summary and action item writes on PostgreSQL (#2580, ADR-0047)', 
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
+  let runtime: Runtime;
   let orgId = '';
   const users = { owner: '', recorder: '', attendee: '', member: '' };
   const meetingId = randomUUID();
@@ -91,7 +92,7 @@ suite('meeting summary and action item writes on PostgreSQL (#2580, ADR-0047)', 
     const pool = createPool({ connectionString: appUrl, max: 4 });
     pools.push(pool);
     const db = createDb(pool);
-    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'meetings-results', subject: key, email: `${key}@meetings-results.test`, name: null });
     }
@@ -208,6 +209,13 @@ suite('meeting summary and action item writes on PostgreSQL (#2580, ADR-0047)', 
       await c.query('ROLLBACK').catch(() => {});
       await c.end();
     }
+    // A real task of ANOTHER org whose source_ref names this very item is refused too (the task must be one of the caller's org).
+    const otherOrg = (await createOrg(runtime, { type: 'user', userId: users.member, aal: 'aal1' }, 'Org khác')).orgId;
+    const foreignTask = randomUUID();
+    await admin((c) =>
+      c.query(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, source_ref) VALUES ($1, $2, 'Việc', 'human', 'user', $3::jsonb)`, [otherOrg, foreignTask, JSON.stringify({ type: 'meetings.action_item', id: ids.draftItem })]),
+    );
+    expect((await attempt(asUser('recorder'), `SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [orgId, ids.draftItem, foreignTask])).code).toBe('42501');
     // Another org's id never matches.
     const wrongOrg = await attempt(asUser('recorder'), `SELECT crove_meetings.action_item_accept($1::uuid, $2::uuid, $3::uuid)`, [randomUUID(), ids.draftItem, randomUUID()]);
     expect(wrongOrg.code).toBe('42501');
