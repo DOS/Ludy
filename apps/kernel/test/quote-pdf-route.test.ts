@@ -10,7 +10,6 @@ import { DomainError, sha256Hex, type BlobStore, type Runtime } from '@crove/ker
 import type { QuoteDocument } from '@crove/mod-crm';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { gradient, jpeg, png } from '../../../modules/crm/test/png-fixture.ts';
 import { createHttpApp } from '../src/http.ts';
 
 const SECRET = 'x'.repeat(32);
@@ -58,8 +57,9 @@ function document(number: string | null): QuoteDocument {
 }
 
 // The letterhead's logo (#2814): where the document says it is stored, and a store that holds those bytes, or fails, or holds something else.
-const LOGO_PNG = png({ width: 12, height: 6, colorType: 2, samples: gradient(12, 6, 3), filters: [0, 4] });
-const LOGO_JPEG = jpeg({ width: 12, height: 6 });
+// A 12 by 6 RGB PNG (rows filtered with none and Paeth) and the frame header of a 12 by 6 JPEG, as bytes: small enough to keep here.
+const LOGO_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAwAAAAGCAIAAAB4jOjWAAAAv0lEQVR4nGNgiN6m2nDbaylD/inVKe+9dork37Ocwhy3U6P5nu8K5qKzGtM/+bKYmpqqgYC5GgRYgQhTeXlkQYasowoT37jvEM67bzX1f9RWtcY7viuYc08oT3nvtVus8JHtDKbYHSCTNDQ0NMw1FBUVNTQ0jEGkCYQNEbTU0GC4ot/1N2KzfNVVj8X/so4qTH7nuVUg+7pRL0P0NqXaG97LGHNPKINM0tLSMlcGAS0tSxBlAiLMtLTAYoZaWloAMmFFDCJ4MNIAAAAASUVORK5CYII=', 'base64');
+const LOGO_JPEG = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/wAARCAAGAAwDAREAAhEAAxEA/9oAAv/Z', 'base64');
 const logoRef = (bytes: Uint8Array, contentType: string) => ({ storageKey: 'org/logo', generation: null, sha256: sha256Hex(bytes), contentType, sizeBytes: bytes.byteLength });
 function storeOf(bytes: Uint8Array | 'down'): BlobStore {
   return {

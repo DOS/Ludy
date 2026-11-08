@@ -9,8 +9,6 @@ import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { extractImages, extractText, getDocumentProxy } from 'unpdf';
 import { quoteFonts } from '../../../modules/crm/src/pdf/fonts.ts';
-import { readLogoImage } from '../../../modules/crm/src/pdf/image.ts';
-import { gradient, jpeg, png } from '../../../modules/crm/test/png-fixture.ts';
 import { renderQuotePdf, vnDate, vnNumber, wrap, type QuoteDocument } from '../../../modules/crm/src/pdf/quote-document.ts';
 import { A4_HEIGHT, A4_WIDTH, PdfDocument } from '../../../modules/crm/src/pdf/writer.ts';
 
@@ -382,10 +380,16 @@ describe('the quote document', () => {
 // The logo of the letterhead (#2814): an image the document is handed already read; it goes on the first page at the top left inside the margins, as an image object with its own
 // alpha plane when it has one, and a quote without one is the file it always was.
 describe('the letterhead logo', () => {
-  const rgba = gradient(40, 14, 4).map((v, i) => (i % 4 === 3 ? (v < 100 ? 0 : 255) : v));
-  const logoPng = readLogoImage(png({ width: 40, height: 14, colorType: 6, samples: rgba, filters: [0, 1, 2, 3, 4] }), 'image/png');
-  const jpegFile = jpeg({ width: 400, height: 100 });
-  const logoJpeg = readLogoImage(jpegFile, 'image/jpeg');
+  // Images as the logo reader hands them over (modules/crm/src/pdf/image.ts has its own tests), made by hand: this package imports no reader of member files.
+  const logoPng = {
+    width: 40,
+    height: 14,
+    space: 'DeviceRGB' as const,
+    colour: { kind: 'raw' as const, data: new Uint8Array(40 * 14 * 3).map((_, i) => (i * 7) & 0xff) },
+    alpha: new Uint8Array(40 * 14).map((_, i) => (i % 5 === 0 ? 0 : 255)),
+  };
+  const jpegFile = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]);
+  const logoJpeg = { width: 400, height: 100, space: 'DeviceRGB' as const, colour: { kind: 'jpeg' as const, data: new Uint8Array(jpegFile) }, alpha: null };
 
   // Every xref entry points at its object and every stream's length is the bytes between the keywords.
   function wellFormed(bytes: Uint8Array): string {
@@ -422,12 +426,6 @@ describe('the letterhead logo', () => {
     }
     return null;
   }
-
-  it('is read as the two files that the tests use', () => {
-    expect(logoPng).toMatchObject({ width: 40, height: 14, space: 'DeviceRGB' });
-    expect(logoPng?.alpha).not.toBeNull();
-    expect(logoJpeg).toMatchObject({ width: 400, height: 100, colour: { kind: 'jpeg' } });
-  });
 
   it('draws a PNG with its alpha as one image and its soft mask, at the top left of the first page, in its own proportions and inside the margins', async () => {
     const bytes = renderQuotePdf({ ...sample(), logo: logoPng });
