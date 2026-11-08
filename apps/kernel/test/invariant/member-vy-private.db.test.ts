@@ -285,7 +285,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
 
   describe('the member_vy agent and its runs', () => {
     // A member's own agent, inserted in their own user context and committed, so the worker login can be asked to enter it.
-    const insertAgent = (actor: Actor, memberUser: string, template = 'member_vy') =>
+    const insertAgent = (actor: Actor, memberUser: string, template = 'kernel.member_vy') =>
       outcome(
         inContext(
           actor.url(),
@@ -323,19 +323,19 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
           author.enter,
           async (c) => {
             const id = randomUUID();
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
             const second = await outcome(
-              c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'member_vy', 'Vy hai', 'member_vy', $3, $3)`, [orgId, randomUUID(), users.author]),
+              c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy hai', 'member_vy', $3, $3)`, [orgId, randomUUID(), users.author]),
             );
             await c.query('ROLLBACK');
             await c.query('BEGIN');
             await author.enter(c);
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
             const flip = await outcome(c.query(`UPDATE crove_kernel.agent SET kind = 'org_chart' WHERE org_id = $1 AND id = $2`, [orgId, id]));
             await c.query('ROLLBACK');
             await c.query('BEGIN');
             await author.enter(c);
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, id, users.author]);
             const move = await outcome(c.query(`UPDATE crove_kernel.agent SET member_user_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, id, users.member]));
             return { second, flip, move };
           },
@@ -359,7 +359,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
           async (c) => {
             const agentId = randomUUID();
             const runId = randomUUID();
-            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, users.author]);
+            await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, users.author]);
             await c.query(
               `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
               [orgId, runId, agentId],
