@@ -186,8 +186,9 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   });
 
   it('shows the owner no title, line, summary or item of a meeting they cannot read, in the finder\'s answer or its audit row', async () => {
-    const found = await api.execute<{ matches: Array<{ column: string; row: unknown }> }>('kernel.personal_data.find', { value: EMAIL }, { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() });
-    expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.'))).toEqual([]);
+    const found = await api.execute<{ matches: Array<{ column: string; row: Record<string, unknown> }> }>('kernel.personal_data.find', { value: EMAIL }, { actor: asUser(users.owner), orgId, idempotencyKey: randomUUID() });
+    // Rows of meetings the owner reads (the org-shared one) may be listed; no row of the hidden meeting is, whatever its table.
+    expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.') && (m.row.meeting_id === meetingId || m.row.id === meetingId))).toEqual([]);
     const answer = JSON.stringify(found);
     for (const secret of [TITLE, LINE, SUMMARY, 'Tuấn']) expect(answer, secret).not.toContain(secret);
     const audit = JSON.stringify(
