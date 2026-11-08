@@ -46,6 +46,11 @@ export const AI_FEATURES = {
   // The finance coworker on a sales e-invoice draft (#2505): the lines, the VAT rate the text states and the customer it is for, proposed from a text a person typed or pasted. A figure the text
   // does not hold, or a rate the invoice date does not allow, refuses the proposal; a person reads the whole draft and issues it.
   'finance.einvoice_draft': 'finance',
+  // The finance coworker on payroll (#2534): prepare the month from the diff of last month, put the anomalies code found in a sentence, explain one payslip. The model sees the pseudonymized sheet only
+  // (an alias per employee, fixed component labels and amounts); every text is refused when it states a figure it was not given, and a person decides.
+  'finance.payroll_prepare': 'finance',
+  'finance.payroll_flag': 'finance',
+  'finance.payroll_explain': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
 } as const satisfies Record<string, string>;
