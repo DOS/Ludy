@@ -39,8 +39,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
     case 'extraction':
       // extraction carries the id of the file whose reading changed. files.batch: a re-read of a file the intake list
       // watches (#2032).
-      // marketplace.staged: an order report read in the sandbox waits as a card until a member decides it (#2515).
-      return path === 'files.recent' || path === 'files.staged' || path === 'marketplace.staged' || path === 'files.batch' || path === 'inbox.list' || (path === 'inbox.get' && detail(query)?.file?.id === id);
+      // marketplace.staged, marketplace.incomeStaged: an order or income report read in the sandbox waits as a card until a member decides it (#2515, #2516).
+      return path === 'files.recent' || path === 'files.staged' || path === 'marketplace.staged' || path === 'marketplace.incomeStaged' || path === 'files.batch' || path === 'inbox.list' || (path === 'inbox.get' && detail(query)?.file?.id === id);
     case 'journal_entry': {
       // The ledger reports (#321) read every posted entry, so any new one changes them. A voucher (#327) is posted, and
       // shown as reversed, with an entry.
