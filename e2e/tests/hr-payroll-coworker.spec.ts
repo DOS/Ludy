@@ -38,7 +38,8 @@ test('with AI off the pay run and the payslip are complete, and the coworker ans
     await page.getByTestId('hr-payslip-open').first().click();
     await expect(page.getByTestId('hr-payslip')).toContainText('Phạm Thị Thử Việc');
     await page.getByTestId('hr-explain').click();
-    await expect(page.getByTestId('hr-coworker-state')).toContainText('AI');
+    // The month card above also shows its own notice, so the payslip's is read inside the payslip.
+    await expect(page.getByTestId('hr-payslip').getByTestId('hr-coworker-state')).toContainText('AI');
     await expect(page.getByTestId('hr-explanation')).toHaveCount(0);
     await expect(page.getByTestId('hr-payslip-print')).toBeVisible();
   });
