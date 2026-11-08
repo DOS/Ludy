@@ -29,11 +29,6 @@ const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...Mem
 const RESULT_DAYS = 30;
 const MAX_BODY = 100_000;
 
-// Whether a subject is visible to the whole org, by its type, read in the member's own context in the transaction that stores. A type with no
-// resolver is private: the flag is set when the subject is private or its visibility is unknown, and a module registers its resolver here
-// when it has a feature (notes, N8). Never taken from the caller.
-const SUBJECT_VISIBILITY: Record<string, (ctx: Pick<CommandContext, 'trx' | 'orgId'>, subjectId: string) => Promise<'org' | 'private' | 'unknown'>> = {};
-
 function requireUser(ctx: Pick<CommandContext, 'actor'>): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   return ctx.actor.userId;
@@ -161,6 +156,7 @@ export const memberVyResultStore = defineCommand({
       .where('r.id', '=', input.runId)
       .where('a.kind', '=', 'member_vy')
       .where('a.member_user_id', '=', userId)
+      .forUpdate('r')
       .executeTakeFirst();
     const result = run
       ? await ctx.trx
@@ -177,12 +173,13 @@ export const memberVyResultStore = defineCommand({
     // A kill switch or a spent budget since the run started: the text is discarded, not stored.
     const off = (await stopped(ctx, run.module, run.agent_id)) || (await budgetSpent(ctx, run.module, run.agent_id));
     const outcome = off ? ({ status: 'failed', errorCode: 'AI_STOPPED' } as const) : input.outcome;
-    // The flag is the kernel's: private when the subject is private or its visibility is unknown, and a run that reads the member's own
-    // memory or an earlier result would inherit it. Without a resolver for the subject's type it is private.
-    const resolver = SUBJECT_VISIBILITY[result.subject_type];
-    const visibility = resolver ? await resolver(ctx, result.subject_id) : 'unknown';
-    const privateRead = visibility !== 'org';
-    await ctx.trx
+    // The flag is the kernel's, never the caller's, and it only ever goes up: a result is inserted private (the member's own text from a
+    // subject that is private or whose visibility is unknown) and stays so; a module that can show a subject is org-visible would lower the
+    // insert default in its own reviewed change, never here. A run that reads the member's memory or an earlier result inherits the flag.
+    const privateRead = true;
+    // Each update is guarded by the status it expects and must touch exactly one row: a cancel that committed between the checks above and here
+    // (the run row is locked FOR UPDATE, in the order the cancel definer takes its locks: run, then result) leaves nothing to write.
+    const wrote = await ctx.trx
       .updateTable('crove_kernel.member_vy_result')
       .set(
         outcome.status === 'ready'
@@ -191,13 +188,18 @@ export const memberVyResultStore = defineCommand({
       )
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', result.id)
-      .execute();
-    await ctx.trx
+      .where('status', '=', 'running')
+      .executeTakeFirst();
+    const closed = await ctx.trx
       .updateTable('crove_kernel.ai_run')
       .set({ status: outcome.status === 'ready' ? 'succeeded' : 'failed', finished_at: ctx.now, error: outcome.status === 'failed' ? outcome.errorCode : null, private_read: privateRead })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', run.id)
-      .execute();
+      .where('status', '=', 'running')
+      .executeTakeFirst();
+    if (wrote.numUpdatedRows !== 1n || closed.numUpdatedRows !== 1n) {
+      throw new DomainError('VY_RUN_NOT_LIVE', 409, 'Lượt làm việc này của Vy đã kết thúc hoặc không còn hiệu lực');
+    }
     ctx.audit({ run_id: run.id, result_id: result.id, status: outcome.status, private_read: privateRead, body_length: outcome.status === 'ready' ? outcome.body.length : 0 });
     return { stored: outcome.status === 'ready', status: outcome.status };
   },

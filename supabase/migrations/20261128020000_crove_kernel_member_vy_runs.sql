@@ -31,15 +31,22 @@ BEGIN
   IF v_org IS NULL THEN
     RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
   END IF;
+  -- ai_run.error holds a fixed code, never text.
+  IF p_reason IS NULL OR p_reason !~ '^[A-Z][A-Z0-9_]{0,63}$' THEN
+    RAISE EXCEPTION 'MEMBER_VY_REASON' USING ERRCODE = '22023';
+  END IF;
   IF crove_kernel.ctx_actor_type() = 'system' THEN
-    NULL;
+    -- The system context of the worker login only, as member_vy_private_counts asks.
+    IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+      RAISE EXCEPTION 'MEMBER_VY_FORBIDDEN' USING ERRCODE = '42501';
+    END IF;
   ELSIF crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
     SELECT 1 FROM crove_kernel.tenant_member m
     WHERE m.org_id = v_org AND m.user_id = crove_kernel.ctx_user_id() AND m.role IN ('owner', 'admin')
   ) THEN
     RAISE EXCEPTION 'MEMBER_VY_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
-  UPDATE crove_kernel.ai_run r SET status = 'cancelled', finished_at = pg_catalog.now(), error = pg_catalog.left(COALESCE(p_reason, 'cancelled'), 100)
+  UPDATE crove_kernel.ai_run r SET status = 'cancelled', finished_at = pg_catalog.now(), error = p_reason
   FROM crove_kernel.agent a
   WHERE r.org_id = v_org AND r.status = 'running' AND a.org_id = r.org_id AND a.id = r.agent_id AND a.kind = 'member_vy'
     AND ((p_agent_ids IS NOT NULL AND r.agent_id = ANY (p_agent_ids))

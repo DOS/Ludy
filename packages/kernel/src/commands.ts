@@ -68,7 +68,7 @@ import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
-import { cancelMemberVyRuns, cancelMemberVyRunsUnlessAllowed, memberVyCommands } from './member-vy.ts';
+import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
@@ -214,11 +214,12 @@ export const changeMemberRole = defineCommand({
       }
     }
     // A demotion to viewer of the last chief accountant under the accountant preset is refused (#1402).
+    // A viewer holds vy.use only through a grant or a role: the live runs of a member made a viewer end first, while the caller is still an owner (the definer answers
+    // owners and admins only, and a self-demotion would otherwise lock the caller out of it).
+    if (input.role === 'viewer') await cancelMemberVyRuns(ctx, { userId: input.userId }, 'ROLE_CHANGED');
     await keepingChiefAccountant(() =>
       ctx.trx.updateTable('crove_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute(),
     );
-    // A demotion can take vy.use away (a viewer holds it only through a grant or a role): their live runs of Vy end unless they still hold it.
-    await cancelMemberVyRunsUnlessAllowed(ctx, input.userId, 'ROLE_CHANGED');
     // Pending invites the member could no longer issue are revoked in the same transaction, after the membership locks
     // (the order every invite path uses): an admin or owner who becomes a member or viewer loses every invite, an
     // owner who becomes an admin loses their admin invites (only owners grant admin), their scoped invites (only

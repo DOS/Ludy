@@ -12,6 +12,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -178,6 +179,34 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await rowsOf(), 'the rows stay for the 30 days').toBe(before);
   });
 
+  it('discards the text of a store that races a cancel, and neither blocks the other for good', async () => {
+    await resetRuns();
+    const run = await start(users.alice);
+    const url = new URL(adminUrl);
+    url.username = 'crove_app';
+    url.password = 'test-app-pw';
+    // A cancel by the owner, held open: it has ended the run and the result and not yet committed.
+    const cancel = new pg.Client({ connectionString: url.toString() });
+    await cancel.connect();
+    try {
+      await cancel.query('BEGIN');
+      await cancel.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users.owner, orgId)]);
+      const ended = await cancel.query<{ n: string }>(`SELECT crove_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, 'TEST') AS n`, [users.alice]);
+      expect(ended.rows[0]?.n).toBe('1');
+      // The store checks the run while the cancel holds it: it waits for the row, then sees the run ended.
+      const racing = store(users.alice, run.runId, { status: 'ready', body: SECRET });
+      const settled = racing.then(() => 'stored', (error: { code?: string }) => error.code ?? 'error');
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await cancel.query('COMMIT');
+      expect(await settled, 'the late text is refused').toBe('VY_RUN_NOT_LIVE');
+    } finally {
+      await cancel.query('ROLLBACK').catch(() => {});
+      await cancel.end();
+    }
+    expect(await runStatus(run.runId)).toBe('cancelled');
+    expect(await query(users.alice, 'kernel.member_vy.result.get', { runId: run.runId })).toMatchObject({ status: 'failed', errorCode: 'RUN_CANCELLED', body: null });
+  });
+
   it('derives the agent of the meter\'s doors from the member, and keeps the spend as figures', async () => {
     await resetRuns();
     await start(users.alice);
@@ -186,8 +215,10 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'notes.summary', inputTokens: 120, outputTokens: 30, cost: '0.000150' })).toEqual({ recorded: true });
     const usage = await sqlAdmin<{ agent_id: string; module: string; feature: string }>(`SELECT agent_id, module, feature FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'notes.summary'`, [orgId]);
     expect(usage).toEqual([{ agent_id: own, module: 'notes', feature: 'notes.summary' }]);
-    // An agent id in the input is refused: the strict schema has no such field.
-    await expect(exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'notes.summary', inputTokens: 1, outputTokens: 1, cost: '0', agentId: randomUUID() })).resolves.toBeDefined();
+    // The input has no agent field: one a caller adds is dropped, and the spend still goes to the member's own Vy.
+    const other = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id <> $2 LIMIT 1`, [orgId, users.alice]))[0]?.id ?? randomUUID();
+    await exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'notes.summary', inputTokens: 1, outputTokens: 1, cost: '0', agentId: other });
+    expect(await sqlAdmin(`SELECT 1 FROM crove_kernel.org_usage WHERE org_id = $1 AND agent_id = $2`, [orgId, other])).toHaveLength(0);
   });
 
   it('keeps what Vy remembers about the member to the member, who writes and deletes it', async () => {
