@@ -119,7 +119,7 @@ import {
   type SignupRules,
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
-import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
+import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
@@ -1381,7 +1381,12 @@ export function createHttpApp(deps: HttpDeps) {
       if (!input || typeof input !== 'object' || !wellFormedExtensionCode(input.code) || !wellFormedVerifier(input.codeVerifier)) return refused();
       const code = input.code;
       const verifier = input.codeVerifier;
-      const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier));
+      // The code is bound to the extension it was issued for (#2850): the exchange must come from that extension, which the browser
+      // states in the Origin header (chrome-extension://<id>). A missing, malformed, unlisted or different origin gets the same
+      // answer as a wrong code, and the code is not spent.
+      const extensionId = extensionIdOfOrigin(c.req.header('origin'));
+      if (extensionId === null || !allowedExtensionIds.includes(extensionId)) return refused();
+      const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier, extensionId));
       if (!done) return refused();
       // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
       const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
@@ -1500,7 +1505,7 @@ export function createHttpApp(deps: HttpDeps) {
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
-        { codeHash: code.hash.toString('hex'), codeChallenge: input.codeChallenge, scopes: input.scopes, deviceName: input.deviceName },
+        { codeHash: code.hash.toString('hex'), codeChallenge: input.codeChallenge, scopes: input.scopes, deviceName: input.deviceName, extensionId: input.extensionId },
         { actor: actorOf(user), orgId },
       );
       return c.json({ code: code.value, expiresInSeconds: issued.expiresInSeconds });
