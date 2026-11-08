@@ -177,9 +177,11 @@ export interface CroveKernelSchema {
 }
 
 export interface CroveMeetingsSchema {
+  'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
+  'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
 }
@@ -2651,6 +2653,28 @@ export interface KernelUsageDeferralTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_meetings.action_item */
+export interface MeetingsActionItemTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  title: string;
+  who_drafted: Generated<string>;
+  who_parsed: string | null;
+  when_drafted: Generated<string>;
+  when_parsed: string | null;
+  transcript_seconds: number | null;
+  stage: Generated<string>;
+  status: ColumnType<string, string | undefined, NotGranted>;
+  flags: ColumnType<unknown, string | undefined, string>;
+  tainted: Generated<boolean>;
+  task_id: ColumnType<string | null, string | null, NotGranted>;
+  accepted_by: ColumnType<string | null, string | null, NotGranted>;
+  accepted_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_meetings.audio_segment */
 export interface MeetingsAudioSegmentTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2670,6 +2694,20 @@ export interface MeetingsMeetingReaderTable {
   meeting_id: ColumnType<string, string, NotGranted>;
   user_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting_result */
+export interface MeetingsMeetingResultTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  summary: string;
+  decisions: ColumnType<unknown, string | undefined, string>;
+  feature: string;
+  stage: Generated<string>;
+  tainted: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_meetings.meeting */

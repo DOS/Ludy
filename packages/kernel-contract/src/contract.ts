@@ -331,6 +331,21 @@ import {
   zTranscribeStarted,
   zTranscribeStatus,
   zTranscriptCopy,
+  zActionItemAccept,
+  zActionItemAccepted,
+  zActionItemAcceptClean,
+  zActionItemCreate,
+  zActionItemCreated,
+  zActionItemDeleted,
+  zActionItemEdit,
+  zActionItemRef,
+  zActionItemSource,
+  zActionItemsAccepted,
+  zMeetingResultSave,
+  zMeetingResultSaved,
+  zMeetingResults,
+  zResultPublish,
+  zResultPublished,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -791,6 +806,20 @@ export const contract = {
       start: oc.input(zTranscribeStart).output(zTranscribeStarted),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
+    },
+    // The summary, the decisions and the action items (#2580): the recorder's drafts, published by one click to the meeting's readers, and the tasks made from items.
+    results: {
+      get: oc.input(zMeetingRef).output(zMeetingResults),
+      saveSummary: oc.input(zMeetingResultSave).output(zMeetingResultSaved),
+      publish: oc.input(zResultPublish).output(zResultPublished),
+    },
+    actionItems: {
+      create: oc.input(zActionItemCreate).output(zActionItemCreated),
+      edit: oc.input(zActionItemEdit).output(zActionItemCreated),
+      delete: oc.input(zActionItemRef).output(zActionItemDeleted),
+      accept: oc.input(zActionItemAccept).output(zActionItemAccepted),
+      acceptClean: oc.input(zActionItemAcceptClean).output(zActionItemsAccepted),
+      source: oc.input(zActionItemRef).output(zActionItemSource),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
