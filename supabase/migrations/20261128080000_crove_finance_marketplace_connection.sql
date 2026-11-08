@@ -5,7 +5,7 @@
 -- marketplace_connection   one row per connected marketplace account: the channel connection that holds the sealed credential (crove_kernel.channel_connection and
 --                          crove_kernel.credential, ADR-0025: provider `marketplace_<adapter>`, one per org and platform account), the platform it reads, the legal
 --                          entity it imports for, the result of the last connection test as a state, and the poll's progress (the cursor of the last page it read, when,
---                          how it ended, and how many orders wait for a member in the Inbox). The row holds no credential, no provider message and no buyer data.
+--                          and how it ended). The row holds no credential, no provider message and no buyer data.
 --                          Every member of the entity reads it; owners and admins connect, test, poll and disconnect.
 --
 -- A tenant role updates only the last test and the poll's progress (a column grant); the entity, the channel connection, the provider and the platform are fixed for the
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.marketplace_connection (
   poll_cursor text CHECK (pg_catalog.length(poll_cursor) <= 200),
   last_polled_at timestamptz,
   last_poll_state text CHECK (last_poll_state IN ('ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized')),
-  -- How many orders the last poll staged that no member has confirmed yet.
+  -- Not written by anything: what waits in the Inbox is counted when the list is read (the staged files of this connection), so a confirm or a reject lowers it. Kept at 0.
   orders_waiting integer NOT NULL DEFAULT 0 CHECK (orders_waiting >= 0),
   created_by uuid,
   created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),

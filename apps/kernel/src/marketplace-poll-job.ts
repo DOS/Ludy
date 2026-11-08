@@ -15,6 +15,7 @@ import {
   SANDBOX_MARKETPLACE_SECRET,
   marketplaceOrdersCsv,
   ordersSpan,
+  splitWritableOrders,
   type MarketplaceOrder,
   type MarketplacePollEnding,
   type MarketplacePollTarget,
@@ -49,9 +50,10 @@ interface SealedChannelCredential {
   envelope: string;
 }
 
-const csvFilename = (platform: string, orders: readonly MarketplaceOrder[]): string => {
+// The connection's id is in the name, so the Inbox files of one connection can be told from every other (the finance module counts what waits for a connection by it).
+const csvFilename = (platform: string, connectionId: string, orders: readonly MarketplaceOrder[]): string => {
   const span = ordersSpan(orders);
-  return `don-hang-${platform}${span ? `-${span.from}-${span.to}` : ''}.csv`;
+  return `don-hang-${platform}-${connectionId}${span ? `-${span.from}-${span.to}` : ''}.csv`;
 };
 
 export async function runMarketplacePoll(deps: MarketplacePollDeps, job: MarketplacePollJob): Promise<MarketplacePollOutcome> {
@@ -61,8 +63,11 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
   // The adapter switched off on this deployment: nothing is sent and the connection's record is left as it was.
   if (!Object.hasOwn(deps.providers, target.adapter)) return { state: 'skipped', reason: 'provider_off' };
   const provider = deps.providers[target.adapter] as MarketplaceProvider;
-  const record = (fields: { state: MarketplacePollEnding; cursor?: string; ordersWaiting?: number }) =>
-    deps.runtime.execute('finance.marketplace_connection.record_poll', { id: job.connectionId, ...fields }, options);
+  // A poll that changes nothing the row holds (the same state, the same cursor) writes nothing: the 15-minute sweep would otherwise add an audit row for every connection every time.
+  const record = async (fields: { state: MarketplacePollEnding; cursor?: string }) => {
+    if (fields.state === target.lastPollState && (fields.cursor === undefined || fields.cursor === target.cursor)) return;
+    await deps.runtime.execute('finance.marketplace_connection.record_poll', { id: job.connectionId, ...fields }, options);
+  };
 
   // The credential: the offline provider has none; a real one is opened here from the sealed copy, and refused once the member who connected it may no longer use it or the connection is
   // no longer active.
@@ -88,10 +93,11 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     page = await provider.listOrders(secret, target.platform, target.cursor);
   } catch (error) {
     // The cursor stays where it was: the next poll asks for the same orders again.
+    // Anything that is not the port's own error is made one of its kind here: its message (which a client library may fill with a URL or a header) is neither kept nor logged, and pg-boss
+    // never stores it in the job's output.
     const state: MarketplacePollEnding = error instanceof MarketplaceProviderError ? error.kind : 'unreachable';
     await record({ state });
     console.warn(`[marketplace] ${job.connectionId.slice(0, 8)}: ${state}`);
-    if (!(error instanceof MarketplaceProviderError)) throw error;
     return { state, orders: 0, staged: false };
   }
 
@@ -101,13 +107,20 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
     await record({ state: 'too_large' });
     return { state: 'too_large', orders: page.orders.length, staged: false };
   }
-  // Nothing new: the poll is recorded with the cursor the provider gave back, and the count of what waits is left as it was.
+  // Nothing new: the poll is recorded with the cursor the provider gave back (and not at all when that changes nothing).
   if (page.orders.length === 0) {
     await record({ state: 'ok', ...(page.nextCursor && page.nextCursor !== target.cursor ? { cursor: page.nextCursor } : {}) });
     return { state: 'ok', orders: 0, staged: false };
   }
 
-  const csv = marketplaceOrdersCsv(target.platform, page.orders);
+  // An order the platform's layout cannot carry (a fractional quantity on a platform that writes a row for each unit) is left out and named as a state, never half written.
+  const { writable, refused } = splitWritableOrders(target.platform, page.orders);
+  const cursor = page.nextCursor && page.nextCursor !== target.cursor ? { cursor: page.nextCursor } : {};
+  if (writable.length === 0) {
+    await record({ state: 'not_recognized', ...cursor });
+    return { state: 'not_recognized', orders: 0, staged: false };
+  }
+  const csv = marketplaceOrdersCsv(target.platform, writable, job.connectionId);
   const bytes = new TextEncoder().encode(csv);
   const lineCount = csv.split('\n').length - 2;
   if (bytes.byteLength > EXTRACT_LIMITS.maxOrderReportBytes || lineCount > EXTRACT_LIMITS.maxOrderLines) {
@@ -121,14 +134,11 @@ export async function runMarketplacePoll(deps: MarketplacePollDeps, job: Marketp
   // content hash dedupes a page read twice, and the extraction job that the event queues stages it for a member. A throw here leaves the cursor where it was, so the retry reads the page again.
   const filed = await deps.runtime.execute<{ fileId: string; duplicate: boolean }>(
     'kernel.file.ingest',
-    { filename: csvFilename(target.platform, page.orders), contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload', legalEntityId: target.legalEntityId },
+    { filename: csvFilename(target.platform, job.connectionId, writable), contentType: 'text/csv', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload', legalEntityId: target.legalEntityId },
     options,
   );
   // Only now does the cursor move. A page that was already ingested hands nothing new to the Inbox.
-  await record({
-    state: 'ok',
-    ...(page.nextCursor && page.nextCursor !== target.cursor ? { cursor: page.nextCursor } : {}),
-    ...(filed.duplicate ? {} : { ordersWaiting: page.orders.length }),
-  });
-  return { state: 'ok', orders: filed.duplicate ? 0 : page.orders.length, staged: !filed.duplicate };
+  const state: MarketplacePollEnding = refused > 0 ? 'not_recognized' : 'ok';
+  await record({ state, ...cursor });
+  return { state, orders: filed.duplicate ? 0 : writable.length, staged: !filed.duplicate };
 }

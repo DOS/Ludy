@@ -36,5 +36,8 @@ export const canPollNow = (connection: Pick<MarketplaceConnection, 'provider' | 
 // The platforms a connect can name: those an adapter serves.
 export const connectablePlatforms = (platforms: readonly MarketplacePlatformInfo[]): MarketplacePlatformInfo[] => platforms.filter((p) => p.adapter);
 
+// The words for a field an adapter asks for, as a message key; a name with no words of its own is shown as it is.
+export const fieldLabelKey = (name: string, known: (key: string) => boolean): string | null => (known(`fieldLabels.${name}`) ? `fieldLabels.${name}` : null);
+
 // A field the org types to connect is a secret unless its name says it is a plain identifier: the input hides what is typed.
 export const fieldIsSecret = (name: string): boolean => !/^(user|username|account|email|login|appId|clientId|shopId)$/i.test(name);

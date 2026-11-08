@@ -243,51 +243,87 @@ export function createSandboxMarketplaceProvider(options: SandboxMarketplaceOpti
 // downloads. There is NO buyer column in any layout: a provider's page never carried one into this process, and the report has none to read.
 interface Layout {
   head: readonly string[];
-  // The cells of one row, in the order of `head`.
-  row(order: MarketplaceOrder, line: MarketplaceOrderLine, unit: number): string[];
+  // The cells of one row, in the order of `head`. A free-text cell (a product name) goes through `text`; ids, SKUs, days and numbers are written as they are.
+  row(order: MarketplaceOrder, line: MarketplaceOrderLine, unit: UnitShare, text: (value: string) => string): string[];
   // A platform with a row per unit (Lazada) writes a line of n units as n rows.
   rowPerUnit: boolean;
-  status: Readonly<Record<MarketplaceOrderStage, string>>;
 }
 
-const VN_STATUS: Layout['status'] = { placed: 'Chờ lấy hàng', shipped: 'Đang giao', completed: 'Hoàn thành', cancelled: 'Đã hủy', returned: 'Hoàn trả' };
-const EN_STATUS: Layout['status'] = { placed: 'Awaiting shipment', shipped: 'In transit', completed: 'Completed', cancelled: 'Cancelled', returned: 'Returned' };
+// One unit of a line: its number (from 1), and its share of the line's amount. The units of a line add up to the line's amount exactly: the last one carries the remainder.
+interface UnitShare {
+  index: number;
+  amount: string;
+}
+
+const VN_STATUS: Record<MarketplaceOrderStage, string> = { placed: 'Chờ lấy hàng', shipped: 'Đang giao', completed: 'Hoàn thành', cancelled: 'Đã hủy', returned: 'Hoàn trả' };
+const EN_STATUS: Record<MarketplaceOrderStage, string> = { placed: 'Awaiting shipment', shipped: 'In transit', completed: 'Completed', cancelled: 'Cancelled', returned: 'Returned' };
 
 const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
   shopee: {
     head: ['Mã đơn hàng', 'Ngày đặt hàng', 'Ngày gửi hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'],
     rowPerUnit: false,
-    status: VN_STATUS,
-    row: (o, l) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', l.itemName, l.unitPrice, l.quantity, l.amount],
+    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), l.unitPrice, l.quantity, l.amount],
   },
   tiktok_shop: {
     head: ['Order ID', 'Order Status', 'Order Substatus', 'Seller SKU', 'Product Name', 'Quantity', 'SKU Unit Original Price', 'SKU Subtotal After Discount', 'Created Time', 'Shipped Time'],
     rowPerUnit: false,
-    status: EN_STATUS,
-    row: (o, l) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', l.itemName, l.quantity, l.unitPrice, l.amount, o.orderedAt, o.shippedAt ?? ''],
+    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), l.quantity, l.unitPrice, l.amount, o.orderedAt, o.shippedAt ?? ''],
   },
   lazada: {
     head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice'],
     rowPerUnit: true,
-    status: EN_STATUS,
-    // One row per unit: the unit's own item id, and its share of the line's amount (the line's amount over its units; a whole number of units).
-    row: (o, l, unit) => [o.orderNo, `${l.lineKey}-${unit}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', l.itemName, l.sku ?? '', l.unitPrice, toMoney(money(l.amount).dividedBy(l.quantity))],
+    // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units).
+    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', l.unitPrice, unit.amount],
   },
 };
 
-// A cell as CSV: always quoted, a quote doubled. The cells hold ids, names the seller chose, ISO days and decimals; none is ever a formula for a spreadsheet to run, because the file
-// is only read by the parsing sandbox, but a leading = + - @ is made plain text all the same.
-const cell = (value: string): string => `"${(/^[=+@]/.test(value) ? `'${value}` : value).replaceAll('"', '""')}"`;
+// A free-text cell (a product name the seller chose) as plain text: a leading = + - @, tab or carriage return would start a formula in a spreadsheet, so it gets a ' in front. Only
+// names go through this; an SKU, an order number, a day or an amount is written as it is, because the parsing sandbox reads those back exactly and no spreadsheet ever opens the file.
+const FORMULA_START = /^[=+\-@\t\r]/;
+const plainText = (value: string): string => (FORMULA_START.test(value) ? `'${value}` : value);
 
-// The CSV of a page of orders in the layout of the platform's report, with a first row of headers. One row for each line (Lazada: for each unit). Deterministic: the same orders give the
-// same bytes, so the same page read twice is the same file and the intake's content hash recognises it.
-export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[]): string {
+// A cell as CSV: always quoted, a quote doubled.
+const cell = (value: string): string => `"${value.replaceAll('"', '""')}"`;
+
+// The number of units of a line on a platform that writes a row for each, or null when the quantity is no whole number of at least 1.
+const wholeUnits = (quantity: string): number | null => {
+  const q = money(quantity);
+  return q.isInteger() && q.gte(1) && q.lte(100_000) ? q.toNumber() : null;
+};
+
+// What a page can be written as: the orders the layout can carry, and how many it cannot (a platform that writes a row for each unit cannot carry a line of 1.5 units). Those are named
+// by the caller, never written half and never dropped without a trace.
+export function splitWritableOrders(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[]): { writable: MarketplaceOrder[]; refused: number } {
+  if (!LAYOUTS[platform].rowPerUnit) return { writable: [...orders], refused: 0 };
+  const writable = orders.filter((order) => order.lines.every((line) => wholeUnits(line.quantity) !== null));
+  return { writable, refused: orders.length - writable.length };
+}
+
+// The CSV of a page of orders in the layout of the platform's report, with a first row of headers. One row for each line (Lazada: for each unit; the units add up to the line's amount
+// exactly, the last carrying the remainder). With `connectionId`, a first row of one cell names the connection, so two connections of one platform never write the same bytes (the intake
+// dedupes a file by its hash per org) and an Inbox file is tied to its connection; the profile finder skips a row with fewer than three headers, and the row holds no order data.
+// Deterministic: the same orders for the same connection give the same bytes, so the same page read twice is the same file and the intake recognises it. A line a platform's layout cannot
+// carry throws; the caller removes those first (splitWritableOrders).
+export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[], connectionId?: string): string {
   const layout = LAYOUTS[platform];
-  const rows: string[][] = [[...layout.head]];
+  const rows: string[][] = [];
+  if (connectionId !== undefined) rows.push([`Ludy marketplace connection ${connectionId}`]);
+  rows.push([...layout.head]);
   for (const order of orders) {
     for (const line of order.lines) {
-      const units = layout.rowPerUnit ? Math.max(1, Math.trunc(Number(line.quantity))) : 1;
-      for (let unit = 1; unit <= units; unit += 1) rows.push(layout.row(order, layout.rowPerUnit ? { ...line, quantity: String(units) } : line, unit));
+      if (!layout.rowPerUnit) {
+        rows.push(layout.row(order, line, { index: 1, amount: line.amount }, plainText));
+        continue;
+      }
+      const units = wholeUnits(line.quantity);
+      if (units === null) throw new Error('a line of a non-integer quantity cannot be written one row for each unit');
+      const total = money(line.amount);
+      // The share of each unit but the last is the line over its units, cut down at four decimals; the last carries what is left, so the units add up to the line.
+      const share = total.dividedBy(units).toDecimalPlaces(4, 1);
+      const last = total.minus(share.times(units - 1));
+      for (let unit = 1; unit <= units; unit += 1) {
+        rows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, plainText));
+      }
     }
   }
   return `${rows.map((r) => r.map(cell).join(',')).join('\n')}\n`;

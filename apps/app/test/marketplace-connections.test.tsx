@@ -96,7 +96,10 @@ describe('MarketplaceConnectionsCard', () => {
 
   it.each<Role>(['owner', 'admin'])('as %s: lists the connection with its status, the buttons to test, pull now and disconnect, and the connect form', (role) => {
     const html = card(role);
-    expect(html).toContain(`aria-label="${en.marketplaceConnections.title}"`);
+    // The card is a labelled group (a bare aria-label on a div is not announced), named by its visible title.
+    expect(html).toMatch(/role="group"[^>]*aria-labelledby="([^"]+)"/);
+    const labelId = /role="group"[^>]*aria-labelledby="([^"]+)"/.exec(html)?.[1] ?? '';
+    expect(html).toMatch(new RegExp(`id="${labelId.replace(/[:]/g, '\\$&')}"[^>]*>${en.marketplaceConnections.title}<`));
     expect(html).toContain('Sàn thử nghiệm (shopee)');
     expect(html).toContain(`>${en.marketplaceConnections.status.active}<`);
     expect(html).toContain(en.marketplaceConnections.neverTested);
@@ -119,6 +122,7 @@ describe('MarketplaceConnectionsCard', () => {
     expect(html).toContain(en.marketplaceConnections.testStates.works);
     expect(html).toContain(en.marketplaceConnections.pollStates.ok);
     expect(html).toContain('3 orders');
+    expect(html).toContain('waiting in the Inbox');
     expect(html).not.toContain(`>${en.marketplaceConnections.test}<`);
     expect(html).not.toContain(`>${en.marketplaceConnections.pollNow}<`);
     expect(html).not.toContain(`>${en.marketplaceConnections.disconnect}<`);
@@ -177,8 +181,11 @@ describe('MarketplaceConnectionsCard', () => {
     expect(several).toContain(`aria-label="${en.marketplaceConnections.entity}"`);
     expect(several).toContain('Chi nhánh Hà Nội');
     const real = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] }, connections: [] });
-    expect(real).toMatch(/type="password"[^>]*aria-label="password"|aria-label="password"[^>]*type="password"/);
-    expect(real).toMatch(/type="text"[^>]*aria-label="user"|aria-label="user"[^>]*type="text"/);
+    // The fields are named in words, not by the adapter's raw field name; a name with no words of its own is shown as it is.
+    expect(real).toMatch(/type="password"[^>]*aria-label="Password"|aria-label="Password"[^>]*type="password"/);
+    expect(real).toMatch(/type="text"[^>]*aria-label="Username"|aria-label="Username"[^>]*type="text"/);
+    const odd = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, connectFields: ['zzField'], platforms: ['shopee'] }] }, connections: [] });
+    expect(odd).toContain('aria-label="zzField"');
     expect(real).toContain(en.marketplaceConnections.fieldsNote);
     expect(real).not.toContain(en.marketplaceConnections.offlineNote);
   });

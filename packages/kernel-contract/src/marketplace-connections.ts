@@ -38,7 +38,7 @@ export const zMarketplaceConnection = z.object({
   lastTestedAt: z.iso.datetime({ offset: true }).nullable(),
   lastPolledAt: z.iso.datetime({ offset: true }).nullable(),
   lastPollState: zMarketplacePollState.nullable(),
-  // The orders the last poll handed to the Inbox for a member to confirm.
+  // The orders waiting in the Inbox for a member to confirm or reject, counted from the staged files this connection's polls ingested.
   ordersWaiting: z.number().int().nonnegative(),
 });
 export type MarketplaceConnection = z.infer<typeof zMarketplaceConnection>;
@@ -59,11 +59,10 @@ export const zMarketplaceConnectionRecordTest = z.strictObject({ id: zId, state:
 export const zMarketplaceConnectionTested = z.object({ state: zMarketplaceConnectionState });
 export type MarketplaceConnectionTested = z.infer<typeof zMarketplaceConnectionTested>;
 
-// The command that records a poll: the cursor the next poll resumes from (moved only after the page was ingested), how it ended, and how many orders it handed to the Inbox.
+// The command that records a poll: the cursor the next poll resumes from (moved only after the page was ingested) and how it ended. What waits in the Inbox is counted when the list is read.
 export const zMarketplaceConnectionRecordPoll = z.strictObject({
   id: zId,
   state: zMarketplacePollState,
   // Left out, the cursor stays where it was (a failed poll never moves it).
   cursor: z.string().min(1).max(200).nullable().optional(),
-  ordersWaiting: z.number().int().min(0).max(100_000).optional(),
 });

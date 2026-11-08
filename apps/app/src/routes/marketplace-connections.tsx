@@ -16,7 +16,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { canPollNow, connectablePlatforms, fieldIsSecret, marketplaceCardShown, PLATFORM_KEYS, POLL_STATE_KEYS, TEST_STATE_KEYS } from '../lib/marketplace-connections.ts';
+import { canPollNow, connectablePlatforms, fieldIsSecret, fieldLabelKey, marketplaceCardShown, PLATFORM_KEYS, POLL_STATE_KEYS, TEST_STATE_KEYS } from '../lib/marketplace-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -101,6 +101,10 @@ function ConnectForm({ adapters, platforms, entities }: { adapters: readonly Mar
   const defaultEntity = entities.find((e) => e.isDefault) ?? entities[0];
   const [entityId, setEntityId] = useState(defaultEntity?.id ?? '');
   const [fields, setFields] = useState<Record<string, string>>({});
+  const fieldLabel = (name: string): string => {
+    const key = fieldLabelKey(name, (candidate) => t.has(candidate as never));
+    return key === null ? name : t(key as never);
+  };
   const adapterKey = useId();
   const platformKey = useId();
   const entityKey = useId();
@@ -161,8 +165,8 @@ function ConnectForm({ adapters, platforms, entities }: { adapters: readonly Mar
             maxLength={500}
             autoComplete="off"
             type={fieldIsSecret(name) ? 'password' : 'text'}
-            placeholder={name}
-            aria-label={name}
+            placeholder={fieldLabel(name)}
+            aria-label={fieldLabel(name)}
             value={fields[name] ?? ''}
             onChange={(e) => setFields((previous) => ({ ...previous, [name]: e.target.value }))}
           />
@@ -179,6 +183,7 @@ function ConnectForm({ adapters, platforms, entities }: { adapters: readonly Mar
 
 export function MarketplaceConnectionsCard({ role }: { role: Role }) {
   const t = useTranslations('marketplaceConnections');
+  const headingId = useId();
   const canManage = role === 'owner' || role === 'admin';
   const providers = useQuery(orpc.marketplace.providers.queryOptions());
   const connections = useQuery(orpc.marketplace.connections.list.queryOptions());
@@ -191,8 +196,10 @@ export function MarketplaceConnectionsCard({ role }: { role: Role }) {
   // No adapter on and nothing connected: nothing to show, so a deployment that offers none draws no card.
   if (!loading && !failure && !marketplaceCardShown(adapters, list)) return null;
   return (
-    <Card className="block p-4" aria-label={t('title')}>
-      <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
+    <Card role="group" aria-labelledby={headingId} className="block p-4">
+      <p id={headingId} className="text-sm font-medium text-muted-foreground">
+        {t('title')}
+      </p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {loading ? (
         <RowsSkeleton />

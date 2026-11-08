@@ -2593,7 +2593,8 @@ export const vi = {
     testedAt: 'Kiểm tra lần cuối {when}',
     neverPolled: 'Chưa lấy đơn lần nào',
     polledAt: 'Lấy đơn lần cuối {when}',
-    ordersWaiting: 'Lần lấy gần nhất đưa {count, plural, other {# đơn}} vào Hộp thư để xác nhận.',
+    ordersWaiting: 'Có {count, plural, other {# đơn}} đang chờ xác nhận ở Hộp thư.',
+    fieldLabels: { user: 'Tên đăng nhập', username: 'Tên đăng nhập', account: 'Tài khoản', email: 'Email', login: 'Tên đăng nhập', password: 'Mật khẩu', apiKey: 'Khóa API', apiSecret: 'Mã bí mật API', appId: 'Mã ứng dụng', clientId: 'Mã khách hàng', clientSecret: 'Mật khẩu khách hàng', shopId: 'Mã gian hàng', token: 'Mã truy cập' },
     status: {
       active: 'Đang kết nối',
       expired: 'Đã hết hạn, hãy kết nối lại',

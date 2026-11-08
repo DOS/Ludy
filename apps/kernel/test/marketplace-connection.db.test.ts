@@ -283,11 +283,11 @@ suite('marketplace connections (#2519)', () => {
     expect(await poll(entry.id)).toEqual({ state: 'ok', orders: 3, staged: true });
     // The page went through the intake as a file of the entity, the same as an upload.
     const filed = only(await files());
-    expect(filed).toMatchObject({ source: 'upload', content_type: 'text/csv', filename: 'don-hang-shopee-2026-11-02-2026-11-06.csv' });
+    expect(filed).toMatchObject({ source: 'upload', content_type: 'text/csv', filename: `don-hang-shopee-${entry.id}-2026-11-02-2026-11-06.csv` });
     expect((await rows<{ upload_entity_id: string | null; created_by: string | null }>('SELECT upload_entity_id, created_by FROM crove_kernel.file WHERE org_id = $1', [orgId]))[0]).toEqual({ upload_entity_id: await defaultEntity(), created_by: null });
-    // The progress is recorded: the cursor, when, how it ended and how many orders went to the Inbox.
+    // The progress is recorded: the cursor, when and how it ended. What waits is counted from the Inbox, so nothing waits until the extraction has staged the file.
     expect(await cursorOf(entry.id)).toBe('sandbox:3');
-    expect(await connection('shopee')).toMatchObject({ lastPollState: 'ok', lastPolledAt: expect.any(String), ordersWaiting: 3 });
+    expect(await connection('shopee')).toMatchObject({ lastPollState: 'ok', lastPolledAt: expect.any(String), ordersWaiting: 0 });
     // The normal extraction event fires and the worker's reader stages the file: no order and no stock yet.
     const read = await readMarketplaceFile({ runtime: worker, store, extract }, orgId, filed.id);
     expect(read).toEqual({ handled: true });
@@ -309,6 +309,8 @@ suite('marketplace connections (#2519)', () => {
     // Only a member's confirmation stores the orders, exactly as for an upload.
     const confirmed = await rt.execute<{ newLines: number }>('finance.marketplace.confirm', { fileId: filed.id }, { actor: asUser(member), orgId, idempotencyKey: randomUUID() });
     expect(confirmed.newLines).toBe(4);
+    // Confirming takes the orders out of what waits.
+    expect((await connection('shopee')).ordersWaiting).toBe(0);
     expect(await count('SELECT 1 FROM crove_finance.channel_order WHERE org_id = $1', [orgId])).toBe(3);
     expect(await staged()).toEqual([]);
     // No buyer data exists anywhere in what was stored: the layout has no buyer column.
@@ -336,12 +338,103 @@ suite('marketplace connections (#2519)', () => {
       ['tiktok_shop', 1],
       ['tiktok_shop', 2],
     ]);
+    // A second page adds to the first (it never overwrites it), and a reject lowers what waits.
+    expect((await connection('tiktok_shop')).ordersWaiting).toBe(3);
+    const second = only((await staged()).filter((s) => s.summary.platform === 'tiktok_shop' && s.summary.orders === 1));
+    await rt.execute('finance.marketplace.reject', { fileId: second.fileId }, { actor: asUser(member), orgId, idempotencyKey: randomUUID() });
+    expect((await connection('tiktok_shop')).ordersWaiting).toBe(2);
     // Lazada writes one row for each unit and is read through its own profile.
     const lazada = await connection('lazada');
     expect(await poll(lazada.id)).toEqual({ state: 'ok', orders: 3, staged: true });
     const lazadaFile = only((await files()).filter((f) => f.filename.includes('lazada')));
     expect(await readMarketplaceFile({ runtime: worker, store, extract }, orgId, lazadaFile.id)).toEqual({ handled: true });
     expect((await staged()).find((s) => s.summary.platform === 'lazada')).toMatchObject({ summary: { orders: 3, lines: 5 } });
+  });
+
+  it('gives each connection its own file: two entities on one offline platform both get their orders staged under their own entity', async () => {
+    const entityIds: string[] = [];
+    for (const name of ['Chi nhánh A', 'Chi nhánh B']) {
+      entityIds.push(String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [orgId, name, owner.userId]))[0]?.id));
+    }
+    const ids: string[] = [];
+    for (const legalEntityId of entityIds) {
+      const connected = await call('connections/connect', owner, connectInput({ platform: 'lazada', legalEntityId }));
+      expect(connected.status).toBe(200);
+      ids.push(String(connected.body.id));
+    }
+    const before = (await files()).length;
+    // The same platform serves the same orders, yet neither poll is taken for a repeat of the other: the bytes carry the connection.
+    expect(await poll(ids[0] as string)).toEqual({ state: 'ok', orders: 3, staged: true });
+    expect(await poll(ids[1] as string)).toEqual({ state: 'ok', orders: 3, staged: true });
+    const added = (await files()).slice(before);
+    expect(added).toHaveLength(2);
+    const owners = await rows<{ filename: string; upload_entity_id: string }>(`SELECT filename, upload_entity_id FROM crove_kernel.file WHERE org_id = $1 AND filename LIKE ANY ($2::text[]) ORDER BY upload_entity_id`, [orgId, ids.map((id) => `%${id}%`)]);
+    expect(owners.map((f) => f.upload_entity_id).sort()).toEqual([...entityIds].sort());
+    for (const f of added) expect(await readMarketplaceFile({ runtime: worker, store, extract }, orgId, f.id)).toEqual({ handled: true });
+    // The reader recognises the profile through the connection row, and each connection counts only its own file.
+    const rowsStaged = (await staged()).filter((s) => added.some((f) => f.id === s.fileId));
+    expect(rowsStaged).toHaveLength(2);
+    for (const s of rowsStaged) expect(s.summary).toMatchObject({ platform: 'lazada', orders: 3, lines: 5 });
+    const list = (await call('connections/list', owner)).body as Array<{ id: string; ordersWaiting: number }>;
+    for (const id of ids) expect(list.find((c) => c.id === id)?.ordersWaiting).toBe(3);
+  });
+
+  it('writes nothing when a poll changes nothing the row holds: the sweep leaves no audit row for an idle connection', async () => {
+    const entry = await connection('shopee');
+    const recorded = () => count("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_connection.record_poll' AND target_id = $2", [orgId, entry.id]);
+    const at = (await connection('shopee')).lastPolledAt;
+    const before = await recorded();
+    for (let i = 0; i < 3; i += 1) expect(await poll(entry.id)).toEqual({ state: 'ok', orders: 0, staged: false });
+    expect(await recorded()).toBe(before);
+    expect((await connection('shopee')).lastPolledAt).toBe(at);
+    // A change is recorded: another state, and then the same state again is not.
+    const failing: MarketplaceProvider = {
+      ...createSandboxMarketplaceProvider(),
+      async listOrders() {
+        throw new MarketplaceProviderError('rate_limited');
+      },
+    };
+    expect(await poll(entry.id, { sandbox: failing })).toEqual({ state: 'rate_limited', orders: 0, staged: false });
+    expect(await recorded()).toBe(before + 1);
+    expect(await poll(entry.id, { sandbox: failing })).toEqual({ state: 'rate_limited', orders: 0, staged: false });
+    expect(await recorded()).toBe(before + 1);
+    expect(await poll(entry.id)).toEqual({ state: 'ok', orders: 0, staged: false });
+    expect(await recorded()).toBe(before + 2);
+  });
+
+  it('turns any other error of a provider into the unreachable state without keeping or logging its text, and names an order a layout cannot carry', async () => {
+    const entry = await connection('lazada');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const broken: MarketplaceProvider = {
+        ...createSandboxMarketplaceProvider(),
+        async listOrders() {
+          throw new Error(`socket hang up at https://secret.example.test/?token=${PLANTED}`);
+        },
+      };
+      await rows("UPDATE crove_finance.marketplace_connection SET last_poll_state = 'ok' WHERE org_id = $1 AND id = $2", [orgId, entry.id]);
+      expect(await poll(entry.id, { sandbox: broken })).toEqual({ state: 'unreachable', orders: 0, staged: false });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(PLANTED);
+    } finally {
+      warn.mockRestore();
+    }
+    // A fractional quantity on a platform with a row for each unit: the order is left out and the poll says so, the others are staged.
+    const fractional: MarketplaceProvider = {
+      ...createSandboxMarketplaceProvider(),
+      async listOrders(_secret, _platform, since) {
+        if (since !== null) return { orders: [], nextCursor: since };
+        const line = (n: string, quantity: string) => ({ lineKey: `${n}-1`, sku: 'MAU-001', itemName: 'Áo', quantity, unitPrice: '100000', amount: '150000' });
+        const order = (orderNo: string, quantity: string) => ({ orderNo, orderedAt: '2026-11-02', shippedAt: null, stage: 'placed' as const, lines: [line(orderNo, quantity)] });
+        return { orders: [order('7000000001', '1.5'), order('7000000002', '3')], nextCursor: 'sandbox:2' };
+      },
+    };
+    const other = await call('connections/connect', owner, connectInput({ platform: 'lazada', legalEntityId: String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh C', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id) }));
+    const id = String(other.body.id);
+    expect(await poll(id, { sandbox: fractional })).toEqual({ state: 'not_recognized', orders: 1, staged: true });
+    expect(await cursorOf(id)).toBe('sandbox:2');
+    const file = only((await files()).filter((f) => f.filename.includes(id)));
+    expect(await readMarketplaceFile({ runtime: worker, store, extract }, orgId, file.id)).toEqual({ handled: true });
+    expect((await staged()).find((s) => s.fileId === file.id)?.summary).toMatchObject({ platform: 'lazada', orders: 1, lines: 3 });
   });
 
   it('records a failed poll as a state, never the provider\'s text, and leaves the cursor and the Inbox alone', async () => {

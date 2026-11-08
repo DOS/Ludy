@@ -2595,7 +2595,8 @@ export const en = {
     testedAt: 'Last tested {when}',
     neverPolled: 'No orders pulled yet',
     polledAt: 'Orders last pulled {when}',
-    ordersWaiting: 'The last pull put {count, plural, one {# order} other {# orders}} in the Inbox to confirm.',
+    ordersWaiting: '{count, plural, one {# order} other {# orders}} waiting in the Inbox to confirm.',
+    fieldLabels: { user: 'Username', username: 'Username', account: 'Account', email: 'Email', login: 'Login', password: 'Password', apiKey: 'API key', apiSecret: 'API secret', appId: 'App ID', clientId: 'Client ID', clientSecret: 'Client secret', shopId: 'Shop ID', token: 'Access token' },
     status: {
       active: 'Connected',
       expired: 'Expired, connect again',

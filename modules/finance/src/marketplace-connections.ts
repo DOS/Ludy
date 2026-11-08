@@ -7,7 +7,7 @@
 // - finance.marketplace_connection.unlink (same; R2): deletes the row. The API revokes the channel connection first, which drops the credential.
 // - finance.marketplace_connection.request_poll (same; R2 external): asks the worker to pull the platform's orders now (the outbox event queues the poll job).
 // - finance.marketplace_connection.record_poll (system; R1): what the worker records after a poll: how it ended, the cursor the next one resumes from (moved only after the page was
-//   ingested) and how many orders the poll handed to the Inbox. The poll NEVER confirms: what it reads is staged like an uploaded file and a member confirms it.
+//   ingested) (the orders still waiting are counted by the list from the staged files the connection's polls ingested). The poll NEVER confirms: what it reads is staged like an uploaded file and a member confirms it.
 // - finance.marketplace_connection.poll_target (system query): what the worker needs to poll one connection, or why it must not.
 // - finance.marketplace_connection.list: every member reads the connections, their last test and their last poll.
 // No query, audit fact or error carries a credential, a buyer's data or a platform's own text: only ids, counts and states.
@@ -197,7 +197,7 @@ export const marketplaceConnectionRequestPoll = defineCommand({
 // What the worker needs to poll one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
 export type MarketplacePollTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'unknown_adapter' }
-  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null };
+  | { action: 'poll'; id: string; channelConnectionId: string; adapter: MarketplaceAdapterId; platform: MarketplacePlatformKey; legalEntityId: string; cursor: string | null; lastPollState: string | null };
 
 export const marketplaceConnectionPollTarget = defineQuery({
   name: 'finance.marketplace_connection.poll_target',
@@ -207,7 +207,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.marketplace_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -215,7 +215,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
     const adapter = marketplaceAdapterOf(row.provider);
     if (!adapter) return { action: 'none', reason: 'unknown_adapter' };
-    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor };
+    return { action: 'poll', id: row.id, channelConnectionId: row.channel_connection_id, adapter, platform: row.platform, legalEntityId: row.legal_entity_id, cursor: row.poll_cursor, lastPollState: row.last_poll_state };
   },
 });
 
@@ -237,12 +237,11 @@ export const marketplaceConnectionRecordPoll = defineCommand({
         last_poll_state: input.state,
         // A cursor given moves it (only after the page was ingested); left out, it stays where it was.
         ...(input.cursor ? { poll_cursor: input.cursor } : {}),
-        ...(input.ordersWaiting === undefined ? {} : { orders_waiting: input.ordersWaiting }),
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .execute();
-    ctx.audit({ state: input.state, ...(input.ordersWaiting === undefined ? {} : { ordersWaiting: input.ordersWaiting }) });
+    ctx.audit({ state: input.state });
     return { recorded: true };
   },
 });
@@ -265,7 +264,6 @@ export const marketplaceConnectionList = defineQuery({
         'c.last_tested_at',
         'c.last_polled_at',
         'c.last_poll_state',
-        'c.orders_waiting',
         'ch.display_name',
         'ch.status',
       ])
@@ -273,6 +271,20 @@ export const marketplaceConnectionList = defineQuery({
       .orderBy('c.created_at')
       .orderBy('c.id')
       .execute();
+    // What waits in the Inbox for each connection: the orders of the staged reads (no member has confirmed or rejected them) of the files its polls ingested, whose names carry the connection's
+    // id. It is counted here, so a confirm or a reject lowers it and a second page adds to the first.
+    const waiting = new Map<string, number>();
+    if (rows.length > 0) {
+      const { rows: counted } = await sql<{ id: string; n: string }>`
+        SELECT c.id::text AS id, COALESCE(SUM((x.result -> 'summary' ->> 'orders')::int), 0)::text AS n
+        FROM crove_finance.marketplace_connection c
+        JOIN crove_kernel.file f ON f.org_id = c.org_id AND f.filename LIKE 'don-hang-%' AND pg_catalog.strpos(f.filename, c.id::text) > 0
+        JOIN crove_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
+        WHERE c.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
+          AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+        GROUP BY c.id`.execute(ctx.trx);
+      for (const r of counted) waiting.set(r.id, Number(r.n));
+    }
     const iso = (value: Date | string | null) => (value ? new Date(value).toISOString() : null);
     return rows.map((r) => ({
       id: r.id,
@@ -286,7 +298,7 @@ export const marketplaceConnectionList = defineQuery({
       lastTestedAt: iso(r.last_tested_at),
       lastPolledAt: iso(r.last_polled_at),
       lastPollState: r.last_poll_state,
-      ordersWaiting: r.orders_waiting,
+      ordersWaiting: waiting.get(r.id) ?? 0,
     }));
   },
 });
