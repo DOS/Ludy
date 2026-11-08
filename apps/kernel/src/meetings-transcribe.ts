@@ -139,7 +139,12 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     const done: TranscriptSegment[][] = [];
     for (const { order } of [...audio.segments].sort((a, b) => a.order - b.order)) {
       const { input } = await openChunk(deps, job, vy, order);
-      done.push(await withAiScope(scope, () => transcribeChunks(deps.provider, [input])));
+      try {
+        done.push(await withAiScope(scope, () => transcribeChunks(deps.provider, [input])));
+      } finally {
+        // The plaintext chunk is zeroed whether the provider answered or not.
+        input.audio.fill(0);
+      }
     }
     const segments = mergeChunkTranscripts(done);
     const body = encodeTranscriptResult(segments);

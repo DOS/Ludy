@@ -316,4 +316,37 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
   });
+
+  it('the recorder\'s own delete (the user-context path) mid-run stops the run and leaves no result row', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const before = providerCalls;
+    afterFirstCall = async () => void (await app.execute('meetings.meeting.delete', { meetingId }, { actor: asUser('recorder'), orgId }));
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls - before).toBe(1);
+    expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+  });
+
+  it('the text purge of the retention job (system context) mid-run stops the run and leaves no result row', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const before = providerCalls;
+    // The text period has ended: the audio door refuses at once (before the first chunk is sent), and the purge removes the meeting and the result with it.
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls).toBe(before);
+    await worker.execute('meetings.retention.shred', { meetingId, kind: 'text' }, { actor: { type: 'system', component: 'meetings.retention' }, orgId });
+    expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+  });
+
+  it('an audio shred mid-run stops the run with MEDIA_KEY_SHREDDED and no further provider call', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const before = providerCalls;
+    afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM crove_meetings.media_key WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])));
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls - before).toBe(1);
+    const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
+  });
 });

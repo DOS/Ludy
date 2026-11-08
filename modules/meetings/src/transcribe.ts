@@ -87,6 +87,9 @@ function build() {
       const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
       if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can start its transcription');
       if (!transcribeEnabled) throw new DomainError('TRANSCRIBE_OFF', 422, 'Transcription is not turned on here; the meeting works as it did');
+      // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger) instead of
+      // leaving an empty failed result row behind.
+      await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
       if (!(await meetingHasAudio(ctx.trx, ctx.orgId, input.meetingId))) throw new DomainError('MEETING_NO_AUDIO', 422, 'This meeting has no audio to transcribe');
       // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. (Another use of Vy by the
       // recorder, a note summary for one, also supersedes a live run: the member has one run at a time, ADR-0049 decision 1; the screen then shows the run as ended.)
