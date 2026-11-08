@@ -1016,7 +1016,9 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
             [tokens.activeA2.hash],
           );
-          expect(restoredVerify.rows.length, 'restored member token must return 1 row').toBe(1);
+          // Step 1 of #2740: accept both behaviours, revived (1 row) or stays refused (0 rows).
+          // The follow-up PR tightens this to "stays refused".
+          expect([0, 1], 'restored member token: revived or stays refused').toContain(restoredVerify.rows.length);
 
           // (b) Setting user_account.disabled_at = now() immediately causes verify_extension_token to return 0 rows
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA2]);
@@ -1032,7 +1034,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
             [tokens.activeA2.hash],
           );
-          expect(enabledVerify.rows.length, 're-enabled user token must return 1 row').toBe(1);
+          // Step 1 of #2740: revived (1 row) or stays refused (0 rows), as above.
+          expect([0, 1], 're-enabled user token: revived or stays refused').toContain(enabledVerify.rows.length);
 
           // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows
           await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [

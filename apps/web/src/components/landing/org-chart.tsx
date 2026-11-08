@@ -19,7 +19,7 @@ function NodeCard({ node, selected, onSelect, a }: { node: Node; selected: boole
       aria-pressed={selected}
       // Opaque and stacked over the connector lines behind it; test/a11y.spec.ts reads this name (#1657).
       data-org-node=""
-      className={`relative z-10 mx-auto flex w-full max-w-[210px] min-w-0 flex-col gap-1.5 rounded-lg border bg-surface p-2.5 text-left transition-colors sm:p-3 ${
+      className={`relative z-10 mx-auto flex w-full max-w-[210px] min-w-0 flex-col gap-1.5 rounded-lg border bg-surface p-2.5 text-left transition-colors sm:p-3 lg:py-2 ${
         isAgent ? 'border-dashed border-accent/70' : 'border-line-strong/50'
       } ${selected ? 'outline-2 outline-offset-2 outline-accent' : 'hover:bg-surface-2'}`}
     >
@@ -88,12 +88,12 @@ export function OrgChart({ dict }: { dict: Dictionary }) {
         </div>
         {/* Text on the dot grid sits on the card's own surface (#1657): a dot never falls behind a letter, so the
             contrast is text-subtle on surface, as everywhere else on the card. */}
-        <div className="canvas-dots px-2 py-6 sm:px-6 sm:py-8">
-          <p className="mx-auto mb-5 w-fit bg-surface px-2 text-center text-xs text-subtle">{a.hint}</p>
+        <div className="canvas-dots px-2 py-6 sm:px-6 sm:py-8 lg:py-4">
+          <p className="mx-auto mb-5 w-fit lg:mb-2 bg-surface px-2 text-center text-xs text-subtle">{a.hint}</p>
           <div className="grid grid-cols-3 gap-x-2 sm:gap-x-4">
             <div className="col-span-3">{node('tuan')}</div>
             {/* Director to the two managers */}
-            <div className="relative col-span-3 h-8" aria-hidden="true">
+            <div className="relative col-span-3 h-8 lg:h-5" aria-hidden="true">
               <span className="absolute top-0 left-1/2 h-1/2 w-px bg-line-strong" />
               <span className="absolute top-1/2 right-[16.667%] left-[16.667%] h-px bg-line-strong" />
               <span className="absolute top-1/2 left-[16.667%] h-1/2 w-px bg-line-strong" />
@@ -103,7 +103,7 @@ export function OrgChart({ dict }: { dict: Dictionary }) {
             <div />
             {node('minh')}
             {/* Managers to their agents: dashed, the path a proposal travels up */}
-            <div className="relative col-span-3 h-14" aria-hidden="true">
+            <div className="relative col-span-3 h-14 lg:h-9" aria-hidden="true">
               <span className="absolute top-0 left-[16.667%] h-full border-l border-dashed border-accent/70" />
               <span className="absolute top-0 right-[16.667%] h-full border-l border-dashed border-accent/70" />
               <span className="travel-up absolute top-0 left-[16.667%] size-2 rounded-full bg-accent ring-4 ring-accent/20" />
@@ -120,36 +120,38 @@ export function OrgChart({ dict }: { dict: Dictionary }) {
         </div>
       </div>
 
-      <div className="min-w-0 p-5" aria-live="polite">
-        <div className="text-xs text-subtle">{panel.kicker}</div>
+      <div className="min-w-0 p-5 lg:p-4" aria-live="polite">
+        <div className="text-xs text-subtle lg:-mb-0.5">{panel.kicker}</div>
         {/* A panel of the product, not a section of the page: a heading here broke the page's outline (h1 then h3). */}
-        <p className="font-display text-xl font-semibold">{panel.title}</p>
-        <p className="mt-1 text-sm text-muted">{panel.sub}</p>
+        <p className="font-display text-xl font-semibold lg:text-lg">{panel.title}</p>
+        <p className="mt-1 text-sm text-muted lg:text-[13px] lg:leading-snug">{panel.sub}</p>
         {byId[selected].budget ? (
-          <div className="mt-4 rounded-md border border-line p-3">
-            <div className="text-xs text-subtle">{a.budget}</div>
+          <div className="mt-4 rounded-md border border-line p-3 lg:mt-3 lg:p-2.5">
+            <div className="flex items-center justify-between gap-2 text-xs text-subtle">
+              {a.budget}
+              <span className="flex items-center gap-2">
+                {a.risk}
+                <span className="rounded-sm border border-accent/50 px-1 font-medium text-accent-ink">{byId[selected].budget?.risk}</span>
+              </span>
+            </div>
             <div className="num mt-1 font-mono text-[13px] text-fg">
               {byId[selected].budget?.used} / {byId[selected].budget?.total}
             </div>
             <div className="mt-2 h-1.5 rounded-full bg-surface-2">
               <div className="h-full rounded-full bg-accent" style={{ width: `${byId[selected].budget?.pct ?? 0}%` }} />
             </div>
-            <div className="mt-3 flex items-center gap-2 text-xs text-subtle">
-              {a.risk}
-              <span className="rounded-sm border border-accent/50 px-1 font-medium text-accent-ink">{byId[selected].budget?.risk}</span>
-            </div>
           </div>
         ) : null}
-        <div className="mt-5 text-xs text-subtle">{a.waitingFor}</div>
-        <ul className="mt-2 flex flex-col gap-2">
+        <div className="mt-5 text-xs text-subtle lg:mt-3">{a.waitingFor}</div>
+        <ul className="mt-2 flex flex-col gap-2 lg:gap-1.5">
           {panel.items.map((item) => (
-            <li key={item.title} className={`rounded-md border border-line p-3 ${item.tone === 'warn' ? 'shadow-[inset_2px_0_0_var(--warn)]' : item.tone === 'ok' ? 'shadow-[inset_2px_0_0_var(--ok)]' : ''}`}>
+            <li key={item.title} className={`rounded-md border border-line p-3 lg:px-3 lg:py-2 ${item.tone === 'warn' ? 'shadow-[inset_2px_0_0_var(--warn)]' : item.tone === 'ok' ? 'shadow-[inset_2px_0_0_var(--ok)]' : ''}`}>
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-sm font-medium">{item.title}</span>
                 {item.amount ? <span className="num shrink-0 font-mono text-[13px]">{item.amount}</span> : null}
               </div>
               <div className="text-xs text-subtle">{item.sub}</div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+              <div className="mt-2 flex flex-wrap items-center gap-2 lg:mt-1">
                 <Chip tone={toneOf(item.tone)} wrap>
                   {item.tone === 'warn' ? <TriangleAlert className="size-3 shrink-0" aria-hidden="true" /> : null}
                   {item.chip}

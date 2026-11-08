@@ -29,8 +29,8 @@ describe('the English copy (content/en.ts)', () => {
   });
 
   it('sees a Vietnamese word, also next to an allowed name and in decomposed form', () => {
-    expect(vietnameseLeft('Chị Lan approved')).toEqual([]);
-    expect(vietnameseLeft('Chị Lan đã duyệt')).toHaveLength(3);
+    expect(vietnameseLeft('Tân Hồng approved')).toEqual([]);
+    expect(vietnameseLeft('Tân Hồng đã duyệt')).toHaveLength(3);
     expect(vietnameseLeft('Hoá đơn'.normalize('NFD'))).toHaveLength(3);
     expect(vietnameseLeft('Invoice')).toEqual([]);
   });

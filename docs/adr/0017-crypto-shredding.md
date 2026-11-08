@@ -66,7 +66,7 @@ Applied to group B:
 | Values | Remedy | Subject |
 |---|---|---|
 | `outbox_event.payload` of `kernel.agent.proposal_requested` | **Keep it out.** The event carries the command and a draft id; the draft waits on the task (`task.pending_draft`, mutable) until the worker takes it off to create the proposal. The outbox archive keeps payloads as plain JSON for 400 days under Object Lock, so nothing personal may enter a payload: `ctx.emit` refuses any value that is not an id or a code (`packages/kernel-runtime/src/event-payload.ts`, built in #1949), and since #1970 the database holds every insert into `outbox_event` to the same rule (`crove_kernel.event_payload_problem`), definers included; the only text an event carries is its type's fixed task title template. | none |
-| `review_feedback.reviewer_name`, `.body` | **Encrypt**, but not in this build: Social is paused (decision D5), so nothing in `modules/social` is sealed now. [#1959](https://github.com/DOS/Ludy/issues/1959) (Social milestone, P3) does it when Social reopens. | `review_link:<id>`: the client who answered one review link. The link names no person, so this subject is erased from the post's review panel by an owner or admin. The panel then shows "Đã xóa theo yêu cầu" in their place. |
+| `review_feedback.reviewer_name`, `.body` | **Encrypt**, but not in this build: Social is not paused (decision D5 was answered no), but this build does not seal it, so nothing in `modules/social` is sealed now. [#1959](https://github.com/DOS/Ludy/issues/1959) (Social milestone, P3) does it when Social reaches that milestone. | `review_link:<id>`: the client who answered one review link. The link names no person, so this subject is erased from the post's review panel by an owner or admin. The panel then shows "Đã xóa theo yêu cầu" in their place. |
 | Free-text reasons in `audit_event.detail` that are not about the books (the operator's note on a member's status, `kernel.user.status_note`, and the like) | **Keep it out** where the reason is not needed to prove the act. A status note keeps a code in the audit fact; its text goes to a mutable row. Otherwise **encrypt** under the member's subject. | `member:<user_id>` |
 | `task_comment.body`, `post_approval.comment` and `.snapshot` | **Not decided here**: open question Q1 (section 9). | (`member:<user_id>` if Q1 says yes) |
 | Proposals and extractions that never reached the books | **Not decided here**: open question Q2. | (`contact:<hash>` of the party's email, phone or tax code if Q2 says yes) |
@@ -193,7 +193,7 @@ From now on only. Nothing already written is rewritten by this decision. What st
 2. Values:
    - the outbox draft out of `kernel.agent.proposal_requested`;
    - the status note's text out of the audit facts;
-   - not review feedback: Social is paused (D5), so its sealing is [#1959](https://github.com/DOS/Ludy/issues/1959).
+   - not review feedback: its sealing is [#1959](https://github.com/DOS/Ludy/issues/1959).
 3. The #923 erase deletes `contact:` and `member:` subject keys, and its result names what was shredded.
 4. Tests: the invariant and unit tests above; the WORM verifier over sealed and shredded rows.
 5. Q1 to Q3 follow when they are answered, each as its own issue.

@@ -217,7 +217,7 @@ The first business senders beyond invites (Finance's invoice delivery and docume
 
 | # | Question | Recommendation | Why |
 |---|---|---|---|
-| E-1 | When does each part start? | E1 and E2 (the kernel pipeline and bounces) in M2 at P2, since the pilot already depends on mail; E3 to E9 after M3, like Social under D5, unless a pilot customer asks earlier | Invites already go out by mail, and reminders to client companies are part of the monthly close loop; marketing has no pilot user yet. The backlog review's rule applies: a recommendation stands unless the owner objects (D11) |
+| E-1 | When does each part start? | E1 and E2 (the kernel pipeline and bounces) in M2 at P2, since the pilot already depends on mail; E3 to E9 after M3, as the backlog review proposed for Social under D5 (the owner answered no for Social), unless a pilot customer asks earlier | Invites already go out by mail, and reminders to client companies are part of the monthly close loop; marketing has no pilot user yet. The backlog review's rule applies: a recommendation stands unless the owner objects (D11) |
 | E-2 | Which provider for the pilot and for Crove Cloud? | One account with a transactional stream now (M1-5 already plans SMTP through a transactional provider); the E2 issue compares Amazon SES, Postmark and Resend on price and delivery | Any of them works over SMTP today; the HTTP adapter adds webhooks for bounces and complaints |
 | E-3 | Marketing for every Crove Cloud org, or operator-approved orgs first? | Operator-approved first | Shared sending reputation (§3.11) |
 | E-4 | `[QC]` label on by default for every org? | Yes; an org with no recipients in Vietnam may turn it off | Decree 91/2020 (§3.12) |

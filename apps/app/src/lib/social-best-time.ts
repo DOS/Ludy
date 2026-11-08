@@ -81,6 +81,30 @@ export function suggestBestTimes(slots: readonly BestTime[], options: SuggestOpt
   return out;
 }
 
+// The best slots that fall on the days a calendar shows (#2221), as chips the viewer clicks to start a post: each of
+// the top slots on the days that have its weekday, at that hour in the zone, skipping a time that is past (or closer
+// than leadMs) and one another post of the channel already takes. `days` are the viewer's calendar days (local
+// midnights) and the zone is the one the slots were ranked in, so a slot's day is the cell it is drawn in. Soonest first.
+export function weekBestSlots(slots: readonly BestTime[], days: readonly Date[], options: SuggestOptions): BestTimeSuggestion[] {
+  const taken = options.taken ?? [];
+  const from = options.nowMs + (options.leadMs ?? BEST_TIME_LEAD_MS);
+  const out: BestTimeSuggestion[] = [];
+  for (const slot of slots.slice(0, options.max ?? BEST_TIME_MAX)) {
+    for (const d of days) {
+      if ((d.getDay() === 0 ? 7 : d.getDay()) !== slot.weekday) continue;
+      const at = zonedToEpoch({ year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), hour: slot.hour, minute: 0 }, options.timeZone);
+      if (at < from || taken.some((t) => t >= at && t < at + HOUR)) continue;
+      out.push({ ...slot, at });
+    }
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+// The composer's address for a best-time chip (#2221): a new post for the channel, planned at the slot.
+export function bestSlotSearch(slot: { at: number }, connectionId: string): { at: string; channel: string } {
+  return { at: new Date(slot.at).toISOString(), channel: connectionId };
+}
+
 export type ChannelBestTimes = { state: 'few'; posts: number } | { state: 'none' } | { state: 'ready'; slots: BestTime[] };
 
 // One channel's ranked slots from the org's published samples, or why there are none: too few posts with metrics
