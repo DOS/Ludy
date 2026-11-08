@@ -54,7 +54,9 @@ Rút ra:
 | Q4 | Ghi nhận đồng ý hoặc từ chối, tạo đơn, nút "Lập hóa đơn" trên đơn đã xác nhận (kèm phần Kế toán, do dòng Kế toán làm) | có |
 | Q4b | Đánh dấu dòng đã giao và ghi kho (kèm lệnh kho của Kế toán) | có |
 | Q5 | Dy gợi ý dòng hàng | không |
-| Q6 | Nhắc theo dõi báo giá chưa trả lời hoặc sắp hết hạn, tab báo cáo "Báo giá", kiểm thử toàn luồng, hướng dẫn | không |
+| Q6 | Nhắc theo dõi báo giá chưa trả lời hoặc sắp hết hạn, tab báo cáo "Báo giá", kiểm thử toàn luồng, hướng dẫn | có (một migration nhỏ: thêm hai lý do nhắc) |
+
+Tình hình xây (2026-11-08): Q1 và Q5 đã vào main. Q6 đang làm phần chỉ cần main (nhắc theo dõi: báo giá gửi 5 ngày chưa trả lời, hoặc còn hiệu lực từ 3 ngày trở xuống; tab báo cáo "Báo giá"; hướng dẫn; kiểm tra khung gợi ý bằng axe); kiểm thử toàn luồng chờ Q2 và Q4.
 
 Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý trên đường dẫn, ngưỡng chiết khấu cần người duyệt, ngôn ngữ thứ hai, dòng tùy chọn, chọn hàng từ danh mục kho, giao một phần số lượng của dòng, chứng từ giao hàng và vận chuyển, một cú nhấp "xác nhận và lập hóa đơn", mã QR hoặc link thanh toán trên báo giá.
 
