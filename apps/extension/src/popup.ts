@@ -67,9 +67,12 @@ function addressForm(state: State): Node[] {
             // A refused or failing request (the browser throws for a pattern the manifest does not list) says the same thing.
             const granted = isDefaultAddress(typed.origin) || (await chrome.permissions.request({ origins: [originPattern(typed.origin)] }).catch(() => false));
             if (granted) {
-              await saveState(area, withAddress(state, typed.origin));
+              // The state is read again here, not taken from when this popup was drawn: another popup may have moved the address in
+              // between, and the permission to give back is the one of the address that is stored now, not the one this popup showed.
+              const current = await loadState(area);
+              await saveState(area, withAddress(current, typed.origin));
               // The address moved: the browser permission for the previous self-hosted one is given back.
-              const stale = stalePattern(state.address, typed.origin);
+              const stale = stalePattern(current.address, typed.origin);
               if (stale) await chrome.permissions.remove({ origins: [stale] }).catch(() => false);
             } else notice = T.addressDenied;
           }
