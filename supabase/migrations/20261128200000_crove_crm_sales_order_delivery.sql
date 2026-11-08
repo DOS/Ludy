@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS crove_crm.sales_order_delivery (
 CREATE UNIQUE INDEX IF NOT EXISTS sales_order_delivery_line_uq ON crove_crm.sales_order_delivery (org_id, order_id, line_no) WHERE kind = 'delivery';
 CREATE UNIQUE INDEX IF NOT EXISTS sales_order_delivery_reversal_uq ON crove_crm.sales_order_delivery (org_id, reverses_id) WHERE kind = 'reversal';
 CREATE INDEX IF NOT EXISTS sales_order_delivery_order_idx ON crove_crm.sales_order_delivery (org_id, order_id, line_no, created_at);
+-- The reversal's foreign key needs an index that leads with exactly its five columns (the tenant conventions, gate G3): a delivery names no row, so the index skips it.
+CREATE INDEX IF NOT EXISTS sales_order_delivery_reverses_idx ON crove_crm.sales_order_delivery (org_id, reverses_id, order_id, line_no, reverses_kind) WHERE reverses_id IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_crm.sales_order_delivery');
 -- Append-only: tenant roles read and insert, never update or delete (APPEND_ONLY in the RLS matrix).
 REVOKE UPDATE, DELETE ON crove_crm.sales_order_delivery FROM crove_tenant;
