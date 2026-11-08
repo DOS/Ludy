@@ -44,7 +44,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/media..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/extension" --filter "@crove/media..." --filter "crove-monorepo"
 
       - name: Lint
         run: pnpm lint
@@ -96,8 +96,12 @@ jobs:
 
   # The database tests run one file at a time (fileParallelism: false) and took 17 minutes in one job (#1041). Two
   # files take 44% of that (finance-search on 50,000 documents, about 260 s; archive, about 150 s), so they run in a
-  # job of their own and every other file in two shards, each job on its own PostgreSQL. A renamed heavy file fails the
+  # job of their own and every other file in four shards, each job on its own PostgreSQL. A renamed heavy file fails the
   # heavy job (no test files found) until this list follows it.
+  # The shards are balanced by measured file time (tools/ci/db-shards.mjs, times in tools/ci/db-test-times.json), not by
+  # file name as vitest's --shard does: the two name-based halves ran 13 and 19 minutes against the 20-minute timeout
+  # (#2769). Every file is in exactly one shard (tools/test/db-shards.test.ts). Each job prints its planned and actual
+  # duration in its summary.
   db:
     name: Database tests (${{ matrix.part.name }})
     runs-on: ubuntu-latest
@@ -107,13 +111,19 @@ jobs:
       matrix:
         part:
           - name: heavy files
-            args: apps/kernel/test/finance-search.db.test.ts apps/kernel/test/archive.db.test.ts
+            shard: ''
             exclude: ''
-          - name: shard 1 of 2
-            args: --shard=1/2
+          - name: shard 1 of 4
+            shard: '1'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
-          - name: shard 2 of 2
-            args: --shard=2/2
+          - name: shard 2 of 4
+            shard: '2'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 3 of 4
+            shard: '3'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 4 of 4
+            shard: '4'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
     services:
       postgres:
@@ -150,13 +160,34 @@ jobs:
       - name: Database tests (PostgreSQL 17, S3 tests against MinIO)
         env:
           CROVE_TEST_S3_URL: http://crove-ci:crove-ci-minio@127.0.0.1:9000/crove-test
-          PART_ARGS: ${{ matrix.part.args }}
+          PART_SHARD: ${{ matrix.part.shard }}
           # Read by vitest.config.ts: the files another part runs (vitest's --exclude does not reach a project).
           CROVE_DB_TEST_EXCLUDE: ${{ matrix.part.exclude }}
         run: |
-          # PART_ARGS is this file's own matrix value, split into arguments on purpose.
-          # shellcheck disable=SC2086
-          pnpm exec vitest run --project db $PART_ARGS
+          echo "DB_PART_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          if [ -z "$PART_SHARD" ]; then
+            files=(apps/kernel/test/finance-search.db.test.ts apps/kernel/test/archive.db.test.ts)
+          else
+            mapfile -t files < <(node tools/ci/db-shards.mjs "$PART_SHARD" 4)
+          fi
+          echo "Running ${#files[@]} database test files"
+          pnpm exec vitest run --project db "${files[@]}"
+
+      # Planned against actual time, so an imbalance shows in the summary before it reaches the timeout (#2769).
+      - name: Duration of this part
+        if: always()
+        env:
+          PART_NAME: ${{ matrix.part.name }}
+          PART_SHARD: ${{ matrix.part.shard }}
+        run: |
+          started="${DB_PART_STARTED:-}"
+          [ -n "$started" ] || exit 0
+          elapsed=$(( $(date +%s) - started ))
+          planned="n/a"
+          if [ -n "$PART_SHARD" ]; then
+            planned=$(node tools/ci/db-shards.mjs --plan 4 | awk -F'|' -v n="$PART_SHARD" '$2 ~ "^ "n" of" { gsub(/ /, "", $4); print $4 "s" }')
+          fi
+          printf '%s: tests ran %dm%02ds (planned file time %s, job timeout 20m)\n' "$PART_NAME" $((elapsed / 60)) $((elapsed % 60)) "$planned" >> "$GITHUB_STEP_SUMMARY"
 
   # The core invariants with CROVE_SHARED_DATABASE=true (#2284): the same migrations in shared-database mode, where PUBLIC keeps
   # TEMPORARY. The cross-org RLS matrix, the EXECUTE matrix of the login roles and the definer search_path hijack test (all in
@@ -283,13 +314,48 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # The required check: it passes only when the static job, knip, the marketing site and every database part passed, so
+  # The Ludy browser extension (#2583; ADR-0047 point 10): built as the store package would be (no bundler, no runtime
+  # dependency), its manifest checked against the fixed permission list of plan section 5.7, then loaded unpacked in
+  # Chromium against a fake Ludy server with fake media devices. A release is the same build with `--version` from a
+  # tag (`node scripts/build.mjs --version 1.2.3`); nothing is published from here.
+  extension:
+    name: Browser extension (build, manifest permissions, Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@crove/extension..."
+
+      - name: Build the package
+        run: pnpm --filter @crove/extension build
+
+      - name: Manifest permissions match the fixed list
+        run: pnpm --filter @crove/extension check:manifest
+
+      - name: Install Chromium
+        run: pnpm --filter @crove/extension exec playwright install --with-deps chromium
+
+      - name: Load the unpacked extension in Chromium
+        run: pnpm --filter @crove/extension test:e2e -- --trace off
+
+  # The required check: it passes only when the static job, knip, the marketing site, the extension and every database part passed, so
   # a failed, cancelled or skipped part fails it.
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db, media-image]
+    needs: [static, knip, web, db, media-image, extension]
     if: always()
     steps:
       - name: Every part passed
@@ -299,9 +365,10 @@ jobs:
           WEB: ${{ needs.web.result }}
           DB: ${{ needs.db.result }}
           MEDIA: ${{ needs.media-image.result }}
+          EXTENSION: ${{ needs.extension.result }}
         run: |
-          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA"
-          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success
+          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
+          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success && test "$EXTENSION" = success
 
   # The migrations and the definer hardening guard (External-tenant gate T17) on the Supabase Postgres image that
   # hosted Supabase runs (issue #179): its extensions, its roles and the supautils hooks, with migrations run as

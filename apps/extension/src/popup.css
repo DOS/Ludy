@@ -1,0 +1,15 @@
+:root { color-scheme: light dark; font: 13px/1.45 system-ui, sans-serif; }
+body { width: 340px; margin: 0; padding: 12px; }
+h1 { font-size: 15px; margin: 0 0 8px; }
+h2 { font-size: 13px; margin: 12px 0 4px; }
+p, .note { margin: 4px 0; }
+.note { font-size: 12px; opacity: 0.75; }
+.row { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+label.block { display: block; margin: 6px 0 2px; }
+input[type="text"], select { width: 100%; box-sizing: border-box; padding: 5px; }
+button { padding: 6px 10px; cursor: pointer; }
+button.primary { font-weight: 600; }
+button.danger { background: #d92d20; color: #fff; border: 0; border-radius: 4px; }
+.error { color: #d92d20; margin: 6px 0; }
+.rec { color: #d92d20; font-weight: 700; }
+.consent { border: 1px solid; border-radius: 6px; padding: 8px; margin: 8px 0; }
