@@ -9119,6 +9119,10 @@ export const en = {
           add: "Add an employee's dependent",
           end: "End an employee's dependent",
         },
+        declaration: {
+          export: 'Record a download of a declaration list (counts only, no name or amount)',
+          get: 'Open a list to declare from (D02-LT, 05/KK-TNCN, 05/QTT-TNCN, data of the 03/TNCN certificate), with identity numbers, tax codes and insurance numbers',
+        },
         employee: {
           add: 'Add an employee with the first contract and wage row',
           edit: "Change an employee's personal details",

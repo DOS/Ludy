@@ -9116,6 +9116,10 @@ export const vi = {
           add: 'Thêm người phụ thuộc của nhân viên',
           end: 'Kết thúc người phụ thuộc của nhân viên',
         },
+        declaration: {
+          export: 'Ghi nhận một lần tải bảng kê khai báo (chỉ số lượng, không có tên hay số tiền)',
+          get: 'Xem bảng kê để khai báo (D02-LT, 05/KK-TNCN, 05/QTT-TNCN, dữ liệu chứng từ 03/TNCN), kể cả số định danh, mã số thuế và số sổ BHXH',
+        },
         employee: {
           add: 'Thêm nhân viên cùng dòng hợp đồng và lương đầu tiên',
           edit: 'Sửa thông tin cá nhân của nhân viên',
