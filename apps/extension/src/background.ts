@@ -5,7 +5,7 @@
 // permissions again, and has the offscreen document capture the one tab the member clicked.
 import { consentBlocker, type ConsentMethod } from './consent.ts';
 import { loadState, activeAccount } from './state.ts';
-import { isOwnSender, parseStartRequest, RECORDING_KEY, type CaptureStart, type RecordingState, type StartReply, type StartRequest, type StopReply, type Tick } from './messages.ts';
+import { isOwnSender, parseStartRequest, parseTick, RECORDING_KEY, type CaptureStart, type RecordingState, type StartReply, type StartRequest, type StopReply } from './messages.ts';
 import { createClient } from './api.ts';
 import { formatClock } from '@crove/meeting-recorder';
 
@@ -72,9 +72,12 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
   if (!isOwnSender(sender, chrome.runtime.id)) return undefined;
   const message = raw as { type?: string };
   if (message.type === 'tick') {
+    // A tick whose time is not a finite number is dropped: the badge keeps its last value.
+    const tick = parseTick(raw);
+    if (!tick) return undefined;
     void chrome.storage.local.get(RECORDING_KEY).then((stored) => {
       const state = stored[RECORDING_KEY] as RecordingState | undefined;
-      if (state) void setBadge(state, (message as Tick).elapsedMs);
+      if (state) void setBadge(state, tick.elapsedMs);
     });
     return undefined;
   }
