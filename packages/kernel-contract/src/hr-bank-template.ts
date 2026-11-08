@@ -15,19 +15,20 @@ export const HR_BANK_HEADER_MAX = 60;
 export const HR_BANK_CONTENT_MAX = 140;
 
 // No NUL character: the database refuses it in text and in jsonb, which would otherwise surface as a server error.
-const noNul = /^[^\u0000]*$/;
-const zName = z.string().trim().min(1).max(HR_BANK_NAME_MAX).regex(noNul);
+const noNul = (value: string): boolean => !value.includes('\u0000');
+const zName = z.string().trim().min(1).max(HR_BANK_NAME_MAX).refine(noNul, 'no NUL character');
 
 /** The columns in the bank's order, each key once, each with the header the bank wants; and the payment's content text, whose only brace form is `{month}`. */
 export const zHrBankLayout = z
   .strictObject({
-    columns: z.array(z.strictObject({ key: z.enum(HR_BANK_COLUMNS), header: z.string().trim().min(1).max(HR_BANK_HEADER_MAX).regex(noNul) })).length(HR_BANK_COLUMNS.length),
+    columns: z.array(z.strictObject({ key: z.enum(HR_BANK_COLUMNS), header: z.string().trim().min(1).max(HR_BANK_HEADER_MAX).refine(noNul, 'no NUL character') })).length(HR_BANK_COLUMNS.length),
     content: z
       .string()
       .trim()
       .min(1)
       .max(HR_BANK_CONTENT_MAX)
-      .regex(/^([^{}\u0000]|\{month\})*$/, 'the only brace form is {month}'),
+      .regex(/^([^{}]|\{month\})*$/, 'the only brace form is {month}')
+      .refine(noNul, 'no NUL character'),
   })
   .refine((layout) => new Set(layout.columns.map((c) => c.key)).size === HR_BANK_COLUMNS.length, { message: 'each column once', path: ['columns'] });
 export type HrBankLayout = z.infer<typeof zHrBankLayout>;
