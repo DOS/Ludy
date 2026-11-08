@@ -157,8 +157,8 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
     expect(seen).not.toContain(videoFile[meetings.theirs as string]);
   });
   // The helper the file policy asks, called directly in a context: a boolean for (org, file), never a row, never an error.
-  async function reads(enter: (c: pg.Client) => Promise<unknown>, org: string, file: string | null): Promise<boolean> {
-    const c = new pg.Client({ connectionString: workerUrl });
+  async function reads(enter: (c: pg.Client) => Promise<unknown>, org: string, file: string | null, url: string = workerUrl): Promise<boolean> {
+    const c = new pg.Client({ connectionString: url });
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -192,8 +192,8 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   it('member_vy_reads_media_file is false for a user, the system context and another org\'s agent', async () => {
     const mine = audioFile[meetings.mine as string] as string;
     const asUserCtx = (who: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users[who] as string, orgId)]);
-    expect(await reads(asUserCtx('recorder'), orgId, mine), 'the recorder as a user').toBe(false);
-    expect(await reads(asUserCtx('owner'), orgId, mine), 'an owner as a user').toBe(false);
+    expect(await reads(asUserCtx('recorder'), orgId, mine, appUrl), 'the recorder as a user').toBe(false);
+    expect(await reads(asUserCtx('owner'), orgId, mine, appUrl), 'an owner as a user').toBe(false);
     expect(await reads((c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]), orgId, mine), 'the system').toBe(false);
     expect(await reads(asRun('stranger'), orgId, mine), "another org's agent asking for this org's file").toBe(false);
     expect(await reads(asRun('stranger'), otherOrgId, mine), "another org's agent, this org's file id in its own org").toBe(false);
