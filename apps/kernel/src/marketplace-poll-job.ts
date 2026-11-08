@@ -26,7 +26,7 @@ const SYSTEM = { type: 'system' as const, component: 'finance.marketplace' };
 
 export interface MarketplacePollJob {
   orgId: string;
-  // The marketplace connection's id (crove_finance.marketplace_connection), not the channel connection's.
+  // The marketplace connection's id (the finance module's row), not the channel connection's.
   connectionId: string;
 }
 

@@ -136,8 +136,8 @@ suite('marketplace connections (#2519)', () => {
   const poll = (connectionId: string, providers: Record<string, MarketplaceProvider> = { sandbox: createSandboxMarketplaceProvider() }, on: BlobStore = store) =>
     runMarketplacePoll({ runtime: worker, broker: vault, store: on, providers }, { orgId, connectionId });
   const connection = async (platform: string) => {
-    const list = (await call('connections/list', owner)).body as Array<{ id: string; platform: string }>;
-    return list.find((c) => c.platform === platform) as { id: string; connectionId: string; lastPollState: string | null; lastPolledAt: string | null; ordersWaiting: number };
+    const list = (await call('connections/list', owner)).body as Array<{ id: string; connectionId: string; platform: string; lastPollState: string | null; lastPolledAt: string | null; ordersWaiting: number }>;
+    return list.find((c) => c.platform === platform) as (typeof list)[number];
   };
   const cursorOf = async (id: string) => (await rows<{ poll_cursor: string | null }>('SELECT poll_cursor FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.poll_cursor;
   const files = () => rows<{ id: string; source: string; content_type: string; filename: string }>('SELECT id, source, content_type, filename FROM crove_kernel.file WHERE org_id = $1 ORDER BY created_at', [orgId]);
