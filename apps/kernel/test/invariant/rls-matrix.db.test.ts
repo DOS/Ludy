@@ -753,6 +753,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // A public link to a sent quote (Q2 of docs/plan/crm-quotes.md, #2694): the hash of its token, its expiry and who made it. The quote it names has left
   // `draft` (a link is made for a sent quote only), so the factory seeds it as the database owner would after a send.
   'crove_crm.quote_link': {
+    noInsertControl: 'a link is made for a quote that has been sent, which only the send command makes (a guard trigger), so the own-org insert control cannot build its setup as a login role; crm-quote-send.db.test.ts tests the link insert as the runtime login',
     make: (o) => {
       const stage = randomUUID();
       const deal = randomUUID();
