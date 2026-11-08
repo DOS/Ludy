@@ -250,7 +250,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
 
   it('holds the birth date, the sealed tax code and insurance number, and the finalization authorization of a person (#2533)', async () => {
     const o = await org();
-    const TAX = '8412905637';
+    const TAX = '8412905638';
     const INS = '7305186294';
     const created = await o.add(o.owner, { birthDate: '1990-05-17', taxCode: TAX, insuranceNumber: INS });
     // Both numbers are sealed: neither text is in any column of any crove table, and the stored text is a sealed value that opens at its own place only.
