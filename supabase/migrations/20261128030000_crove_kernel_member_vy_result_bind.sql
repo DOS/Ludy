@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- ADR-0049 stage B precondition (#2756): a member_vy_result belongs to its member's own run and lives at most 31 days.
---   member_vy_result_bind  BEFORE INSERT: the run's agent is a member_vy agent of the same member, and
---                          expires_at <= created_at + 31 days. The store command enforces the same; the database refuses the rest.
+--   member_vy_result_bind  BEFORE INSERT or UPDATE of the four columns it reads: the run's agent is a member_vy agent of the same
+--                          member, created_at is not in the future (5 minutes of clock skew allowed), and expires_at is at most 31 days
+--                          after the earlier of created_at and now(), so a writer-set created_at buys no extra time. The store command
+--                          enforces the same; the database refuses the rest.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_result_bind() RETURNS trigger
@@ -14,12 +16,15 @@ BEGIN
     -- Worded as the row-level refusal it is (a result is the member's alone), with the reason in the hint.
     RAISE EXCEPTION 'new row violates row-level security policy for table "member_vy_result"' USING ERRCODE = '42501', HINT = 'MEMBER_VY_RESULT_RUN_MISMATCH';
   END IF;
-  IF NEW.expires_at > NEW.created_at + interval '31 days' THEN
+  IF NEW.created_at > pg_catalog.now() + interval '5 minutes' THEN
+    RAISE EXCEPTION 'MEMBER_VY_RESULT_CREATED_IN_FUTURE' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.expires_at > LEAST(NEW.created_at, pg_catalog.now()) + interval '31 days' THEN
     RAISE EXCEPTION 'MEMBER_VY_RESULT_EXPIRY_TOO_LONG' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_result_bind() FROM PUBLIC;
 DROP TRIGGER IF EXISTS member_vy_result_bind ON crove_kernel.member_vy_result;
-CREATE TRIGGER member_vy_result_bind BEFORE INSERT ON crove_kernel.member_vy_result
+CREATE TRIGGER member_vy_result_bind BEFORE INSERT OR UPDATE OF member_user_id, run_id, created_at, expires_at ON crove_kernel.member_vy_result
   FOR EACH ROW EXECUTE FUNCTION crove_kernel.member_vy_result_bind();
