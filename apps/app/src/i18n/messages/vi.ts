@@ -3191,13 +3191,13 @@ export const vi = {
     hints: {
       finance: {
         chief_accountant: 'Duyệt các đề xuất ghi sổ, mở khóa tháng đã khóa sổ và đánh dấu đã nộp tờ khai GTGT, như chủ sở hữu.',
-        accountant: 'Cho biết thành viên làm kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.',
+        accountant: 'Cho biết thành viên làm kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.',
         viewer: 'Cho biết thành viên chỉ theo dõi số liệu kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.',
         entity_chief_accountant: 'Mở khóa các tháng đã khóa sổ và đánh dấu đã nộp tờ khai GTGT, chỉ của các pháp nhân được giao. Mỗi lần giao là một pháp nhân; có thể giao thêm. Duyệt đề xuất ghi sổ vẫn cần kế toán trưởng của cả tổ chức. Nếu đây là vai trò duy nhất của người này, hãy giao cho họ vai trò Kế toán thuê ngoài cho pháp nhân đó trước khi thu hồi.',
       },
-      crm: { sales: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
-      desk: { agent: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
-      hr: { manager: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
+      crm: { sales: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
+      desk: { agent: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
+      hr: { manager: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
       external_accountant: 'Người này chỉ xem được sổ sách, chứng từ, thu chi và tờ khai của các pháp nhân được giao. Đề xuất trong Chứng từ chờ duyệt và thông báo của pháp nhân khác có thể vẫn hiện, cho đến khi phần này cũng được tách theo pháp nhân. Mỗi lần giao là một pháp nhân; có thể giao thêm.',
     },
     rolesOf: 'Vai trò nghiệp vụ của {name}',

@@ -113,6 +113,28 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     expect(await asked(users.member, 'vy.use')).toEqual({ held: true, vy: true });
   });
 
+  it('records whether an owner set an exception, and reports a change of who set it', async () => {
+    const flag = async () => {
+      const c = new pg.Client({ connectionString: adminUrl });
+      await c.connect();
+      try {
+        const out = await c.query<{ set_by_owner: boolean }>(`SELECT set_by_owner FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`, [orgId, users.member]);
+        return out.rows.map((r) => r.set_by_owner);
+      } finally {
+        await c.end();
+      }
+    };
+    expect(await set(users.admin, users.member, true), 'an admin grants').toMatchObject({ changed: true });
+    expect(await flag(), 'set by an admin').toEqual([false]);
+    // The owner repeating the same grant takes the exception over: that is a change, and an admin can no longer touch it.
+    expect(await set(users.owner, users.member, true), 'the owner repeats the grant').toMatchObject({ changed: true });
+    expect(await flag(), 'set by an owner').toEqual([true]);
+    await expect(set(users.admin, users.member, null), 'an admin clearing an owner-set exception').rejects.toMatchObject({ code: 'PERMISSION_MANAGE_FORBIDDEN' });
+    expect(await set(users.owner, users.member, true), 'the same grant by the same owner').toMatchObject({ changed: false });
+    expect(await set(users.owner, users.member, null)).toMatchObject({ changed: true });
+    expect(await flag(), 'cleared').toEqual([]);
+  });
+
   it('gives a viewer with a grant vy.use and no other permission, and a deny takes it away again', async () => {
     expect(await asked(users.viewer, 'vy.use')).toEqual({ held: true, vy: true });
     expect((await asked(users.viewer, 'finance.period.unlock')).held).toBe(false);
