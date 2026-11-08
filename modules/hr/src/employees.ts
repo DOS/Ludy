@@ -126,8 +126,8 @@ export const employeeAdd = defineCommand({
     const subject = subjectOf(employeeId);
     const identity = input.identityNumber === undefined ? null : await ctx.seal(subject, IDENTITY_PLACE, input.identityNumber);
     const account = input.accountNumber === undefined ? null : await ctx.seal(subject, ACCOUNT_PLACE, input.accountNumber);
-    const taxCode = input.taxCode === undefined ? null : await ctx.seal(subject, TAX_CODE_PLACE, input.taxCode);
-    const insurance = input.insuranceNumber === undefined ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
+    const taxSealed = input.taxCode === undefined ? null : await ctx.seal(subject, TAX_CODE_PLACE, input.taxCode);
+    const insuranceSealed = input.insuranceNumber === undefined ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
     await ctx.trx
       .insertInto('crove_hr.payroll_employee')
       .values({
@@ -139,8 +139,8 @@ export const employeeAdd = defineCommand({
         national_id_sealed: identity,
         bank_account_sealed: account,
         birth_date: input.birthDate ?? null,
-        tax_code_sealed: taxCode,
-        insurance_number_sealed: insurance,
+        tax_code_sealed: taxSealed,
+        insurance_number_sealed: insuranceSealed,
         created_by: userId,
         created_at: ctx.now,
         updated_at: ctx.now,
@@ -171,9 +171,9 @@ export const employeeAdd = defineCommand({
       address: auditValue(EMPLOYEE, 'address', input.address ?? null),
       hasIdentityNumber: identity !== null,
       hasAccountNumber: account !== null,
-      hasTaxCode: taxCode !== null,
-      hasInsuranceNumber: insurance !== null,
-      hasBirthDate: input.birthDate !== undefined,
+      hasTaxNumber: taxSealed !== null,
+      hasInsuranceNo: insuranceSealed !== null,
+      birth: auditValue(EMPLOYEE, 'birth_date', input.birthDate ?? null),
       effectiveFrom: terms.effectiveFrom,
       contractType: terms.contractType,
       region: terms.region,

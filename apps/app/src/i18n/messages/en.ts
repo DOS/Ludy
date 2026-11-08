@@ -9123,6 +9123,9 @@ export const en = {
           add: 'Add an employee with the first contract and wage row',
           edit: "Change an employee's personal details",
           end: 'End an employee',
+          finalization: {
+            set: 'Record that an employee authorized (or no longer authorizes) the payer to finalize their income tax for a year',
+          },
           erase: 'Erase the record of an employee who left, after the retention period',
           get: 'Open one employee, with the identity number and the account number',
           list: 'List the employees and their base wage',

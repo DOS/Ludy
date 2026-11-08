@@ -16,6 +16,6 @@ ALTER TABLE crove_hr.payroll_employee ADD COLUMN IF NOT EXISTS tax_code_sealed t
 ALTER TABLE crove_hr.payroll_employee ADD COLUMN IF NOT EXISTS insurance_number_sealed text
   CHECK (insurance_number_sealed IS NULL OR (pg_catalog.length(insurance_number_sealed) <= 1000 AND insurance_number_sealed ~ '^crove:s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$'));
 ALTER TABLE crove_hr.payroll_employee ADD COLUMN IF NOT EXISTS finalization_authorized_years smallint[] NOT NULL DEFAULT '{}'
-  CHECK (pg_catalog.cardinality(finalization_authorized_years) <= 50 AND pg_catalog.array_position(finalization_authorized_years, NULL::smallint) IS NULL);
+  CHECK (pg_catalog.cardinality(finalization_authorized_years) <= 100 AND pg_catalog.array_position(finalization_authorized_years, NULL::smallint) IS NULL);
 
 GRANT UPDATE (birth_date, tax_code_sealed, insurance_number_sealed, finalization_authorized_years) ON crove_hr.payroll_employee TO crove_tenant;
