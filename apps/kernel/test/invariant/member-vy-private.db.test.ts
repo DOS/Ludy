@@ -25,6 +25,9 @@ const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 // The text a member's private note and Vy's answer to it must never reach anyone else with.
 const SECRET = 'Tóm tắt riêng: khách đề nghị giảm giá 12%';
+// The only member-Vy definers a tenant login may call, by exact signature: counts for an owner or admin, and the cancellation of a member's live runs by an owner, an admin or the system.
+// Both return numbers, never text, and refuse every other caller (cases below).
+const TENANT_CALLABLE = ['crove_kernel.member_vy_private_counts()', 'crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)'];
 // The department roles that grant vy.use (ADR-0049 decision 10) and the one that does not.
 const VY_ROLES = ['finance.chief_accountant', 'finance.accountant', 'external_accountant', 'crm.sales', 'desk.agent', 'hr.manager'];
 
@@ -35,6 +38,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
   let workerUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
+  let apiRuntime: Runtime | undefined;
   let branch = '';
   const users = { owner: '', admin: '', author: '', vyUser: '', member: '', viewer: '', limited: '' };
   let agent = { agentId: '', runId: '' };
@@ -127,6 +131,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] }) };
     };
     const api = runtimeFor(appUrl);
+    apiRuntime = api.runtime;
     const worker = runtimeFor(workerUrl).runtime;
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(api.db, { issuer: 'member-vy', subject: key, email: `${key}@member-vy.test`, name: null });
@@ -210,7 +215,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
       // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the one counts function below (an owner or admin's removal warning: ids and numbers, never text).
-      if (f.definer && f.fn !== 'crove_kernel.member_vy_private_counts()') expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      if (f.definer && !TENANT_CALLABLE.includes(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
@@ -374,6 +379,50 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     }
   });
 
+  // Ending a member's live runs: an owner, an admin or the system may ask; nobody else, whoever the target is.
+  it('lets only an owner, an admin or the system end a member\'s live runs, and returns a number', async () => {
+    const found = await admin((c) => c.query<{ fn: string; result: string }>(`SELECT p.oid::regprocedure::text AS fn, pg_get_function_result(p.oid) AS result FROM pg_proc p WHERE p.pronamespace = 'crove_kernel'::regnamespace AND p.proname = 'member_vy_runs_cancel'`));
+    expect(found.rows.map((r) => r.fn), 'one cancel function with this signature').toEqual(has.kind && found.rows.length ? ['crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)'] : []);
+    if (!found.rows[0]) return;
+    expect(found.rows[0].result, 'it answers a count and nothing else').toBe('bigint');
+    const call = (actor: Actor) => outcome(run(actor, (c) => c.query('SELECT crove_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, $2::text)', [users.author, 'TEST'])));
+    for (const actor of [member('an owner', () => users.owner), member('an admin', () => users.admin), system]) {
+      expect((await call(actor)).ok, `${actor.name} ending a member's runs (positive control)`).toBe(true);
+    }
+    for (const actor of [member('another member', () => users.member), member('the member', () => users.author), member('a viewer', () => users.viewer), agentActor]) {
+      // The refusal is the definer's own (MEMBER_VY_FORBIDDEN), not an entry refusal that also carries 42501, whichever filter the call names.
+      const filters: Array<[string, unknown[]]> = [
+        ['NULL::uuid[], $1::uuid, NULL::text, $2::text', [users.author, 'TEST']],
+        ['ARRAY[$1::uuid], NULL::uuid, NULL::text, $2::text', [users.author, 'TEST']],
+        ['NULL::uuid[], NULL::uuid, $1::text, $2::text', ['notes', 'TEST']],
+      ];
+      for (const [args, values] of filters) {
+        const refused = await outcome(run(actor, (c) => c.query(`SELECT crove_kernel.member_vy_runs_cancel(${args})`, values)));
+        expect(refused, `${actor.name} ending runs with the arguments ${args}`).toMatchObject({ ok: false, code: '42501', message: expect.stringContaining('MEMBER_VY_FORBIDDEN') });
+      }
+    }
+    // The reason is a fixed code, never text.
+    const badReason = await outcome(run(member('an owner', () => users.owner), (c) => c.query(`SELECT crove_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, 'free text')`, [users.author])));
+    expect(badReason.ok, 'a reason that is text').toBe(false);
+    // Another org's owner ends nothing of this org, whatever ids they name: a live run of a member's Vy here stays running.
+    if (!apiRuntime) return;
+    const seeded = await admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      const agentId = randomUUID();
+      const runId = randomUUID();
+      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, randomUUID()]);
+      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`, [orgId, runId, agentId]);
+      return { agentId, runId };
+    });
+    const otherOrg = (await createOrg(apiRuntime, asUser(users.viewer), 'Vy khác')).orgId;
+    const ended = await inContext(appUrl, (c) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [otherOrg, contextToken(users.viewer, otherOrg)]), (c) =>
+      c.query<{ n: string }>('SELECT crove_kernel.member_vy_runs_cancel(ARRAY[$1::uuid], NULL, $2::text, $3::text) AS n', [seeded.agentId, 'notes', 'TEST']),
+    );
+    expect(ended.rows[0]?.n, 'the other org ended no run of this one').toBe('0');
+    const still = await admin((c) => c.query<{ status: string }>('SELECT status FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, seeded.runId]));
+    expect(still.rows[0]?.status, 'the live run is untouched').toBe('running');
+  });
+
   describe('the member_vy agent and its runs', () => {
     // A member's own agent, inserted in their own user context and committed, so the worker login can be asked to enter it.
     const insertAgent = (actor: Actor, memberUser: string, template = 'kernel.member_vy') =>
@@ -532,7 +581,10 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       const viewerRoles = async (roles: string[]) => {
         const out: Record<string, boolean | undefined> = {};
         for (const role of roles) {
-          await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, $3, $4)`, [orgId, users.viewer, role, users.owner]));
+          // external_accountant is an entity role: its assignment names the branch.
+          await admin((c) =>
+            c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, $4, $5)`, [orgId, users.viewer, role, role === 'external_accountant' ? branch : null, users.owner]),
+          );
           try {
             out[role] = await permitted(users.viewer, 'vy.use');
           } finally {
