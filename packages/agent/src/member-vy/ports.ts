@@ -14,8 +14,8 @@ import { privateText, type PrivateText } from '../private-text.ts';
 
 // Who a run acts for.
 export interface MemberRef {
-  orgId: string;
-  memberUserId: string;
+  readonly orgId: string;
+  readonly memberUserId: string;
 }
 
 // A thing a result or a passage came from (a note, a meeting), for forgetting by source.
@@ -75,13 +75,15 @@ export interface BoundPorts {
 }
 
 export function bindPorts(who: MemberRef, ports: Ports): BoundPorts {
-  const fixed: MemberRef = { orgId: who.orgId, memberUserId: who.memberUserId };
-  return {
-    who: fixed,
-    generate: (prompt) => ports.model.generate({ ...fixed }, prompt),
-    readMemory: () => ports.memory.read({ ...fixed }),
-    retrieve: (question) => ports.knowledge.retrieve({ ...fixed }, question),
-  };
+  // The closures use a frozen object of their own, and the caller gets another frozen copy: changing bound.who changes nothing the ports are asked.
+  const fixed: MemberRef = Object.freeze({ orgId: who.orgId, memberUserId: who.memberUserId });
+  const shown: MemberRef = Object.freeze({ orgId: who.orgId, memberUserId: who.memberUserId });
+  return Object.freeze({
+    who: shown,
+    generate: (prompt: ModelPrompt) => ports.model.generate(fixed, prompt),
+    readMemory: () => ports.memory.read(fixed),
+    retrieve: (question: string) => ports.knowledge.retrieve(fixed, question),
+  });
 }
 
 // A provider is eligible only when its memory can forget (decision 9): checked when it is plugged in, not when a member asks to be erased.
@@ -100,7 +102,7 @@ export async function forgetMember(memories: readonly MemoryPort[], who: MemberR
       failures.push(error);
     }
   }
-  if (failures.length > 0) throw new Error(`member Vy: ${failures.length} provider(s) could not forget the member`);
+  if (failures.length > 0) throw new AggregateError(failures, `member Vy: ${failures.length} provider(s) could not forget the member`);
 }
 
 // The built-in knowledge port of a deployment with no declared queries yet: no passages. A richer implementation reads declared queries in the

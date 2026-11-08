@@ -5,7 +5,7 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bindPorts, noKnowledge, privateText, runFeature, type ModelPort, type Ports } from '@crove/agent/member-vy';
+import { bindPorts, noKnowledge, privateText, revealPrivateText, runFeature, type ModelPort, type Ports } from '@crove/agent/member-vy';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
@@ -84,7 +84,7 @@ suite('the built-in memory port of member Vy', () => {
     await expect(memoryOf(users.alice).forget({ member: ref(users.bob) })).rejects.toThrow('only about the member');
     await memoryOf(users.alice).forget({ member: ref(users.alice) });
     expect(await memoryOf(users.alice).read(ref(users.alice))).toEqual([]);
-    expect((await memoryOf(users.bob).read(ref(users.bob))).map((e) => e.text), 'forgetting one member leaves the other\'s').toEqual(['BÍ MẬT CỦA BOB']);
+    expect((await memoryOf(users.bob).read(ref(users.bob))).map((e) => revealPrivateText(e.text)), 'forgetting one member leaves the other\'s').toEqual(['BÍ MẬT CỦA BOB']);
     // A source has nothing in the built-in memory: forgetting one is a no-op.
     await expect(memoryOf(users.bob).forget({ source: { orgId, type: 'note', id: 'x' } })).resolves.toBeUndefined();
   });
