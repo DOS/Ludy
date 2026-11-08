@@ -275,6 +275,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
               {t('draftTitle')}
               {draft?.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
             </h3>
+            {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
             <SummaryEditor key={draft?.id ?? 'new'} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} />
           </section>
         )}

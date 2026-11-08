@@ -230,7 +230,9 @@ export const resultPublish = defineCommand({
       .unionAll(ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
       .executeTakeFirst();
     if (unread) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
-    const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    // The draft is locked first: the nightly expiry (meetings.retention.shred, kind 'draft') then waits for this publish, or has already deleted the draft, in which
+    // case none is found here and the summary published before it is not replaced by nothing.
+    const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;
     if (draft) {
