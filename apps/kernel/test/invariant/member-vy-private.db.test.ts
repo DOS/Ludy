@@ -32,11 +32,13 @@ const SYSTEM = { type: "system" as const, component: "kernel.agent" };
 const suite = ADMIN ? describe : describe.skip;
 // The text a member's private note and Vy's answer to it must never reach anyone else with.
 const SECRET = "Tóm tắt riêng: khách đề nghị giảm giá 12%";
-// The only member-Vy definers a tenant login may call, by exact signature: counts for an owner or admin, and the cancellation of a member's live runs by an owner, an admin or the system.
-// Both return numbers, never text, and refuse every other caller (cases below).
+// The only member-Vy definers a tenant login may call, by exact signature: counts for an owner or admin, the cancellation of a member's live runs by an owner, an admin or the system,
+// and the meetings policy question (#2874): whether this member-Vy context may read a meeting media file row, asked by the file table's SELECT policy as the tenant role.
+// All return numbers or one boolean, never text, and refuse every other caller (cases below). A name listed here that does not exist yet is harmless: the check walks the functions that exist.
 const TENANT_CALLABLE = [
   "crove_kernel.member_vy_private_counts()",
   "crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)",
+  "crove_meetings.member_vy_reads_media_file(uuid,uuid)",
 ];
 // The department roles that grant vy.use (ADR-0049 decision 10) and the one that does not.
 const VY_ROLES = [
