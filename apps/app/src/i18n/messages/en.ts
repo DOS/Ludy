@@ -710,6 +710,7 @@ export const en = {
     view: 'Show the list',
     download: 'Download xlsx',
     downloadFile: 'declaration-{kind}-{period}.xlsx',
+    stepUp: 'view or download the declaration list',
     print: 'Print or save as PDF',
     hint: 'Figures come only from approved pay runs. The printout is the PDF: choose "Save as PDF" in the browser\'s print dialog.',
     layout: 'Form and layout version',

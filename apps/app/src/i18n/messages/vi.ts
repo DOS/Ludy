@@ -708,6 +708,7 @@ export const vi = {
     view: 'Xem bảng kê',
     download: 'Tải xlsx',
     downloadFile: 'bang-ke-{kind}-{period}.xlsx',
+    stepUp: 'xem hoặc tải bảng kê khai báo',
     print: 'In hoặc lưu PDF',
     hint: 'Số liệu chỉ lấy từ các bảng lương đã duyệt. Bản in là bản PDF: chọn "Lưu dưới dạng PDF" trong hộp thoại in của trình duyệt.',
     layout: 'Mẫu và phiên bản bố cục',

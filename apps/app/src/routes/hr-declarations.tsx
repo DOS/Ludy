@@ -2,11 +2,11 @@
 // "Bảng kê khai báo", the declaration lists of the HR app (#2533, payroll plan 6.5, ADR-0046): the D02-LT of a month, the figures of 05/KK-TNCN for a quarter, the data of 05/QTT-TNCN and of the
 // 03/TNCN certificates for a year. The page shows the document the server built from approved pay runs; "Print or save as PDF" opens the browser's print dialog (the same way the payslip is
 // a PDF), "Download xlsx" fetches the file from the authenticated export route. Nothing is filed or sent; every document says it is a list to declare from, its layout version and, while the
-// accountant has not confirmed the plan rows it rests on, that it is a draft. Owners and admins only. Every read is a sensitive query that leaves an audit row: the page reads on a click, never on its own.
+// accountant has not confirmed the plan rows it rests on, that it is a draft. Owners and admins only. Every read is a sensitive query that leaves an audit row and needs a second factor used in the last 5 minutes: the page reads on a click, never on its own.
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HR_DECLARATION_KINDS, vietnamToday, type HrDeclarationDocument, type HrDeclarationKind } from '@crove/kernel-contract';
+import { HR_DECLARATION_KINDS, vietnamToday, zHrDeclarationDocument, type HrDeclarationDocument, type HrDeclarationKind } from '@crove/kernel-contract';
 import { Alert } from '@crove/ui/components/alert';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -14,9 +14,10 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, ErrorText, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { apiFetch, client, errorMessage } from '../lib/api.ts';
+import { apiFetch, errorMessage, isStepUpRequired } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
@@ -73,7 +74,8 @@ export function HrDeclarationsPage() {
   // The document shown: read on a click (a sensitive read leaves an audit row), and dropped when the choice changes so a list is never shown under another period's name.
   const [doc, setDoc] = useState<{ period: string; kind: HrDeclarationKind; document: HrDeclarationDocument } | null>(null);
   const view = useMutation({
-    mutationFn: () => client.hr.payroll.declarations.get({ kind, period }),
+    // The same audited read as the download, as JSON: the server records the view (and so the print) with the same row as a file.
+    mutationFn: async () => zHrDeclarationDocument.parse(await (await apiFetch(`/api/payroll-export/${kind}.json?period=${encodeURIComponent(period)}`)).json()),
     onSuccess: (document) => setDoc({ period, kind, document }),
   });
   const download = useMutation({
@@ -87,6 +89,8 @@ export function HrDeclarationsPage() {
       URL.revokeObjectURL(url);
     },
   });
+  // Opening everyone's identifiers needs a second factor used in the last 5 minutes: the prompt appears when the server asks, and the action that was refused runs again once it is verified.
+  const stepUp = isStepUpRequired(view.error) ? 'view' : isStepUpRequired(download.error) ? 'download' : null;
   const shown = doc && doc.kind === kind && doc.period === period ? doc.document : null;
   return (
     <>
@@ -140,8 +144,18 @@ export function HrDeclarationsPage() {
           )}
         </div>
         <p className="mt-2 text-xs text-subtle-foreground">{t('hint')}</p>
-        {view.error && <ErrorText>{errorMessage(view.error)}</ErrorText>}
-        {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+        {stepUp && (
+          <StepUpPrompt
+            action={t('stepUp')}
+            onVerified={() => (stepUp === 'view' ? view.mutate() : download.mutate())}
+            onCancel={() => {
+              view.reset();
+              download.reset();
+            }}
+          />
+        )}
+        {view.error && !isStepUpRequired(view.error) && <ErrorText>{errorMessage(view.error)}</ErrorText>}
+        {download.error && !isStepUpRequired(download.error) && <ErrorText>{errorMessage(download.error)}</ErrorText>}
       </Card>
       {shown && (
         <article data-testid="hr-declaration" aria-label={shown.title}>
