@@ -798,6 +798,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
     update: { set: 'cancel_reason = cancel_reason' },
   },
+  // The org's number counter for sales orders (Q4): one row per org and year, taken by the accept command in its own transaction. Tenant roles update the last number
+  // only (a column grant), so the update probes assign it to itself.
+  'crove_crm.sales_order_counter': {
+    update: { set: 'last_no = last_no' },
+    noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
+  },
   // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
   'crove_crm.sales_order_line': {
     make: (o) => {
@@ -831,13 +838,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
       };
     },
-  },
-  // The org's number counter for sales orders (Q4): one row per org and year, taken by the accept command in its own transaction. Tenant roles update the last number
-  // only (a column grant), so the update probes assign it to itself.
-  'crove_crm.sales_order_counter': {
-    update: { set: 'last_no = last_no' },
-    noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
-    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
   },
   // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
   // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
