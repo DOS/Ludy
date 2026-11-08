@@ -86,6 +86,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.publish',
       'meetings.action_item.accept',
       'meetings.action_item.accept_clean',
+      'meetings.summary.copy_result',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');

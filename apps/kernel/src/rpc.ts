@@ -884,6 +884,7 @@ export function createRpcHandler(
         get: os.meetings.results.get.handler(meetingsQuery('meetings.result.get')),
         saveSummary: os.meetings.results.saveSummary.handler(meetingsCommand('meetings.summary.save')),
         publish: os.meetings.results.publish.handler(meetingsCommand('meetings.result.publish')),
+        copySummary: os.meetings.results.copySummary.handler(meetingsCommand('meetings.summary.copy_result')),
       },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),

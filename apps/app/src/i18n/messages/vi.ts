@@ -8659,6 +8659,10 @@ export const vi = {
       TOO_MANY_ITEMS: 'Một cuộc họp có tối đa 100 việc cần làm.',
       NOTHING_TO_PUBLISH: 'Chưa có gì để chia sẻ: hãy viết tóm tắt hoặc thêm một việc cần làm trước.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
+      SUMMARY_OFF: 'Hệ thống này chưa bật tính năng Vy tóm tắt. Hãy tự viết bản tóm tắt.',
+      SUMMARY_RESULT_INVALID: 'Không đọc được kết quả tóm tắt. Hãy nhờ Vy tóm tắt lại.',
+      SUMMARY_RESULT_NOT_FOUND: 'Cuộc họp này chưa có kết quả tóm tắt.',
+      SUMMARY_RESULT_NOT_READY: 'Vy chưa tóm tắt xong.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
@@ -10269,6 +10273,7 @@ export const vi = {
       },
       summary: {
         save: 'Lưu tóm tắt và các quyết định của cuộc họp',
+        copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
       },
       reader: {
         add: 'Thêm người đọc cuộc họp',

@@ -10,6 +10,7 @@ describe('member-Vy features (agent side)', () => {
       'notes.summary': { module: 'notes', expiryMinutes: 30 },
       'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
       'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
+      'meetings.summary': { module: 'meetings', expiryMinutes: 30 },
     });
   });
 });
