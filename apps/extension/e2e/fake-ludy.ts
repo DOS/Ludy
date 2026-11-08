@@ -54,11 +54,12 @@ export async function startFakeLudy(): Promise<FakeLudy> {
       const media = /^\/api\/meetings\/([0-9a-f-]{36})\/media$/.exec(path);
       if (media) {
         if (fake.failUploads) return json({ code: 'INTERNAL', message: 'down' }, 500);
-        const text = body.toString('latin1');
+        // The raw body of the file: the kind in the query and the type in Content-Type (#2780).
+        const url = new URL(req.url ?? '/', 'http://x');
         fake.uploads.push({
           meetingId: media[1]!,
-          kind: /name="kind"\r\n\r\n(\w+)/.exec(text)?.[1] ?? null,
-          fileType: /name="file"; filename="[^"]*"\r\nContent-Type: ([^\r\n]+)/.exec(text)?.[1] ?? null,
+          kind: url.searchParams.get('kind'),
+          fileType: req.headers['content-type'] ?? null,
           bytes: body.length,
         });
         return json({ fileId: 'f1' });
