@@ -16,7 +16,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@crove/l10n-vn';
+import { PAYROLL_POSTING_MAPS, PAYROLL_RULES } from '@crove/l10n-vn';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { hrCommands, hrQueries } from '@crove/mod-hr';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
@@ -115,16 +115,6 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return rt.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
   }
-  const entry = async (o: Org, entryId: string) =>
-    Object.fromEntries(
-      (
-        await rows<{ account_code: string; debit: string; credit: string }>(
-          'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
-          [o.orgId, entryId],
-        )
-      ).map((l) => [l.account_code, l.debit !== '0' ? `Dr ${l.debit}` : `Cr ${l.credit}`]),
-    );
-
   beforeEach(() => setMapStatus('confirmed'));
   afterEach(() => setMapStatus('commentary'));
 
