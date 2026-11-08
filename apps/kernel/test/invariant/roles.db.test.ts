@@ -179,7 +179,12 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     expect(roles.filter((r) => r.scope === 'legal_entity').map((r) => r.key)).toEqual(['external_accountant', 'finance.entity_chief_accountant']);
     // Both chief accountants mark the VAT return filed too (finance.vat.file, #1508), for their entities.
     // The Service inbox (CV3, #2306) seeds one permission for desk.agent, kernel.conversation.direct.read (reading private messages), and no other.
-    expect(permissions).toEqual([
+    // vy.use (ADR-0049 decision 10, stage A step (a)) is the one permission a viewer may hold and the one every preset role of the
+    // catalog but finance.viewer grants. The rows may be absent (before its migration) or exactly these; every other row is pinned below.
+    const VY_ROLES = ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager'];
+    const vyRows = permissions.filter((p) => p.permission === 'vy.use').map((p) => p.role_key);
+    expect(vyRows.length === 0 || JSON.stringify(vyRows) === JSON.stringify(VY_ROLES), `vy.use rows: ${vyRows.join(', ')}`).toBe(true);
+    expect(permissions.filter((p) => p.permission !== 'vy.use')).toEqual([
       { role_key: 'desk.agent', permission: 'kernel.conversation.direct.read' },
       { role_key: 'finance.chief_accountant', permission: 'finance.period.unlock' },
       { role_key: 'finance.chief_accountant', permission: 'finance.proposal.approve' },
