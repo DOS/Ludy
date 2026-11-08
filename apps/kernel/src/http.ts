@@ -1358,7 +1358,9 @@ export function createHttpApp(deps: HttpDeps) {
           { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
         );
       } catch (error) {
-        await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
+        const voided = await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
+        // A live row nobody holds is left behind (it expires on its own); say so, with ids only.
+        if (!voided) logEvent('error', 'extension exchange failed and its token row was not voided', { tokenId: done.exchange.tokenId, orgId: done.exchange.orgId });
         throw error;
       }
       return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });

@@ -240,20 +240,33 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     expect(await standing(users.memberB, tokens.memberB, orgB)).toBe('ok');
     expect(await standing(users.member, randomUUID())).toBe('401 EXTENSION_TOKEN_INVALID');
     // Demoted to viewer, then restored; disabled, then enabled: each applies at once and, from #2740, for good.
+    const revokedAt = async (tokenId: string) => (await admin((c) => c.query('SELECT revoked_at FROM crove_kernel.extension_token WHERE id = $1', [tokenId]))).rows[0]?.revoked_at as Date | null;
     expect(await standing(users.other, tokens.other)).toBe('ok');
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgA, users.other]));
     expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
+    expect(await revokedAt(tokens.other), 'a demotion voids the token for good').not.toBeNull();
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.other]));
     // Step 2 of #2740: the demotion voided the token for good, so restoring the role does not revive it.
     expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
+    // The disable step needs its own live token: the demotion above already voided the first one.
+    const disableToken = randomUUID();
+    await insertToken(orgA, users.other, disableToken);
+    expect(await standing(users.other, disableToken)).toBe('ok');
     await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.other]));
-    expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
+    expect(await standing(users.other, disableToken)).toBe('401 EXTENSION_TOKEN_INVALID');
+    expect(await revokedAt(disableToken), 'disabling the user voids the token for good').not.toBeNull();
     await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.other]));
-    // Removed from the org: void, and still void when the member is added back (a new membership).
+    expect(await standing(users.other, disableToken)).toBe('401 EXTENSION_TOKEN_INVALID');
+    // Removed from the org: void, and still void when the member is added back (a new membership). A live token is
+    // made for this step too, so the removal itself is what the assertions test.
+    const removalToken = randomUUID();
+    await insertToken(orgA, users.other, removalToken);
+    expect(await standing(users.other, removalToken)).toBe('ok');
     await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgA, users.other]));
-    expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
+    expect(await standing(users.other, removalToken)).toBe('401 EXTENSION_TOKEN_INVALID');
+    expect(await revokedAt(removalToken), 'removing the member voids the token and records it').not.toBeNull();
     await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.other]));
-    expect(await standing(users.other, tokens.other)).toBe('401 EXTENSION_TOKEN_INVALID');
+    expect(await standing(users.other, removalToken)).toBe('401 EXTENSION_TOKEN_INVALID');
   });
 
   it('lets a token reach only the meetings it created, and no other member or token reads their status', async () => {

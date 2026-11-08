@@ -1025,11 +1025,25 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
           // Step 2 of #2740: the demotion voided the token for good (revoked_at is set), so restoring the role does not revive it.
           expect(restoredVerify.rows.length, 'restored member token must stay refused').toBe(0);
 
+          // The disable step needs its own live token: the demotion above already voided activeA2, so testing it again
+          // would pass even without a trigger on user_account.
+          const disableToken = makeToken();
+          await c.query(
+            `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+             VALUES ($1, $2, $3, $4, 'Disable step', ARRAY['meetings'], now(), now() + interval '90 days', $3)`,
+            [orgAId, disableToken.id, users.memberA2, disableToken.hash],
+          );
+          const liveVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [disableToken.hash],
+          );
+          expect(liveVerify.rows.length, 'the fresh token is live before the user is disabled').toBe(1);
+
           // (b) Setting user_account.disabled_at = now() immediately causes verify_extension_token to return 0 rows
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA2]);
           const disabledVerify = await appClient.query(
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
-            [tokens.activeA2.hash],
+            [disableToken.hash],
           );
           expect(disabledVerify.rows.length, 'disabled user token must return 0 rows').toBe(0);
 
@@ -1037,19 +1051,30 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.memberA2]);
           const enabledVerify = await appClient.query(
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
-            [tokens.activeA2.hash],
+            [disableToken.hash],
           );
           // Step 2 of #2740: disabling voided the token for good, so re-enabling the user does not revive it.
           expect(enabledVerify.rows.length, 're-enabled user token must stay refused').toBe(0);
+          const disabledRow = await c.query(`SELECT revoked_at FROM crove_kernel.extension_token WHERE id = $1`, [disableToken.id]);
+          expect(disabledRow.rows[0]?.revoked_at, 'disabling the user voids the token for good').not.toBeNull();
 
-          // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows
+          // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows.
+          // A live token again, so the removal itself is what the assertions test.
+          const removalToken = makeToken();
+          await c.query(
+            `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+             VALUES ($1, $2, $3, $4, 'Removal step', ARRAY['meetings'], now(), now() + interval '90 days', $3)`,
+            [orgAId, removalToken.id, users.memberA2, removalToken.hash],
+          );
           await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [
             orgAId,
             users.memberA2,
           ]);
+          const removalRow = await c.query(`SELECT revoked_at FROM crove_kernel.extension_token WHERE id = $1`, [removalToken.id]);
+          expect(removalRow.rows[0]?.revoked_at, 'removing the member voids the token and records it').not.toBeNull();
           const removedVerify = await appClient.query(
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
-            [tokens.activeA2.hash],
+            [removalToken.hash],
           );
           expect(removedVerify.rows.length, 'removed member token must return 0 rows').toBe(0);
         });

@@ -13,8 +13,12 @@
 --    cut off an owner's; list_extension_tokens_for_org lists the org's devices (never a hash) for them. A member and a
 --    viewer get EXTENSION_FORBIDDEN from both; revoke_extension_token still acts on the caller's own devices only.
 -- 3. void_undelivered_extension_token: the exchange hands the token to the client only after its audit row is written; when
---    that fails, the API voids the row it just made (by the token's hash, within two minutes of its creation), so no
---    usable token row is left that nobody holds.
+--    that fails, the API voids the row it just made (by the token's hash, while it was never used), so no usable token
+--    row is left that nobody holds.
+-- 4. exchange_extension_auth_code takes a row lock on the member and the user while it checks them, so a demotion or a
+--    disable that runs at the same time cannot slip between the check and the new token: either the exchange sees the
+--    demotion and refuses, or the demotion's trigger sees the new token and voids it.
+-- 5. Removing a member voids their tokens too (an AFTER DELETE trigger), so removed members' devices show as revoked.
 -- ext_device_system_revoke is the one routine that revokes and audits on the system's own behalf; the two triggers
 -- call it. The ext_device_* routines and the trigger functions are callable by nobody (their names avoid
 -- extension_token, which the invariant suite reads as "a function the API's login runs").
@@ -39,7 +43,7 @@ DECLARE
   r record;
   v_n integer := 0;
 BEGIN
-  IF p_user IS NULL OR p_reason NOT IN ('role_change', 'user_disabled') THEN
+  IF p_user IS NULL OR p_reason NOT IN ('role_change', 'user_disabled', 'member_removed') THEN
     RAISE EXCEPTION 'EXTENSION_INVALID' USING ERRCODE = '22023';
   END IF;
   FOR r IN
@@ -78,6 +82,16 @@ DROP TRIGGER IF EXISTS user_account_voids_extension_tokens ON crove_kernel.user_
 CREATE TRIGGER user_account_voids_extension_tokens AFTER UPDATE OF disabled_at ON crove_kernel.user_account
   FOR EACH ROW WHEN (OLD.disabled_at IS NULL AND NEW.disabled_at IS NOT NULL)
   EXECUTE FUNCTION crove_kernel.ext_device_user_disabled();
+
+CREATE OR REPLACE FUNCTION crove_kernel.ext_device_member_removed()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  PERFORM crove_kernel.ext_device_system_revoke(OLD.org_id, OLD.user_id, 'member_removed');
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS tenant_member_voids_extension_tokens_on_delete ON crove_kernel.tenant_member;
+CREATE TRIGGER tenant_member_voids_extension_tokens_on_delete AFTER DELETE ON crove_kernel.tenant_member
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.ext_device_member_removed();
 
 -- ---------------------------------------------------------------------------
 -- Owner and admin: list and revoke a member's devices
@@ -143,8 +157,9 @@ END $$;
 -- ---------------------------------------------------------------------------
 -- An exchange whose audit failed leaves no usable token
 -- ---------------------------------------------------------------------------
--- No member context: the caller proves it holds the token by its hash. Revokes the live token made in the last two minutes
--- and tries to audit it as a system revoke; a failed audit does not undo the revoke. true when a row was revoked.
+-- No member context: the caller proves it holds the token by its hash. Revokes that token while it has never been used (the
+-- client only holds it from the exchange's answer, so an unused token is an undelivered or just delivered one) and tries to
+-- audit it as a system revoke; a failed audit does not undo the revoke. true when a row was revoked.
 CREATE OR REPLACE FUNCTION crove_kernel.void_undelivered_extension_token(p_token_hash bytea)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
@@ -157,7 +172,7 @@ BEGIN
     RETURN false;
   END IF;
   UPDATE crove_kernel.extension_token x SET revoked_at = pg_catalog.clock_timestamp()
-  WHERE x.token_hash = p_token_hash AND x.revoked_at IS NULL AND x.created_at > pg_catalog.clock_timestamp() - interval '2 minutes'
+  WHERE x.token_hash = p_token_hash AND x.revoked_at IS NULL AND x.last_used_at IS NULL
   RETURNING x.org_id, x.id, x.user_id INTO v_org, v_id, v_user;
   IF v_id IS NULL THEN
     RETURN false;
@@ -171,6 +186,63 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
+-- The exchange checks the member under a row lock
+-- ---------------------------------------------------------------------------
+-- The body of the function of 20261126140000 with one change: the eligibility check locks the member and user rows (FOR SHARE).
+-- Its signature, result columns, owner and grants are as they were.
+CREATE OR REPLACE FUNCTION crove_kernel.exchange_extension_auth_code(p_code_hash bytea, p_code_verifier text, p_token_hash bytea)
+RETURNS TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz, code_id uuid)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+#variable_conflict use_column
+DECLARE
+  v_code crove_kernel.extension_auth_code%ROWTYPE;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+  v_challenge text;
+  v_id uuid;
+BEGIN
+  IF p_code_hash IS NULL OR pg_catalog.octet_length(p_code_hash) <> 32
+     OR p_token_hash IS NULL OR pg_catalog.octet_length(p_token_hash) <> 32
+     OR p_code_verifier IS NULL OR p_code_verifier !~ '^[A-Za-z0-9._~-]{43,128}$' THEN
+    RETURN;
+  END IF;
+  SELECT c.* INTO v_code FROM crove_kernel.extension_auth_code c WHERE c.code_hash = p_code_hash FOR UPDATE;
+  IF NOT FOUND OR v_code.consumed_at IS NOT NULL OR v_code.expires_at <= v_now OR v_code.failed_attempts >= 5 THEN
+    RETURN;
+  END IF;
+  v_challenge := pg_catalog.translate(
+    pg_catalog.rtrim(pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_code_verifier, 'UTF8')), 'base64'), '='), '+/', '-_');
+  IF v_challenge <> v_code.code_challenge THEN
+    UPDATE crove_kernel.extension_auth_code c
+    SET failed_attempts = c.failed_attempts + 1,
+        consumed_at = CASE WHEN c.failed_attempts + 1 >= 5 THEN v_now ELSE NULL END
+    WHERE c.org_id = v_code.org_id AND c.id = v_code.id;
+    RETURN;
+  END IF;
+  -- FOR SHARE on the member and the user: a demotion or disable in flight holds these rows, so this waits for it and then
+  -- sees its result; one that starts after this holds the share lock until the token exists, and its trigger then voids it.
+  PERFORM 1
+  FROM crove_kernel.tenant_member m
+  JOIN crove_kernel.tenant t ON t.org_id = m.org_id AND t.status = 'active'
+  JOIN crove_kernel.user_account u ON u.id = m.user_id AND u.disabled_at IS NULL
+  WHERE m.org_id = v_code.org_id AND m.user_id = v_code.user_id AND m.role IN ('owner', 'admin', 'member')
+    AND m.created_at <= v_code.created_at
+  FOR SHARE OF m, u;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+  UPDATE crove_kernel.extension_auth_code c SET consumed_at = v_now WHERE c.org_id = v_code.org_id AND c.id = v_code.id;
+  UPDATE crove_kernel.extension_token t SET revoked_at = v_now
+  WHERE t.org_id = v_code.org_id AND t.id IN (
+    SELECT o.id FROM crove_kernel.extension_token o
+    WHERE o.org_id = v_code.org_id AND o.user_id = v_code.user_id AND o.revoked_at IS NULL AND o.expires_at > v_now
+    ORDER BY o.created_at DESC OFFSET 19);
+  INSERT INTO crove_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+  VALUES (v_code.org_id, v_code.user_id, p_token_hash, v_code.device_name, v_code.scopes, v_now, v_now + interval '2160 hours', v_code.user_id)
+  RETURNING id INTO v_id;
+  RETURN QUERY SELECT v_id, v_code.org_id, v_code.user_id, v_code.scopes, v_now + interval '2160 hours', v_code.id;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Grants: the internal routines and the trigger functions are callable by nobody; the API's login alone runs the rest.
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION
@@ -178,6 +250,7 @@ REVOKE ALL ON FUNCTION
   crove_kernel.ext_device_system_revoke(uuid, uuid, text),
   crove_kernel.ext_device_member_demoted(),
   crove_kernel.ext_device_user_disabled(),
+  crove_kernel.ext_device_member_removed(),
   crove_kernel.ext_device_caller_role(),
   crove_kernel.list_extension_tokens_for_org(),
   crove_kernel.revoke_extension_token_as_admin(uuid),
@@ -191,7 +264,7 @@ BEGIN
     EXECUTE pg_catalog.format(
       'REVOKE ALL ON FUNCTION crove_kernel.ext_device_audit_revoke(uuid, uuid, uuid, text), '
       'crove_kernel.ext_device_system_revoke(uuid, uuid, text), crove_kernel.ext_device_member_demoted(), '
-      'crove_kernel.ext_device_user_disabled(), crove_kernel.ext_device_caller_role(), '
+      'crove_kernel.ext_device_user_disabled(), crove_kernel.ext_device_member_removed(), crove_kernel.ext_device_caller_role(), '
       'crove_kernel.list_extension_tokens_for_org(), crove_kernel.revoke_extension_token_as_admin(uuid), '
       'crove_kernel.void_undelivered_extension_token(bytea) FROM %I',
       r.rolname);

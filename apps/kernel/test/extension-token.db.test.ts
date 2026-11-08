@@ -409,7 +409,68 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
     expect(await me(second.token)).toBe(200);
     expect(await autoRevokeRows(second.tokenId)).toHaveLength(0);
+    expect(await live(second.tokenId)).toBe(true);
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+  });
+
+  it('voids the tokens of a member whose role is changed through the runtime command, and of one who is removed', async () => {
+    await join('changed', 'member');
+    const first = await signedIn('changed');
+    const second = await signedIn('changed');
+    const userId = await userIdOf('changed');
+    const changed = await rpc('org/changeMemberRole', await asBrowser('owner', slug, true), { userId, role: 'viewer', idempotencyKey: randomUUID() });
+    expect(changed.status).toBe(200);
+    for (const device of [first, second]) {
+      expect(await me(device.token)).toBe(401);
+      expect(await live(device.tokenId)).toBe(false);
+      const rows = await autoRevokeRows(device.tokenId);
+      expect(rows).toHaveLength(1);
+      // The member's own session in this org is stamped as the actor; the detail names ids and the reason only.
+      expect(rows[0]!.detail).toEqual({ tokenId: device.tokenId, userId, reason: 'role_change' });
+      expect(rows[0]!.outcome).toBe('ok');
+    }
+    // Removing a member voids a live token and says so; a token made after the role came back is a new one.
+    const restored = await rpc('org/changeMemberRole', await asBrowser('owner', slug, true), { userId, role: 'member', idempotencyKey: randomUUID() });
+    expect(restored.status).toBe(200);
+    expect(await me(first.token)).toBe(401);
+    const third = await signedIn('changed');
+    expect(await me(third.token)).toBe(200);
+    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, userId]));
+    expect(await live(third.tokenId)).toBe(false);
+    const removed = await autoRevokeRows(third.tokenId);
+    expect(removed).toHaveLength(1);
+    expect(removed[0]!.detail).toEqual({ tokenId: third.tokenId, userId, reason: 'member_removed' });
+  });
+
+  it('keeps an exchange that races a demotion or a disable from leaving a live token', async () => {
+    // The demotion (or disable) is in flight and holds its row when the exchange starts; the exchange must wait for it
+    // and then see it, not read the old role and make a token the demotion's trigger can no longer see.
+    for (const kind of ['demotion', 'disable'] as const) {
+      const name = `racer_${kind}`;
+      await join(name, 'member');
+      const userId = await userIdOf(name);
+      const first = await connect(name);
+      expect(first.status).toBe(200);
+      const holder = new pg.Client({ connectionString: adminUrl });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        if (kind === 'demotion') await holder.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]);
+        else await holder.query('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [userId]);
+        const exchanging = exchange(first.code, first.verifier);
+        // Give the exchange time to reach its lock wait; it must not have finished while the change is uncommitted.
+        const early = await Promise.race([exchanging.then(() => 'finished'), new Promise((r) => setTimeout(() => r('waiting'), 600))]);
+        expect(early, 'the exchange waits for the change in flight').toBe('waiting');
+        await holder.query('COMMIT');
+        const done = await exchanging;
+        expect(done.status).toBe(400);
+      } finally {
+        await holder.end().catch(() => undefined);
+      }
+      const live = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.extension_token WHERE user_id = $1 AND revoked_at IS NULL', [userId])).rows[0].n as number);
+      expect(live, `no live token after a ${kind} that raced the exchange`).toBe(0);
+      if (kind === 'disable') await admin((c) => c.query('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [userId]));
+    }
   });
 
   it('voids a user\'s tokens for good when the account is disabled, also through the operator\'s no-context path', async () => {

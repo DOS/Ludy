@@ -17,6 +17,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@crove/kernel-runtime';
+import { logEvent } from './log.ts';
 
 export const EXTENSION_TOKEN_PREFIX = 'crx_';
 const EXTENSION_CODE_PREFIX = 'crc_';
@@ -122,7 +123,9 @@ export async function voidUndeliveredExtensionToken(db: Db, token: string): Prom
   try {
     const { rows } = await sql<{ voided: boolean }>`SELECT crove_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
     return rows[0]?.voided === true;
-  } catch {
+  } catch (error) {
+    // Never the token or its hash: the class of the failure only.
+    logEvent('error', 'extension token void failed', { error: error instanceof Error ? error.name : 'unknown' });
     return false;
   }
 }
