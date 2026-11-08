@@ -98,6 +98,7 @@ import {
   type VatDeclaration,
   type VatReport,
 } from '@crove/mod-finance';
+import { renderQuotePdf, type QuoteDocument } from '@crove/mod-crm';
 import { buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
@@ -142,6 +143,7 @@ import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
+import { quoteView, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
@@ -249,6 +251,8 @@ export interface HttpDeps {
   reviewLimits?: { views: RateLimiter; answers: RateLimiter; files?: RateLimiter };
   // The public report page's budget per client (#643). Unset: REPORT_VIEWS_PER_MINUTE.
   reportLimit?: RateLimiter;
+  // The public quote page's budget per client (#2694). Unset: QUOTE_VIEWS_PER_MINUTE.
+  quoteLimit?: RateLimiter;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -444,6 +448,8 @@ const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
+// Quote PDFs one member may take a minute (#2695).
+const QUOTE_PDFS_PER_MINUTE = 30;
 const MAX_FILES_PER_UPLOAD = 5;
 // A Social video (#409) is one file of up to 100 MB; a batch of documents stays under 60 MB.
 const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
@@ -1030,6 +1036,29 @@ export function createHttpApp(deps: HttpDeps) {
         }
         if (ics === null) return c.text('Không tìm thấy lịch này', 404, headers);
         return c.body(ics, 200, { ...headers, 'content-type': 'text/calendar; charset=utf-8' });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // A sent quote's page (#2694, crm module): the same edge as the report page, with its own budget per client. The link's token is the only credential; it comes in the
+  // body, never the URL, and a bad, revoked or expired one gets the one refusal.
+  if (runtime.installed('crm')) {
+    const quoteLimit = deps.quoteLimit ?? new RateLimiter({ perMinute: QUOTE_VIEWS_PER_MINUTE });
+    app.post('/api/quote/view', bodyLimit({ maxSize: 1024 }), async (c) => {
+      const decision = quoteLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        // Behind a proxy that is not trusted, every client shares one budget: say so, as the other public pages do.
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      c.header('cache-control', 'no-store');
+      c.header('referrer-policy', 'no-referrer');
+      try {
+        const view = await quoteView(runtime, await c.req.json().catch(() => null));
+        return view ? c.json(view) : c.json({ code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
       } catch (error) {
         return problem(c, error);
       }
@@ -2354,6 +2383,40 @@ export function createHttpApp(deps: HttpDeps) {
   // is held until the handler is done, the audit row included.
   const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
   // The org export's owner-run tables (#2676) take a slot too, held until their response has ended.
+
+  // A quote as a PDF (issue #2695, plan docs/plan/crm-quotes.md step Q3): the same quote a member reads on screen, in the org's own words and the
+  // seller's and buyer's own records, for anyone who may read quotes. It is read only (no row is audited, as for `crm.quote.get`), and the bytes are the
+  // same every time for the same quote on the same day (an expired quote says so). A bad or another org's id answers as a missing quote. Each member may take 30 a minute: the writer is
+  // quick, but it runs on the API's own thread.
+  if (runtime.installed('crm')) {
+    const quotePdfLimit = new RateLimiter({ perMinute: QUOTE_PDFS_PER_MINUTE });
+    app.get('/api/crm/quotes/:id/pdf', async (c) => {
+      try {
+        const user = c.get('user');
+        const decision = quotePdfLimit.take(user.userId);
+        if (!decision.allowed) {
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          throw new DomainError('RATE_LIMITED', 429, 'Bạn tải quá nhiều bản PDF; hãy thử lại sau ít phút');
+        }
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const document = await runtime.query<QuoteDocument>('crm.quote.document', { quoteId: c.req.param('id') }, { actor: actorOf(user), orgId });
+        const bytes = renderQuotePdf(document);
+        // The number is the org's own text: only what a filename can safely hold goes into it.
+        const named = (document.quote.number ?? '').replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/pdf',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'bao-gia', named || 'nhap', ORG_SLUG], 'pdf'),
+            'cache-control': 'private, no-store',
+            'x-content-type-options': 'nosniff',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
 
   // Finance routes exist only when the finance module is installed (CROVE_MODULES); otherwise they are 404 below.
   if (runtime.installed('finance')) {

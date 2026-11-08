@@ -85,6 +85,13 @@ export const EXCEPTIONS = [
   },
   {
     rule: 'no-deep-import',
+    from: ['apps/extract/test/quote-pdf.test.ts'],
+    to: '^modules/crm/src/pdf/(fonts|writer|quote-document)\\.ts$',
+    reason:
+      '#2695: the quote PDF writer only writes and reads no PDF, so the test that reads its output back with an independent reader (unpdf) lives in crove-extract, the one place a PDF reader may run (gate T12). It loads the writer by path; the writer imports nothing from crove-extract. Test code that never ships.',
+  },
+  {
+    rule: 'no-deep-import',
     from: ['apps/kernel/test/bank-statement-file.test.ts'],
     to: '^apps/extract/test/statement-fixture\\.ts$',
     reason:
