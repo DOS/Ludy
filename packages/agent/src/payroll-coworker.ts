@@ -119,7 +119,8 @@ const pickFigures = (f: PayrollFigures): PayrollFigures => Object.fromEntries(FI
 
 /** The sheet with an alias per person. Only the named fields are copied, so a field a caller adds to a line is not carried over. */
 export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: { language: Language; blockingRules: number }): PseudonymSheet {
-  const ordered = [...lines].sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0)).slice(0, PAYROLL_SHEET_LINES_MAX);
+  if (lines.length > PAYROLL_SHEET_LINES_MAX) throw new RangeError('Payroll sheet exceeds the employee limit');
+  const ordered = [...lines].sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0));
   const aliases = new Map<string, string>();
   const out: AliasedLine[] = ordered.map((line, i) => {
     const alias = `E${i + 1}`;
@@ -148,11 +149,11 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
 export function promptLeaks(prompt: string, forbidden: readonly string[]): string[] {
   const fold = (v: string) => v.normalize('NFKD').replace(/\p{M}/gu, '').replace(/đ/gi, 'd').replace(/\s+/g, ' ').trim().toLowerCase();
   const haystack = fold(prompt);
-  const compact = haystack.replace(/[\s.\-_]/g, '');
+  const compact = haystack.replace(/[\s.,\-_]/g, '');
   return forbidden.filter((value) => {
     const needle = fold(value);
     if (needle.length < 3) return false;
-    return haystack.includes(needle) || (/\d/.test(needle) && compact.includes(needle.replace(/[\s.\-_]/g, '')));
+    return haystack.includes(needle) || (/\d/.test(needle) && compact.includes(needle.replace(/[\s.,\-_]/g, '')));
   });
 }
 
@@ -165,7 +166,7 @@ export class PayrollPromptLeakError extends Error {
 
 /** Puts the persons' names back in a text the model wrote about aliases: by code, on the server, after every check. */
 export function restoreAliases(text: string, names: ReadonlyMap<string, string>): string {
-  return text.replace(/(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/gu, (alias) => names.get(alias) ?? alias);
+  return text.normalize('NFKC').replace(/(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/giu, (alias) => names.get(alias.toUpperCase()) ?? alias);
 }
 
 const ALIAS = /(?<![\p{L}\p{N}])E\d+(?![\p{L}\p{N}])/giu;
@@ -196,15 +197,21 @@ export interface PayrollAnomaly {
   alias: string | null;
   /** The facts the sentence is written from, each figure as the sentence must write it. */
   facts: string;
+  /** Words that say the opposite of what the facts say (the direction of a change): a sentence holding one is refused. */
+  contradicts?: RegExp;
 }
 
+const OPPOSITE = {
+  vi: { up: /giảm|hạ\b|thấp hơn|sụt/iu, down: /tăng|cao hơn|nhảy/iu },
+  en: { up: /\b(?:down|decreas\w*|drop\w*|fell|fall\w*|lower|declin\w*|reduc\w*)\b/iu, down: /\b(?:up|increas\w*|rose|rise\w*|higher|grew|grow\w*|jump\w*)\b/iu },
+} as const;
 const DIRECTION = { vi: { up: 'tăng', down: 'giảm' }, en: { up: 'up', down: 'down' } } as const;
 
 /** The anomalies of the month, in a fixed order: the same sheet always gives the same list. Pure. */
 export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
   const { language } = sheet;
   const out: PayrollAnomaly[] = [];
-  const add = (kind: PayrollAnomalyKind, alias: string | null, facts: string) => out.push({ id: `A${out.length + 1}`, kind, alias, facts });
+  const add = (kind: PayrollAnomalyKind, alias: string | null, facts: string, contradicts?: RegExp) => out.push({ id: `A${out.length + 1}`, kind, alias, facts, ...(contradicts ? { contradicts } : {}) });
   const vi = language === 'vi';
   for (const line of sheet.lines) {
     const who = line.alias;
@@ -217,15 +224,15 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
         const dir = DIRECTION[language][diff.isPositive() ? 'up' : 'down'];
         add('pay_moved', who, vi
           ? `${who}: thực nhận ${amountOf(line.figures.net, language)}, tháng trước ${amountOf(line.previous.net, language)}; ${dir} ${pct}%`
-          : `${who}: net pay ${amountOf(line.figures.net, language)}, last month ${amountOf(line.previous.net, language)}; ${dir} ${pct}%`);
+          : `${who}: net pay ${amountOf(line.figures.net, language)}, last month ${amountOf(line.previous.net, language)}; ${dir} ${pct}%`, OPPOSITE[language][diff.isPositive() ? 'up' : 'down']);
       }
     }
     if (line.checks.netBelowMinimum) add('net_below_minimum', who, vi ? `${who}: thực nhận ${amountOf(line.figures.net, language)}, thấp hơn mức lương tối thiểu của tháng` : `${who}: net pay ${amountOf(line.figures.net, language)}, below the month's minimum wage`);
     else if (line.checks.minimumWageFailed) add('net_below_minimum', who, vi ? `${who}: lương cơ bản ${amountOf(line.figures.base_wage, language)}, không đạt kiểm tra lương tối thiểu của tháng` : `${who}: base wage ${amountOf(line.figures.base_wage, language)} fails the month's minimum wage check`);
-    if (line.checks.deductionCapFailed) add('deduction_over_cap', who, vi ? `${who}: các khoản khấu trừ ${amountOf(line.figures.deductions, language)} vượt mức 30% theo Điều 129 Bộ luật Lao động` : `${who}: deductions of ${amountOf(line.figures.deductions, language)} are over the 30% cap of Article 129 of the Labor Code`);
+    if (line.checks.deductionCapFailed) add('deduction_over_cap', who, vi ? `${who}: có khoản khấu trừ vượt mức 30% lương theo quy định của Bộ luật Lao động; tổng khấu trừ tháng này ${amountOf(line.figures.deductions, language)}` : `${who}: a deduction is over the 30% cap of the Labor Code; total deductions this month ${amountOf(line.figures.deductions, language)}`);
     if (line.dependentsWithoutRegistration > 0) add('dependent_unregistered', who, vi ? `${who}: ${line.dependentsWithoutRegistration} người phụ thuộc chưa đăng ký` : `${who}: ${line.dependentsWithoutRegistration} dependent(s) without a registration`);
     if (line.checks.insuredAboveCap) add('insured_above_cap', who, vi ? `${who}: mức đóng bảo hiểm vượt mức trần` : `${who}: the insured wage is above the cap`);
-    if (line.checks.cashPaymentOverLimit) add('cash_payment_over_limit', who, vi ? `${who}: trả tiền mặt ${amountOf(line.figures.net, language)}, từ ${amountOf(CASH_PAYMENT_LIMIT, language)} trở lên phải chuyển khoản` : `${who}: ${amountOf(line.figures.net, language)} paid in cash; ${amountOf(CASH_PAYMENT_LIMIT, language)} or more must be non-cash`);
+    if (line.checks.cashPaymentOverLimit) add('cash_payment_over_limit', who, vi ? `${who}: trả tiền mặt ${amountOf(line.figures.net, language)}, từ ${amountOf(CASH_PAYMENT_LIMIT, language)} trở lên phải chuyển khoản thì chi phí lương mới được trừ khi tính thuế thu nhập doanh nghiệp` : `${who}: ${amountOf(line.figures.net, language)} paid in cash; ${amountOf(CASH_PAYMENT_LIMIT, language)} or more must be non-cash for the pay to be deductible for corporate income tax`);
   }
   if (sheet.blockingRules > 0) add('rule_blocks', null, vi ? `Tháng này dùng ${sheet.blockingRules} quy tắc chưa được kế toán xác nhận nên chưa duyệt được` : `This month uses ${sheet.blockingRules} rule(s) the accountant has not confirmed, so it cannot be approved yet`);
   return out;
@@ -278,6 +285,7 @@ export function checkFlagSentences(anomalies: readonly PayrollAnomaly[], output:
       Array.from(text).length > PAYROLL_SENTENCE_MAX ||
       sentencesIn(text) > 2 ||
       aliasesIn(text).some((a) => a !== ownAlias) ||
+      (anomaly.contradicts?.test(text.normalize('NFKC')) ?? false) ||
       statedFiguresProblem(text, [anomaly.facts]) !== null;
     if (bad) {
       refused += 1;
@@ -513,11 +521,12 @@ export class PayrollCoworker {
   // The generators replace the model calls in tests; by default each goes to the deployment's OpenAI-compatible endpoint, through the AI meter.
   constructor(config: AiConfig, generators: { prepare?: PayrollPrepareGenerator; flag?: PayrollFlagGenerator; explain?: PayrollExplainGenerator } = {}) {
     const timeoutMs = config.timeoutMs ?? 60_000;
+    const retries = config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries };
     this.generatePrepare =
       generators.prepare ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.payroll_prepare', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zPrepareOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zPrepareOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...retries }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -525,7 +534,7 @@ export class PayrollCoworker {
       generators.flag ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.payroll_flag', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zFlagOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zFlagOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...retries }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -533,10 +542,15 @@ export class PayrollCoworker {
       generators.explain ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.payroll_explain', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zExplainOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zExplainOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...retries }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
+  }
+
+  // An alias that is not the generated "E<number>" (a name put there by a careless caller) never reaches a prompt.
+  private guardSheet(sheet: PayrollSheet): void {
+    if (sheet.lines.some((l) => !/^E\d+$/.test(l.alias))) throw new PayrollPromptLeakError();
   }
 
   private guard(prompt: string, options: PayrollCallOptions): void {
@@ -545,6 +559,7 @@ export class PayrollCoworker {
 
   /** What probably changes this month, one proposal per signal code found; with no signal the model is not asked. A person accepts or edits each proposal. */
   async prepare(sheet: PayrollSheet, options: PayrollCallOptions = {}): Promise<PayrollPrepareResult> {
+    this.guardSheet(sheet);
     const signals = findSignals(sheet);
     if (signals.length === 0) return { kind: 'none', code: 'QUIET' };
     const prompt = preparePrompt(signals);
@@ -556,6 +571,7 @@ export class PayrollCoworker {
 
   /** The anomalies code found, each in one sentence; with no anomaly the model is not asked. */
   async flag(sheet: PayrollSheet, options: PayrollCallOptions = {}): Promise<PayrollFlagResult> {
+    this.guardSheet(sheet);
     const anomalies = findAnomalies(sheet);
     if (anomalies.length === 0) return { kind: 'none', code: 'QUIET' };
     const prompt = flagPrompt(anomalies);

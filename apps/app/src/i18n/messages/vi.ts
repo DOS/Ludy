@@ -828,6 +828,24 @@ export const vi = {
     payslipPeriod: 'Phiếu lương kỳ tháng {month}',
     payslipFor: 'Người lao động: {name}',
     payslipDraft: 'Bảng lương này chưa duyệt: phiếu chỉ để xem trước.',
+    coworker: {
+      title: '{finance} xem tháng này',
+      ask: 'Nhờ {finance} xem',
+      asking: 'Đang xem...',
+      explain: 'Nhờ {finance} giải thích phiếu này',
+      explainTitle: '{finance} giải thích',
+      prepareTitle: 'Có thể cần nhập hoặc xem lại',
+      flagTitle: 'Điểm bất thường',
+      note: '{finance} chỉ đọc bảng đã lưu với tên được thay bằng mã, không tính lương và không duyệt gì. Bạn quyết định từng việc.',
+      field: { overtime: 'giờ làm thêm', unpaid_days: 'ngày nghỉ không lương', bonus: 'thưởng', allowances: 'phụ cấp', insured: 'đóng bảo hiểm', contract: 'hợp đồng', none: 'không cần nhập gì' },
+      state: {
+        off: 'Chưa bật AI, bảng lương vẫn đầy đủ.',
+        busy: '{finance} đang bận, thử lại sau ít phút.',
+        budget: '{finance} đã hết ngân sách tháng này; bảng lương vẫn đầy đủ.',
+        failed: '{finance} chưa trả lời được lần này; bảng lương vẫn đầy đủ.',
+        quiet: 'Không có gì đáng chú ý để nói thêm.',
+      },
+    },
   },
   // The HR app's staff list (#2530): the people payroll is run for. Short copy; the identity number and the account number are sealed under the person's own key.
   hrEmployees: {

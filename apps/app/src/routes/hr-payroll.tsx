@@ -2,10 +2,11 @@
 // "Bảng lương", the monthly pay run of the HR app (#2531, payroll plan 6.2 and 6.3, ADR-0046): the months, the month's sheet with each person's breakdown and the employer's total cost,
 // the month's inputs, the approval (R3: a fresh second factor; refused while a rule used is still `commentary`), a correction of an approved month as an adjustment line, and the payslip
 // of Labor Code Art. 95(3), a view of the stored line that the person prints or saves as a PDF. Owners and admins only. Every read is a sensitive query that leaves an audit row, so the
-// screen asks once and again only after its own change. No model call is made here: the flags are deterministic checks and the sheet works with AI off.
+// screen asks once and again only after its own change. The sheet, the payslips and the flags (deterministic checks) work with AI off; the finance coworker's part (#2534: prepare, flag, explain)
+// is a button a person presses, read-only, and shows nothing but the sheet when the model is off, busy, out of budget or refused.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import type { PayrollBreakdown } from '@crove/l10n-vn';
 import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_OVERTIME_DAY_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -228,6 +229,89 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
   );
 }
 
+// The coworker's states with no text: a notice, never an error and never a gap in the sheet.
+function CoworkerNotice({ state }: { state: 'used' | 'off' | 'busy' | 'budget' | 'failed' | 'quiet' }) {
+  const t = useTranslations('hrPayroll');
+  if (state === 'used') return null;
+  return (
+    <p className="text-xs text-subtle-foreground" data-testid="hr-coworker-state">
+      {t(`coworker.state.${state}`)}
+    </p>
+  );
+}
+
+// "Explain" for one payslip: asked on a press (a model call costs), from the stored components only; its text is shown beside the payslip and never printed.
+function ExplainPayslip({ lineId }: { lineId: string }) {
+  const t = useTranslations('hrPayroll');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
+  const explain = useMutation({ mutationFn: () => client.hr.payroll.coworker.explain({ lineId, lang }) });
+  return (
+    <div className="mt-4 print:hidden">
+      <Button variant="outline" size="sm" onClick={() => explain.mutate()} disabled={explain.isPending} data-testid="hr-explain">
+        {explain.isPending ? t('coworker.asking') : t('coworker.explain')}
+      </Button>
+      {explain.error && <ErrorText>{errorMessage(explain.error)}</ErrorText>}
+      {explain.data && <CoworkerNotice state={explain.data.ai} />}
+      {explain.data?.ai === 'used' && explain.data.text && (
+        <div className="mt-2 rounded-md border p-3" data-testid="hr-explanation">
+          <p className="text-xs font-medium text-muted-foreground">{t('coworker.explainTitle')}</p>
+          <p className="mt-1 text-sm">{explain.data.text}</p>
+          <p className="mt-2 text-xs text-subtle-foreground">{t('coworker.note')}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The coworker's look at a draft month: what probably changes, and each anomaly code found in a sentence. Proposals only: a person edits the inputs by hand.
+function MonthCoworker({ runId }: { runId: string }) {
+  const t = useTranslations('hrPayroll');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
+  const ask = useMutation({
+    mutationFn: async () => {
+      const [prepared, flagged] = await Promise.all([client.hr.payroll.coworker.prepare({ runId, lang }), client.hr.payroll.coworker.flag({ runId, lang })]);
+      return { prepared, flagged };
+    },
+  });
+  const prepared = ask.data?.prepared;
+  const flagged = ask.data?.flagged;
+  return (
+    <Card className="mb-4 block p-4" data-testid="hr-coworker">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium">{t('coworker.title')}</p>
+        <Button variant="outline" size="sm" onClick={() => ask.mutate()} disabled={ask.isPending} data-testid="hr-coworker-ask">
+          {ask.isPending ? t('coworker.asking') : t('coworker.ask')}
+        </Button>
+      </div>
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {prepared && prepared.ai !== 'used' && <CoworkerNotice state={prepared.ai} />}
+      {prepared?.ai === 'used' && (
+        <div className="mt-3" data-testid="hr-coworker-prepare">
+          <p className="text-xs font-medium text-muted-foreground">{t('coworker.prepareTitle')}</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+            {prepared.items.map((i) => (
+              <li key={i.id}>
+                {i.text} <span className="text-xs text-subtle-foreground">({t(`coworker.field.${i.field}`)})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {flagged?.ai === 'used' && (
+        <div className="mt-3" data-testid="hr-coworker-flag">
+          <p className="text-xs font-medium text-muted-foreground">{t('coworker.flagTitle')}</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+            {flagged.items.map((i) => (
+              <li key={i.id}>{i.text}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(prepared?.ai === 'used' || flagged?.ai === 'used') && <p className="mt-2 text-xs text-subtle-foreground">{t('coworker.note')}</p>}
+    </Card>
+  );
+}
+
 // The payslip of Labor Code Art. 95(3): only stored facts. "Print" opens the browser's print dialog, where the person saves it as a PDF; nothing is emailed.
 function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
   const t = useTranslations('hrPayroll');
@@ -279,6 +363,7 @@ function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
           </tr>
         </tbody>
       </table>
+      <ExplainPayslip lineId={lineId} />
     </Card>
   );
 }
@@ -408,6 +493,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
         </Button>
       </div>
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
+      {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}

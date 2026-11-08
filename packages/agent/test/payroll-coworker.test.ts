@@ -61,6 +61,7 @@ describe('promptLeaks', () => {
   it('finds a name without its accents, an identity number with separators, and ignores a one-letter value', () => {
     expect(promptLeaks('E1 và nguyen van thu', ['Nguyễn Văn Thử'])).toEqual(['Nguyễn Văn Thử']);
     expect(promptLeaks('so 0792 0101 2345', ['079201012345'])).toEqual(['079201012345']);
+    expect(promptLeaks('so 0,792,010,123,45', ['079201012345'])).toEqual(['079201012345']);
     expect(promptLeaks('E1 gets a bonus', ['a'])).toEqual([]);
   });
 });
@@ -148,6 +149,23 @@ describe('checkFlagSentences', () => {
     expect(checkFlagSentences(e1, { items: [{ id: 'A1', sentence: 'E1 thực nhận 1 đồng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 
+  it('refuses a sentence that says the opposite direction, in either language', () => {
+    expect(checkFlagSentences(anomalies, { items: [{ id: 'A1', sentence: 'E1 nhận 12.000.000 đồng, giảm 50% so với 8.000.000 đồng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+    const down = findAnomalies(pseudonymizeSheet([line('1', { figures: figures({ net: '4000000' }), previous: figures({ net: '8000000' }) })], { language: 'en', blockingRules: 0 }).sheet);
+    expect(checkFlagSentences(down, { items: [{ id: 'A1', sentence: 'E1 net pay rose to 4,000,000 dong, down from 8,000,000 dong.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+    expect(checkFlagSentences(down, { items: [{ id: 'A1', sentence: 'E1 net pay is 4,000,000 dong, down 50% from 8,000,000 dong.' }] }).kind).toBe('flags');
+  });
+
+  it('refuses an oversized sheet and a sheet whose alias is not generated, before any model call', async () => {
+    expect(() => pseudonymizeSheet(Array.from({ length: 201 }, (_, i) => line(String(i))), { language: 'vi', blockingRules: 0 })).toThrow(RangeError);
+    const bad = pseudonymizeSheet([line('1', { dependentsWithoutRegistration: 1 })], { language: 'vi', blockingRules: 0 }).sheet;
+    bad.lines[0]!.alias = 'Nguyễn Văn A';
+    let asked = 0;
+    const c = new PayrollCoworker(CONFIG, { flag: async () => { asked += 1; return { output: { items: [] } }; } });
+    await expect(c.flag(bad)).rejects.toBeInstanceOf(PayrollPromptLeakError);
+    expect(asked).toBe(0);
+  });
+
   it('refuses a link, an empty sentence and a null answer', () => {
     expect(checkFlagSentences(anomalies, { items: [{ id: 'A2', sentence: 'E2 có 2 người phụ thuộc, xem pay.example.cn' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkFlagSentences(anomalies, { items: [{ id: 'A2', sentence: '  ' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
@@ -173,7 +191,7 @@ describe('explain', () => {
     tax: { dependentsCounted: 1 },
     deductions: { total: '200000' },
   };
-  const f = payrollFiguresOf({ gross: '11230000', employeeInsurance: '1050000', pit: '120000', net: '10060000' }, breakdown);
+  const f = payrollFiguresOf({ gross: '11230000', employeeInsurance: '1050000', pit: '120000', net: '9860000' }, breakdown);
   const request = { language: 'vi' as const, figures: f, dependentsCounted: dependentsCountedOf(breakdown) };
 
   it('reads the stored breakdown into fixed components and never carries a free label', () => {
@@ -182,17 +200,17 @@ describe('explain', () => {
     expect(f.deductions).toBe('200000');
     const text = explainFactsText(request);
     expect(text).toContain('Phụ cấp: 730.000 đồng');
-    expect(text).toContain('Thực nhận: 10.060.000 đồng');
+    expect(text).toContain('Thực nhận: 9.860.000 đồng');
     expect(text).not.toContain('Nguyễn');
   });
 
   it('accepts a text whose figures are all given and refuses one that states another, scales a figure or says a number in words', () => {
-    expect(checkExplanation(request, { text: 'Tổng thu nhập 11.230.000 đồng, trừ bảo hiểm 1.050.000 đồng và thuế 120.000 đồng nên thực nhận 10.060.000 đồng.' }).kind).toBe('text');
+    expect(checkExplanation(request, { text: 'Tổng thu nhập 11.230.000 đồng, trừ bảo hiểm 1.050.000 đồng, thuế 120.000 đồng và khoản khấu trừ khác 200.000 đồng nên thực nhận 9.860.000 đồng.' }).kind).toBe('text');
     expect(checkExplanation(request, { text: 'Thực nhận 10.060.001 đồng.' })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkExplanation(request, { text: 'Thực nhận khoảng 10 triệu đồng.' })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkExplanation(request, { text: 'Thực nhận mười triệu đồng.' })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkExplanation(request, { text: 'Xem thêm tại pay.example.cn' })).toEqual({ kind: 'none', code: 'LINK' });
-    expect(checkExplanation(request, { text: 'E1 nhận 10.060.000 đồng.' })).toEqual({ kind: 'none', code: 'ALIAS' });
+    expect(checkExplanation(request, { text: 'E1 nhận 9.860.000 đồng.' })).toEqual({ kind: 'none', code: 'ALIAS' });
     expect(checkExplanation(request, null)).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 });
@@ -200,6 +218,7 @@ describe('explain', () => {
 describe('restoreAliases', () => {
   it('puts a name back for an alias it knows and leaves an unknown one', () => {
     expect(restoreAliases('E1 và E7', new Map([['E1', 'An']]))).toBe('An và E7');
+    expect(restoreAliases('e25 nhận', new Map([['E25', 'Bình']]))).toBe('Bình nhận');
   });
 });
 

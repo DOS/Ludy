@@ -830,6 +830,24 @@ export const en = {
     payslipPeriod: 'Payslip for {month}',
     payslipFor: 'Employee: {name}',
     payslipDraft: 'This pay run is not approved: the payslip is a preview.',
+    coworker: {
+      title: '{finance} looks at this month',
+      ask: 'Ask {finance} to look',
+      asking: 'Looking...',
+      explain: 'Ask {finance} to explain this payslip',
+      explainTitle: '{finance} explains',
+      prepareTitle: 'May need typing or a second look',
+      flagTitle: 'Anomalies',
+      note: '{finance} reads the stored sheet with names replaced by codes, computes no pay and approves nothing. You decide each item.',
+      field: { overtime: 'overtime hours', unpaid_days: 'unpaid days', bonus: 'bonus', allowances: 'allowances', insured: 'insurance', contract: 'contract', none: 'nothing to type' },
+      state: {
+        off: 'AI is off; the pay run is complete without it.',
+        busy: '{finance} is busy, try again in a few minutes.',
+        budget: '{finance} has used this month\'s budget; the pay run is complete without it.',
+        failed: '{finance} could not answer this time; the pay run is complete without it.',
+        quiet: 'Nothing worth adding.',
+      },
+    },
   },
   // The HR app's staff list (#2530): the people payroll is run for. Short copy; the identity number and the account number are sealed under the person's own key.
   hrEmployees: {

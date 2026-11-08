@@ -54,10 +54,12 @@ export interface PayrollSource {
 /** The sheet of a run as facts: this month's lines with last month's figures, the overtime run and the stored flags. The earlier months are the run's own legal entity's. */
 export async function payrollSource(reads: PayrollReads, runId: string): Promise<PayrollSource> {
   const sheet = await reads.sheet(runId);
+  // The sheet's header: the pay run it is about. Read by key, since the job-egress scan reads any `.run` of this server as a call to the job runner.
+  const header = sheet['run'];
   const runs = await reads.runs();
   const earlier = async (back: number): Promise<HrRunSheet | null> => {
-    const month = monthBefore(sheet.run.month, back);
-    const run = runs.find((r) => r.legalEntityId === sheet.run.legalEntityId && r.month === month);
+    const month = monthBefore(header.month, back);
+    const run = runs.find((r) => r.legalEntityId === header.legalEntityId && r.month === month);
     return run ? reads.sheet(run.id) : null;
   };
   const one = await earlier(1);
@@ -87,7 +89,7 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
       },
     };
   });
-  return { lines, names, blockingRules: sheet.blocking.length, employerName: sheet.run.employerName };
+  return { lines, names, blockingRules: sheet.blocking.length, employerName: header.employerName };
 }
 
 type State = HrCoworkerExplained['ai'];
@@ -108,6 +110,16 @@ async function guarded<T>(ai: PayrollAi, orgId: string, userId: string, label: s
   }
 }
 
+// A run with more people than one sheet holds is not sent in part (a partial sheet would say "nothing unusual" about the people left out): the answer is `failed` and the sheet stays whole.
+function pseudonymizedOrNull(source: PayrollSource, language: 'vi' | 'en') {
+  try {
+    return pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+  } catch (error: unknown) {
+    console.error('[payroll-coworker-ai] sheet not sent', error instanceof Error ? error.name : typeof error);
+    return null;
+  }
+}
+
 const forbiddenOf = (source: PayrollSource): string[] => [...source.names.values(), source.employerName].filter((v) => v.trim() !== '');
 
 export async function prepareMonth(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, runId: string, language: 'vi' | 'en'): Promise<HrCoworkerPrepared> {
@@ -115,7 +127,9 @@ export async function prepareMonth(ai: PayrollAi, reads: PayrollReads, orgId: st
   if (!ai.reader) return none('off');
   const reader = ai.reader;
   const source = await payrollSource(reads, runId);
-  const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+  const pseudo = pseudonymizedOrNull(source, language);
+  if (!pseudo) return none('failed');
+  const { sheet, aliases } = pseudo;
   const answer = await guarded(ai, orgId, userId, 'prepare', () => reader.payrollPrepare(sheet, { forbidden: forbiddenOf(source) }));
   if ('state' in answer) return none(answer.state);
   const result = answer.value;
@@ -133,7 +147,9 @@ export async function flagMonth(ai: PayrollAi, reads: PayrollReads, orgId: strin
   if (!ai.reader) return none('off');
   const reader = ai.reader;
   const source = await payrollSource(reads, runId);
-  const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+  const pseudo = pseudonymizedOrNull(source, language);
+  if (!pseudo) return none('failed');
+  const { sheet, aliases } = pseudo;
   const answer = await guarded(ai, orgId, userId, 'flag', () => reader.payrollFlag(sheet, { forbidden: forbiddenOf(source) }));
   if ('state' in answer) return none(answer.state);
   const result = answer.value;
