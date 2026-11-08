@@ -203,8 +203,15 @@ BEGIN
   IF v_ctx ->> 'kind' = 'member_vy' THEN
     IF EXISTS (SELECT 1 FROM crove_kernel.member_vy_table c
                WHERE c.table_name = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME AND c.mode = 'write') THEN
+      -- It never deletes (results expire and are purged by definers) and never clears the taint of a result: only the member's own act
+      -- does, in the member's own context (ADR-0049 decisions 4 and 5).
       IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
+        RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
+      END IF;
+      IF TG_OP = 'UPDATE' AND TG_TABLE_NAME = 'member_vy_result' THEN
+        IF OLD.tainted AND NOT NEW.tainted THEN
+          RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
+        END IF;
       END IF;
       RETURN NEW;
     END IF;
