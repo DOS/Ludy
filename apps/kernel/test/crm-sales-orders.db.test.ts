@@ -60,10 +60,12 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    // A tax code is unique within an org (party_tax_code_uq), so only the org's first customer has one; the others have none.
+    let customers = 0;
     const party = (name: string) =>
       admin((c) =>
         c
-          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name])
+          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', $3, '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, customers++ === 0 ? '0312345678' : null])
           .then((r) => r.rows[0]!.id),
       );
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
