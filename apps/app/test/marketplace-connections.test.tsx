@@ -99,7 +99,10 @@ describe('MarketplaceConnectionsCard', () => {
     // The card is a labelled group (a bare aria-label on a div is not announced), named by its visible title.
     expect(html).toMatch(/role="group"[^>]*aria-labelledby="([^"]+)"/);
     const labelId = /role="group"[^>]*aria-labelledby="([^"]+)"/.exec(html)?.[1] ?? '';
-    expect(html).toMatch(new RegExp(`id="${labelId.replace(/[:]/g, '\\$&')}"[^>]*>${en.marketplaceConnections.title}<`));
+    // The title is the element that carries that id (compared as text, so no id character needs escaping).
+    const at = html.indexOf(`id="${labelId}"`);
+    expect(at).toBeGreaterThan(-1);
+    expect(html.slice(at, at + 400)).toContain(`>${en.marketplaceConnections.title}<`);
     expect(html).toContain('Sàn thử nghiệm (shopee)');
     expect(html).toContain(`>${en.marketplaceConnections.status.active}<`);
     expect(html).toContain(en.marketplaceConnections.neverTested);

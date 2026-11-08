@@ -44,7 +44,7 @@ CREATE INDEX IF NOT EXISTS marketplace_connection_entity_idx ON crove_finance.ma
 CREATE INDEX IF NOT EXISTS marketplace_connection_created_by_idx ON crove_finance.marketplace_connection (org_id, created_by) WHERE created_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_finance.marketplace_connection');
 REVOKE UPDATE ON crove_finance.marketplace_connection FROM crove_tenant;
-GRANT UPDATE (last_test_state, last_tested_at, poll_cursor, last_polled_at, last_poll_state, orders_waiting) ON crove_finance.marketplace_connection TO crove_tenant;
+GRANT UPDATE (last_test_state, last_tested_at, poll_cursor, last_polled_at, last_poll_state) ON crove_finance.marketplace_connection TO crove_tenant;
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.marketplace_connection;
 CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id ON crove_finance.marketplace_connection
   FOR EACH ROW EXECUTE FUNCTION crove_finance.legal_entity_fill();

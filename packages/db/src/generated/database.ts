@@ -1188,7 +1188,7 @@ export interface FinanceMarketplaceConnectionTable {
   poll_cursor: string | null;
   last_polled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   last_poll_state: string | null;
-  orders_waiting: Generated<number>;
+  orders_waiting: ColumnType<number, number | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }

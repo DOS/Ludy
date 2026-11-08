@@ -571,7 +571,7 @@ suite('marketplace connections (#2519)', () => {
     expect(await asRole(adminUser, async (c) => (await c.query(insertSql, [orgId, entity, channel, 'marketplace_sandbox', 'shopee'])).rowCount)).toBe(1);
     const id = String((await rows<{ id: string }>(insertSql, [orgId, entity, channel, 'marketplace_sandbox', 'shopee']))[0]?.id);
     for (const who of [member, viewer, adminUser, owner]) expect(await asRole(who, async (c) => (await c.query('SELECT 1 FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
-    const setPoll = "UPDATE crove_finance.marketplace_connection SET last_test_state = 'works', last_tested_at = now(), poll_cursor = 'c1', last_polled_at = now(), last_poll_state = 'ok', orders_waiting = 2 WHERE org_id = $1 AND id = $2";
+    const setPoll = "UPDATE crove_finance.marketplace_connection SET last_test_state = 'works', last_tested_at = now(), poll_cursor = 'c1', last_polled_at = now(), last_poll_state = 'ok' WHERE org_id = $1 AND id = $2";
     for (const who of [member, viewer]) {
       expect(await asRole(who, async (c) => (await c.query(setPoll, [orgId, id])).rowCount)).toBe(0);
       expect(await asRole(who, async (c) => (await c.query('DELETE FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(0);
