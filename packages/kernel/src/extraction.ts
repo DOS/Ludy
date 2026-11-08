@@ -172,7 +172,7 @@ async function lockFile(ctx: CommandContext, fileId: string, statement = false) 
 }
 
 // The kinds of staged read a member decides (#2142, #2515): a bank statement and a marketplace order report. Each is kept with the file's read until a member imports or skips it.
-const STAGED_KINDS: readonly unknown[] = ['bank_statement', 'marketplace_orders'];
+const STAGED_KINDS: readonly unknown[] = ['bank_statement', 'marketplace_orders', 'marketplace_income'];
 
 // Whether the file's newest run is a staged read (a bank statement, an order report) a member imported (#2142).
 async function statementImported(ctx: CommandContext, fileId: string): Promise<boolean> {
@@ -784,7 +784,7 @@ export const statementState = defineCommand({
     if (!run || run.status !== 'done' || !STAGED_KINDS.includes(result?.kind) || result?.summary?.state !== 'staged') {
       throw new DomainError('STATEMENT_NOT_STAGED', 409, 'Tệp này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
     }
-    const kind = result.kind as 'bank_statement' | 'marketplace_orders';
+    const kind = result.kind as 'bank_statement' | 'marketplace_orders' | 'marketplace_income';
     const summary = {
       ...result.summary,
       state: input.state,
@@ -807,17 +807,22 @@ export const statementState = defineCommand({
       .execute();
     ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
     const orders = kind === 'marketplace_orders';
+    const income = kind === 'marketplace_income';
     await ctx.activity(
       'kernel.file',
       input.fileId,
       input.state === 'imported' ? 'statement.imported' : 'statement.rejected',
       input.state === 'imported'
-        ? orders
-          ? `Đã nhập báo cáo đơn hàng: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
-          : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
-        : orders
-          ? 'Đã bỏ qua báo cáo đơn hàng; không có đơn nào được nhập'
-          : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
+        ? income
+          ? `Đã nhập báo cáo thu nhập: ${input.newLines ?? 0} dòng`
+          : orders
+            ? `Đã nhập báo cáo đơn hàng: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+            : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+        : income
+          ? 'Đã bỏ qua báo cáo thu nhập; không có gì được nhập'
+          : orders
+            ? 'Đã bỏ qua báo cáo đơn hàng; không có đơn nào được nhập'
+            : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
     );
     return { fileId: input.fileId, state: input.state };
   },
