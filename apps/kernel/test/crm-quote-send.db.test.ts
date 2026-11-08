@@ -31,6 +31,9 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
+  let workerPool: pg.Pool;
+  // The worker's login: the only one that enters an org's system context (a mail being sent asks crm.quote.mail_data there).
+  let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
@@ -51,10 +54,10 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
-    const party = (name: string, email: string | null = null) =>
+    const party = (name: string, email: string | null = null, taxCode = '0312345678') =>
       admin((c) =>
         c
-          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, $2, 'organization', $3, '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, email])
+          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, tax_code, address) VALUES ($1, $2, 'organization', $3, $4, '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, email, taxCode])
           .then((r) => r.rows[0]!.id),
       );
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
@@ -101,10 +104,16 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] });
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'crove_worker';
+    workerUrl.password = 'test-worker-pw';
+    workerPool = createPool({ connectionString: workerUrl.toString(), max: 4 });
+    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] });
   });
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -144,11 +153,11 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
       revision: 1,
       status: 'sent',
       expired: false,
-      total: draft.total,
-      subtotal: draft.subtotal,
       buyer: { name: 'Công ty ABC', taxCode: '0312345678', address: '12 Lê Lợi, Quận 1' },
       seller: { name: issuer.rows[0]!.name, phone: null, email: null, bankNote: null },
     });
+    // The page's money is the database's numeric text (scale 4); its value is the quote's.
+    expect([Number(doc.total), Number(doc.subtotal)]).toEqual([Number(draft.total), Number(draft.subtotal)]);
     expect(doc.lines.map((l) => [l.lineNo, l.kind, l.description])).toEqual([[1, 'item', 'Gói kế toán năm'], [2, 'text', 'Giao trong 3 ngày']]);
     expect(JSON.stringify(doc)).not.toContain(o.orgId);
     expect(JSON.stringify(doc)).not.toContain(quote.id);
@@ -264,7 +273,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(JSON.stringify(row.payload)).not.toMatch(/[A-Za-z0-9_-]{43}/);
     expect(row.payload).toMatchObject({ quoteId: quote.id, number: quote.number });
     // The mail renders from its stored data and makes the link then: only its hash is stored, and it opens the document.
-    const execute = <T>(command: string, input: unknown) => rt.execute<T>(command, input, { actor: SYSTEM, orgId: o.orgId });
+    const execute = <T>(command: string, input: unknown) => worker.execute<T>(command, input, { actor: SYSTEM, orgId: o.orgId });
     const rendered = await quoteMailTemplate.render({ messageId: randomUUID(), subject: row.subject, payload: row.payload, publicUrl: 'https://app.example.test/', inboundAddress: null, brand: 'Ludy', execute });
     expect(rendered).not.toBeNull();
     const token = /quote#([A-Za-z0-9_-]{43})/.exec(rendered!.text)![1]!;
@@ -319,7 +328,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const o = await org();
     const party = await o.party('Công ty ABC');
     const deal = await o.newDeal(party);
-    const otherDeal = await o.newDeal(await o.party('Công ty khác'));
+    const otherDeal = await o.newDeal(await o.party('Công ty khác', null, '0399999999'));
     const draft = await o.readyDraft(deal.id);
     const { quote: sent } = await o.send(o.member, await o.readyDraft(deal.id), 'link');
     const entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 LIMIT 1', [o.orgId]))).rows[0]!.id;
