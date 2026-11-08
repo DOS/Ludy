@@ -397,13 +397,15 @@ async function reserveMailImages(ctx: CommandContext, messageId: string, connect
   const rows = await ctx.trx
     .insertInto('crove_kernel.conversation_attachment')
     .values(
-      Array.from({ length: count }, () => ({
+      // Each row is a millisecond after the one before it: the thread and a redelivery order the images by created_at, and ids made in one
+      // millisecond are not in order.
+      Array.from({ length: count }, (_, i) => ({
         org_id: ctx.orgId,
         message_id: messageId,
         channel_connection_id: connectionId,
         kind: 'email' as const,
         storage_key: conversationKey(ctx.orgId, newConversationBlobId()),
-        created_at: ctx.now,
+        created_at: new Date(ctx.now.getTime() + i),
       })),
     )
     .returning(['id', 'storage_key'])

@@ -17,7 +17,9 @@ const MAIL_FILES_LOOKED_AT = 20;
 // The longest note listing the files a mail carried, so the list never crowds out the text.
 export const MAIL_FILE_NOTE_MAX = 1500;
 const NAME_MAX = 80;
-const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'bmp', 'tif', 'tiff', 'svg']);
+// A real image of a format the store does not take: said so, not called invalid.
+const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['heic', 'heif', 'bmp', 'tif', 'tiff']);
+const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'bmp', 'tif', 'tiff', 'heif', 'svg']);
 
 export interface MailImage {
   bytes: Buffer;
@@ -53,7 +55,7 @@ function typeLabel(name: string, bytes: Buffer): string {
   if (bytes.subarray(0, 5).toString('latin1') === '%PDF-') return 'PDF';
   const extension = /\.([a-z0-9]{1,5})$/i.exec(name)?.[1]?.toLowerCase();
   if (!extension) return 'tệp';
-  return IMAGE_EXTENSIONS.has(extension) ? 'không phải ảnh hợp lệ' : extension.toUpperCase();
+  return IMAGE_EXTENSIONS.has(extension) ? (UNSUPPORTED_IMAGE_EXTENSIONS.has(extension) ? 'ảnh định dạng chưa hỗ trợ' : 'không phải ảnh hợp lệ') : extension.toUpperCase();
 }
 
 export function readMailFiles(attachments: ReadonlyArray<{ filename: string | null; content: string }>): MailFiles {
