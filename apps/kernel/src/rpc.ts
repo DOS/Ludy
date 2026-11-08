@@ -2025,6 +2025,8 @@ export function createRpcHandler(
       tokens: {
         list: os.extension.tokens.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list', {}, { actor, orgId }))),
         revoke: os.extension.tokens.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.extension.token.revoke', input, { actor, orgId }))),
+        listOrg: os.extension.tokens.listOrg.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list_org', {}, { actor, orgId }))),
+        revokeMember: os.extension.tokens.revokeMember.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.extension.token.revoke_member', input, { actor, orgId }))),
       },
     },
     inbox: {

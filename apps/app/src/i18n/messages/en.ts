@@ -9037,6 +9037,7 @@ export const en = {
       extension_scope: 'The extension is not allowed to do this.',
       extension_org: 'The extension can only work in the organization it was authorized for.',
       extension_only: 'This route is for the browser extension only.',
+      extension_id: 'This browser extension is not allowed to connect to this server.',
     },
   },
   // The label of every registered command and query, by its name (#1654), for the audit log and its export.
@@ -9658,6 +9659,8 @@ export const en = {
           exchanged: 'Record the exchange of an extension sign-in code',
           list: 'List connected extension devices',
           revoke: 'Disconnect an extension device',
+          list_org: "List every member's connected extension devices",
+          revoke_member: "Disconnect a member's extension device",
         },
       },
       extraction: {

@@ -191,7 +191,7 @@ const indexRoute = createRoute({
     // An invite opened before signing in (or signing up) is answered first.
     if (pendingInvite()) throw redirect({ to: '/-/invite' });
     // So is the Ludy extension's sign-in (#2582), opened in a window before the member signed in.
-    if (pendingConnect()) throw redirect({ to: CONNECT_PATH });
+    if (pendingConnect(getConfig().extensionIds ?? [])) throw redirect({ to: CONNECT_PATH });
     // So is a page shared before signing in (#1235), where social runs; elsewhere it is dropped.
     if (pendingShare()) {
       if (outsideInstalled(getConfig().modules, SHARE_PATH)) throw redirect({ to: SHARE_PATH });
@@ -270,7 +270,7 @@ const extensionConnectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: CONNECT_PATH,
   beforeLoad: async () => {
-    const request = parseConnectRequest(window.location.search);
+    const request = parseConnectRequest(window.location.search, getConfig().extensionIds ?? []);
     if (request) rememberConnect(request);
     if (window.location.search) window.history.replaceState(window.history.state, '', window.location.pathname);
     await requireAuth();
