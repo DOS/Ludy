@@ -1476,11 +1476,16 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     );
     if (store)
       expect(["R0", "R1"], "the store command risk").toContain(store.risk);
-    // No command outside the kernel.member_vy namespace is declared for a member-mode run before stage B.
-    for (const c of kernelCommands)
-      expect(
-        "memberVy" in c && (c as { memberVy?: unknown }).memberVy,
-        `${c.name} declares memberVy before stage B`,
-      ).toBeFalsy();
+    // No command is declared for a member-mode run before stage B (the entry function). With it, only the commands listed here are: the member's
+    // background store, which writes the result alone. A new one is a decision for the invariant suite, never a side effect of a feature.
+    const memberMode = kernelCommands
+      .filter((c) => "memberVy" in c && (c as { memberVy?: unknown }).memberVy)
+      .map((c) => c.name)
+      .sort();
+    const allowed = has.memberEntry ? ["kernel.member_vy.result.store"] : [];
+    expect(
+      memberMode.filter((n) => !allowed.includes(n)),
+      "commands that declare memberVy outside the allowed list",
+    ).toEqual([]);
   });
 });

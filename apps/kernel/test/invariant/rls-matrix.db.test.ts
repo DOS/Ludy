@@ -801,8 +801,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   // The sales order of an accepted quote (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): one per quote, in the quote's issuing entity (named by issuer_entity_id, so it
-  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names only has to exist (the accept
-  // command takes it to `accepted` and makes the order in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
+  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names is sent and carries the same deal, customer and issuing entity
+  // (the order's insert policy holds it; the accept command makes the order and takes the quote to `accepted` in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
   // assign the cancel reason to itself.
   'crove_crm.sales_order': {
     noInsertControl: 'an order is made for a sent quote of the same deal, customer and issuing entity, and the quote is sent only by the send command (a guard trigger), so the own-org insert control cannot build its setup as a login role; crm-sales-orders.db.test.ts tests the order insert as the runtime login',
