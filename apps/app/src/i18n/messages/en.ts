@@ -8283,6 +8283,10 @@ export const en = {
       ROLE_ASSIGNMENT_NOT_FOUND: 'This member does not hold that role.',
       ROLE_PRIVILEGED_FOR_VIEWER: 'A view-only member cannot get a role that approves postings or unlocks the books. Make them a member first.',
       PERMISSION_MANAGE_FORBIDDEN: 'You cannot change who works with Vy for this person.',
+      MEMORY_NOT_FOUND: 'That memory was not found.',
+      RESULT_NOT_FOUND: 'That result was not found.',
+      VY_NOT_ALLOWED: 'You are not allowed to work with Vy.',
+      VY_RUN_NOT_LIVE: 'This run of Vy has ended or is no longer valid.',
       ROLE_GRANT_WIDENS_SCOPE: 'This member may see only some legal entities. An organization-wide role would let them see every entity, so it cannot be given. If you mean organization-wide access, revoke their entity roles first; the last one goes only by making them an admin, or by removing and inviting them again.',
       ROLE_DEMOTION_MIXES_SCOPE: 'This member holds both organization-wide roles and roles for some legal entities, so they cannot be made a member or viewer yet. Revoke their organization-wide roles to keep them limited to those entities, or their entity roles to let them see every entity, then try again.',
       ROLE_REVOKE_WIDENS_SCOPE: 'This is the last legal entity this member may see. Revoking it would let them see every entity; if they no longer work for the organization, remove them instead.',
@@ -9723,6 +9727,24 @@ export const en = {
         suppression: {
           add: 'Stop mail to an address',
           lift: 'Allow mail to an address again',
+        },
+      },
+      member_vy: {
+        memory: {
+          delete: 'Delete something Vy remembers about you',
+          list: 'See what Vy remembers about you',
+          save: 'Save something for Vy to remember about you',
+        },
+        meter: {
+          check: 'Check the AI budget and kill switches before Vy works for you',
+          record: 'Record a run of Vy working for you in the usage ledger',
+        },
+        result: {
+          get: 'See a result Vy made for you',
+          store: 'Store the result Vy made for you (only you can see it)',
+        },
+        run: {
+          start: 'Start a run of Vy working for you',
         },
       },
       member: {
