@@ -8126,6 +8126,7 @@ export const en = {
       HR_EMPLOYEE_NOT_FOUND: 'This employee was not found',
       HR_EMPLOYEE_ENDED: 'This employee has left',
       HR_EMPLOYEE_NOT_ENDED: 'Only an employee who has left can be erased',
+      HR_YEAR_NOT_BEGUN: 'An authorization cannot be recorded for a year that has not begun',
       HR_EMPLOYEE_ERASED: 'This record was erased on request and cannot be changed any more',
       HR_RETENTION_NOT_PASSED: 'The retention period of this record is not over yet, so it cannot be erased',
       HR_EMPLOYMENT_NOT_NEWER: 'The effective date must be after the effective date of the latest row',
@@ -9210,6 +9211,9 @@ export const en = {
           add: 'Add an employee with the first contract and wage row',
           edit: "Change an employee's personal details",
           end: 'End an employee',
+          finalization: {
+            set: 'Record that an employee authorized (or no longer authorizes) the payer to finalize their income tax for a year',
+          },
           erase: 'Erase the record of an employee who left, after the retention period',
           get: 'Open one employee, with the identity number and the account number',
           list: 'List the employees and their base wage',
