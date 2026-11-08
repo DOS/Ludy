@@ -12,6 +12,6 @@ describe('the next step sets (#2381)', () => {
 
   it('keeps the database sets the screens rely on', () => {
     expect([...DEAL_NEXT_STEP_STATUSES]).toEqual(['open', 'done', 'closed']);
-    expect([...DEAL_NEXT_STEP_CLOSE_REASONS]).toEqual(['deal_edited', 'deal_moved', 'deal_closed']);
+    expect([...DEAL_NEXT_STEP_CLOSE_REASONS]).toEqual(['deal_edited', 'deal_moved', 'deal_closed', 'quote_decided']);
   });
 });
