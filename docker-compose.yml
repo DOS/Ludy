@@ -141,6 +141,12 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}
+      # Speech to text for meeting notes (#2578): off unless MEETINGS_TRANSCRIBE=on with a provider; the meetings module works without it.
+      MEETINGS_TRANSCRIBE: ${MEETINGS_TRANSCRIBE:-off}
+      TRANSCRIBE_BASE_URL: ${TRANSCRIBE_BASE_URL:-}
+      TRANSCRIBE_API_KEY: ${TRANSCRIBE_API_KEY:-}
+      TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-}
+      AI_PRICE_AUDIO_PER_MIN: ${AI_PRICE_AUDIO_PER_MIN:-0}
       AI_VISION: ${AI_VISION:-false}
       # The product name users see in the app and in mails (#1040); empty keeps "Ludy".
       BRAND_NAME: ${BRAND_NAME:-}

@@ -281,22 +281,27 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     // An id taken off the allow-list after the code was issued no longer exchanges, even from its own origin.
     const c = await issue(OTHER_EXT_ID);
     expect((await exchange(c.code, c.verifier, originOf(OTHER_EXT_ID))).status).toBe(400);
-    // The old 3-argument exchange, still callable by the API login, refuses a bound code and leaves it unspent.
-    const d = await issue(EXT_ID);
-    const viaOld = await pool.query('SELECT * FROM crove_kernel.exchange_extension_auth_code($1::bytea, $2::text, $3::bytea)', [createHash('sha256').update(d.code).digest(), d.verifier, randomBytes(32)]);
-    expect(viaOld.rows).toEqual([]);
-    expect((await exchange(d.code, d.verifier, originOf(EXT_ID), twoIds)).status).toBe(200);
-    // A code made without an id (the old 5-argument issue, still callable by the API login) is unbound: the route refuses it.
+    // A code with no bound id (a row from before the id was bound, written by the owner role: no definer makes one any more) is refused by the
+    // route whatever the origin, and the command no longer takes an input without the id.
     const verifier = randomBytes(32).toString('base64url');
     const unboundCode = `crc_${randomBytes(32).toString('base64url')}`;
-    const unbound = await sharedRuntime.execute(
-      'kernel.extension.code.issue',
-      { codeHash: createHash('sha256').update(unboundCode).digest('hex'), codeChallenge: challengeOf(verifier), scopes: ['meetings'], deviceName: 'Chrome' },
-      { actor: { type: 'user', userId: await userIdOf('recorder'), aal: 'aal1', sessionId: randomUUID(), mfaAt: null }, orgId },
+    await admin(async (c) =>
+      c.query(
+        `INSERT INTO crove_kernel.extension_auth_code (org_id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, 'S256', ARRAY['meetings'], 'Chrome', now(), now() + interval '5 minutes')`,
+        [orgId, await userIdOf('recorder'), createHash('sha256').update(unboundCode).digest(), challengeOf(verifier)],
+      ),
     );
-    expect(unbound).toMatchObject({ expiresInSeconds: 300 });
     expect((await exchange(unboundCode, verifier, originOf(EXT_ID), twoIds)).status).toBe(400);
     expect((await exchange(unboundCode, verifier, originOf(OTHER_EXT_ID), twoIds)).status).toBe(400);
+    const noId = await sharedRuntime
+      .execute(
+        'kernel.extension.code.issue',
+        { codeHash: createHash('sha256').update(randomBytes(8)).digest('hex'), codeChallenge: challengeOf(verifier), scopes: ['meetings'], deviceName: 'Chrome' },
+        { actor: { type: 'user', userId: await userIdOf('recorder'), aal: 'aal1', sessionId: randomUUID(), mfaAt: null }, orgId },
+      )
+      .then(() => 'accepted', (error: unknown) => (error as { code?: string }).code);
+    expect(noId).toBe('VALIDATION');
   });
 
   it('counts a token\'s requests per client even when the header has extra spaces', async () => {
