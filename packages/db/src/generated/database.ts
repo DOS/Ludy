@@ -1336,9 +1336,9 @@ export interface FinancePurchaseLineTable {
   debit_account: ColumnType<string | null, string | null, NotGranted>;
   credit_account: ColumnType<string | null, string | null, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
-  source_kind: ColumnType<string | null, string | null | undefined, NotGranted>;
-  source_id: ColumnType<string | null, string | null | undefined, NotGranted>;
-  source_line_no: ColumnType<number | null, number | null | undefined, NotGranted>;
+  source_kind: ColumnType<string | null, string | null, NotGranted>;
+  source_id: ColumnType<string | null, string | null, NotGranted>;
+  source_line_no: ColumnType<number | null, number | null, NotGranted>;
 }
 
 /** crove_finance.purchase_tax_rate */
