@@ -148,7 +148,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
-  // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, so only the shared ones).
+  // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
   [
     'crove_notes.link',
     (m) =>
@@ -2600,6 +2600,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   // The Vy of a second owner of org A in member mode, and that owner's user id.
   let memberVy: Actor;
   let memberVyUser = '';
+  let memberVyAgent = '';
+  let memberVyRun = '';
   // A member of org A limited by its external_accountant assignment to one legal entity, a branch with no rows: it
   // must see, write and change none of the rows the factories seed (all in org A's default entity).
   let scoped: Actor;
@@ -2904,6 +2906,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     memberVyUser = vyUser;
     const vyAgent = randomUUID();
     const vyRun = randomUUID();
+    memberVyAgent = vyAgent;
+    memberVyRun = vyRun;
     await adminTx([
       { table: 'crove_kernel.tenant_member', values: { org_id: orgs.A.id, user_id: vyUser, role: 'owner' } },
       {
@@ -2921,7 +2925,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           module: 'notes',
           status: 'running',
           started_at: new Date().toISOString(),
-          expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
         },
       },
     ]);
@@ -2975,13 +2979,26 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   it('runs the member-mode actor as an agent context of its member, and pins the catalog it is judged by', async () => {
     const sealed = expectRows(await probe(memberVy, (c) => c.query(`SELECT current_setting('crove.ctx') AS org`)), memberVy.name);
     const seal = JSON.parse(sealed.rows[0]?.org ?? '{}') as Record<string, unknown>;
-    expect({ actor: seal.actor, kind: seal.kind, member: seal.member, user: seal.user ?? null, org: seal.org }, `${memberVy.name}: the seal`).toEqual({
+    expect(Object.keys(seal).sort(), `${memberVy.name}: the seal's keys`).toEqual(
+      ['actor', 'agent', 'flags', 'kind', 'le_scope', 'max_risk', 'member', 'module', 'org', 'position', 'role', 'run', 'tainted', 'user', 'v'].sort(),
+    );
+    expect(seal, `${memberVy.name}: the seal`).toMatchObject({
+      v: 1,
       actor: 'agent',
       kind: 'member_vy',
       member: memberVyUser,
       user: null,
       org: orgs.A.id,
+      role: 'owner',
+      agent: memberVyAgent,
+      run: memberVyRun,
+      position: null,
+      module: 'notes',
+      tainted: true,
+      le_scope: ['*'],
+      flags: [],
     });
+    expect(['R0', 'R1'], `${memberVy.name}: max_risk is R1 at most`).toContain(seal.max_risk);
     // ctx_acting_user_id answers the member only to this context: the tables that read it are the catalog's.
     const acting = expectRows(await probe(memberVy, (c) => c.query('SELECT crove_kernel.ctx_acting_user_id()::text AS org')), memberVy.name);
     expect(acting.rows, 'the acting user of the member-mode actor').toEqual([{ org: memberVyUser }]);
@@ -3186,7 +3203,23 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
               const q = insertSql({ table, values: built.row });
               return c.query(q.text, q.values);
             }).finally(async () => {
-              for (const row of [...setupRows].reverse()) await admin.query(`DELETE FROM ${row.table} WHERE org_id = $1 AND id = $2`, [row.values.org_id, row.values.id]).catch(() => {});
+              // Removed as the database owner with the guards off (replica mode), each row asserted gone: a leaked setup row would skew later cases.
+              await admin.query('BEGIN');
+              try {
+                await admin.query('SET LOCAL session_replication_role = replica');
+                // The completing rows were committed only when they applied (the fallback above), so they may be absent; the setup rows never.
+                for (const [rows, exact] of [[built.complete ?? [], false], [setupRows, true]] as const) {
+                  for (const row of [...rows].reverse()) {
+                    const del = await admin.query(`DELETE FROM ${row.table} WHERE org_id = $1 AND id = $2`, [row.values.org_id, row.values.id]);
+                    if (exact) expect(del.rowCount, `${row.table} setup row ${row.values.id} removed after ${actor.name}'s case on ${table}`).toBe(1);
+                    else expect(del.rowCount ?? 0, `${row.table} completing row ${row.values.id}`).toBeLessThanOrEqual(1);
+                  }
+                }
+                await admin.query('COMMIT');
+              } catch (e) {
+                await admin.query('ROLLBACK').catch(() => {});
+                throw e;
+              }
             });
             expectDenied(own, AGENT_FORBIDDEN, `${actor.name} inserting into ${table} for its own org: refused by the member-mode guard`);
             continue;
