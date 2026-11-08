@@ -384,7 +384,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     await expect(as(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.quote SET seller_logo_frozen = true WHERE org_id = $1 AND id = $2', [o.orgId, spare.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FORBIDDEN') });
     expect(await as(o.orgId, o.member, async (c) => (await c.query(forgedSend(`${complete}, seller_name = 'Bên bán', seller_logo_frozen = true`), [o.orgId, spare.id, entity])).rowCount)).toBe(1);
     // A sent quote does not change, whoever asks and whatever the column.
-    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1', "seller_bank_note = 'Tài khoản khác'", "seller_name = 'Giả mạo'", "seller_phone = '0123'", 'seller_logo_frozen = false', 'seller_logo_file_id = NULL']) {
+    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1', "seller_bank_note = 'Tài khoản khác'", "seller_name = 'Giả mạo'", "seller_phone = '0123'", 'seller_logo_frozen = false', 'seller_logo_file_id = gen_random_uuid()']) {
       await expect(as(o.orgId, o.owner, (c) => c.query(forgedSend(set), [o.orgId, sent.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // A sent quote's lines do not change: the share lock and the status check (the line policies also hide the row).
@@ -550,6 +550,13 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const otherDeal = await other.newDeal(await other.party('Công ty KHÁC'));
     const otherSent = await other.send(other.member, await other.readyDraft(otherDeal.id), 'link');
     const otherLink = await other.link(other.member, otherSent.quote.id);
+    // The other org has a logo of its own (a JPEG): its token serves its own bytes, and no token of this org ever serves them.
+    await other.exec(other.owner, 'crm.quote_setting.logo_set', { fileId: await makeFile(other.orgId, JPEG_BYTES, { contentType: 'image/jpeg' }) });
+    const otherSent2 = await other.send(other.member, await other.readyDraft(otherDeal.id), 'link');
+    const otherLink2 = await other.link(other.member, otherSent2.quote.id);
+    const theirs = await quoteLogo(rt, store, { token: otherLink2.token });
+    expect(theirs?.contentType).toBe('image/jpeg');
+    expect([...(theirs?.bytes ?? [])]).toEqual([...JPEG_BYTES]);
     expect(await quoteLogo(rt, store, { token: otherLink.token })).toBeNull();
     expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
     expect(await quoteView(rt, { token: linkB.token })).toBeNull();

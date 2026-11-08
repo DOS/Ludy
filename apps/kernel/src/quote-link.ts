@@ -25,7 +25,7 @@ export async function quoteView(runtime: Runtime, body: unknown): Promise<QuoteD
 // null for anything else. A store or integrity error is thrown, for the caller to answer (the page's route) or to leave the logo out (the PDF's).
 export async function readLogoFile(store: BlobStore, file: { storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: string | number }): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   if (!(QUOTE_LOGO_TYPES as readonly string[]).includes(file.contentType) || Number(file.sizeBytes) > QUOTE_LOGO_MAX_BYTES) return null;
-  const bytes = await readVerified(store, { key: file.storageKey, generation: file.generation, sha256: file.sha256 });
+  const bytes = await readVerified(store, { key: file.storageKey, generation: file.generation, sha256: file.sha256 }, QUOTE_LOGO_MAX_BYTES);
   if (bytes.byteLength > QUOTE_LOGO_MAX_BYTES || sniffType(bytes) !== file.contentType) return null;
   return { bytes, contentType: file.contentType };
 }
