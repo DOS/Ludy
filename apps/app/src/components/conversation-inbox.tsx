@@ -5,7 +5,7 @@
 // pass the direct kind. What a viewer may read is the database's decision, not this screen's: a thread the reader may not
 // read is simply not in the list. A reply carries the last message its sender saw, so a newer one asks them to read it first.
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -17,6 +17,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { splitQuoted } from '../lib/email-text.ts';
+import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel } from './conversation-drafts.tsx';
@@ -75,14 +76,52 @@ export function useContactName() {
   return (c: ConversationSummary['contact']): string => c.partyName ?? c.displayName ?? t('anonymous', { tail: c.idTail });
 }
 
+type ListInput = ReturnType<typeof inboxListInput> & { posts?: Array<{ connectionId: string; externalPostId: string }> };
+
+// The threads of a list as pages (#2339): the first page and every older page asked for with "load older", each read again every POLL_MS so the
+// list stays live. A page starts after the last thread of the one before it (last message time and id), so a thread that moves up between two
+// reads can land on two pages: it is shown once (mergeConversationPages).
+export function useConversationPages(input: ListInput) {
+  const pages = useInfiniteQuery({
+    ...orpc.conversations.list.infiniteOptions({
+      input: (cursor: { at: string | null; id: string } | undefined) => ({ ...input, ...(cursor ? { before: cursor } : {}) }),
+      initialPageParam: undefined as { at: string | null; id: string } | undefined,
+      getNextPageParam: nextConversationCursor,
+    }),
+    refetchInterval: POLL_MS,
+  });
+  const items = useMemo(() => mergeConversationPages(pages.data?.pages ?? []), [pages.data]);
+  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadMore: () => void pages.fetchNextPage() };
+}
+
+// "Load older conversations" under a list: shown only while the server says there are more.
+export function LoadOlderConversations({ hasMore, loading, onLoad, failed }: { hasMore: boolean; loading: boolean; onLoad: () => void; failed?: boolean }) {
+  const t = useTranslations('conversations');
+  if (!hasMore) return null;
+  return (
+    <div className="space-y-1" data-testid="conversation-more">
+      <Button type="button" size="sm" variant="outline" className="w-full" loading={loading} onClick={onLoad}>
+        {t('loadOlder')}
+      </Button>
+      {failed && <ErrorText>{t('loadOlderFailed')}</ErrorText>}
+    </div>
+  );
+}
+
 export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKind; posts?: readonly PostRef[] | undefined; empty?: string | undefined }) {
   const t = useTranslations('conversations');
   const [status, setStatus] = useState<ConversationStatus>('new');
   const [selected, setSelected] = useState<string | null>(null);
+  // The channel the threads are narrowed to (#2339): the channels the posts are on, offered when there are two or more.
+  const [channel, setChannel] = useState<string>('');
+  const channelIds = useMemo(() => channelsOfPosts(posts ?? []), [posts]);
+  const channels = useQuery({ ...orpc.channels.list.queryOptions({ input: {} }), enabled: channelIds.length > 1 });
+  const offered = (channels.data ?? []).filter((c) => channelIds.includes(c.id));
+  const narrowed = channel !== '' && channelIds.includes(channel) ? { connectionId: channel } : {};
   const postFilter = posts && posts.length > 0 ? { posts: posts.map((p) => ({ connectionId: p.connectionId, externalPostId: p.externalPostId })) } : {};
-  const list = useQuery({ ...orpc.conversations.list.queryOptions({ input: { status, kind, limit: 50, ...postFilter } }), refetchInterval: POLL_MS });
-  const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: { kind, ...postFilter } }), refetchInterval: POLL_MS });
-  const items = list.data?.conversations ?? [];
+  const list = useConversationPages({ status, kind, limit: INBOX_PAGE_SIZE, ...narrowed, ...postFilter });
+  const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: { kind, ...narrowed, ...postFilter } }), refetchInterval: POLL_MS });
+  const items = list.items;
   // The thread shown: the one chosen while it is still in the list or was opened from it, else the first.
   const openId = selected ?? items[0]?.id ?? null;
   // The first thread of a tab is opened for good: answering it moves it to another tab, and it stays on screen.
@@ -92,6 +131,26 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]" data-testid="conversation-inbox">
       <section aria-label={t('listLabel')} className="min-w-0 space-y-3">
+        {offered.length > 1 && (
+          <label className="block text-xs font-medium text-muted-foreground">
+            <span className="mb-1 block">{t('channelFilter')}</span>
+            <NativeSelect
+              value={channel}
+              data-testid="conversation-channel"
+              onChange={(e) => {
+                setChannel(e.target.value);
+                setSelected(null);
+              }}
+            >
+              <option value="">{t('channelAll')}</option>
+              {offered.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.displayName}
+                </option>
+              ))}
+            </NativeSelect>
+          </label>
+        )}
         <Tabs
           value={status}
           onValueChange={(v) => {
@@ -110,13 +169,13 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
         </Tabs>
         {list.isPending && <Spinner />}
         {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
-        {list.data && items.length === 0 && <Empty title={empty ?? t(`empty.${status}`)} />}
+        {list.loaded && items.length === 0 && <Empty title={empty ?? t(`empty.${status}`)} />}
         <ul className="divide-y divide-border rounded-md border border-border">
           {items.map((c) => (
             <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => setSelected(c.id)} />
           ))}
         </ul>
-        {list.data?.more && <p className="text-xs text-muted-foreground">{t('more')}</p>}
+        <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} onLoad={list.loadMore} />
       </section>
       <section aria-label={t('threadLabel')} className="min-w-0">
         {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} /> : <Empty title={t('pick')} />}
