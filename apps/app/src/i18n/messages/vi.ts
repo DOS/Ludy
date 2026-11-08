@@ -8061,6 +8061,12 @@ export const vi = {
       HR_LEGAL_ENTITY_REQUIRED: 'Hãy chọn pháp nhân của nhân viên',
       HR_RUN_NOT_FOUND: 'Không tìm thấy bảng lương này',
       HR_LINE_NOT_FOUND: 'Không tìm thấy dòng lương này',
+      HR_RUN_NOT_APPROVED: 'Chỉ bảng lương đã được duyệt mới hạch toán được',
+      HR_POSTING_OPEN: 'Bảng lương này đã có một đề xuất hạch toán đang chờ duyệt',
+      HR_POSTING_DONE: 'Bảng lương này đã được hạch toán',
+      HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
+      HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
+      HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
       HR_RUN_NOT_DRAFT: 'Bảng lương đã được duyệt, không sửa được nữa; sửa sai bằng dòng điều chỉnh ở tháng sau',
       HR_RUN_EXISTS: 'Tháng này đã có bảng lương',
       HR_RUN_EMPTY: 'Bảng lương chưa có dòng nào để duyệt',
@@ -9054,6 +9060,11 @@ export const vi = {
         preview: 'Xem trước số dư đầu kỳ',
       },
       overview: 'Xem tổng quan kế toán: tiền, lợi nhuận, phải thu, phải trả',
+      payroll_posting: {
+        check: 'Kiểm tra bút toán lương trước khi đề xuất',
+        record: 'Ghi sổ bút toán lương tháng',
+        regime: 'Xem chế độ kế toán của pháp nhân để chọn tài khoản hạch toán lương',
+      },
       period: {
         closing_remind: 'Nhắc khóa sổ kỳ kế toán',
         lock: 'Khóa sổ kỳ kế toán',
@@ -9133,6 +9144,9 @@ export const vi = {
             set: 'Nhập số liệu tháng của một nhân viên và tính lại dòng lương',
           },
           payslip: 'Xem phiếu lương của một nhân viên trong tháng',
+        },
+        posting: {
+          prepare: 'Lập đề xuất hạch toán lương của một tháng đã duyệt',
         },
         run: {
           approve: 'Duyệt bảng lương tháng (cần xác thực hai bước, khóa số liệu)',

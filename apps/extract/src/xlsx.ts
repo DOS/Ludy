@@ -441,6 +441,14 @@ const WANTED = new Set(['[Content_Types].xml', 'xl/workbook.xml', 'xl/_rels/work
 
 // The first sheet of the workbook as rows of cells.
 export function readFirstSheet(bytes: Uint8Array, limits: XlsxLimits = XLSX_LIMITS): Sheet {
+  const sheet = readSheetAt(bytes, 0, limits);
+  if (!sheet) throw new XlsxError('Tệp Excel không có trang tính nào');
+  return sheet;
+}
+
+// The sheet at a 0-based position of the workbook, null when the workbook has fewer sheets. A report of a marketplace keeps its per-order table on a later sheet (a Summary comes first), so
+// a reader that looks for a table asks for the sheets in turn, a few at most; each call reads the workbook's parts again within the same byte limits.
+export function readSheetAt(bytes: Uint8Array, index: number, limits: XlsxLimits = XLSX_LIMITS): Sheet | null {
   if (startsWith(bytes, OLE_SIGNATURE)) {
     throw new XlsxError('Đây là tệp Excel 97-2003 (.xls); hãy mở bằng Excel và lưu lại dạng .xlsx rồi tải lên');
   }
@@ -459,14 +467,14 @@ export function readFirstSheet(bytes: Uint8Array, limits: XlsxLimits = XLSX_LIMI
   if (!isNode(workbook)) throw new XlsxError('Tệp Excel bị hỏng (không đọc được workbook.xml)');
   const props = isNode(workbook.workbookPr) ? workbook.workbookPr : {};
   const date1904 = ['1', 'true'].includes(attr(props, 'date1904') ?? '');
-  const first = nodes(isNode(workbook.sheets) ? workbook.sheets.sheet : undefined)[0];
-  if (!first) throw new XlsxError('Tệp Excel không có trang tính nào');
+  const first = nodes(isNode(workbook.sheets) ? workbook.sheets.sheet : undefined)[index];
+  if (!first) return null;
   const relId = attr(first, 'id');
   const relsBytes = parts.get('xl/_rels/workbook.xml.rels');
   const rels = relsBytes ? parseStructure(relsBytes, 'workbook.xml.rels').Relationships : undefined;
   const target = nodes(isNode(rels) ? rels.Relationship : undefined).find((r) => attr(r, 'Id') === relId);
   const targetPath = target ? attr(target, 'Target') : null;
-  if (!targetPath || /^[a-z][a-z0-9+.-]*:/i.test(targetPath)) throw new XlsxError('Tệp Excel bị hỏng (không tìm thấy trang tính đầu tiên)');
+  if (!targetPath || /^[a-z][a-z0-9+.-]*:/i.test(targetPath)) throw new XlsxError('Tệp Excel bị hỏng (không tìm thấy trang tính)');
   const sheetPath = resolveTarget(targetPath);
 
   let sheetParts: Map<string, Uint8Array>;
@@ -478,7 +486,7 @@ export function readFirstSheet(bytes: Uint8Array, limits: XlsxLimits = XLSX_LIMI
     throw error;
   }
   const sheetBytes = sheetParts.get(sheetPath);
-  if (!sheetBytes) throw new XlsxError('Tệp Excel bị hỏng (thiếu trang tính đầu tiên)');
+  if (!sheetBytes) throw new XlsxError('Tệp Excel bị hỏng (thiếu trang tính)');
   const strings = sharedStrings(parts.get('xl/sharedStrings.xml'), limits);
   const dated = dateStyles(parts.get('xl/styles.xml'));
   const xml = partText(sheetBytes, sheetPath);
