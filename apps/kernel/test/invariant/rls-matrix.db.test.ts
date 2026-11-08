@@ -64,6 +64,10 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  // Q4 of the CRM quotes (#2696, ADR-0050): the sales order of an accepted quote, its frozen lines and the org's per-year number counter.
+  'crove_crm.sales_order',
+  'crove_crm.sales_order_counter',
+  'crove_crm.sales_order_line',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
@@ -155,6 +159,8 @@ const leScopeOrOrgPredicate = (c: string) =>
 // listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
 // listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
 const APPEND_ONLY = new Set<string>([
+  // The lines of a sales order (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): a frozen copy made with the order; a correction is a cancelled order and a new quote.
+  'crove_crm.sales_order_line',
   'crove_finance.channel_settlement',
   'crove_finance.channel_settlement_line',
 ]);
@@ -351,6 +357,8 @@ let calendarHour = 0;
 let bankAccountNumber = 0;
 // A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
 let stagePosition = 1;
+// A sales order number counter (Q4, #2696) is unique per org and year: each seeded one takes the next year from 2000.
+let salesOrderYear = 2000;
 // A staged import row's number is unique per batch (#2229): each factory row takes the next one.
 let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
@@ -755,6 +763,80 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'valid_days = valid_days' },
     noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (crm-quotes.db.test.ts tests it)',
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // The sales order of an accepted quote (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): one per quote, in the quote's issuing entity (named by issuer_entity_id, so it
+  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names only has to exist (the accept
+  // command takes it to `accepted` and makes the order in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
+  // assign the cancel reason to itself.
+  'crove_crm.sales_order': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      const entity = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          quote_id: quote,
+          deal_id: deal,
+          party_id: o.party,
+          issuer_entity_id: entity,
+          number: `DH-RLS-${tag()}`,
+          order_date: '2031-02-01',
+          buyer_name: 'RLS matrix buyer',
+          created_by: o.owner,
+        },
+      };
+    },
+    update: { set: 'cancel_reason = cancel_reason' },
+  },
+  // The org's number counter for sales orders (Q4): one row per org and year, taken by the accept command in its own transaction. Tenant roles update the last number
+  // only (a column grant), so the update probes assign it to itself.
+  'crove_crm.sales_order_counter': {
+    update: { set: 'last_no = last_no' },
+    noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
+  },
+  // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
+  'crove_crm.sales_order_line': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      const entity = randomUUID();
+      const order = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.sales_order',
+            values: {
+              org_id: o.id,
+              id: order,
+              quote_id: quote,
+              deal_id: deal,
+              party_id: o.party,
+              issuer_entity_id: entity,
+              number: `DH-RLS-${tag()}`,
+              order_date: '2031-02-01',
+              buyer_name: 'RLS matrix buyer',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
+      };
+    },
   },
   // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
   // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
