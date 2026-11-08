@@ -46,6 +46,7 @@ export const T = {
   retry: 'Tải lên lại',
   discard: 'Xóa khỏi máy',
   blockers: {
+    invalid: 'Yêu cầu không hợp lệ.',
     title: 'Vui lòng nhập tên cuộc họp.',
     consentMethod: 'Vui lòng chọn cách đã báo cho người tham gia.',
     consentAgreed: 'Bạn phải xác nhận người tham gia đã đồng ý.',

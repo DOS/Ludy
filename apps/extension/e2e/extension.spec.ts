@@ -164,3 +164,47 @@ test('a failed upload keeps the recording on the device', async () => {
   expect(result).toEqual({ ok: true, uploaded: false, left: 1 });
   expect(fake.uploads).toHaveLength(0);
 });
+
+test('a redirect from the configured address is not followed: the token goes nowhere else', async () => {
+  const elsewhere = await startFakeLudy();
+  try {
+    await seed({});
+    fake.redirectMeTo = elsewhere.origin;
+    const page = await popup();
+    await expect(page.getByText('Không lấy được thông tin từ Ludy')).toBeVisible();
+    await page.close();
+    expect(elsewhere.requests).toEqual([]);
+  } finally {
+    fake.redirectMeTo = null;
+    await elsewhere.close();
+  }
+});
+
+test('an address the manifest cannot ask for is refused in the form, not by a thrown permission request', async () => {
+  await context.serviceWorkers()[0]!.evaluate(() => chrome.storage.local.clear());
+  const page = await popup();
+  await page.locator('#where-own').check();
+  await page.locator('#address').fill('http://127.0.0.1:8080');
+  await page.getByRole('button', { name: 'Lưu địa chỉ' }).click();
+  await expect(page.getByText('Chỉ nhận địa chỉ https')).toBeVisible();
+  await page.close();
+});
+
+test('the worker refuses a start request whose flags are not booleans, and creates no meeting', async () => {
+  await seed({ meetings: true });
+  fake.created.length = 0;
+  const page = await popup();
+  const replies = await page.evaluate(async () => {
+    const base = { type: 'start', title: 'Họp', consentMethod: 'told_at_start', streamId: 'x' };
+    return [
+      await chrome.runtime.sendMessage({ ...base, consentAgreed: 'true', keepVideo: false }),
+      await chrome.runtime.sendMessage({ ...base, consentAgreed: true, keepVideo: 'false' }),
+    ];
+  });
+  await page.close();
+  expect(replies).toEqual([
+    { ok: false, reason: 'invalid' },
+    { ok: false, reason: 'invalid' },
+  ]);
+  expect(fake.created).toEqual([]);
+});
