@@ -41,17 +41,18 @@ BEGIN
   -- One row per line with what can be summed safely: the amounts read as numbers only when they are numbers, and the per-fund elements kept only when each is well formed.
   WITH ln AS (
     SELECT l.kind, l.status, l.gross, l.employee_insurance, l.employer_insurance, l.union_fee, l.pit, l.net, e.pay_function, l.breakdown,
-           (pg_catalog.jsonb_typeof(l.breakdown #> '{deductions}') = 'object'
+           -- Every flag below is TRUE or FALSE, never NULL: a missing key makes a typeof NULL, and a NULL would count as neither well formed nor malformed.
+           coalesce(pg_catalog.jsonb_typeof(l.breakdown #> '{deductions}') = 'object'
              AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,advance}') = 'string' AND (l.breakdown #>> '{deductions,advance}') ~ '^-?[0-9]+(\.[0-9]+)?$'
              AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,damage}') = 'string' AND (l.breakdown #>> '{deductions,damage}') ~ '^-?[0-9]+(\.[0-9]+)?$'
-             AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,other}') = 'string' AND (l.breakdown #>> '{deductions,other}') ~ '^-?[0-9]+(\.[0-9]+)?$') AS ded_ok,
-           CASE WHEN pg_catalog.jsonb_typeof(l.breakdown #> '{insurance,funds}') = 'array'
+             AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,other}') = 'string' AND (l.breakdown #>> '{deductions,other}') ~ '^-?[0-9]+(\.[0-9]+)?$', false) AS ded_ok,
+           coalesce(CASE WHEN pg_catalog.jsonb_typeof(l.breakdown #> '{insurance,funds}') = 'array'
                 THEN NOT EXISTS (
                   SELECT 1 FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x
-                  WHERE NOT (pg_catalog.jsonb_typeof(x -> 'fund') = 'string' AND (x ->> 'fund') IN ('retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment')
+                  WHERE (pg_catalog.jsonb_typeof(x -> 'fund') = 'string' AND (x ->> 'fund') IN ('retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment')
                              AND pg_catalog.jsonb_typeof(x -> 'employee') = 'string' AND (x ->> 'employee') ~ '^-?[0-9]+(\.[0-9]+)?$'
-                             AND pg_catalog.jsonb_typeof(x -> 'employer') = 'string' AND (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$'))
-                ELSE false END AS funds_ok,
+                             AND pg_catalog.jsonb_typeof(x -> 'employer') = 'string' AND (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$') IS NOT TRUE)
+                ELSE false END, false) AS funds_ok,
            -- A line holds together: its net is its gross less its deductions, and its per-fund split adds to its own insurance, compared as numbers. Only a well formed line is judged (the others are
            -- counted above); a line that is not whole counts in badLines, which no sum can hide: two lines that are wrong by opposite amounts cancel in a department's total, never here.
            CASE WHEN l.status = 'calculated' AND l.kind = 'pay' AND l.gross IS NOT NULL AND l.employee_insurance IS NOT NULL AND l.employer_insurance IS NOT NULL AND l.pit IS NOT NULL AND l.net IS NOT NULL
@@ -60,9 +61,9 @@ BEGIN
                      AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,damage}') = 'string' AND (l.breakdown #>> '{deductions,damage}') ~ '^-?[0-9]+(\.[0-9]+)?$'
                      AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,other}') = 'string' AND (l.breakdown #>> '{deductions,other}') ~ '^-?[0-9]+(\.[0-9]+)?$'
                      AND pg_catalog.jsonb_typeof(l.breakdown #> '{insurance,funds}') = 'array'
-                THEN (l.gross - l.employee_insurance - l.pit - (l.breakdown #>> '{deductions,advance}')::numeric - (l.breakdown #>> '{deductions,damage}')::numeric - (l.breakdown #>> '{deductions,other}')::numeric = l.net)
+                THEN coalesce((l.gross - l.employee_insurance - l.pit - (l.breakdown #>> '{deductions,advance}')::numeric - (l.breakdown #>> '{deductions,damage}')::numeric - (l.breakdown #>> '{deductions,other}')::numeric = l.net)
                      AND coalesce((SELECT pg_catalog.sum((x ->> 'employee')::numeric) FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x WHERE (x ->> 'employee') ~ '^-?[0-9]+(\.[0-9]+)?$'), 0) = l.employee_insurance
-                     AND coalesce((SELECT pg_catalog.sum((x ->> 'employer')::numeric) FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x WHERE (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$'), 0) = l.employer_insurance
+                     AND coalesce((SELECT pg_catalog.sum((x ->> 'employer')::numeric) FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x WHERE (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$'), 0) = l.employer_insurance, false)
                 ELSE true END AS line_whole
     FROM crove_hr.payroll_line l
     LEFT JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id

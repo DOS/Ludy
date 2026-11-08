@@ -337,6 +337,33 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     }
   });
 
+  // A breakdown with a missing key reads as NULL in SQL, and NULL must count as malformed, never as well formed: the run is refused as a missing list, not passed over.
+  it('refuses a run with a line whose breakdown lost a deduction key or a fund\'s employee amount: the counts see it, both verifications and the payment record refuse, nothing recorded (#2751)', async () => {
+    const cases = [
+      { how: 'deductions', sql: `UPDATE crove_hr.payroll_line SET breakdown = breakdown #- '{deductions,damage}' WHERE org_id = $1 AND id = $2`, what: 'thiếu các khoản khấu trừ' },
+      { how: 'fund', sql: `UPDATE crove_hr.payroll_line SET breakdown = breakdown #- '{insurance,funds,0,employee}' WHERE org_id = $1 AND id = $2`, what: 'thiếu chi tiết bảo hiểm' },
+    ] as const;
+    for (const c of cases) {
+      const o = await org('tt134', 'solo');
+      const { runId } = await postedRun(o);
+      const { proposalId } = await pay(o, runId, 'tax');
+      await withAdmin(async (db) => {
+        await db.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+        try {
+          const { rows } = await db.query<{ id: string }>(`SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 AND kind = 'pay' ORDER BY id LIMIT 1`, [o.orgId, runId]);
+          expect(rows, c.how).toHaveLength(1);
+          await db.query(c.sql, [o.orgId, (rows[0] as { id: string }).id]);
+        } finally {
+          await db.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+        }
+      });
+      await expect(o.exec(o.owner, 'hr.payroll.posting.verify', { runId }), c.how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: c.what } });
+      await expect(o.exec(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'tax' }), c.how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: c.what } });
+      await expect(approve(o, proposalId), c.how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+      expect(await voucherOf(o, runId, 'tax'), c.how).toHaveLength(0);
+    }
+  });
+
   it('holds one voucher per run and kind in the table: a run needs a kind, a proposal and a payment type, and a second of the same kind is refused', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
