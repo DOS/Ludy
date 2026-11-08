@@ -194,6 +194,7 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
   if ((c.noDeductions ?? 0) > 0) throw mismatch('thiếu các khoản khấu trừ');
   const lines: PostingLine[] = t.groups.map((g) => {
     if (!(PAY_FUNCTIONS as readonly string[]).includes(g.payFunction)) throw mismatch('bộ phận hạch toán');
+    if (g.funds.some((f) => !(FUNDS as readonly string[]).includes(f.fund))) throw mismatch('quỹ bảo hiểm');
     // The per-fund sums must add to the insurance the lines carry: the entry rests on one fact, not two.
     const employee = g.funds.reduce((acc, f) => acc.plus(f.employee), money(0));
     const employer = g.funds.reduce((acc, f) => acc.plus(f.employer), money(0));

@@ -421,7 +421,16 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
 
   it('returns no per-person field from the verification and the totals function: the same entry as the proposal, by cost department only', async () => {
     const o = await org('tt133', 'trio');
-    const { runId } = await approvedRun(o);
+    // An advance and a damage deduction on people of two cost departments, so the per-department sums carry them.
+    const { runId } = await approvedRun(o, MONTH, async (id) => {
+      const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: id });
+      const [first, second] = sheet.lines;
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: (first as HrRunSheet['lines'][number]).id, inputs: { ...(first as HrRunSheet['lines'][number]).inputs, advance: '500000' } });
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: (second as HrRunSheet['lines'][number]).id,
+        inputs: { ...(second as HrRunSheet['lines'][number]).inputs, deductions: [{ label: 'Đền bù', kind: 'damage', amount: '300000' }] },
+      });
+    });
     const { proposalId } = await ask(o, runId, o.admin);
     const verified = await o.exec<{ lines: { account: string; debit: string; credit: string }[] }>(o.owner, 'hr.payroll.posting.verify', { runId });
     expect(JSON.stringify(verified)).not.toMatch(/canary/i);

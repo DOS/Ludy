@@ -7,7 +7,9 @@
 --   The people tables stay owners and admins only (the RESTRICTIVE owner_admin policy of 20261125000000 is untouched); this one function lets whoever may approve the posting of the run
 --   (an owner, an admin, or a member holding finance.proposal.approve through an org-wide assignment) rebuild the entry from totals, so a chief accountant who is a plain member can approve it.
 --   The owner decided on 2026-11-08 (#2538) that the books show payroll totals by account to everyone who reads Kế toán; where a department has a single employee, its total is that person's pay
---   (the known limit of plan 6.6). The function checks itself: a user context only, in the sealed org, the run in its legal-entity scope and approved, the caller one of the approvers above.
+--   (the known limit of plan 6.6): the per-department groups never leave the HR module, its commands return accounts and a count. The function checks itself: a user context only, in the
+--   sealed org, the run in its legal-entity scope, the caller one of the approvers above, and the run approved (a draft run answers with its status and no figure). It never raises on a stored
+--   value: a line whose figures cannot be summed is counted (noFunds, noDeductions) and left out of the sums, and the caller refuses a run that has any.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_hr.payroll_run_totals(p_run uuid) RETURNS jsonb
@@ -32,49 +34,68 @@ BEGIN
   IF NOT FOUND OR NOT crove_kernel.ctx_le_allowed(v_run.legal_entity_id) THEN
     RETURN NULL;
   END IF;
-  -- What the figures cannot be summed from, counted and never named: lines that are not pay lines, lines not calculated, lines whose employment holds no cost department, lines without the
-  -- per-fund split of their insurance. The caller refuses a run that has any.
-  SELECT pg_catalog.jsonb_build_object(
-           'lines', pg_catalog.count(*),
-           'adjustments', pg_catalog.count(*) FILTER (WHERE l.kind <> 'pay'),
-           'notCalculated', pg_catalog.count(*) FILTER (WHERE l.status <> 'calculated' OR l.gross IS NULL OR l.employee_insurance IS NULL OR l.employer_insurance IS NULL OR l.union_fee IS NULL OR l.pit IS NULL OR l.net IS NULL),
-           'noFunction', pg_catalog.count(*) FILTER (WHERE e.pay_function IS NULL),
-           'noFunds', pg_catalog.count(*) FILTER (WHERE pg_catalog.jsonb_typeof(l.breakdown #> '{insurance,funds}') IS DISTINCT FROM 'array'),
-           'noDeductions', pg_catalog.count(*) FILTER (WHERE pg_catalog.jsonb_typeof(l.breakdown #> '{deductions}') IS DISTINCT FROM 'object'),
-           -- How many people's net pay is at the cash limit (5,000,000 dong) or above: a number only.
-           'cashLarge', pg_catalog.count(*) FILTER (WHERE l.net >= 5000000))
-    INTO v_counts
-  FROM crove_hr.payroll_line l
-  LEFT JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id
-  WHERE l.org_id = v_org AND l.run_id = p_run;
-  SELECT coalesce(pg_catalog.jsonb_agg(g.obj ORDER BY g.pay_function), '[]'::jsonb) INTO v_groups
-  FROM (
-    SELECT e.pay_function,
-           pg_catalog.jsonb_build_object(
-             'payFunction', e.pay_function,
-             'gross', coalesce(pg_catalog.sum(l.gross), 0)::text,
-             'unionFee', coalesce(pg_catalog.sum(l.union_fee), 0)::text,
-             'pit', coalesce(pg_catalog.sum(l.pit), 0)::text,
-             'net', coalesce(pg_catalog.sum(l.net), 0)::text,
-             'advance', coalesce(pg_catalog.sum((l.breakdown #>> '{deductions,advance}')::numeric), 0)::text,
-             'otherDeductions', coalesce(pg_catalog.sum(coalesce((l.breakdown #>> '{deductions,damage}')::numeric, 0) + coalesce((l.breakdown #>> '{deductions,other}')::numeric, 0)), 0)::text,
-             'employeeInsurance', coalesce(pg_catalog.sum(l.employee_insurance), 0)::text,
-             'employerInsurance', coalesce(pg_catalog.sum(l.employer_insurance), 0)::text,
-             'funds', (
-               SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('fund', f.fund, 'employee', f.employee::text, 'employer', f.employer::text) ORDER BY f.fund), '[]'::jsonb)
-               FROM (
-                 SELECT x ->> 'fund' AS fund, pg_catalog.sum((x ->> 'employee')::numeric) AS employee, pg_catalog.sum((x ->> 'employer')::numeric) AS employer
-                 FROM crove_hr.payroll_line l2
-                 JOIN crove_hr.payroll_employment e2 ON e2.org_id = l2.org_id AND e2.id = l2.employment_id
-                 CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(CASE WHEN pg_catalog.jsonb_typeof(l2.breakdown #> '{insurance,funds}') = 'array' THEN l2.breakdown #> '{insurance,funds}' ELSE '[]'::jsonb END) AS x
-                 WHERE l2.org_id = v_org AND l2.run_id = p_run AND e2.pay_function = e.pay_function
-                 GROUP BY x ->> 'fund'
-               ) f)) AS obj
+  -- A run that is not approved is not posted: its status and no figure.
+  IF v_run.status IS DISTINCT FROM 'approved' THEN
+    RETURN pg_catalog.jsonb_build_object('runId', v_run.id, 'status', v_run.status);
+  END IF;
+  -- One row per line with what can be summed safely: the amounts read as numbers only when they are numbers, and the per-fund elements kept only when each is well formed.
+  WITH ln AS (
+    SELECT l.kind, l.status, l.gross, l.employee_insurance, l.employer_insurance, l.union_fee, l.pit, l.net, e.pay_function, l.breakdown,
+           (pg_catalog.jsonb_typeof(l.breakdown #> '{deductions}') = 'object'
+             AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,advance}') = 'string' AND (l.breakdown #>> '{deductions,advance}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+             AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,damage}') = 'string' AND (l.breakdown #>> '{deductions,damage}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+             AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,other}') = 'string' AND (l.breakdown #>> '{deductions,other}') ~ '^-?[0-9]+(\.[0-9]+)?$') AS ded_ok,
+           CASE WHEN pg_catalog.jsonb_typeof(l.breakdown #> '{insurance,funds}') = 'array'
+                THEN NOT EXISTS (
+                  SELECT 1 FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x
+                  WHERE NOT (pg_catalog.jsonb_typeof(x -> 'fund') = 'string' AND (x ->> 'fund') IN ('retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment')
+                             AND pg_catalog.jsonb_typeof(x -> 'employee') = 'string' AND (x ->> 'employee') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                             AND pg_catalog.jsonb_typeof(x -> 'employer') = 'string' AND (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$'))
+                ELSE false END AS funds_ok
     FROM crove_hr.payroll_line l
-    JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id
+    LEFT JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id
     WHERE l.org_id = v_org AND l.run_id = p_run
-    GROUP BY e.pay_function
-  ) g;
+  )
+  SELECT
+    -- What the figures cannot be summed from, counted and never named: lines that are not pay lines, lines not calculated, lines whose employment holds no cost department, lines without a well
+    -- formed per-fund split of their insurance or list of deductions. The caller refuses a run that has any.
+    pg_catalog.jsonb_build_object(
+      'lines', pg_catalog.count(*),
+      'adjustments', pg_catalog.count(*) FILTER (WHERE kind <> 'pay'),
+      'notCalculated', pg_catalog.count(*) FILTER (WHERE status <> 'calculated' OR gross IS NULL OR employee_insurance IS NULL OR employer_insurance IS NULL OR union_fee IS NULL OR pit IS NULL OR net IS NULL),
+      'noFunction', pg_catalog.count(*) FILTER (WHERE pay_function IS NULL),
+      'noFunds', pg_catalog.count(*) FILTER (WHERE NOT funds_ok),
+      'noDeductions', pg_catalog.count(*) FILTER (WHERE NOT ded_ok),
+      -- How many people's net pay is at the cash limit (CASH_PAYMENT_LIMIT, 5,000,000 dong) or above: a number only.
+      'cashLarge', pg_catalog.count(*) FILTER (WHERE net >= 5000000)),
+    (SELECT coalesce(pg_catalog.jsonb_agg(g.obj ORDER BY g.pay_function), '[]'::jsonb)
+     FROM (
+       SELECT d.pay_function,
+              pg_catalog.jsonb_build_object(
+                'payFunction', d.pay_function,
+                'gross', coalesce(pg_catalog.sum(d.gross), 0)::text,
+                'unionFee', coalesce(pg_catalog.sum(d.union_fee), 0)::text,
+                'pit', coalesce(pg_catalog.sum(d.pit), 0)::text,
+                'net', coalesce(pg_catalog.sum(d.net), 0)::text,
+                'advance', coalesce(pg_catalog.sum((d.breakdown #>> '{deductions,advance}')::numeric), 0)::text,
+                'otherDeductions', coalesce(pg_catalog.sum((d.breakdown #>> '{deductions,damage}')::numeric + (d.breakdown #>> '{deductions,other}')::numeric), 0)::text,
+                'employeeInsurance', coalesce(pg_catalog.sum(d.employee_insurance), 0)::text,
+                'employerInsurance', coalesce(pg_catalog.sum(d.employer_insurance), 0)::text,
+                'funds', (
+                  SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('fund', f.fund, 'employee', f.employee::text, 'employer', f.employer::text) ORDER BY f.fund), '[]'::jsonb)
+                  FROM (
+                    SELECT x ->> 'fund' AS fund, pg_catalog.sum((x ->> 'employee')::numeric) AS employee, pg_catalog.sum((x ->> 'employer')::numeric) AS employer
+                    FROM ln l2
+                    CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(l2.breakdown #> '{insurance,funds}') AS x
+                    WHERE l2.funds_ok AND l2.ded_ok AND l2.pay_function = d.pay_function AND l2.kind = 'pay'
+                    GROUP BY x ->> 'fund'
+                  ) f)) AS obj
+       FROM ln d
+       WHERE d.pay_function IS NOT NULL AND d.funds_ok AND d.ded_ok AND d.kind = 'pay'
+       GROUP BY d.pay_function
+     ) g)
+  INTO v_counts, v_groups
+  FROM ln;
   RETURN pg_catalog.jsonb_build_object(
     'runId', v_run.id,
     'legalEntityId', v_run.legal_entity_id,
