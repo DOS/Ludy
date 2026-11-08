@@ -13,7 +13,7 @@
 import type { MemberRole } from '@crove/db';
 import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
-import { buildAnnual, buildCertificates, buildD02Lt, buildD02LtListing, buildQuarterly, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
+import { annualExclusion, buildAnnual, buildCertificates, buildD02Lt, buildD02LtListing, buildQuarterly, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { IDENTITY_PLACE, INSURANCE_PLACE, TAX_CODE_PLACE, subjectOf } from './employees.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -172,7 +172,9 @@ export const declarationGet = defineQuery({
       persons = personsOf(await openFor(listed, ['identityNumber', 'insuranceNumber']));
       document = buildD02Lt(d02Input(persons));
     } else {
-      const clear = await openFor(null, ['identityNumber', 'taxCode']);
+      // 05/QTT prints only the authorizers who qualify (the list of everyone else shows a name and a reason), so only they are opened; 05/KK and 03/TNCN list everyone paid in the period.
+      const who = input.kind === 'qtt' ? new Set(personsOf(new Map()).filter((p) => annualExclusion(p, Number(input.period), lines) === null).map((p) => p.employeeId)) : null;
+      const clear = await openFor(who, ['identityNumber', 'taxCode']);
       for (const c of clear.values()) if (c.taxCode === undefined && c.identityNumber !== undefined) taxCodeFromIdentity += 1;
       persons = personsOf(clear);
       if (input.kind === 'kk') document = buildQuarterly({ quarter: input.period, employer, persons, lines, approvedMonths });
