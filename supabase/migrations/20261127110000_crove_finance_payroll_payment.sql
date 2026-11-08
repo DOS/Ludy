@@ -18,7 +18,7 @@ BEGIN
     ALTER TABLE crove_finance.cash_voucher
       ADD CONSTRAINT cash_voucher_payroll_payment CHECK (
         (payroll_run_id IS NULL AND payroll_payment_kind IS NULL)
-        OR (payroll_run_id IS NOT NULL AND payroll_payment_kind IN ('net_pay', 'insurance', 'union', 'tax') AND proposal_id IS NOT NULL AND voucher_type IN ('cash_payment', 'bank_debit')));
+        OR (payroll_run_id IS NOT NULL AND payroll_payment_kind IS NOT NULL AND payroll_payment_kind IN ('net_pay', 'insurance', 'union', 'tax') AND proposal_id IS NOT NULL AND voucher_type IN ('cash_payment', 'bank_debit')));
   END IF;
 END
 $$;
