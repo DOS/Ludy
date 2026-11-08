@@ -9287,9 +9287,11 @@ export const vi = {
       },
       sales_order: {
         cancel: 'Hủy đơn hàng',
+        deliver: 'Ghi một dòng đơn hàng đã giao',
         get: 'Xem một đơn hàng',
         handoff: 'Đọc đơn hàng để Kế toán lập hóa đơn',
         list: 'Xem danh sách đơn hàng',
+        undeliver: 'Hoàn giao một dòng đơn hàng',
       },
       quote: {
         accept: 'Ghi nhận khách chấp nhận báo giá và tạo đơn hàng',
@@ -9310,10 +9312,6 @@ export const vi = {
       quote_setting: {
         get: 'Xem mặc định và thông tin in trên báo giá',
         set: 'Đặt số ngày hiệu lực, thuế suất và điều khoản mặc định của báo giá',
-      },
-      sales_order: {
-        deliver: 'Ghi một dòng đơn hàng đã giao',
-        undeliver: 'Hoàn giao một dòng đơn hàng',
       },
       stage: {
         add: 'Thêm giai đoạn vào quy trình bán hàng',

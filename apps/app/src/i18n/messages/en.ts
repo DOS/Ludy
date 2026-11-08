@@ -9290,9 +9290,11 @@ export const en = {
       },
       sales_order: {
         cancel: 'Cancel a sales order',
+        deliver: 'Mark a sales order line as delivered',
         get: 'View a sales order',
         handoff: 'Read a sales order for Accounting to invoice',
         list: 'List sales orders',
+        undeliver: 'Take back the delivery of a sales order line',
       },
       quote: {
         accept: 'Record that the customer accepted a quote and make the sales order',
@@ -9313,10 +9315,6 @@ export const en = {
       quote_setting: {
         get: 'See the defaults and the details printed on quotes',
         set: "Set the quote validity days, VAT rate and default terms",
-      },
-      sales_order: {
-        deliver: 'Mark a sales order line as delivered',
-        undeliver: 'Take back the delivery of a sales order line',
       },
       stage: {
         add: 'Add a stage to the sales pipeline',
