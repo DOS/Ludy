@@ -3195,13 +3195,13 @@ export const en = {
     hints: {
       finance: {
         chief_accountant: 'Approves posting proposals, unlocks locked months and marks VAT returns filed, as an owner does.',
-        accountant: 'Says the member keeps the books. Adds no permission beyond the base role yet.',
+        accountant: 'Says the member keeps the books. Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.',
         viewer: 'Says the member only follows the accounting figures. Adds no permission beyond the base role yet.',
         entity_chief_accountant: 'Unlocks the locked months and marks the VAT returns filed of the assigned legal entities only. Each assignment names one entity; you can add more. Approving posting proposals needs the org-wide chief accountant. If it is the only role of this person, give them Outside accountant for that entity before revoking it.',
       },
-      crm: { sales: 'Adds no permission beyond the base role yet.' },
-      desk: { agent: 'Adds no permission beyond the base role yet.' },
-      hr: { manager: 'Adds no permission beyond the base role yet.' },
+      crm: { sales: 'Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.' },
+      desk: { agent: 'Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.' },
+      hr: { manager: 'Adds no permission beyond the base role yet, except working with Vy, unless an owner denies it.' },
       external_accountant: 'This person sees the books, documents, vouchers and returns of the assigned entities only. Inbox proposals and notifications of other entities may still show until those are kept per entity too. Each assignment names one entity; you can add more.',
     },
     rolesOf: 'Job roles of {name}',
