@@ -13,6 +13,7 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
+import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 import {
@@ -181,9 +182,11 @@ export class InboxReader {
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
+  private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+    this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -308,6 +311,18 @@ export class InboxReader {
     const { output, usage } = await this.generateReminder({ system: reminderInstructions(request), prompt: reminderPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkReminderWords(request, output);
+  }
+
+  /** The finance coworker on payroll (#2534): what probably changes this month, the anomalies code found in a sentence each, and one payslip explained, from the pseudonymized sheet only
+   * (payroll-coworker.ts). Each is metered under its own feature; pass `forbidden` (the names and identifiers of the run) so a prompt that holds one is refused before the call. */
+  payrollPrepare(sheet: PayrollSheet, options?: PayrollCallOptions): Promise<PayrollPrepareResult> {
+    return this.payroll.prepare(sheet, options);
+  }
+  payrollFlag(sheet: PayrollSheet, options?: PayrollCallOptions): Promise<PayrollFlagResult> {
+    return this.payroll.flag(sheet, options);
+  }
+  payrollExplain(request: PayslipExplainRequest, options?: PayrollCallOptions): Promise<PayslipExplainResult> {
+    return this.payroll.explain(request, options);
   }
 
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,

@@ -205,3 +205,22 @@ export const zPayrollPostingProposal = zJournalVoucherProposal.extend({
   mapStatus: z.enum(['confirmed', 'commentary']),
 });
 export type PayrollPostingProposal = z.infer<typeof zPayrollPostingProposal>;
+
+// The finance coworker on payroll (#2534, plan 6.7). Each call is read-only: it reads the stored run through the audited sensitive queries, asks the model about the pseudonymized sheet
+// only (outside any transaction, under the AI budget meter) and answers with checked text, the people's names put back by code. `ai` names the state when there is no text: the sheet,
+// the payslips and the exports are complete in every state. The proposals and the notes are for a person to read and accept or edit; nothing here changes a run or presses approve.
+export const HR_COWORKER_STATES = ['used', 'off', 'busy', 'budget', 'failed', 'quiet'] as const;
+export const zHrCoworkerAsk = z.strictObject({ runId: zId, lang: z.enum(['vi', 'en']).optional() });
+export type HrCoworkerAsk = z.infer<typeof zHrCoworkerAsk>;
+export const zHrCoworkerPayslipAsk = z.strictObject({ lineId: zId, lang: z.enum(['vi', 'en']).optional() });
+export type HrCoworkerPayslipAsk = z.infer<typeof zHrCoworkerPayslipAsk>;
+const zCoworkerItem = z.object({ id: z.string(), kind: z.string(), employeeId: zId.nullable(), text: z.string() });
+export const zHrCoworkerPrepared = z.object({
+  ai: z.enum(HR_COWORKER_STATES),
+  items: z.array(zCoworkerItem.extend({ field: z.enum(['overtime', 'unpaid_days', 'bonus', 'allowances', 'insured', 'contract', 'none']) })),
+});
+export type HrCoworkerPrepared = z.infer<typeof zHrCoworkerPrepared>;
+export const zHrCoworkerFlagged = z.object({ ai: z.enum(HR_COWORKER_STATES), items: z.array(zCoworkerItem) });
+export type HrCoworkerFlagged = z.infer<typeof zHrCoworkerFlagged>;
+export const zHrCoworkerExplained = z.object({ ai: z.enum(HR_COWORKER_STATES), text: z.string().nullable() });
+export type HrCoworkerExplained = z.infer<typeof zHrCoworkerExplained>;
