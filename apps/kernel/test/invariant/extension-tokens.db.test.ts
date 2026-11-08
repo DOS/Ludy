@@ -9,7 +9,9 @@
 //   another org, viewer, agent, and system context cannot list or revoke them;
 // - verify_extension_token(bytea, text) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[]) or 0 rows;
 //   fails immediately when revoked, expired, member removed, demoted to viewer, user disabled, or scope mismatch;
-// - exchange_extension_auth_code(bytea, text, bytea) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz);
+// - exchange_extension_auth_code(bytea, text, bytea, text) (the last argument is the id of the extension asking, from the Origin header, #2850) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz, code_id uuid);
+//   a code is exchanged only by the extension id it was issued for; an unbound code, another id or a malformed id gets no row and the code is not spent;
+//   issue_extension_auth_code(bytea, text, text, text[], text, text) requires that id; the older 5- and 3-argument forms no longer exist (step 2 of #2850, #2855);
 //   neither raw auth code nor raw extension token is passed to SQL statements or query logs;
 // - all 5 definers grant EXECUTE to crove_app only (crove_worker and all other roles refused);
 // - agent_write_guard trigger is installed on both tables.
@@ -33,6 +35,9 @@ const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', impo
 const suite = ADMIN ? describe : describe.skip;
 
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
+// The extension id the seeded codes are bound to (32 letters a to p), and another one (#2850).
+const EXT_A = 'a'.repeat(32);
+const EXT_B = 'b'.repeat(32);
 
 const ALL_RUNTIME_ROLES = [
   'public',
@@ -300,22 +305,22 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       await admin(async (c) => {
         // Auth code 1: active unconsumed for memberA1 in Org A
         await c.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-           VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Laptop Chrome', now(), now() + interval '5 minutes')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Laptop Chrome', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
           [orgAId, authCodes.activeA1.id, users.memberA1, authCodes.activeA1.hash, authCodes.activeA1.challenge],
         );
 
         // Auth code 2: consumed for memberA1 in Org A
         await c.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at, consumed_at)
-           VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Laptop Chrome', now() - interval '2 minutes', now() + interval '3 minutes', now() - interval '1 minute')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at, consumed_at)
+           VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Laptop Chrome', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now() - interval '2 minutes', now() + interval '3 minutes', now() - interval '1 minute')`,
           [orgAId, authCodes.consumedA1.id, users.memberA1, authCodes.consumedA1.hash, authCodes.consumedA1.challenge],
         );
 
         // Auth code 3: expired for memberA1 in Org A
         await c.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-           VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Laptop Chrome', now() - interval '15 minutes', now() - interval '10 minutes')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Laptop Chrome', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now() - interval '15 minutes', now() - interval '10 minutes')`,
           [orgAId, authCodes.expiredA1.id, users.memberA1, authCodes.expiredA1.hash, authCodes.expiredA1.challenge],
         );
       });
@@ -446,8 +451,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       ).rejects.toMatchObject({ code: '42501' });
       await expect(
         appClient.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-           VALUES ($1, $2, $3, $4, 'ch', 'S256', ARRAY['meetings'], 'Probe', now(), now() + interval '5 minutes')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, 'ch', 'S256', ARRAY['meetings'], 'Probe', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
           [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
         ),
       ).rejects.toMatchObject({ code: '42501' });
@@ -496,8 +501,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       // 2. code_hash octet_length must be 32 bytes (SHA-256)
       await expect(
         c.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-           VALUES ($1, $2, $3, '\\x1234', 'challenge', 'S256', ARRAY['meetings'], 'Device', now(), now() + interval '5 minutes')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+           VALUES ($1, $2, $3, '\\x1234', 'challenge', 'S256', ARRAY['meetings'], 'Device', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
           [orgAId, randomUUID(), users.memberA1],
         ),
       ).rejects.toThrow();
@@ -514,16 +519,16 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       // 4. auth code CHECK constraints: code_challenge_method must be S256, expires_at <= created_at + 10 minutes
       await expect(
         c.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-           VALUES ($1, $2, $3, $4, 'challenge', 'plain', ARRAY['meetings'], 'Device', now(), now() + interval '5 minutes')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, 'challenge', 'plain', ARRAY['meetings'], 'Device', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
           [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
         ),
       ).rejects.toThrow();
 
       await expect(
         c.query(
-          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-           VALUES ($1, $2, $3, $4, 'challenge', 'S256', ARRAY['meetings'], 'Device', now(), now() + interval '11 minutes')`,
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, 'challenge', 'S256', ARRAY['meetings'], 'Device', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '11 minutes')`,
           [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
         ),
       ).rejects.toThrow();
@@ -561,11 +566,11 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
 
     const hasExchangeProc = await admin(async (c) => {
       const res = await c.query<{ exists: boolean }>(
-        `SELECT to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea)') IS NOT NULL AS exists`,
+        `SELECT to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea,text)') IS NOT NULL AS exists`,
       );
       return res.rows[0]?.exists === true;
     });
-    expect(hasExchangeProc, 'crove_kernel.exchange_extension_auth_code(bytea, text, bytea) must exist once tables land').toBe(true);
+    expect(hasExchangeProc, 'crove_kernel.exchange_extension_auth_code(bytea, text, bytea, text) must exist once tables land').toBe(true);
 
     if (hasExchangeProc) {
       // Call exchange as crove_app (appUrl)
@@ -574,11 +579,11 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       try {
         const dummyTokenHash = randomBytes(32);
 
-        const safeExchange = async (codeHash: Buffer, verifier: string, tokenHash: Buffer) => {
+        const safeExchange = async (codeHash: Buffer, verifier: string, tokenHash: Buffer, extensionId: string | null = EXT_A) => {
           try {
             return await appClient.query<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>(
-              `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
-              [codeHash, verifier, tokenHash],
+              `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3, $4)`,
+              [codeHash, verifier, tokenHash, extensionId],
             );
           } catch (e) {
             if (isExpectedRefusal(e)) return { rows: [] };
@@ -610,6 +615,42 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const replayRes = await safeExchange(authCodes.activeA1.hash, authCodes.activeA1.verifier, randomBytes(32));
         expect(replayRes.rows.length, 'replayed exchange must return 0 rows or throw').toBe(0);
 
+        // A code is bound to the extension it was issued for (#2850, step 2 #2855): another id, a malformed id, no id and an unbound code all get no
+        // row, and a refusal for the id does not spend the code or count a failed attempt, so the real extension can still use it.
+        const boundCode = makeAuthCode();
+        const unboundCode = makeAuthCode();
+        await admin(async (c) => {
+          await c.query(
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Bound Test', $6, now(), now() + interval '5 minutes')`,
+            [orgAId, boundCode.id, users.memberA1, boundCode.hash, boundCode.challenge, EXT_A],
+          );
+          await c.query(
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Unbound Test', now(), now() + interval '5 minutes')`,
+            [orgAId, unboundCode.id, users.memberA1, unboundCode.hash, unboundCode.challenge],
+          );
+        });
+        for (const asking of [EXT_B, 'A'.repeat(32), 'c'.repeat(31), '', null]) {
+          const refused = await safeExchange(boundCode.hash, boundCode.verifier, randomBytes(32), asking);
+          expect(refused.rows.length, `a code for ${EXT_A} must not exchange for ${String(asking)}`).toBe(0);
+        }
+        for (const asking of [EXT_A, EXT_B, null]) {
+          const refused = await safeExchange(unboundCode.hash, unboundCode.verifier, randomBytes(32), asking);
+          expect(refused.rows.length, `an unbound code must not exchange for ${String(asking)}`).toBe(0);
+        }
+        await admin(async (c) => {
+          const state = await c.query<{ id: string; consumed_at: Date | null; failed_attempts: number }>(
+            `SELECT id, consumed_at, failed_attempts FROM crove_kernel.extension_auth_code WHERE id = ANY($1::uuid[])`,
+            [[boundCode.id, unboundCode.id]],
+          );
+          expect(state.rows).toHaveLength(2);
+          for (const row of state.rows) expect(row, 'a refused id must not spend the code').toMatchObject({ consumed_at: null, failed_attempts: 0 });
+        });
+        const boundOk = await safeExchange(boundCode.hash, boundCode.verifier, randomBytes(32), EXT_A);
+        expect(boundOk.rows.length, 'the code of that id still exchanges, once').toBe(1);
+        expect((await safeExchange(boundCode.hash, boundCode.verifier, randomBytes(32), EXT_A)).rows.length).toBe(0);
+
         // Newly exchanged token verifies immediately
         const verifyRes = await appClient.query<{ token_id: string }>(
           `SELECT * FROM crove_kernel.verify_extension_token($1, 'meetings')`,
@@ -623,8 +664,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const demoteCode = makeAuthCode();
         await admin(async (c) => {
           await c.query(
-            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Demote Test', now(), now() + interval '5 minutes')`,
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Demote Test', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
             [orgAId, demoteCode.id, users.memberA1, demoteCode.hash, demoteCode.challenge],
           );
           await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
@@ -644,8 +685,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const disabledCode = makeAuthCode();
         await admin(async (c) => {
           await c.query(
-            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Disabled Test', now(), now() + interval '5 minutes')`,
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Disabled Test', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
             [orgAId, disabledCode.id, users.memberA1, disabledCode.hash, disabledCode.challenge],
           );
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA1]);
@@ -665,8 +706,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const removedCode = makeAuthCode();
         await admin(async (c) => {
           await c.query(
-            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
-             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Removed Test', now(), now() + interval '5 minutes')`,
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Removed Test', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
             [orgAId, removedCode.id, users.memberA1, removedCode.hash, removedCode.challenge],
           );
           await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
@@ -689,11 +730,11 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
     // Verify issue_extension_auth_code definer access control (Round 2 item 3: pinned to_regprocedure)
     const hasIssueProc = await admin(async (c) => {
       const res = await c.query<{ exists: boolean }>(
-        `SELECT to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text)') IS NOT NULL AS exists`,
+        `SELECT to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text,text)') IS NOT NULL AS exists`,
       );
       return res.rows[0]?.exists === true;
     });
-    expect(hasIssueProc, 'crove_kernel.issue_extension_auth_code(bytea, text, text, text[], text) must exist once tables land').toBe(true);
+    expect(hasIssueProc, 'crove_kernel.issue_extension_auth_code(bytea, text, text, text[], text, text) must exist once tables land').toBe(true);
 
     if (hasIssueProc) {
       // Member A1 can issue an auth code
@@ -701,8 +742,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       const issueRes = await run(memberA1, async (c) => {
         return (
           await c.query<{ id: string }>(
-            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device A1') AS id`,
-            [memberCode.hash, memberCode.challenge],
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device A1', $3) AS id`,
+            [memberCode.hash, memberCode.challenge, EXT_A],
           )
         ).rows[0];
       });
@@ -713,8 +754,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       await expect(
         run(viewerA, async (c) => {
           return await c.query(
-            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Viewer') AS id`,
-            [viewerCode.hash, viewerCode.challenge],
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Viewer', $3) AS id`,
+            [viewerCode.hash, viewerCode.challenge, EXT_A],
           );
         }),
       ).rejects.toSatisfy((e) => isExpectedRefusal(e));
@@ -723,8 +764,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       await expect(
         run(systemA, async (c) => {
           return await c.query(
-            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Sys') AS id`,
-            [viewerCode.hash, viewerCode.challenge],
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Sys', $3) AS id`,
+            [viewerCode.hash, viewerCode.challenge, EXT_A],
           );
         }),
       ).rejects.toSatisfy((e) => isExpectedRefusal(e));
@@ -732,8 +773,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       await expect(
         run(agentA, async (c) => {
           return await c.query(
-            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Agent') AS id`,
-            [viewerCode.hash, viewerCode.challenge],
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Agent', $3) AS id`,
+            [viewerCode.hash, viewerCode.challenge, EXT_A],
           );
         }),
       ).rejects.toSatisfy((e) => isExpectedRefusal(e));
@@ -835,7 +876,7 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       try {
         const dummyCode = makeAuthCode();
         const unenteredIssue = await unenteredClient
-          .query(`SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Probe')`, [dummyCode.hash, dummyCode.challenge])
+          .query(`SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Probe', $3)`, [dummyCode.hash, dummyCode.challenge, EXT_A])
           .then((r) => r.rows)
           .catch((e) => {
             if (isExpectedRefusal(e)) return [];
@@ -1130,6 +1171,19 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         );
         expect(pubAcl.rows[0]?.has_exec, `${d.proname} PUBLIC EXECUTE must be false`).toBe(false);
       }
+
+      // Step 2 of #2850 (#2855): only the id-bound definers exist; the 5-argument issue and the 3-argument exchange are dropped.
+      const pinned = await c.query<{ issue6: string | null; exchange4: string | null; issue5: string | null; exchange3: string | null }>(
+        `SELECT to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text,text)')::text AS issue6,
+                to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea,text)')::text AS exchange4,
+                to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text)')::text AS issue5,
+                to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea)')::text AS exchange3`,
+      );
+      expect(pinned.rows[0]?.issue6).not.toBeNull();
+      expect(pinned.rows[0]?.exchange4).not.toBeNull();
+      expect(pinned.rows[0]?.issue5, 'the unbound issue must be gone').toBeNull();
+      expect(pinned.rows[0]?.exchange3, 'the unbound exchange must be gone').toBeNull();
+      expect(definers.rows.filter((d) => d.proname === 'issue_extension_auth_code' || d.proname === 'exchange_extension_auth_code')).toHaveLength(2);
 
       // Enforce EXECUTE matrix on ALL 5 definers: crove_app = true, all other runtime roles = false (Round 2 item 2)
       for (const d of definers.rows) {
