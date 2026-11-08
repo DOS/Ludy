@@ -26,6 +26,8 @@ export const PROPOSAL_PREPARERS = {
   'finance.stock.close_period': 'finance.stock.prepare_close',
   // The confirmation of a count of stock (#2513), built from the books for the count named.
   'finance.stock.count_confirm': 'finance.stock.prepare_count',
+  // The posting of an approved pay run (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
+  'finance.payroll_posting.record': 'hr.payroll.posting.prepare',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',

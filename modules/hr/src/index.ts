@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { hrEmployeeCommands, hrEmployeeQueries } from './employees.ts';
 import { hrPayrollCommands, hrPayrollQueries } from './payroll-run.ts';
+import { hrPostingCommands } from './payroll-posting.ts';
 import { hrDeclarationCommands, hrDeclarationQueries } from './declaration-export.ts';
 
 export * from './employees.ts';
 export * from './payroll-run.ts';
+export * from './payroll-posting.ts';
 export * from './declarations.ts';
 export { declarationMonths } from './declaration-export.ts';
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 
-export const hrCommands = [...hrEmployeeCommands, ...hrPayrollCommands, ...hrDeclarationCommands];
+export const hrCommands = [...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrDeclarationCommands];
 export const hrQueries = [...hrEmployeeQueries, ...hrPayrollQueries, ...hrDeclarationQueries];
 export { hrManifest } from './manifest.ts';

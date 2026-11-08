@@ -272,7 +272,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -1474,6 +1474,9 @@ export const contract = {
           // The confirmation of a count of stock (#2513): the server works out the differences from the books and builds the entry; an owner or an admin approves, and approving writes
           // the adjustment moves. STOCK_COUNT_NOT_DRAFT, STOCK_COUNT_CLOSED, PERIOD_LOCKED, STOCK_COUNT_STALE (409), STOCK_COUNT_UNPRICED, STOCK_COUNT_NO_DIFFERENCE (422).
           z.object({ command: z.literal('finance.stock.count_confirm'), input: zStockCountIdInput, idempotencyKey: zId }),
+          // The posting of an approved pay run (#2532, ADR-0046): the server builds one line per account from the frozen run, with the account map of the entity's chart; an owner or an admin
+          // approves it. HR_RUN_NOT_FOUND (404), HR_RUN_NOT_APPROVED, HR_POSTING_OPEN, HR_POSTING_DONE, PERIOD_LOCKED (409), HR_POSTING_ADJUSTMENTS, HR_POSTING_MISMATCH (422).
+          z.object({ command: z.literal('finance.payroll_posting.record'), input: zHrPostingRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),

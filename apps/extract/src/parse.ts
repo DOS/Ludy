@@ -11,6 +11,7 @@ import { FeedError, readFeed } from './feed.ts';
 import { PortalListError, readPortalList } from './portal-list.ts';
 import { ArchiveError, readZip } from './zip.ts';
 import { readBankStatement } from './bank-statement.ts';
+import { readMarketplaceIncome } from './marketplace-income.ts';
 import { readMarketplaceOrders } from './marketplace-orders.ts';
 
 const MiB = 1024 * 1024;
@@ -196,6 +197,9 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
     case 'marketplace_orders':
       // A Shopee, TikTok Shop or Lazada order report (#2515): .xlsx or CSV, read through the platform's profile; only the allow-listed columns come back.
       return { ok: true, kind, orders: readMarketplaceOrders(bytes) };
+    case 'marketplace_income':
+      // A Shopee or TikTok Shop income report (#2516): .xlsx or CSV, the per-order table found on one of the first sheets and read through the platform's profile; only the allow-listed columns come back.
+      return { ok: true, kind, income: readMarketplaceIncome(bytes) };
   }
 }
 
@@ -210,6 +214,7 @@ const UNREADABLE: Record<ExtractKind, string> = {
   feed: 'Không đọc được nguồn tin',
   bank_statement: 'Không đọc được sao kê ngân hàng',
   marketplace_orders: 'Không đọc được báo cáo đơn hàng của sàn',
+  marketplace_income: 'Không đọc được báo cáo thu nhập của sàn',
 };
 
 export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractResponse> {
