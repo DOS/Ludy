@@ -76,12 +76,18 @@ const NARROW = [
   "crove_kernel.idempotency_key",
   "crove_kernel.outbox_pending",
 ];
-const LOGINS = [
-  "crove_app",
-  "crove_worker",
-  "crove_tenant",
-  "crove_definer_tenant",
+// Every schema but the system ones, and functions and procedures both: a definer in any schema can seal or read a context.
+// The key rotation, the re-entry guard, the MAC, the verifier and the writer: the whole of the machinery, each with its reason to touch the seal.
+const SEAL_TOUCHERS = [
+  "crove_kernel.context_key_rotate()",
+  "crove_kernel.context_reentry_guard()",
+  "crove_kernel.ctx_mac(text)",
+  "crove_kernel.ctx_verified()",
+  "crove_kernel.ctx_write(jsonb)",
 ];
+const HASH = "a".repeat(64);
+const NON_SYSTEM =
+  "s.nspname NOT LIKE 'pg\\_%' AND s.nspname <> 'information_schema'";
 
 suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   const dbName = `crove_test_member_vy_bg_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -383,7 +389,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
         `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-         WHERE s.nspname LIKE 'crove\\_%' AND p.prokind = 'f' AND pg_get_functiondef(p.oid) ~* 'ctx_write\\s*\\('
+         WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* 'ctx_write\\s*\\('
          ORDER BY 1`,
       ),
     );
@@ -392,6 +398,18 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       rows.map((r) => r.n).sort(),
       "functions that call ctx_write",
     ).toEqual([...CTX_WRITERS, ...(has.entry ? [MEMBER_ENTRY] : [])].sort());
+  });
+
+  it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {
+    const { rows } = await admin((c) =>
+      c.query<{ n: string }>(
+        `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+         WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* 'ctx_mac\\s*\\(|context_key|crove\\.ctx_seal'
+         ORDER BY 1`,
+      ),
+    );
+    // A function that computes the seal, reads the key or sets crove.ctx_seal could seal a member context of its own.
+    expect(rows.map((r) => r.n)).toEqual(SEAL_TOUCHERS);
   });
 
   it("refuses a member's Vy agent and run in enter_agent_context, and enters no member context through any other entry", async () => {
@@ -445,14 +463,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       readers: (
         await c.query<{ n: string }>(
           `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-           WHERE s.nspname LIKE 'crove\\_%' AND p.prokind = 'f' AND p.proname <> 'ctx_acting_user_id' AND pg_get_functiondef(p.oid) ~* 'ctx_acting_user_id'
+           WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND p.oid <> to_regprocedure('crove_kernel.ctx_acting_user_id()') AND pg_get_functiondef(p.oid) ~* 'ctx_acting_user_id'
            ORDER BY 1`,
         )
       ).rows.map((r) => r.n),
       sealReaders: (
         await c.query<{ n: string }>(
           `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-           WHERE s.nspname LIKE 'crove\\_%' AND p.prokind = 'f' AND pg_get_functiondef(p.oid) ~* 'ctx_verified\\s*\\(\\s*\\)\\s*(->>?|#>>?)\\s*(''member''|''{member}'')'
+           WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* '(->>?|#>>?)\\s*''\\{?member\\}?'''
            ORDER BY 1`,
         )
       ).rows.map((r) => r.n),
@@ -473,6 +491,10 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
   it("holds only the catalog's tables, matches the policies in both directions, and is written by no login", async () => {
+    // The catalog and the entry arrive together: one without the other is a half-built stage B.
+    expect(has.catalog, "the catalog exists exactly when the entry does").toBe(
+      has.entry,
+    );
     if (!has.catalog) return;
     const catalog = (
       await admin((c) =>
@@ -504,17 +526,17 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         `${row.t} has a write-covering policy that reads the helper`,
       ).toBe("write");
     }
+    // Every crove_* role that is not a superuser (a login, a tenant role, the auth reader, the prober, the reporter): none writes the catalog,
+    // by table privilege or by a column privilege.
     const privileges = await admin((c) =>
-      c.query<{ r: string; p: string; ok: boolean }>(
-        `SELECT r, p, has_table_privilege(r, 'crove_kernel.member_vy_table', p) AS ok
-         FROM unnest($1::text[]) r, unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p`,
-        [LOGINS],
+      c.query<{ r: string; p: string }>(
+        `SELECT r.rolname AS r, p AS p FROM pg_roles r, unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
+         WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+           AND (has_table_privilege(r.rolname, 'crove_kernel.member_vy_table', p)
+                OR (p IN ('INSERT', 'UPDATE') AND has_any_column_privilege(r.rolname, 'crove_kernel.member_vy_table', p)))`,
       ),
     );
-    expect(
-      privileges.rows.filter((r) => r.ok),
-      "logins and tenant roles that can write the catalog",
-    ).toEqual([]);
+    expect(privileges.rows, "roles that can write the catalog").toEqual([]);
     for (const login of ["crove_app", "crove_worker"]) {
       const written = await outcome(
         inContext(
@@ -921,42 +943,84 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         await c.query("ROLLBACK TO SAVEPOINT s");
         return o;
       };
-      const audit = (detail: unknown) =>
+      const audit = (
+        detail: unknown,
+        cols: { command?: string; target?: string | null; sha?: string } = {},
+      ) =>
         attempt(
-          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail) VALUES ($1, 'agent', $2, 'kernel.member_vy.result.store', $3, 'ok', 'x', $4::jsonb)`,
-          [orgId, run.agentId, randomUUID(), JSON.stringify(detail)],
+          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, input_sha256, detail) VALUES ($1, 'agent', $2, $3, $4, 'ok', $5, $6, $7::jsonb)`,
+          [
+            orgId,
+            run.agentId,
+            cols.command ?? "kernel.member_vy.result.store",
+            randomUUID(),
+            cols.target === undefined ? null : cols.target,
+            cols.sha ?? HASH,
+            JSON.stringify(detail),
+          ],
         );
-      // The audit row of this agent and run with ids, enums and numbers passes (the positive control); planted text, an unlisted key or a nested value never does.
-      const clean = await audit({
+      // The audit row of this agent and run with ids, enums and numbers passes (the positive control): the real command, a 64-hex hash and a
+      // detail of known shapes. Text anywhere else, in any column or key, never does, not even an ASCII slug a person could have typed.
+      const goodDetail = {
         agentRun: run.runId,
         resultId: randomUUID(),
         feature: "notes.summary",
+        status: "ready",
         bodyLength: 120,
-      });
+      };
+      const clean = await audit(goodDetail);
       expect(
         clean.ok || clean.message,
         "an audit row with ids and numbers only",
       ).toBe(true);
-      for (const [why, detail] of [
+      for (const [why, detail, cols] of [
         [
           "planted text in a listed key",
           {
             agentRun: run.runId,
             feature: "Tóm tắt riêng: khách đề nghị giảm giá 12%",
           },
+          {},
         ],
-        ["a key off the list", { agentRun: run.runId, summary: "x" }],
-        ["a nested value", { agentRun: run.runId, status: { a: 1 } }],
-        ["another run", { agentRun: randomUUID() }],
+        [
+          "an ASCII slug in feature",
+          { agentRun: run.runId, feature: "goi_anh_Nam_0909123456" },
+          {},
+        ],
+        [
+          "an ASCII slug in status",
+          { agentRun: run.runId, status: "goi_anh_Nam" },
+          {},
+        ],
+        [
+          "a code with digits",
+          { agentRun: run.runId, code: "GOI_0909123456" },
+          {},
+        ],
+        [
+          "an id that is no uuid",
+          { agentRun: run.runId, resultId: "khach-hang-Nam" },
+          {},
+        ],
+        ["a key off the list", { agentRun: run.runId, summary: "x" }, {}],
+        ["a nested value", { agentRun: run.runId, status: { a: 1 } }, {}],
+        ["another run", { agentRun: randomUUID() }, {}],
+        ["text in command", goodDetail, { command: "Gọi anh Nam 0909123456" }],
+        [
+          "a command off the member_vy names",
+          goodDetail,
+          { command: "kernel.task.create" },
+        ],
+        ["text in target_type", goodDetail, { target: "Tóm tắt riêng" }],
+        [
+          "text in input_sha256",
+          goodDetail,
+          { sha: "Tóm tắt riêng: khách đề nghị giảm giá 12%" },
+        ],
+        ["a hash of the wrong length", goodDetail, { sha: "x" }],
       ] as const) {
-        expect(await audit(detail), why).toMatchObject(forbidden);
+        expect(await audit(detail, cols), why).toMatchObject(forbidden);
       }
-      expect(
-        await attempt(
-          `INSERT INTO crove_kernel.idempotency_key DEFAULT VALUES`,
-        ),
-        "an idempotency key of nobody's run",
-      ).toMatchObject(forbidden);
       expect(
         await attempt(`INSERT INTO crove_kernel.agent_wakeup DEFAULT VALUES`),
         "a wakeup",
@@ -1063,6 +1127,108 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         "an entity-limited member's Vy",
       ).toEqual([]);
     });
+  });
+
+  it("lets a member-mode context emit no event and keep no idempotency text: outbox_pending, emit() and an own-run key (AGENT_FORBIDDEN)", async () => {
+    if (!has.entry || !has.kind) return;
+    const run = await liveRun("vyUser");
+    // As the superuser, so a missing privilege cannot stand in for the guard: the guard fires on the row, whoever writes it.
+    const attempts = await admin(async (c) => {
+      await c.query("BEGIN");
+      try {
+        await memberEnter(run.agentId, run.runId)(c);
+        const attempt = async (sql: string, params: unknown[] = []) => {
+          await c.query("SAVEPOINT s");
+          const o = await outcome(c.query(sql, params));
+          await c.query("ROLLBACK TO SAVEPOINT s");
+          return o;
+        };
+        const ownKey = `agent:${run.agentId}:${run.runId}`;
+        const key = (
+          k: string,
+          command: string,
+          sha: string,
+          response: unknown,
+        ) =>
+          attempt(
+            `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, response) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+            [orgId, ownKey, k, command, sha, JSON.stringify(response)],
+          );
+        return {
+          // emit() with any type and a free-text payload, a declared-looking type with ids only, and a direct outbox_pending row.
+          emitText: await attempt(
+            `SELECT crove_kernel.emit('kernel.x', '{"t":"Tóm tắt riêng"}'::jsonb, gen_random_uuid())`,
+          ),
+          emitIds: await attempt(
+            `SELECT crove_kernel.emit('kernel.member_vy.result.stored', jsonb_build_object('resultId', gen_random_uuid()), gen_random_uuid())`,
+          ),
+          pending: await attempt(
+            `INSERT INTO crove_kernel.outbox_pending DEFAULT VALUES`,
+          ),
+          // The run's own key: ids and a hash pass (the control); text in the key, the command, the hash or the response never does.
+          keyOk: await key("store-1", "kernel.member_vy.result.store", HASH, {
+            resultId: randomUUID(),
+          }),
+          keyText: await key(
+            "Gọi anh Nam",
+            "kernel.member_vy.result.store",
+            HASH,
+            { resultId: randomUUID() },
+          ),
+          commandText: await key(
+            "store-2",
+            "Gọi anh Nam 0909123456",
+            HASH,
+            null,
+          ),
+          hashText: await key(
+            "store-3",
+            "kernel.member_vy.result.store",
+            "Tóm tắt riêng",
+            null,
+          ),
+          responseText: await key(
+            "store-4",
+            "kernel.member_vy.result.store",
+            HASH,
+            { feature: "Tóm tắt riêng: khách đề nghị giảm giá 12%" },
+          ),
+          responseSlug: await key(
+            "store-5",
+            "kernel.member_vy.result.store",
+            HASH,
+            { status: "goi_anh_Nam_0909123456" },
+          ),
+          otherRun: await attempt(
+            `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256) VALUES ($1, $2, 'k', 'kernel.member_vy.result.store', $3)`,
+            [orgId, `agent:${run.agentId}:${randomUUID()}`, HASH],
+          ),
+        };
+      } finally {
+        await c.query("ROLLBACK");
+      }
+    });
+    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN" };
+    for (const [why, o] of [
+      ["emit() with free text", attempts.emitText],
+      [
+        "emit() with ids only (no event type is declared for member mode)",
+        attempts.emitIds,
+      ],
+      ["a direct outbox_pending row", attempts.pending],
+      ["text in the idempotency key", attempts.keyText],
+      ["text in the idempotency command", attempts.commandText],
+      ["text in the request hash", attempts.hashText],
+      ["text in the stored response", attempts.responseText],
+      ["an ASCII slug in the stored response", attempts.responseSlug],
+      ["another run's idempotency key", attempts.otherRun],
+    ] as const) {
+      expect(o, why).toMatchObject(forbidden);
+    }
+    expect(
+      attempts.keyOk.ok || attempts.keyOk.message,
+      "an idempotency key of the run's own with ids and a hash only",
+    ).toBe(true);
   });
 
   it("writes only its own result: the run's result updates, another member's is out of reach, and the cross-member insert is refused", async () => {
