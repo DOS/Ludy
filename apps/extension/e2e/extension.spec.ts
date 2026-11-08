@@ -86,7 +86,7 @@ test('the code exchange carries the extension\'s own Origin, which the kernel bi
   fake.requests.length = 0;
   fake.exchanges.length = 0;
   const page = await popup();
-  const asked = await page.evaluate(() => {
+  await page.evaluate(() => {
     const seen: { redirect: string } = { redirect: '' };
     (chrome.identity as { launchWebAuthFlow: unknown }).launchWebAuthFlow = async ({ url }: { url: string }) => {
       const params = new URL(url).searchParams;
@@ -98,13 +98,12 @@ test('the code exchange carries the extension\'s own Origin, which the kernel bi
       return back.toString();
     };
     (window as unknown as { seen: typeof seen }).seen = seen;
-    return seen;
   });
-  expect(asked).toBeDefined();
   await page.getByRole('button', { name: 'Đăng nhập Ludy' }).click();
   await expect.poll(() => fake.exchanges.length).toBe(1);
   const redirect = await page.evaluate(() => (window as unknown as { seen: { redirect: string } }).seen.redirect);
   // The address the extension asked the app to send the code to is its own id's, and the exchange request says the same id.
+  expect(redirect).not.toBe('');
   expect(new URL(redirect).hostname).toBe(`${extensionId}.chromiumapp.org`);
   const exchange = fake.requests.filter((r) => r.method === 'POST' && r.path === '/api/extension/token');
   expect(exchange).toHaveLength(1);
