@@ -41,12 +41,12 @@ CREATE POLICY le_scope ON crove_finance.marketplace_party AS RESTRICTIVE FOR ALL
   USING ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))
   WITH CHECK ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]));
 
--- The party a link names is an organization that is not merged into another: a person is never a platform. Runs as the writer, which reads the party through its own policies; a party it
--- cannot see is refused too (stricter than the foreign key alone).
+-- The party a link names is an organization that is not merged into another: a person is never a platform. Runs as the writer, which reads the party through its own policies: a party it
+-- cannot see is left to the foreign key and the row policies, so a write for another org is refused by RLS.
 CREATE OR REPLACE FUNCTION crove_finance.marketplace_party_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM crove_kernel.party p WHERE p.org_id = NEW.org_id AND p.id = NEW.party_id AND p.kind = 'organization' AND p.duplicate_of IS NULL) THEN
+  IF EXISTS (SELECT 1 FROM crove_kernel.party p WHERE p.org_id = NEW.org_id AND p.id = NEW.party_id AND (p.kind <> 'organization' OR p.duplicate_of IS NOT NULL)) THEN
     RAISE EXCEPTION 'MARKETPLACE_PARTY_KIND' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;

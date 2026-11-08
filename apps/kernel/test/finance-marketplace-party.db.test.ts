@@ -137,8 +137,7 @@ suite('marketplace party links on PostgreSQL (#2516)', () => {
     const p = await party('organization');
     await expect(
       asMember(stranger, orgB, (c) => c.query('INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, $2, $3)', [orgA, 'lazada', p])),
-    ).rejects.toThrow();
-    // Refused by the guard (the party is invisible to the other org) or by RLS: either way nothing landed.
+    ).rejects.toMatchObject({ code: '42501' });
     expect((await admin((c) => c.query('SELECT 1 FROM crove_finance.marketplace_party WHERE party_id = $1', [p]))).rowCount).toBe(0);
   });
 
