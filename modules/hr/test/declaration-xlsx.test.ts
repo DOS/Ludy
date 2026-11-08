@@ -26,7 +26,7 @@ function documentWith(names: string[]): HrDeclarationDocument {
     })),
     approvedMonths: ['2026-07'],
   });
-  return zHrDeclarationDocument.parse(doc);
+  return zHrDeclarationDocument.parse({ ...doc, used: { months: ['2026-07'] } });
 }
 
 describe('the declaration workbook (#2533)', () => {

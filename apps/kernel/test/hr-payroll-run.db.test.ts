@@ -477,6 +477,8 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
   const EXPORT_IDENTITY_DIGITS = '079123456789';
   const EXPORT_ACCOUNT = '1903 4455 6677 88';
   const EXPORT_ACCOUNT_DIGITS = '19034455667788';
+  const EXPORT_TAX = '3498120657';
+  const EXPORT_INSURANCE = '9071263845';
   const EXPORT_NAME = 'Nguyễn Thị Hằng Export';
   const EXPORT_DEPENDENT = 'Nguyễn Văn Con Export';
   const system = { type: 'system' as const, component: 'org-export' };
@@ -484,7 +486,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
   // An org with one employee (the identity and account numbers sealed), a dependent and a draft pay run; `closing` moves it to offboarding (R3, a fresh second factor), as an owner closing it does.
   async function exportOrg(closing = false) {
     const o = await org();
-    const employee = await o.hire({ address: '12 Đường Canary, Quận 1', identityNumber: EXPORT_IDENTITY, accountNumber: EXPORT_ACCOUNT }, WAGES[0], EXPORT_NAME);
+    const employee = await o.hire({ address: '12 Đường Canary, Quận 1', identityNumber: EXPORT_IDENTITY, accountNumber: EXPORT_ACCOUNT, birthDate: '1990-05-17', taxCode: EXPORT_TAX, insuranceNumber: EXPORT_INSURANCE }, WAGES[0], EXPORT_NAME);
     await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: employee.employeeId, displayName: EXPORT_DEPENDENT, relation: 'child', registeredOn: '2026-02-01' });
     await o.open('2026-06');
     if (closing) await rt.execute('kernel.org.offboard', { confirmSlug: o.slug }, { actor: asMfa(o.owner), orgId: o.orgId });
@@ -503,7 +505,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
   const DECL_IDENTITY = '079 321 654 987';
   const DECL_IDENTITY_DIGITS = '079321654987';
   const DECL_TAX = '8765432101';
-  const DECL_INSURANCE = 'SI-4455667788';
+  const DECL_INSURANCE = '7305186294';
   async function declarationOrg() {
     setRuleStatus('confirmed');
     const o = await org();
@@ -532,6 +534,9 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(doc.layout.version).toBe('ludy-hr-05kk/1');
     expect(doc.draft).toContain('dòng 14');
     expect(doc.header.find((h) => h.label.startsWith('Tháng chưa'))?.value).toBe('2026-09');
+    // The list says which approved months it used.
+    expect(doc.used).toEqual({ months: ['2026-07', '2026-08'] });
+    expect(doc.header.find((h) => h.label.startsWith('Bảng lương đã duyệt'))?.value).toBe('2026-07, 2026-08');
     const [summary, progressive] = doc.sheets;
     const stored = await withAdmin(async (c) => (await c.query<{ pit: string; n: string }>(`SELECT COALESCE(sum(l.pit), 0)::text AS pit, count(DISTINCT l.employee_id)::text AS n FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.status = 'approved'`, [o.orgId])).rows[0]);
     const value = (item: string) => summary?.rows.find((r) => r.item?.startsWith(item))?.value;
@@ -554,6 +559,8 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const july = await get(o.owner, 'd02lt', '2026-07');
     expect(july.sheets[0]?.rows).toEqual([]);
     const annual = await get(o.owner, 'qtt', '2026');
+    // The annual lists name the authorization list used: the year and the two people (Chi and the formula-named one) who authorized.
+    expect(annual.used).toEqual({ months: ['2026-07', '2026-08'], authorizedYear: 2026, authorizedPeople: 2 });
     expect(annual.sheets[1]?.rows.map((r) => r.name).sort()).toEqual([NAMES[2], '=HYPERLINK("http://example.test","click")'].sort());
     expect(annual.sheets[2]?.rows.map((r) => r.name).sort()).toEqual([NAMES[0], NAMES[1]].sort());
     expect(annual.notes[0]).toContain('Chưa có bảng lương đã duyệt');
@@ -612,7 +619,10 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // A download leaves an audit row with counts only.
     const exported = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
     expect(exported.length).toBe(8);
-    expect(exported.map((r) => JSON.parse(r.detail) as { kind: string; period: string }).find((d) => d.kind === 'kk')).toMatchObject({ period: '2026-Q3' });
+    const details = exported.map((r) => JSON.parse(r.detail) as { kind: string; period: string; months: string[]; authorizedYear?: number; authorizedPeople?: number });
+    expect(details.find((d) => d.kind === 'kk')).toMatchObject({ period: '2026-Q3', months: ['2026-07', '2026-08'] });
+    expect(details.find((d) => d.kind === 'qtt')).toMatchObject({ period: '2026', months: ['2026-07', '2026-08'], authorizedYear: 2026, authorizedPeople: 2 });
+    expect(details.find((d) => d.kind === 'd02lt')).not.toHaveProperty('authorizedYear');
     for (const r of exported) for (const needle of [DECL_IDENTITY_DIGITS, DECL_TAX, NAMES[0], NAMES[1]]) expect(r.row, needle).not.toContain(needle);
   });
 
@@ -632,10 +642,12 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
     expect(employees[0]).not.toHaveProperty('national_id_sealed');
     expect(employees[0]).not.toHaveProperty('bank_account_sealed');
+    expect(employees[0]).not.toHaveProperty('tax_code_sealed');
+    expect(employees[0]).not.toHaveProperty('insurance_number_sealed');
     expect(employments[0]).toMatchObject({ contract_type: 'indefinite' });
     expect(dependents[0]).toMatchObject({ display_name: EXPORT_DEPENDENT });
     const text = JSON.stringify([employees, employments, dependents, runs, lines]);
-    for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, 'crove:s1:']) expect(text, needle).not.toContain(needle);
+    for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
@@ -643,7 +655,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // Each row names the table read (not personal data) and says the read was started.
     expect(audits.map((a) => (JSON.parse(a.detail) as { table: string }).table)).toEqual([...OWNER_RUN_EXPORT_TABLE_NAMES]);
     expect(JSON.parse(audits[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read' });
-    for (const a of audits) for (const needle of [EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT_DIGITS, EXPORT_NAME, EXPORT_DEPENDENT]) expect(a.row, needle).not.toContain(needle);
+    for (const a of audits) for (const needle of [EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, EXPORT_NAME, EXPORT_DEPENDENT]) expect(a.row, needle).not.toContain(needle);
   });
 
   it('(org export, #2676) refuses a member, an admin, an admin of another org, the system and the worker; the snapshot cannot be asked for the tables', async () => {

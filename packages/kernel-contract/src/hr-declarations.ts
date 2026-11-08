@@ -41,6 +41,8 @@ export const zHrDeclarationDocument = z.object({
   header: z.array(z.object({ label: z.string(), value: z.string() })),
   sheets: z.array(zSheet),
   notes: z.array(z.string()),
+  // What the document was built from, so a file says which approved months and which authorization list it used (also recorded in the audit row of the download).
+  used: z.object({ months: z.array(z.string()), authorizedYear: z.number().int().optional(), authorizedPeople: z.number().int().optional() }),
 });
 export type HrDeclarationDocument = z.infer<typeof zHrDeclarationDocument>;
 
@@ -49,6 +51,10 @@ export const zHrDeclarationExport = z.strictObject({
   kind: z.enum(HR_DECLARATION_KINDS),
   period: z.string().max(10),
   rows: z.number().int().min(0),
+  // The approved months the list was built from, and for the annual lists the authorization list's year and size.
+  months: z.array(z.string().max(7)).max(13),
+  authorizedYear: z.number().int().optional(),
+  authorizedPeople: z.number().int().optional(),
   legalEntityId: zId.optional(),
 });
 export type HrDeclarationExport = z.infer<typeof zHrDeclarationExport>;

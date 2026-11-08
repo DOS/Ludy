@@ -2687,7 +2687,7 @@ export function createHttpApp(deps: HttpDeps) {
           const document = await runtime.query<HrDeclarationDocument>('hr.payroll.declaration.get', query, { actor: actorOf(user), orgId });
           const bytes = await buildDeclarationWorkbook(document, config.BRAND_NAME);
           const rows = document.sheets.reduce((n, sheet) => n + sheet.rows.length, 0);
-          await runtime.execute('hr.payroll.declaration.export', { ...query, rows }, { actor: actorOf(user), orgId });
+          await runtime.execute('hr.payroll.declaration.export', { ...query, rows, months: document.used.months, ...document.used.authorizedYear === undefined ? {} : { authorizedYear: document.used.authorizedYear, authorizedPeople: document.used.authorizedPeople } }, { actor: actorOf(user), orgId });
           return new Response(body(bytes), {
             headers: {
               'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
