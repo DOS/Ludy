@@ -2,7 +2,7 @@
 -- Crove kernel (issue #2756, ADR-0049 stage B): the member-scoped background context. Idempotent; applied files stay untouched.
 --   member_vy_table                      the catalog of tables Vy in member mode may touch: mode 'read' or 'write'. Filled only by a
 --                                        migration. A table whose policy reads ctx_acting_user_id() is listed (the invariant suite
---                                        scans both ways); ai_run, member_vy_memory and member_vy_result are 'write', notes 'read'.
+--                                        scans both ways); ai_run and member_vy_result are 'write', member_vy_memory and notes 'read'.
 --   ctx_acting_user_id()                 now also the sealed member of a member-scoped agent context (kind 'member_vy').
 --   enter_member_vy_context(org, agent, run)
 --                                        worker login only. Refuses an org-chart agent, a run that is not live, a member who is no
@@ -26,7 +26,7 @@ GRANT SELECT ON crove_kernel.member_vy_table TO crove_tenant;
 SELECT crove_kernel.agent_write_guard_install('crove_kernel.member_vy_table');
 INSERT INTO crove_kernel.member_vy_table (table_name, mode, adr) VALUES
   ('crove_kernel.ai_run', 'write', 'ADR-0049 decision 2'),
-  ('crove_kernel.member_vy_memory', 'write', 'ADR-0049 decision 3'),
+  ('crove_kernel.member_vy_memory', 'read', 'ADR-0049 decision 3'),
   ('crove_kernel.member_vy_result', 'write', 'ADR-0049 decision 3'),
   ('crove_notes.note', 'read', 'ADR-0049 decision 2')
 ON CONFLICT (table_name) DO NOTHING;
@@ -41,6 +41,26 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
     WHEN 'agent' THEN CASE WHEN crove_kernel.ctx_verified() ->> 'kind' = 'member_vy' THEN (crove_kernel.ctx_verified() ->> 'member')::uuid END
   END
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Memory: a member-scoped run may read its member's memory (the prompt), never write it (ADR-0049 decisions 3 and 5: nothing a model
+-- produced reaches memory without the member's own act). member_only of 20261128000000 covered all commands with the helper; it is
+-- split so that only the read uses it. The writes stay on ctx_user_id(), which is NULL in every agent context.
+-- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS member_only ON crove_kernel.member_vy_memory;
+DROP POLICY IF EXISTS member_read ON crove_kernel.member_vy_memory;
+CREATE POLICY member_read ON crove_kernel.member_vy_memory AS RESTRICTIVE FOR SELECT TO crove_tenant
+  USING (member_user_id = (SELECT crove_kernel.ctx_acting_user_id()));
+DROP POLICY IF EXISTS member_insert ON crove_kernel.member_vy_memory;
+CREATE POLICY member_insert ON crove_kernel.member_vy_memory AS RESTRICTIVE FOR INSERT TO crove_tenant
+  WITH CHECK (member_user_id = (SELECT crove_kernel.ctx_user_id()));
+DROP POLICY IF EXISTS member_update ON crove_kernel.member_vy_memory;
+CREATE POLICY member_update ON crove_kernel.member_vy_memory AS RESTRICTIVE FOR UPDATE TO crove_tenant
+  USING (member_user_id = (SELECT crove_kernel.ctx_user_id()))
+  WITH CHECK (member_user_id = (SELECT crove_kernel.ctx_user_id()));
+DROP POLICY IF EXISTS member_delete ON crove_kernel.member_vy_memory;
+CREATE POLICY member_delete ON crove_kernel.member_vy_memory AS RESTRICTIVE FOR DELETE TO crove_tenant
+  USING (member_user_id = (SELECT crove_kernel.ctx_user_id()));
 
 -- ---------------------------------------------------------------------------
 -- The entry
@@ -133,6 +153,20 @@ END $$;
 REVOKE ALL ON FUNCTION crove_kernel.enter_member_vy_context(uuid, uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.enter_member_vy_context(uuid, uuid, uuid) TO crove_worker;
 
+CREATE OR REPLACE FUNCTION crove_kernel.member_vy_audit_detail_ok(p_detail jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
+  -- Listed keys only, and their values ids, enums, numbers and flags: never free text (ADR-0049 decision 4; the audit stream is
+  -- WORM and anchored, so a text that reaches it cannot be erased).
+  SELECT pg_catalog.jsonb_typeof(p_detail) = 'object'
+    AND (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(p_detail)) <= 12
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.jsonb_each(p_detail) e
+      WHERE e.key <> ALL (ARRAY['agentRun', 'code', 'rule', 'runId', 'resultId', 'feature', 'subjectType', 'subjectId', 'bodyLength', 'status', 'errorCode', 'count'])
+        OR NOT (pg_catalog.jsonb_typeof(e.value) IN ('number', 'boolean', 'null')
+                OR (pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Za-z0-9_.:-]{1,64}$')))
+$$;
+REVOKE ALL ON FUNCTION crove_kernel.member_vy_audit_detail_ok(jsonb) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
 -- ---------------------------------------------------------------------------
 -- The write guard, with the member_vy branch (the org-chart branches are as in 20261019010000)
 -- ---------------------------------------------------------------------------
@@ -163,7 +197,8 @@ BEGIN
   IF TG_TABLE_SCHEMA = 'crove_kernel' AND TG_OP <> 'DELETE' THEN
     IF TG_TABLE_NAME = 'audit_event' THEN
       IF TG_OP = 'INSERT' AND NEW.actor_type = 'agent' AND NEW.actor_id = v_agent
-         AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run') THEN
+         AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run')
+         AND (v_ctx ->> 'kind' IS DISTINCT FROM 'member_vy' OR crove_kernel.member_vy_audit_detail_ok(NEW.detail)) THEN
         NEW.occurred_at := pg_catalog.now();
         RETURN NEW;
       END IF;
