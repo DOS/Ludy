@@ -142,9 +142,19 @@ export const recordPayrollPosting = defineCommand({
     if (done) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
     // The entry is built again from the frozen run, in the approver's context (the HR module's own command: no payroll table is read from here), and the stored proposal must equal it. A proposal
     // row not written by the preparer (raw SQL) cannot post lines the run does not hold.
-    const expected = await ctx.run<{ runId: string; month: string; date: string; regime: string; lines: { account: string; debit: string; credit: string }[] }>('hr.payroll.posting.verify', {
-      runId: payload.payrollRunId,
-    });
+    // Payroll is read by owners and admins only, so only they can approve a posting: anyone else who holds the approval permission (a chief accountant who is a member) is told so, and the proposal
+    // stays pending for one of them. If the owner later lets members read payroll totals, a follow-up can verify on the totals alone.
+    let expected: { runId: string; month: string; date: string; regime: string; lines: { account: string; debit: string; credit: string }[] };
+    try {
+      expected = await ctx.run('hr.payroll.posting.verify', { runId: payload.payrollRunId });
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'FORBIDDEN') {
+        throw new DomainError('HR_POSTING_APPROVER_ROLE', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương, vì người duyệt phải đối chiếu được với bảng lương', {
+          approvers: ['owner', 'admin'],
+        });
+      }
+      throw error;
+    }
     const key = (l: { account: string; debit: string; credit: string }) => `${l.account}|${money(l.debit).toFixed(0)}|${money(l.credit).toFixed(0)}`;
     const stored = payload.lines.map(key).sort();
     const rebuilt = expected.lines.map(key).sort();

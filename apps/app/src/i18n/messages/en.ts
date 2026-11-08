@@ -8110,6 +8110,7 @@ export const en = {
       HR_POSTING_ADJUSTMENTS: 'This pay run has adjustment lines; a run like that cannot be posted yet',
       HR_POSTING_MISMATCH: 'The pay run does not match its totals or the accounting regime changed; the entry cannot be built',
       HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
+      HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting, because the approver has to compare it with the pay run',
       HR_RUN_NOT_DRAFT: 'This pay run is approved and cannot be edited; correct it with an adjustment line in a later month',
       HR_RUN_EXISTS: 'This month already has a pay run',
       HR_RUN_EMPTY: 'The pay run has no line to approve',

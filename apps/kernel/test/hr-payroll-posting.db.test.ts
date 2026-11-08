@@ -371,4 +371,23 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
   });
+
+  it('lets only an owner or an admin approve a posting: a member who holds the approval permission is told so, and the proposal stays pending', async () => {
+    const o = await org('tt133', 'trio');
+    // A chief accountant who is a plain member, holding the ledger's approval permission org-wide: in the approvers' snapshot, but payroll is not theirs to read.
+    const chief = await upsertIdentity(createDb(pool), { issuer: 'hrposting', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
+    await withAdmin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
+    });
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId, o.admin);
+    await expect(approve(o, proposalId, chief)).rejects.toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403, details: { approvers: ['owner', 'admin'] } });
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    // The owner froze the run, and the chief counts as another approver who may decide, so the owner is held back too (the chief is eligible by the approval rules, though payroll is not theirs to read);
+    // the other admin approves. In an org with no second owner or admin, such a posting waits until one exists (the PR body names it).
+    await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
+    await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+  });
 });

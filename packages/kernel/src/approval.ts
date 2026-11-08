@@ -117,8 +117,8 @@ export function liveApprovalCommands(): string[] {
 
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
-// version and the build.
-export const APPROVAL_POLICY_VERSION = 8;
+// version and the build. 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; decideApproval and proposal_approval_decide).
+export const APPROVAL_POLICY_VERSION = 9;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
