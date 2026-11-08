@@ -51,7 +51,19 @@ BEGIN
                   WHERE NOT (pg_catalog.jsonb_typeof(x -> 'fund') = 'string' AND (x ->> 'fund') IN ('retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment')
                              AND pg_catalog.jsonb_typeof(x -> 'employee') = 'string' AND (x ->> 'employee') ~ '^-?[0-9]+(\.[0-9]+)?$'
                              AND pg_catalog.jsonb_typeof(x -> 'employer') = 'string' AND (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$'))
-                ELSE false END AS funds_ok
+                ELSE false END AS funds_ok,
+           -- A line holds together: its net is its gross less its deductions, and its per-fund split adds to its own insurance, compared as numbers. Only a well formed line is judged (the others are
+           -- counted above); a line that is not whole counts in badLines, which no sum can hide: two lines that are wrong by opposite amounts cancel in a department's total, never here.
+           CASE WHEN l.status = 'calculated' AND l.kind = 'pay' AND l.gross IS NOT NULL AND l.employee_insurance IS NOT NULL AND l.employer_insurance IS NOT NULL AND l.pit IS NOT NULL AND l.net IS NOT NULL
+                     AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions}') = 'object'
+                     AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,advance}') = 'string' AND (l.breakdown #>> '{deductions,advance}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                     AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,damage}') = 'string' AND (l.breakdown #>> '{deductions,damage}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                     AND pg_catalog.jsonb_typeof(l.breakdown #> '{deductions,other}') = 'string' AND (l.breakdown #>> '{deductions,other}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                     AND pg_catalog.jsonb_typeof(l.breakdown #> '{insurance,funds}') = 'array'
+                THEN (l.gross - l.employee_insurance - l.pit - (l.breakdown #>> '{deductions,advance}')::numeric - (l.breakdown #>> '{deductions,damage}')::numeric - (l.breakdown #>> '{deductions,other}')::numeric = l.net)
+                     AND coalesce((SELECT pg_catalog.sum((x ->> 'employee')::numeric) FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x WHERE (x ->> 'employee') ~ '^-?[0-9]+(\.[0-9]+)?$'), 0) = l.employee_insurance
+                     AND coalesce((SELECT pg_catalog.sum((x ->> 'employer')::numeric) FROM pg_catalog.jsonb_array_elements(l.breakdown #> '{insurance,funds}') x WHERE (x ->> 'employer') ~ '^-?[0-9]+(\.[0-9]+)?$'), 0) = l.employer_insurance
+                ELSE true END AS line_whole
     FROM crove_hr.payroll_line l
     LEFT JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id
     WHERE l.org_id = v_org AND l.run_id = p_run
@@ -66,6 +78,8 @@ BEGIN
       'noFunction', pg_catalog.count(*) FILTER (WHERE pay_function IS NULL),
       'noFunds', pg_catalog.count(*) FILTER (WHERE NOT funds_ok),
       'noDeductions', pg_catalog.count(*) FILTER (WHERE NOT ded_ok),
+      -- Lines that are not whole (see line_whole): a number only, never a figure.
+      'badLines', pg_catalog.count(*) FILTER (WHERE funds_ok AND ded_ok AND NOT line_whole),
       -- How many people's net pay is at the cash limit (CASH_PAYMENT_LIMIT, 5,000,000 dong) or above: a number only.
       'cashLarge', pg_catalog.count(*) FILTER (WHERE net >= 5000000)),
     (SELECT coalesce(pg_catalog.jsonb_agg(g.obj ORDER BY g.pay_function), '[]'::jsonb)

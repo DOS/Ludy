@@ -192,6 +192,8 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
   if ((c.noFunction ?? 0) > 0) throw mismatch('bộ phận hạch toán');
   if ((c.noFunds ?? 0) > 0) throw mismatch('thiếu chi tiết bảo hiểm');
   if ((c.noDeductions ?? 0) > 0) throw mismatch('thiếu các khoản khấu trừ');
+  // The per-line identities that the sums cannot show (two lines wrong by opposite amounts cancel in a department's total): the database counts the lines that break them, and a run with any is refused.
+  if ((c.badLines ?? 0) > 0) throw mismatch('toàn vẹn dòng lương');
   const lines: PostingLine[] = t.groups.map((g) => {
     if (!(PAY_FUNCTIONS as readonly string[]).includes(g.payFunction)) throw mismatch('bộ phận hạch toán');
     if (g.funds.some((f) => !(FUNDS as readonly string[]).includes(f.fund))) throw mismatch('quỹ bảo hiểm');

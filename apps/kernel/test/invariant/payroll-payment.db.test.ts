@@ -282,6 +282,61 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(answer).toEqual({ ok: true, totals: { runId: draft.runId, status: 'draft' } });
   });
 
+  // Two lines of one cost department, each wrong by an opposite amount: the department's total is right, so only a per-line check can see it. Written by staff with the frozen-run guard off for the
+  // moment (an approved run is frozen against every tenant role), as a database corruption or a forged row would be.
+  async function tamperTwoLines(o: Org, runId: string, how: 'net' | 'funds') {
+    await withAdmin(async (c) => {
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      try {
+        const { rows } = await c.query<{ id: string }>(
+          `SELECT l.id FROM crove_hr.payroll_line l JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id
+            WHERE l.org_id = $1 AND l.run_id = $2 AND e.pay_function = 'admin' ORDER BY l.id LIMIT 2`,
+          [o.orgId, runId],
+        );
+        expect(rows).toHaveLength(2);
+        const [up, down] = rows as [{ id: string }, { id: string }];
+        if (how === 'net') {
+          await c.query('UPDATE crove_hr.payroll_line SET net = net + 1000 WHERE org_id = $1 AND id = $2', [o.orgId, up.id]);
+          await c.query('UPDATE crove_hr.payroll_line SET net = net - 1000 WHERE org_id = $1 AND id = $2', [o.orgId, down.id]);
+        } else {
+          // The first fund of each line moves by 1000 in opposite directions: each line's split no longer adds to its own insurance.
+          await c.query(
+            `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', to_jsonb((((breakdown #>> '{insurance,funds,0,employee}')::numeric) + 1000)::text)) WHERE org_id = $1 AND id = $2`,
+            [o.orgId, up.id],
+          );
+          await c.query(
+            `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', to_jsonb((((breakdown #>> '{insurance,funds,0,employee}')::numeric) - 1000)::text)) WHERE org_id = $1 AND id = $2`,
+            [o.orgId, down.id],
+          );
+        }
+      } finally {
+        await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      }
+    });
+  }
+
+  it('refuses a run whose lines are wrong by opposite amounts in one department: the sums agree, the per-line count does not, and neither the verification nor the payment record passes (#2751)', async () => {
+    for (const how of ['net', 'funds'] as const) {
+      const o = await org('tt133', 'solo');
+      // A second person of the same cost department (admin), so two lines can cancel in its total.
+      await o.exec(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Phạm Văn Hai Canary',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '12000000' },
+      });
+      const { runId } = await postedRun(o);
+      const verifiedBefore = await o.exec<{ lines: unknown[] }>(o.owner, 'hr.payroll.posting.verify', { runId });
+      expect(verifiedBefore.lines.length, how).toBeGreaterThan(0);
+      const { proposalId } = await pay(o, runId, 'tax');
+      await tamperTwoLines(o, runId, how);
+      // The department's totals are unchanged by the two opposite errors; the database counts the broken lines, so the verification and the payment verification refuse.
+      await expect(o.exec(o.owner, 'hr.payroll.posting.verify', { runId }), how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'toàn vẹn dòng lương' } });
+      await expect(o.exec(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'tax' }), how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'toàn vẹn dòng lương' } });
+      // A payment proposal asked for before the tampering cannot be approved after it, and nothing is recorded.
+      await expect(approve(o, proposalId), how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+      expect(await voucherOf(o, runId, 'tax'), how).toHaveLength(0);
+    }
+  });
+
   it('holds one voucher per run and kind in the table: a run needs a kind, a proposal and a payment type, and a second of the same kind is refused', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
