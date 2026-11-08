@@ -5,7 +5,7 @@
 --                                               source), one per run: a unique index makes "approving the proposal posts once" a fact of the database, not only of the command. Such a
 --                                               voucher is no year closing, no close of a month of stock and no count, and it names the proposal that approved it.
 -- crove_finance.effect_proposal_check          the trigger lists the new command, so a voucher may name a proposal only when that proposal is executing one of the commands that post vouchers.
--- The approval policy of the new command is in 20261126120000 (the kernel's own migration: a finance migration touches no crove_kernel object).
+-- The approval policy of the new command is in 20261126130000 (the kernel's own migration: a finance migration touches no crove_kernel object).
 -- crove_finance.ledger_effect_recorded          the body of 20261124040000 with the branch for the new command: its effect is a voucher naming the run, stored in this transaction.
 SET LOCAL lock_timeout = '2s';
 
