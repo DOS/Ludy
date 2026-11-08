@@ -45,10 +45,13 @@ export const fileForExtraction = defineQuery({
   handler: async (ctx, input) => {
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'upload_entity_id'])
+      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'upload_entity_id', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
       .executeTakeFirst();
+    // The original of a decided marketplace report was deleted (#2516, ADR-0045 point 8). On a versioned bucket the recorded version may still be readable, so no reader is told the file exists:
+    // the extraction, order, income and bank statement readers all end here, as for a file that is not there.
+    if (file?.original_deleted_at) return null;
     let query = ctx.trx
       .selectFrom('crove_kernel.extraction')
       .select(['status', 'legal_entity_id'])
@@ -82,7 +85,7 @@ export const fileForExtraction = defineQuery({
       .limit(1)
       .executeTakeFirst();
     // The legal entity the reading is made in (#2502): the one a re-reading was asked for, else the one the upload named; none, the org's default.
-    const { upload_entity_id: uploadEntity, ...fileRow } = file ?? { upload_entity_id: null };
+    const { upload_entity_id: uploadEntity, original_deleted_at: _deleted, ...fileRow } = file ?? { upload_entity_id: null, original_deleted_at: null };
     return file ? { ...fileRow, legalEntityId: extraction?.legal_entity_id ?? uploadEntity ?? null, hasExtraction: Boolean(extraction), due, aiStopped: Boolean(stopped) || global[0]?.on === true, waitingAiBudget: Boolean(waiting) } : null;
   },
 });

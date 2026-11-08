@@ -1,5 +1,6 @@
 // Recording a stored file (plan §7.6, ADR-0013), shared by kernel.file.ingest (uploads and email attachments) and
 // kernel.file.archive.record (the entries of a ZIP, #314).
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { ACCEPTED_ARCHIVE_TYPES, zId } from '@crove/kernel-contract';
 import { DomainError, GENERATION_PATTERN, contentGeneration, fileKey, type CommandContext } from '@crove/kernel-runtime';
@@ -85,11 +86,14 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
   if (!inserted) {
     const existing = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'source'])
+      .select(['id', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('sha256', '=', input.sha256)
       .forUpdate()
       .executeTakeFirstOrThrow();
+    // The original of a marketplace report deleted after 90 days (#2516, ADR-0045 point 8): the same bytes arriving again were stored under the same content-addressed key, so the original
+    // is back. The marker is cleared so the file reads and downloads again, and the nightly run deletes this copy again; left set, the copy would be kept for ever.
+    if (existing.original_deleted_at) await sql`SELECT crove_kernel.file_original_restore(${existing.id}::uuid)`.execute(ctx.trx);
     // Files are deduplicated by content, so the same bytes can arrive as a document and as an image for a Social
     // post (#372). A document is never offered for publishing: an image upload of a document's bytes is refused.
     if (input.source === 'social' && existing.source !== 'social') {
