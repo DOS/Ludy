@@ -122,7 +122,9 @@ function NewItem({ meetingId, readers }: { meetingId: string; readers: readonly 
 function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean }) {
   const t = useTranslations('meetings.results');
   const chart = useQuery(orpc.chart.get.queryOptions());
-  const seats = (chart.data?.positions ?? []).filter((p) => p.status !== 'archived');
+  // The attendee's own seats first, then the others (a person may give the work to any seat).
+  const own = new Set(item.positions.map((p) => p.id));
+  const seats = (chart.data?.positions ?? []).filter((p) => p.status !== 'archived').sort((a, b) => Number(own.has(b.id)) - Number(own.has(a.id)));
   const [title, setTitle] = useState(item.title);
   const [due, setDue] = useState(item.whenDate ?? '');
   // The seat is preselected only when the attendee holds exactly one; otherwise a person picks it (the code never picks).

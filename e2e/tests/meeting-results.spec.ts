@@ -72,13 +72,13 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
     await expect(reader.getByTestId('meeting-results')).toHaveCount(0);
     await outsider.goto(`/o/${slug}/meetings/${meetingId}`);
     await expect(outsider.getByTestId('meeting-results')).toHaveCount(0);
-    expect(sql(`SELECT 1 FROM crove_meetings.action_item WHERE stage = 'published'`)).toHaveLength(0);
+    expect(sql(`SELECT 1 FROM crove_meetings.action_item i JOIN crove_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug' AND i.stage = 'published'`, { slug })).toHaveLength(0);
   });
 
   await test.step('one click shares the summary and the item', async () => {
     await page.getByRole('button', { name: 'Chia sẻ cho người dự họp' }).click();
     await expect(page.getByText('Đã chia sẻ cho người dự họp')).toBeVisible();
-    expect(sql(`SELECT stage FROM crove_meetings.action_item`)).toEqual([{ stage: 'published' }]);
+    expect(sql(`SELECT i.stage FROM crove_meetings.action_item i JOIN crove_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ stage: 'published' }]);
   });
 
   await test.step('the reader sees what was shared and makes a task from the item', async () => {
@@ -90,7 +90,7 @@ test('the recorder shares a summary and an action item, a reader makes a task fr
     await expect(panel.getByLabel('Vị trí', { exact: true })).toHaveValue(/.+/);
     await panel.getByRole('button', { name: 'Tạo việc', exact: true }).click();
     await expect(panel.getByText('Đã tạo việc')).toBeVisible();
-    expect(sql(`SELECT status FROM crove_meetings.action_item`)).toEqual([{ status: 'accepted' }]);
+    expect(sql(`SELECT i.status FROM crove_meetings.action_item i JOIN crove_kernel.tenant t ON t.org_id = i.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ status: 'accepted' }]);
   });
 
   await test.step('the task links back to the meeting for the reader, and the outsider is told the record cannot be opened', async () => {
