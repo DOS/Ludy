@@ -281,7 +281,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const party = await o.party('Công ty ABC');
     const stranger = await o.party('Công ty khác');
     expect(await o.query<QuoteDefaults>(o.viewer, 'crm.quote.defaults', { partyId: party })).toEqual({ validDays: 14, defaultVat: '10%', defaultTerms: null, hints: [] });
-    expect(await o.exec(o.adminUser, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: 'Thanh toán trong 7 ngày' })).toEqual({ validDays: 30, defaultVat: '8%', defaultTerms: 'Thanh toán trong 7 ngày' });
+    expect(await o.exec(o.adminUser, 'crm.quote_setting.set', { validDays: 30, defaultVat: '8', defaultTerms: 'Thanh toán trong 7 ngày' })).toEqual({ validDays: 30, defaultVat: '8%', defaultTerms: 'Thanh toán trong 7 ngày', phone: null, email: null, bankNote: null });
     await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 6, defaultVat: '10%', defaultTerms: null })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(o.exec(o.owner, 'crm.quote_setting.set', { validDays: 30, defaultVat: '77%', defaultTerms: null })).rejects.toMatchObject({ code: 'QUOTE_VAT_RATE_INVALID' });
     const deal = await o.newDeal(party);
@@ -378,14 +378,19 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     }
     // The editable columns of a draft change; the status, the number, the sent and decided facts, the deal and the customer never do.
     expect(await as(o.member, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x', terms = 'y', valid_until = '2031-02-01' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(1);
-    for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", 'first_viewed_at = now()', 'decided_at = now()', "decline_reason = 'x'", `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
+    // The status, the number and the sent columns are granted to the send command's transition, which the guard trigger holds: a draft is not edited into a sent quote.
+    for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", `issuer_entity_id = '${randomUUID()}'`, "buyer_name = 'x'"]) {
+      await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501' });
+    }
+    // The rest is never granted to a tenant role.
+    for (const set of ['first_viewed_at = now()', 'decided_at = now()', "decline_reason = 'x'", `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
       await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     }
     // A viewer changes and deletes nothing; a sent quote is read-only to every tenant role, and its lines too.
     expect(await as(o.viewer, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(0);
     expect(await as(o.viewer, async (c) => (await c.query('DELETE FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, draft.id])).rowCount)).toBe(0);
     for (const who of [o.member, o.owner]) {
-      expect(await as(who, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id])).rowCount)).toBe(0);
+      await expect(as(who, (c) => c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FROZEN') });
       expect(await as(who, async (c) => (await c.query('DELETE FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, quote.id])).rowCount)).toBe(0);
     }
     const lineSql = (quoteId: string) => ({

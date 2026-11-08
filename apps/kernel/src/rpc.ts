@@ -929,6 +929,10 @@ export function createRpcHandler(
         deleteDraft: os.crm.quotes.deleteDraft.handler(crmCommand('crm.quote.delete_draft')),
         revise: os.crm.quotes.revise.handler(crmCommand('crm.quote.revise')),
         setSetting: os.crm.quotes.setSetting.handler(crmCommand('crm.quote_setting.set')),
+        send: os.crm.quotes.send.handler(crmCommand('crm.quote.send')),
+        createLink: os.crm.quotes.createLink.handler(crmCommand('crm.quote.create_link')),
+        revokeLink: os.crm.quotes.revokeLink.handler(crmCommand('crm.quote.revoke_link')),
+        setting: os.crm.quotes.setting.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote_setting.get', {}, { actor, orgId }))),
       },
       eventTypes: {
         list: os.crm.eventTypes.list.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.event_type.list', {}, { actor, orgId }))),
