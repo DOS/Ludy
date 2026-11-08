@@ -199,4 +199,49 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
     expect(await reads(asRun('stranger'), otherOrgId, mine), "another org's agent, this org's file id in its own org").toBe(false);
     expect(await reads(asRun('stranger'), otherOrgId, audioFile[meetings.strangers as string] as string), "another org's agent, its own file").toBe(true);
   });
+  // The set form the file policy reads once per statement: the segment file ids of the run's own meeting, an empty set for everything else.
+  async function mediaFiles(enter: (c: pg.Client) => Promise<unknown>, url: string = workerUrl): Promise<string[]> {
+    const c = new pg.Client({ connectionString: url });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await enter(c);
+      return (await c.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows.map((r) => r.m);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  }
+
+  it('member_vy_media_files returns the run\'s own meeting segment files and nothing else', async () => {
+    const mine = meetings.mine as string;
+    const theirs = meetings.theirs as string;
+    expect(await mediaFiles(asRun('recorder')), 'the recorder run').toEqual([audioFile[mine]]);
+    expect(await mediaFiles(asRun('other')), "another member's run").toEqual([audioFile[theirs]]);
+    expect(await mediaFiles(asRun('stranger')), "another org's run, its own meeting").toEqual([audioFile[meetings.strangers as string]]);
+  });
+
+  it('member_vy_media_files is empty for a user and the system context', async () => {
+    const asUserCtx = (who: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users[who] as string, orgId)]);
+    expect(await mediaFiles(asUserCtx('recorder'), appUrl), 'the recorder as a user').toEqual([]);
+    expect(await mediaFiles(asUserCtx('owner'), appUrl), 'an owner as a user').toEqual([]);
+    expect(await mediaFiles((c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId])), 'the system').toEqual([]);
+  });
+
+  it('the file policy runs the helper once per statement: one function scan, hashed, not a call per row', async () => {
+    const c = new pg.Client({ connectionString: workerUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await asRun('recorder')(c);
+      const plan = (await c.query<{ 'QUERY PLAN': string }>('EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) SELECT id FROM crove_kernel.file WHERE org_id = $1', [orgId])).rows
+        .map((r) => r['QUERY PLAN'])
+        .join('\n');
+      expect(plan).toMatch(/Function Scan on member_vy_media_files[^\n]*loops=1\b/);
+      expect(plan).not.toMatch(/member_vy_reads_media_file/);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  });
 });

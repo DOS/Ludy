@@ -5,8 +5,9 @@
 -- Visible rows: any file that is not meeting media (tested first, so ordinary rows never reach the probes); every row to the system context (worker sweeps, orphan
 -- scan, org purge); the creator's own row while the creator still holds a base role of owner, admin or member (an upload is inserted before its segment or video row
 -- exists); a meeting media row whose segment or video row names a meeting the sealed context's user reads (crove_meetings.is_meeting_reader); and, to a member Vy
--- run (actor agent), a segment file of a meeting that run may open (crove_meetings.member_vy_reads_media_file from 20261203030000, which asks audio_for_member_vy and so repeats none of its checks).
--- The owner's compliance path stays the meeting_owner_list / meeting_owner_delete definers. No index is built on the hot file table: the probes use
+-- run (actor agent), a segment file of the meeting that run may open (crove_meetings.member_vy_media_files from 20261203030000: it asks audio_for_member_vy and is read once per statement as a subplan, not per row).
+-- The owner's compliance path stays the meeting_owner_list / meeting_owner_delete definers (ADR-0047): an owner or admin who is not a reader no longer sees a media file row
+-- through the file table, so a media file id answers 404 to them, and an evidence hold on such an id is not possible through this table. No index is built on the hot file table: the probes use
 -- audio_segment_file_idx and meeting_video_file_idx.
 SET LOCAL lock_timeout = '2s';
 
@@ -37,5 +38,5 @@ CREATE POLICY file_meeting_media_read ON crove_kernel.file AS RESTRICTIVE FOR SE
         )
       )
     )
-    OR ((SELECT crove_kernel.ctx_actor_type()) = 'agent' AND crove_meetings.member_vy_reads_media_file(org_id, id))
+    OR ((SELECT crove_kernel.ctx_actor_type()) = 'agent' AND id IN (SELECT m FROM crove_meetings.member_vy_media_files() AS m))
   );

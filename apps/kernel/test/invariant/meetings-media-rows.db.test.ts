@@ -318,6 +318,11 @@ suite('meeting media file rows are visible to readers only (#2874, ADR-0047)', (
     expect(plan).not.toMatch(/ctx_actor_type\(\)|ctx_user_id\(\)/);
   });
 
+  it('an agent that is not a member Vy gets an empty member_vy_media_files, whatever the run', async () => {
+    const rows = await run(agentActor, async (c) => (await c.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows);
+    expect(rows).toEqual([]);
+  });
+
   it('the org export carries no meeting media row', async () => {
     const from = EXPORT_TABLES['kernel.file'].from;
     for (const actor of [system, member('an owner', () => users.owner)]) {
