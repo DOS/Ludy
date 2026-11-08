@@ -106,6 +106,7 @@ import {
   EXTRACTION_METHODS,
   EXTRACTION_STATUSES,
   FILE_SOURCES,
+  FILE_UPLOAD_PURPOSES,
   INVITE_ROLES,
   LEGAL_ENTITY_KINDS,
   ROLE_SCOPES,
@@ -118,7 +119,11 @@ import {
   AD_DRAFT_ORIGINS,
   AD_DRAFT_STATUSES,
   HR_CONTRACT_TYPES,
+  HR_PAY_FUNCTIONS,
   HR_EMPLOYEE_STATUSES,
+  HR_LINE_KINDS,
+  HR_LINE_STATUSES,
+  HR_RUN_STATUSES,
   HR_REGIONS,
   AD_LAUNCH_STATES,
   AD_OBJECT_LEVELS,
@@ -135,6 +140,10 @@ import {
   AD_REVOKE_STATES,
   AD_TOKEN_KINDS,
   NOTE_VISIBILITIES,
+  MEETING_VISIBILITIES,
+  MEETING_LANGUAGES,
+  MEETING_STATUSES,
+  MEETING_CONSENT_METHODS,
   NUMBER_RESETS,
   PARTY_KINDS,
   IMPORT_BATCH_STATUSES,
@@ -170,7 +179,7 @@ import {
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr'];
+const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr', 'crove_meetings'];
 const suite = ADMIN ? describe : describe.skip;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -196,6 +205,10 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 const UNIONS = unions({
   'crove_hr.payroll_employee.status': HR_EMPLOYEE_STATUSES,
   'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
+  'crove_hr.payroll_line.kind': HR_LINE_KINDS,
+  'crove_hr.payroll_line.status': HR_LINE_STATUSES,
+  'crove_hr.payroll_run.status': HR_RUN_STATUSES,
+  'crove_hr.payroll_employment.pay_function': HR_PAY_FUNCTIONS,
   'crove_hr.payroll_employment.region': HR_REGIONS,
   'crove_ads.ad_account.last_error_kind': AD_ERROR_KINDS,
   'crove_ads.ad_campaign_draft.objective': AD_OBJECTIVES,
@@ -233,6 +246,10 @@ const UNIONS = unions({
   'crove_crm.import_row.outcome': IMPORT_ROW_OUTCOMES,
   'crove_crm.import_row.company_state': IMPORT_ROW_COMPANY_STATES,
   'crove_crm.pipeline_stage.kind': PIPELINE_STAGE_KINDS,
+  'crove_meetings.meeting.visibility': MEETING_VISIBILITIES,
+  'crove_meetings.meeting.language': MEETING_LANGUAGES,
+  'crove_meetings.meeting.status': MEETING_STATUSES,
+  'crove_meetings.meeting.consent_method': MEETING_CONSENT_METHODS,
   'crove_notes.link.target_type': NOTE_LINK_TARGET_TYPES,
   'crove_notes.note.visibility': NOTE_VISIBILITIES,
   'crove_notes.todo.status': TODO_STATUSES,
@@ -280,6 +297,7 @@ const UNIONS = unions({
   'crove_kernel.extraction.method': EXTRACTION_METHODS,
   'crove_kernel.extraction.status': EXTRACTION_STATUSES,
   'crove_kernel.file.source': FILE_SOURCES,
+  'crove_kernel.file_upload.purpose': FILE_UPLOAD_PURPOSES,
   'crove_kernel.inbox_item.kind': INBOX_ITEM_KINDS,
   'crove_kernel.kill_switch.scope': AGENT_SCOPES,
   'crove_kernel.legal_entity.kind': LEGAL_ENTITY_KINDS,
@@ -307,6 +325,7 @@ const UNIONS = unions({
   'crove_finance.einvoice_connection.last_test_state': EINVOICE_CONNECTION_STATES,
   'crove_finance.channel_order.platform': CHANNEL_PLATFORMS,
   'crove_finance.channel_order_line.stage': CHANNEL_STAGES,
+  'crove_finance.channel_settlement.platform': CHANNEL_PLATFORMS,
   'crove_finance.stock_count.status': STOCK_COUNT_STATUSES,
   'crove_finance.stock_item.kind': STOCK_ITEM_KINDS,
   'crove_finance.stock_item.trade': STOCK_TRADES,

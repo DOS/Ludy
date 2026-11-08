@@ -198,13 +198,17 @@ export type PartyTable = Refine<
 // A file row never changes, for every role (trigger file_guard; a move to another org is refused by RLS): crove_tenant
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
-// extracted or shown in the Inbox.
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import'] as const;
+// extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
+
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
+export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
 
 // archive: a ZIP whose entries were filed as files of their own (#314); such a run never has a proposal.
 export const EXTRACTION_METHODS = ['einvoice_xml', 'pdf_text_ai', 'image_ai', 'unsupported', 'archive'] as const;
@@ -511,6 +515,9 @@ export type StockCountTable = Refine<G.FinanceStockCountTable, { status: ColumnT
 export type StockCountLineTable = Refine<G.FinanceStockCountLineTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderTable = Refine<G.FinanceChannelOrderTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderLineTable = Refine<G.FinanceChannelOrderLineTable, { stage: ChannelStage; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The income reports of the marketplaces (#2516): a settlement per platform and period and what the platform paid for each order of it, both append-only.
+export type ChannelSettlementTable = Refine<G.FinanceChannelSettlementTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type ChannelSettlementLineTable = Refine<G.FinanceChannelSettlementLineTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 // A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
 export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
 export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
@@ -964,10 +971,43 @@ export type AdsAdTokenRevokeTable = Refine<
 export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
+export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+// A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
+export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
 export type HrPayrollEmploymentTable = Refine<
   G.HrPayrollEmploymentTable,
-  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never> }
+  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>; pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never> }
+>;
+// The pay run (#2531): a run is a draft until a person approves it; the posting and payment builds (#2532) take it on to paid and closed. A line is a pay line or a signed adjustment, and
+// is calculated or refused by the calculator.
+export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
+export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
+export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
+export type HrPayrollLineTable = Refine<
+  G.HrPayrollLineTable,
+  { kind: ColumnType<(typeof HR_LINE_KINDS)[number], (typeof HR_LINE_KINDS)[number] | undefined, never>; status: Generated<(typeof HR_LINE_STATUSES)[number]> }
+>;
+
+// The meetings module (#2576, ADR-0047): recorded meetings with consent records, retention dates and reader permissions.
+export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
+export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
+export const MEETING_LANGUAGES = ['vi', 'en'] as const;
+export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
+export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
+export type MeetingStatus = (typeof MEETING_STATUSES)[number];
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
+
+export type MeetingsMeetingTable = Refine<
+  G.MeetingsMeetingTable,
+  {
+    visibility: Generated<MeetingVisibility>;
+    language: Generated<MeetingLanguage>;
+    status: Generated<MeetingStatus>;
+    consent_method: MeetingConsentMethod;
+  }
 >;
 
 type Refined = Tables<{
@@ -987,8 +1027,12 @@ type Refined = Tables<{
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_line': HrPayrollLineTable;
+  'crove_hr.payroll_run': HrPayrollRunTable;
+  'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
@@ -1007,6 +1051,7 @@ type Refined = Tables<{
   'crove_kernel.audit_event': AuditEventTable;
   'crove_kernel.party': PartyTable;
   'crove_kernel.file': FileTable;
+  'crove_kernel.file_upload': FileUploadTable;
   'crove_kernel.extraction': ExtractionTable;
   'crove_kernel.notification': NotificationTable;
   'crove_kernel.inbox_item': InboxItemTable;
@@ -1046,6 +1091,8 @@ type Refined = Tables<{
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;
+  'crove_finance.channel_settlement': ChannelSettlementTable;
+  'crove_finance.channel_settlement_line': ChannelSettlementLineTable;
   'crove_finance.stock_alias': StockAliasTable;
   'crove_finance.stock_move': StockMoveTable;
   'crove_finance.stock_period': StockPeriodTable;

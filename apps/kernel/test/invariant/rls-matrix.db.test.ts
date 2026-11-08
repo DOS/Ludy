@@ -76,15 +76,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
-  'crove_kernel.extension_auth_code',
-  'crove_kernel.extension_token',
   'crove_meetings.action_item',
-  'crove_meetings.audio_segment',
-  'crove_meetings.media_key',
-  'crove_meetings.meeting',
-  'crove_meetings.meeting_reader',
   'crove_meetings.meeting_result',
-  'crove_meetings.meeting_video',
   'crove_meetings.transcript_segment',
   'crove_notes.link',
   'crove_notes.note',
@@ -100,10 +93,15 @@ const PENDING_TABLES = new Set<string>([
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
 const AUTHOR_ONLY = new Map<string, string>([
-  // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it.
+  // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
+  // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
+  ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
   ['crove_hr.payroll_employee', 'false'],
   ['crove_hr.payroll_employment', 'false'],
+  // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
+  ['crove_hr.payroll_line', 'false'],
+  ['crove_hr.payroll_run', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -157,6 +155,13 @@ const leScopePredicate = (c: string) =>
 // The same policy for a nullable column whose NULL rows are org-level (20261101060000 role_assignment_scope, #1716).
 const leScopeOrOrgPredicate = (c: string) =>
   `((${c} IS NULL) OR ('*'::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])) OR ((${c})::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])))`;
+// Tables no tenant role may update or delete: the rows are the record of what a member confirmed (an import, a posting), and a correction is a new row. The matrix checks, for every table
+// listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
+// listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
+const APPEND_ONLY = new Set<string>([
+  'crove_finance.channel_settlement',
+  'crove_finance.channel_settlement_line',
+]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
 type Values = Record<string, string | number>;
@@ -217,9 +222,20 @@ const stockMonth = () => {
   const n = stockMonthSeq++;
   return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-01`;
 };
+// A bank template (#2532) is unique per entity and name: each seeded one takes the next number.
+let bankTemplateSeq = 0;
+// A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
+let payrollMonthSeq = 0;
+const payrollMonth = () => {
+  const n = payrollMonthSeq++;
+  return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
+};
 // Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
 let channelOrderSeq = 0;
 const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
+// A settlement of a marketplace (#2516) is unique per entity, platform and period: each seeded one takes the next day from 2000-01-01 as a one-day period.
+let channelSettlementSeq = 0;
+const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -837,6 +853,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2516: the income report of a platform for a period (ADR-0045 point 5), read from a file a member confirmed: the period, the platform's payout reference and the net the report states; it
+  // takes the org's default entity by its trigger and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement': {
+    make: (o) => {
+      const day = channelSettlementDay();
+      return { row: { org_id: o.id, id: randomUUID(), platform: 'shopee', period_start: day, period_end: day, report_net: '0' } };
+    },
+  },
+  // #2516: what the platform paid for one order of a settlement. It takes its settlement's entity, and the settlement and the order it names are seeded with it. The net is what the columns say
+  // (sales less the deductions), so the seeded row is a sale of 100000 with a commission of 5000. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement_line': {
+    make: (o) => {
+      const order = randomUUID();
+      const settlement = randomUUID();
+      const day = channelSettlementDay();
+      return {
+        setup: [
+          { table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } },
+          { table: 'crove_finance.channel_settlement', values: { org_id: o.id, id: settlement, platform: 'shopee', period_start: day, period_end: day, report_net: '95000' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), settlement_id: settlement, order_id: order, line_key: 'RLS-matrix', sales: '100000', commission: '5000', net: '95000' },
+      };
+    },
+  },
   // #2488: the org's one row of payment reminder settings: the days after an invoice date a sale falls due, and the switch of the weekly "Hôm nay cần bạn"
   // item. Org-wide, so no entity. Tenant roles update the two values and who set them (a column grant), so the update probes assign a value to itself.
   'crove_finance.collection_setting': {
@@ -1170,9 +1210,31 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
+  'crove_hr.payroll_bank_template': {
+    update: { set: 'name = name' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        name: `RLS matrix ${bankTemplateSeq++}`,
+        layout: JSON.stringify({
+          columns: [
+            { key: 'sequence', header: 'STT' },
+            { key: 'name', header: 'Ten' },
+            { key: 'account', header: 'So tai khoan' },
+            { key: 'bank', header: 'Ngan hang' },
+            { key: 'amount', header: 'So tien' },
+            { key: 'content', header: 'Noi dung' },
+          ],
+          content: 'Luong thang {month}',
+        }),
+      },
+    }),
+  },
   // position is an SQL keyword, so the catalog prints the name quoted.
-  // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll, the system context none of it
-  // (AUTHOR_ONLY). Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
+  // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
+  // admins only" case below (every crove_hr table) keeps a plain member and a viewer out. Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
   'crove_hr.payroll_dependent': {
     update: { set: 'ended_on = ended_on' },
     make: (o) => {
@@ -1196,6 +1258,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, effective_from: '2026-11-01', contract_type: 'indefinite', region: 'I', base_wage: '10000000' },
       };
     },
+  },
+  // #2531: one person's month of a pay run (ADR-0046), in the run's entity (b_legal_entity). Owners and admins alone (AUTHOR_ONLY); a draft run is the only one whose lines change, so the
+  // factory's run is a draft. Tenant roles update the terms, the status, the inputs, the figures, the breakdown and the stamp only (never the run, the person, the kind or the creation), so the update probes assign the stamp to itself.
+  'crove_hr.payroll_line': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const run = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } },
+          { table: 'crove_hr.payroll_run', values: { org_id: o.id, id: run, month: payrollMonth(), working_days: '26' } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          run_id: run,
+          employee_id: employee,
+          gross: '10000000',
+          employee_insurance: '1050000',
+          employer_insurance: '2150000',
+          union_fee: '200000',
+          taxable_income: '10000000',
+          pit: '0',
+          net: '8950000',
+          employer_cost: '12350000',
+        },
+      };
+    },
+  },
+  // One month of one entity (the org's default, by its trigger): a draft until a person approves it, then frozen. Tenant roles update the working days, the status, the approval columns and the stamp only (never the month, the entity or the creation); the probes assign the working days to themselves.
+  'crove_hr.payroll_run': {
+    update: { set: 'working_days = working_days' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
   },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
@@ -2381,6 +2477,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   // must see, write and change none of the rows the factories seed (all in org A's default entity).
   let scoped: Actor;
   let branch = '';
+  // Plain people of org A with no branch scope and no assigned role: an admin, a member and a viewer. The crove_hr tables are owner and admin only, so only the admin
+  // reaches them (the check below, #2715).
+  let adminPerson: Actor;
+  let plainMember: Actor;
+  let viewerPerson: Actor;
   // privileges[table][role] = the table privileges the role holds.
   const privileges = new Map<string, Map<string, Set<Op>>>();
 
@@ -2619,6 +2720,23 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgs.A.id, contextToken(accountant, orgs.A.id)]);
       },
     };
+
+    const person = async (role: 'admin' | 'member' | 'viewer', label: string): Promise<Actor> => {
+      const user = freshUser();
+      await adminTx([{ table: 'crove_kernel.tenant_member', values: { org_id: orgs.A.id, user_id: user, role } }]);
+      return {
+        name: `crove_app as ${label} of org A`,
+        role: 'crove_app',
+        client: app,
+        org: 'A',
+        enter: async (c) => {
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgs.A.id, contextToken(user, orgs.A.id)]);
+        },
+      };
+    };
+    adminPerson = await person('admin', 'an admin');
+    plainMember = await person('member', 'a plain member (no assigned role, no branch scope)');
+    viewerPerson = await person('viewer', 'a viewer');
   });
 
   afterAll(async () => {
@@ -2648,6 +2766,9 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(authorOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'AUTHOR_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(authorOnly.filter((t) => !ROW_FACTORIES[t]), 'AUTHOR_ONLY lists tables with no row factory').toEqual([]);
     expect(authorOnly, 'AUTHOR_ONLY is kept sorted, one table per line').toEqual([...authorOnly].sort());
+    const appendOnly = [...APPEND_ONLY];
+    expect(appendOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'APPEND_ONLY lists tables that no longer have org_id').toEqual([]);
+    expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
   });
 
   it('limits the scoped member to its branch', async () => {
@@ -2941,6 +3062,20 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         expect(rows[0]?.n, `${table} still has its org B rows`).toBeGreaterThan(0);
       });
 
+      if (APPEND_ONLY.has(table)) {
+        it('is append-only: no tenant role holds UPDATE or DELETE on it, and an update or delete of its own rows is refused', async () => {
+          factoryFor(table);
+          for (const actor of actors.filter((a) => a.role !== 'crove_definer_tenant')) {
+            const who = `${actor.name} on ${table}`;
+            expect(can(table, actor.role, 'UPDATE'), `${who}: holds UPDATE`).toBe(false);
+            expect(can(table, actor.role, 'DELETE'), `${who}: holds DELETE`).toBe(false);
+            expect(updatable.get(table)?.get(actor.role) ?? [], `${who}: holds UPDATE on columns`).toEqual([]);
+            expectDenied(await probe(actor, (c) => c.query(`UPDATE ${table} SET org_id = org_id WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: updating its own rows`);
+            expectDenied(await probe(actor, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: deleting its own rows`);
+          }
+        });
+      }
+
       if (relation.entityColumn) {
         const column = relation.entityColumn;
         it('has the RESTRICTIVE le_scope policy, and a member limited to another entity reaches none of its rows', async () => {
@@ -3002,6 +3137,55 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           if (can(table, 'crove_app', 'DELETE') && can(table, 'crove_app', 'SELECT')) {
             const deleted = await probe(scoped, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1 AND ${others}`, [orgs.A.id]));
             expect(expectRows(deleted, `${where} (delete)`).rowCount, `${where}: rows of another entity deleted`).toBe(0);
+          }
+        });
+      }
+
+      // HR data (wages, insurance, tax, the sealed identity and account numbers) is for owners and admins alone (#2538, ADR-0046), and that has to hold in the database, not only in the
+      // commands: a plain member and a viewer, with no assigned role and no branch scope, reach no row, write none and delete none, while the owner and an admin do the same things
+      // with the same outcomes. AUTHOR_ONLY proves the system context is out; this proves the people are. A policy that tests the actor is a user and drops the role test fails here (#2715).
+      if (table.startsWith('crove_hr.')) {
+        it('is for owners and admins only: a plain member and a viewer reach no row, and an admin does what the owner does', async () => {
+          const factory = factoryFor(table);
+          const readOwn = async (actor: Actor) => expectRows(await probe(actor, (c) => c.query(`SELECT org_id::text AS org FROM ${table} WHERE org_id = $1`, [orgs.A.id])), `${actor.name} (read)`);
+          const ownerRead = await readOwn(member);
+          expect(ownerRead.rows.length, `${table}: the owner reads the seeded rows of org A`).toBeGreaterThan(0);
+          expect((await readOwn(adminPerson)).rows.length, `${adminPerson.name} reads what the owner reads on ${table}`).toBe(ownerRead.rows.length);
+          for (const who of [plainMember, viewerPerson]) expect((await readOwn(who)).rows, `${who.name} reads a row of ${table}`).toEqual([]);
+
+          // Inserts: each actor's own row (its parents committed first as the database owner). The owner and an admin get the same answer; the others are refused by row-level security.
+          const outcomes = new Map<string, Awaited<ReturnType<typeof probe>>>();
+          if (can(table, 'crove_app', 'INSERT')) {
+            for (const who of [member, adminPerson, plainMember, viewerPerson]) {
+              const built = factory.make(orgs.A);
+              if (built.setup?.length) await adminTx([...built.setup, ...(built.complete ?? [])]).catch(() => adminTx(built.setup ?? []));
+              const q = insertSql({ table, values: built.row });
+              outcomes.set(who.name, await probe(who, (c) => c.query(q.text, q.values)));
+            }
+            const owner = outcomes.get(member.name);
+            const adminOutcome = outcomes.get(adminPerson.name);
+            expect({ ok: adminOutcome?.ok, code: adminOutcome && !adminOutcome.ok ? adminOutcome.code : undefined }, `${adminPerson.name} inserting into ${table}, as the owner does`).toEqual({
+              ok: owner?.ok,
+              code: owner && !owner.ok ? owner.code : undefined,
+            });
+            for (const who of [plainMember, viewerPerson]) {
+              expect(outcomes.get(who.name), `${who.name} inserting into ${table}: refused by row-level security`).toMatchObject({ ok: false, code: '42501' });
+            }
+          }
+
+          // Updates and deletes: the owner and an admin reach the rows alike (the table's own guards may refuse a change, the same for both); the others change none.
+          const cols = columnsToUpdate(table, 'crove_app');
+          const shape = (o: Awaited<ReturnType<typeof probe>>) => (o.ok ? { ok: true, rowCount: o.rowCount } : { ok: false, code: o.code });
+          if (cols.length > 0 && can(table, 'crove_app', 'SELECT')) {
+            const set = factory.update?.set ?? `"${cols[0]}" = "${cols[0]}"`;
+            const run = (who: Actor) => probe(who, (c) => c.query(`UPDATE ${table} SET ${set} WHERE org_id = $1`, [orgs.A.id]));
+            expect(shape(await run(adminPerson)), `${adminPerson.name} updating ${table}, as the owner does`).toEqual(shape(await run(member)));
+            for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (update)`).rowCount, `${who.name}: rows of ${table} updated`).toBe(0);
+          }
+          if (can(table, 'crove_app', 'DELETE') && can(table, 'crove_app', 'SELECT')) {
+            const run = (who: Actor) => probe(who, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id]));
+            expect(shape(await run(adminPerson)), `${adminPerson.name} deleting from ${table}, as the owner does`).toEqual(shape(await run(member)));
+            for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (delete)`).rowCount, `${who.name}: rows of ${table} deleted`).toBe(0);
           }
         });
       }

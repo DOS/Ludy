@@ -172,12 +172,25 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const list = await o.query<HrEmployeeSummary[]>(o.admin, 'hr.payroll.employee.list', {});
     expect(list.map((e) => e.id).sort()).toEqual([mine.employeeId, theirs.employeeId].sort());
     const first = list.find((e) => e.id === mine.employeeId);
-    expect(first).toMatchObject({ displayName: NAME, status: 'active', hasIdentityNumber: true, hasAccountNumber: true, current: { contractType: 'indefinite', region: 'I', baseWage: '15000000.00' } });
+    expect(first).toMatchObject({ displayName: NAME, status: 'active', hasIdentityNumber: true, hasAccountNumber: true, current: { contractType: 'indefinite', region: 'I', baseWage: '15000000.00', payFunction: 'admin' } });
     // The list never carries the numbers; the one employee asked for does, opened from the sealed text.
     expect(JSON.stringify(list)).not.toContain(IDENTITY_DIGITS);
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: mine.employeeId });
     expect(detail).toMatchObject({ identityNumber: IDENTITY, accountNumber: ACCOUNT, address: ADDRESS, erased: false });
     expect(detail.employments).toHaveLength(1);
+  });
+
+  it('keeps the pay function with the terms: administration by default, a change of function is a new row', async () => {
+    const o = await org();
+    const plain = await o.add(o.owner);
+    const sales = await o.add(o.owner, { displayName: 'Trần Văn Hai', employment: { ...TERMS, payFunction: 'sales' } });
+    const list = await o.query<HrEmployeeSummary[]>(o.owner, 'hr.payroll.employee.list', {});
+    expect(list.find((e) => e.id === plain.employeeId)?.current?.payFunction).toBe('admin');
+    expect(list.find((e) => e.id === sales.employeeId)?.current?.payFunction).toBe('sales');
+    await o.exec(o.owner, 'hr.payroll.employment.add', { employeeId: sales.employeeId, effectiveFrom: '2026-07-01', contractType: 'indefinite', region: 'I', baseWage: '15000000', payFunction: 'production' });
+    const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: sales.employeeId });
+    expect(detail.employments.map((t) => t.payFunction)).toEqual(['production', 'sales']);
+    await expect(o.add(o.owner, { displayName: 'Lê Thị Ba', employment: { ...TERMS, payFunction: 'marketing' } })).rejects.toThrow();
   });
 
   it('keeps a member, a viewer and the system out: nothing is read, written or told, in the commands, the queries and the database', async () => {

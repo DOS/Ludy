@@ -118,6 +118,25 @@ export class SubjectVault {
     }
   }
 
+  /** The ids of every key this vault opens, the current one first. */
+  get keyIds(): string[] {
+    return [this.current.id, ...[...this.keys.keys()].filter((id) => id !== this.current.id)];
+  }
+
+  /**
+   * The subject's wrapped data key wrapped again under the current wrap key (a credential key rotation, ADR-0017 section 7, #2643): unwrapped under the key id it is stored
+   * with, wrapped with a fresh nonce for the current key id. The data key lives in memory for this call only and is wiped. Throws like `unwrap` (an unknown key id, damaged
+   * bytes, another org or subject). Nothing sealed under the data key changes: the values stay as they are.
+   */
+  rewrap(orgId: string, subjectId: string, keyId: string, wrapped: Buffer): { keyId: string; wrapped: Buffer } {
+    const dataKey = this.unwrap(orgId, subjectId, keyId, wrapped);
+    try {
+      return { keyId: this.current.id, wrapped: encrypt(this.current.key, dataKey, aad('wrap', orgId, subjectId, this.current.id)) };
+    } finally {
+      dataKey.fill(0);
+    }
+  }
+
   seal(dataKey: Buffer, orgId: string, subjectId: string, place: string, value: string): string {
     const plain = Buffer.from(value, 'utf8');
     try {

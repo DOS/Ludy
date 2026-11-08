@@ -22,6 +22,11 @@ export const KERNEL_ERROR_CODES = [
   'AUTH_NOT_READY',
   'ORG_REQUIRED',
   'ORG_CLOSED',
+  // The Ludy extension's sign-in and token (#2582).
+  'EXTENSION_CODE_INVALID',
+  'EXTENSION_TOKEN_INVALID',
+  'EXTENSION_TOKEN_NOT_FOUND',
+  'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',
   'NOT_FOUND',
@@ -172,6 +177,30 @@ export const KERNEL_ERROR_CODES = [
   'HR_DEPENDENT_ENDED',
   'HR_DEPENDENT_END_BEFORE_START',
   'HR_LEGAL_ENTITY_REQUIRED',
+  // The pay run (#2531).
+  'HR_RUN_NOT_FOUND',
+  'HR_LINE_NOT_FOUND',
+  'HR_RUN_NOT_DRAFT',
+  // The posting of an approved run (#2532).
+  'HR_RUN_NOT_APPROVED',
+  'HR_POSTING_OPEN',
+  'HR_POSTING_DONE',
+  'HR_POSTING_ADJUSTMENTS',
+  'HR_POSTING_MISMATCH',
+  'HR_POSTING_MAP_UNCONFIRMED',
+  'HR_RUN_EXISTS',
+  'HR_RUN_EMPTY',
+  'HR_RUN_HAS_REFUSED',
+  'HR_RUN_CHANGED',
+  'HR_RULES_COMMENTARY',
+  'HR_FLAGS_NOT_ACCEPTED',
+  'HR_ADJUST_NOT_APPROVED',
+  'HR_ADJUST_NOT_EARLIER',
+  'HR_LINE_NOT_PAY',
+  'HR_EMPLOYEE_NOT_PAID',
+  'HR_NO_PAYSLIP',
+  'HR_RUN_STALE',
+  'HR_ADJUST_NOT_PAID',
   // Members' notes (#1671).
   'NOTE_NOT_FOUND',
   'NOTE_AUTHOR_ONLY',
@@ -181,6 +210,15 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_LIMIT',
   'NOTE_LINK_NOT_FOUND',
   'NOTE_LINK_TARGET_NOT_FOUND',
+  // AI Meeting Notes (#2576).
+  'MEETING_NOT_FOUND',
+  'FILE_TOO_LARGE',
+  'INVALID_READER',
+  'INVALID_MEDIA_CONTAINER',
+  'VIDEO_NOT_ENABLED',
+  // Retention (#2579).
+  'MEDIA_RETENTION_PASSED',
+  'MEETING_SETTINGS_INVALID',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
@@ -834,6 +872,10 @@ export const KERNEL_ERROR_RULES = {
   before_opening_posting_date: 'BEFORE_OPENING_BALANCE',
   before_opening_fixed: 'BEFORE_OPENING_BALANCE',
   before_opening_later_date: 'BEFORE_OPENING_BALANCE',
+  // A Ludy extension token run outside its scopes, org or routes (#2582).
+  extension_scope: 'FORBIDDEN',
+  extension_org: 'FORBIDDEN',
+  extension_only: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;

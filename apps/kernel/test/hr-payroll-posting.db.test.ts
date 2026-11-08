@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The posting of an approved pay run (#2532, payroll plan 6.4 and row 18, ADR-0046) on a real PostgreSQL 17, through the finance proposal path:
+// - an owner or an admin asks for it (kernel.proposal.request, `finance.payroll_posting.record`), the HR module builds the entry from the frozen run, an owner or an admin approves it, and
+//   approving posts one voucher that names the run; the entry balances and equals the run's totals, one line per account;
+// - a TT133 entity posts unemployment insurance to 3385 and never 3386, a TT99 entity to 3386 and never 3385, and each function has its own expense account;
+// - a run that is not approved, one with a posting open or done, and one that does not exist are refused; a member cannot ask; the voucher of a run is unique in the database.
+// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+import { randomBytes, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDb, createPool } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import type { HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
+import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@crove/l10n-vn';
+import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+// Every rule of the shipped set, and every account map of the posting, is `commentary` until the accountant confirms it (#2535), so a real approval or posting cannot pass yet: the tests confirm the
+// rows for themselves (see hr-payroll-run), and one test leaves the maps as shipped to show the posting is refused.
+vi.mock('@crove/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+  return {
+    ...real,
+    PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })),
+    PAYROLL_POSTING_MAPS: Object.fromEntries(Object.entries(real.PAYROLL_POSTING_MAPS).map(([regime, map]) => [regime, { ...map }])) as typeof real.PAYROLL_POSTING_MAPS,
+  };
+});
+const setMapStatus = (status: 'confirmed' | 'commentary') => {
+  for (const map of Object.values(PAYROLL_POSTING_MAPS)) (map as { status: string }).status = status;
+};
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const suite = ADMIN ? describe : describe.skip;
+
+const MONTH = '2026-03';
+const TEAM: { name: string; wage: string; payFunction?: string }[] = [
+  { name: 'Nguyễn Thị Hằng Canary', wage: '15000000' },
+  { name: 'Trần Văn Hai Canary', wage: '9000000', payFunction: 'sales' },
+  { name: 'Lê Thu Cúc Canary', wage: '30000000', payFunction: 'production' },
+];
+
+suite('the posting of a pay run on PostgreSQL (#2532)', () => {
+  const dbName = `crove_test_hrposting_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let pool: pg.Pool;
+  let rt: Runtime;
+  const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+  const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
+
+  async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      return await fn(c);
+    } finally {
+      await c.end();
+    }
+  }
+  const rows = <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => withAdmin(async (c) => (await c.query<T>(sql, params)).rows);
+
+  async function org(regime: 'tt133' | 'tt99' = 'tt133') {
+    const tag = randomUUID().slice(0, 8);
+    const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'hrposting', subject: `${name}-${tag}`, email: `${name}-${tag}@hr.test`, name: null });
+    const owner = await person('owner');
+    const admin = await person('admin');
+    const member = await person('member');
+    const { orgId } = await createOrg(rt, asUser(owner), `Hạch toán lương ${tag}`);
+    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
+    if (regime === 'tt99') {
+      await withAdmin((c) =>
+        c.query(
+          `INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
+           SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`,
+          [orgId],
+        ),
+      );
+    }
+    const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) =>
+      rt.execute<O>(name, input, { actor, orgId, idempotencyKey: randomUUID() });
+    const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
+    for (const t of TEAM) {
+      await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+        displayName: t.name,
+        employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: t.wage, ...(t.payFunction ? { payFunction: t.payFunction } : {}) },
+      });
+    }
+    return { orgId, owner, admin, member, exec, query };
+  }
+  type Org = Awaited<ReturnType<typeof org>>;
+
+  // Opens, calculates and approves a month (the rules confirmed for the test), returning the run and its totals as approved.
+  async function approvedRun(o: Org, month = MONTH, beforeApprove?: (runId: string) => Promise<void>) {
+    for (const row of PAYROLL_RULES) (row as { status: string }).status = 'confirmed';
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month });
+    await beforeApprove?.(run.runId as string);
+    const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: sheet.fingerprint, acceptFlags: true }, asMfa(o.owner));
+    for (const row of PAYROLL_RULES) (row as { status: string }).status = 'commentary';
+    return { runId: run.runId as string, totals: sheet.totals };
+  }
+  const ask = (o: Org, runId: string, user = o.admin) =>
+    rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.payroll_posting.record', input: { runId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  async function approve(o: Org, proposalId: string, user = o.owner) {
+    const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
+    return rt.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
+  }
+  const entry = async (o: Org, entryId: string) =>
+    Object.fromEntries(
+      (
+        await rows<{ account_code: string; debit: string; credit: string }>(
+          'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
+          [o.orgId, entryId],
+        )
+      ).map((l) => [l.account_code, l.debit !== '0' ? `Dr ${l.debit}` : `Cr ${l.credit}`]),
+    );
+
+  beforeEach(() => setMapStatus('confirmed'));
+  afterEach(() => setMapStatus('commentary'));
+
+  beforeAll(async () => {
+    const rootDb = new pg.Client({ connectionString: ADMIN });
+    await rootDb.connect();
+    await rootDb.query(`CREATE DATABASE ${dbName}`);
+    await rootDb.end();
+    const url = new URL(ADMIN as string);
+    url.pathname = `/${dbName}`;
+    adminUrl = url.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    url.username = 'crove_app';
+    url.password = 'test-app-pw';
+    pool = createPool({ connectionString: url.toString(), max: 4 });
+    rt = new Runtime(createDb(pool), {
+      manifests: TEST_MANIFESTS,
+      subjectVault: new SubjectVault(new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]).deriveKeys(SUBJECT_WRAP_INFO)),
+      readAuditKey: randomBytes(32),
+    }).register({ commands: [...kernelCommands, ...hrCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...hrQueries, ...financeQueries] });
+  }, 120_000);
+
+  afterAll(async () => {
+    await pool?.end();
+    if (!ADMIN) return;
+    const rootDb = new pg.Client({ connectionString: ADMIN });
+    await rootDb.connect();
+    await rootDb.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await rootDb.end();
+  });
+
+  it('posts a TT133 run once: balanced, equal to the totals, one line per account, 3385 and never 3386, each function on its own account', async () => {
+    const o = await org('tt133');
+    const { runId, totals } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId);
+    const posted = await approve(o, proposalId);
+    const lines = await entry(o, posted.journalEntryId);
+    const all = await rows<{ account_code: string; debit: string; credit: string }>(
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
+      [o.orgId, posted.journalEntryId],
+    );
+    expect(new Set(all.map((l) => l.account_code)).size).toBe(all.length);
+    const debit = all.reduce((a, l) => a + BigInt(l.debit), 0n);
+    const credit = all.reduce((a, l) => a + BigInt(l.credit), 0n);
+    expect(debit).toBe(credit);
+    // The expense of the entry is the employer's cost of the run, and 334 carries the net pay.
+    expect(money(debit.toString()).equals(money(totals.employerCost))).toBe(true);
+    expect(lines['334']).toBe(`Cr ${money(totals.net).toFixed(0)}`);
+    expect(lines['3385']).toMatch(/^Cr /);
+    expect(lines['3386']).toBeUndefined();
+    expect(Object.keys(lines)).toEqual(expect.arrayContaining(['6422', '6421', '154', '3383', '3384', '3382', '3335']));
+    const [voucher] = await rows<{ payroll_run_id: string; proposal_id: string }>('SELECT payroll_run_id, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
+    expect(voucher).toMatchObject({ payroll_run_id: runId, proposal_id: proposalId });
+    // The people stay on the run: the test team's names appear nowhere in the proposal, the voucher, the entry, the audit rows of the posting or the outbox.
+    const [trace] = await rows<{ n: string }>(
+      `SELECT (SELECT count(*) FROM crove_kernel.proposal t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM crove_finance.journal_voucher t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM crove_finance.journal_entry t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM crove_finance.journal_line t WHERE org_id = $1 AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM crove_kernel.audit_event t WHERE org_id = $1 AND command IN ('kernel.proposal.request', 'hr.payroll.posting.prepare', 'finance.payroll_posting.check', 'finance.payroll_posting.regime', 'kernel.proposal.approve', 'finance.payroll_posting.record') AND t::text ILIKE '%canary%')
+            + (SELECT count(*) FROM crove_kernel.outbox_event t WHERE org_id = $1 AND t::text ILIKE '%canary%') AS n`,
+      [o.orgId],
+    );
+    expect(trace?.n).toBe('0');
+    // Posted once: a new request and a second voucher for the run are both refused.
+    await expect(ask(o, runId)).rejects.toMatchObject({ code: 'HR_POSTING_DONE' });
+    await expect(
+      withAdmin((c) =>
+        c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`, [posted.voucherId]),
+      ),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+  });
+
+  it('posts a TT99 run to 3386, never 3385, and sends each function to its own account', async () => {
+    const o = await org('tt99');
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId);
+    const posted = await approve(o, proposalId);
+    const lines = await entry(o, posted.journalEntryId);
+    expect(lines['3386']).toMatch(/^Cr /);
+    expect(lines['3385']).toBeUndefined();
+    expect(Object.keys(lines)).toEqual(expect.arrayContaining(['6421', '6411', '622', '3383', '3384', '3382', '3335', '334']));
+  });
+
+  it('refuses to approve a month whose lines rest on superseded terms (a change of function with the same wage), and posts the function of the terms frozen at approval', async () => {
+    for (const row of PAYROLL_RULES) (row as { status: string }).status = 'confirmed';
+    const o = await org();
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: MONTH });
+    const before = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    // After the month was opened, the first person moves to sales from the first day, on the same wage: the figures do not change, the expense account does.
+    const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]);
+    await o.exec(o.owner, 'hr.payroll.employment.add', { employeeId: first?.id, effectiveFrom: `${MONTH}-01`, contractType: 'indefinite', region: 'I', baseWage: TEAM[0]?.wage, payFunction: 'sales' });
+    await expect(o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: before.fingerprint, acceptFlags: true }, asMfa(o.owner))).rejects.toMatchObject({ code: 'HR_RUN_STALE' });
+    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId });
+    const after = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+    await o.exec(o.owner, 'hr.payroll.run.approve', { runId: run.runId, fingerprint: after.fingerprint, acceptFlags: true }, asMfa(o.owner));
+    for (const row of PAYROLL_RULES) (row as { status: string }).status = 'commentary';
+    const { proposalId } = await ask(o, run.runId as string);
+    const posted = await approve(o, proposalId);
+    const lines = await entry(o, posted.journalEntryId);
+    // Two people now sit on 6421 (sales); the first one's pay no longer goes to 6422 (administration).
+    expect(lines['6421']).toMatch(/^Dr /);
+    expect(lines['6422']).toBeUndefined();
+  });
+
+  it('refuses a run that is not approved, one already asked for, and one that does not exist; a member cannot ask', async () => {
+    const o = await org();
+    const draft = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-02' });
+    await expect(ask(o, draft.runId)).rejects.toMatchObject({ code: 'HR_RUN_NOT_APPROVED' });
+    await expect(ask(o, randomUUID())).rejects.toMatchObject({ code: 'HR_RUN_NOT_FOUND' });
+    const { runId } = await approvedRun(o);
+    await expect(ask(o, runId, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await ask(o, runId);
+    await expect(ask(o, runId, o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_OPEN' });
+    // The id written in capitals is the same run.
+    await expect(ask(o, runId.toUpperCase(), o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_OPEN' });
+  });
+
+  it('refuses to ask for or to post a run while the accountant has not confirmed the account map (#2535), and posts once it is confirmed', async () => {
+    const o = await org();
+    const { runId } = await approvedRun(o);
+    setMapStatus('commentary');
+    await expect(ask(o, runId)).rejects.toMatchObject({ code: 'HR_POSTING_MAP_UNCONFIRMED' });
+    // A proposal asked for while the map was confirmed is not posted once it is not (finance's own gate), and stays pending.
+    setMapStatus('confirmed');
+    const { proposalId } = await ask(o, runId);
+    setMapStatus('commentary');
+    await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MAP_UNCONFIRMED' });
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+    setMapStatus('confirmed');
+    await expect(approve(o, proposalId)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+  });
+
+  it('lets two requests for the same run take turns: one proposal is made, the other is refused as open', async () => {
+    const o = await org();
+    const { runId } = await approvedRun(o);
+    const results = await Promise.allSettled([ask(o, runId, o.admin), ask(o, runId, o.owner)]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const refused = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(refused.reason).toMatchObject({ code: 'HR_POSTING_OPEN' });
+    expect(await rows(`SELECT 1 FROM crove_kernel.proposal WHERE org_id = $1 AND command = 'finance.payroll_posting.record' AND status = 'pending'`, [o.orgId])).toHaveLength(1);
+  });
+
+  it('refuses a run holding an adjustment line, and one whose stored lines have no employment on record', async () => {
+    const o = await org();
+    const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [o.orgId]);
+    const march = await approvedRun(o);
+    // A correction of March, in an April run: the run carries an adjustment line, which is not posted yet.
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: first?.id, note: 'Tính thiếu tiền làm thêm giờ', gross: '500000', pit: '25000' });
+    });
+    await expect(ask(o, april.runId)).rejects.toMatchObject({ code: 'HR_POSTING_ADJUSTMENTS' });
+    // A stored line that lost its employment (a raw session that lifts the freeze of an approved run, outside the commands) has no cost department on record: refused, never read as administration.
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND id = (SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [o.orgId, march.runId]);
+      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+      await c.query('COMMIT');
+    });
+    await expect(ask(o, march.runId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+  });
+
+  it('refuses a posting whose entity changed its chart after the request (HR_POSTING_MISMATCH), and one into a month that is closed (PERIOD_LOCKED)', async () => {
+    const o = await org('tt133');
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId);
+    // The entity moves to TT99 books from the start of the year after the proposal was made: the entry was built for the TT133 chart.
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
+         SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`,
+        [o.orgId],
+      ),
+    );
+    await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+    // A new request builds the entry again for the TT99 chart; closing the month then refuses its posting.
+    await o.exec(o.owner, 'kernel.proposal.reject', { id: proposalId });
+    const again = await ask(o, runId);
+    await rt.execute('finance.period.lock', { month: MONTH }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(approve(o, again.proposalId)).rejects.toMatchObject({ code: 'PERIOD_LOCKED' });
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(0);
+  });
+});

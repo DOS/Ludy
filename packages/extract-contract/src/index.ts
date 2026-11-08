@@ -13,7 +13,7 @@ import { z } from 'zod';
 // number above the lines and the lines come back read, cells as text, and the worker checks them again.
 // marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
 // amounts): the buyer's columns are never read, so they never leave the sandbox.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders'] as const;
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -76,6 +76,9 @@ export const EXTRACT_LIMITS = {
   maxOrderLines: 20_000,
   // Rows of the report that were not read as lines of an order, reported by number.
   maxOrderSkipped: 1000,
+  // A marketplace income report (#2516): the same file size, with one line per order paid (at most this many) in the first few sheets of the workbook.
+  maxIncomeLines: 20_000,
+  maxIncomeSheets: 8,
 } as const;
 
 // Why the sandbox did not return an entry of an archive. The whole archive is refused instead (as invalid) when an
@@ -88,7 +91,7 @@ export function maxRequestBytes(kind: ExtractKind): number {
   if (kind === 'mime' || kind === 'dsn') return EXTRACT_LIMITS.maxEmailBytes;
   if (kind === 'portal_invoice_list') return EXTRACT_LIMITS.maxPortalListBytes;
   if (kind === 'bank_statement') return EXTRACT_LIMITS.maxStatementBytes;
-  if (kind === 'marketplace_orders') return EXTRACT_LIMITS.maxOrderReportBytes;
+  if (kind === 'marketplace_orders' || kind === 'marketplace_income') return EXTRACT_LIMITS.maxOrderReportBytes;
   if (kind === 'html_meta') return EXTRACT_LIMITS.maxHtmlBytes;
   if (kind === 'feed') return EXTRACT_LIMITS.maxFeedBytes;
   return EXTRACT_LIMITS.maxFileBytes;
@@ -429,6 +432,50 @@ export const zExtractedMarketplaceOrders = z.strictObject({
 });
 export type ExtractedMarketplaceOrders = z.infer<typeof zExtractedMarketplaceOrders>;
 
+// A marketplace income report (#2516, ADR-0045): the per-order table of Shopee's or TikTok Shop's income export, read through the platform's profile. Like the order report, only an allow-list of columns
+// comes back (the order, the payment date, the amounts): the buyer's name, phone, email and address have no field here, so they are not read, not returned and not stored.
+export const MARKETPLACE_INCOME_PLATFORMS = ['shopee', 'tiktok_shop'] as const;
+export const MARKETPLACE_INCOME_FIELDS = ['orderNo', 'paidAt', 'sales', 'sellerDiscount', 'commission', 'serviceFee', 'paymentFee', 'shipping', 'taxVat', 'taxPit', 'refund', 'net'] as const;
+export const MARKETPLACE_INCOME_SKIP_REASONS = ['no_order_no', 'bad_amount', 'bad_date', 'bad_id', 'too_long'] as const;
+// A deduction is a positive amount taken from the seller; `other` is the net the file states less what the named columns explain, and may be negative.
+const zSignedMoney = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/, 'decimal string');
+export const zExtractedMarketplaceIncome = z.strictObject({
+  recognized: z.boolean(),
+  platform: z.enum(MARKETPLACE_INCOME_PLATFORMS).nullable(),
+  // The profile that read the file: its version and whether a real seller's file confirmed it.
+  profile: z.strictObject({ version: z.string().max(40), confirmed: z.boolean() }).nullable(),
+  // The name of the sheet the table was found on, and the header the sheet had for each field read (the file's own words for the columns, never a cell of data).
+  sheet: z.string().max(200).nullable(),
+  columns: z.array(z.strictObject({ field: z.enum(MARKETPLACE_INCOME_FIELDS), header: z.string().max(200) })).max(MARKETPLACE_INCOME_FIELDS.length),
+  tooMany: z.boolean(),
+  lines: z
+    .array(
+      z.strictObject({
+        rowNo: z.number().int().positive().max(1_048_576),
+        orderNo: z.string().min(1).max(64),
+        lineKey: z.string().min(1).max(120),
+        paidAt: zLocalDate.nullable(),
+        sales: zMoney,
+        sellerDiscount: zMoney,
+        commission: zMoney,
+        serviceFee: zMoney,
+        paymentFee: zMoney,
+        shipping: zMoney,
+        taxWithheld: zMoney,
+        refund: zMoney,
+        other: zSignedMoney,
+        net: zSignedMoney,
+      }),
+    )
+    .max(EXTRACT_LIMITS.maxIncomeLines),
+  // The net of the totals row below the table, when the file has exactly one; null otherwise (the report states no total, or states several).
+  statedNet: zSignedMoney.nullable(),
+  skipped: z.array(z.strictObject({ rowNo: z.number().int().positive().max(1_048_576), reason: z.enum(MARKETPLACE_INCOME_SKIP_REASONS) })).max(EXTRACT_LIMITS.maxOrderSkipped),
+  // Every row skipped, including those past maxOrderSkipped that are not listed.
+  skippedCount: z.number().int().min(0).max(1_048_576),
+});
+export type ExtractedMarketplaceIncome = z.infer<typeof zExtractedMarketplaceIncome>;
+
 export const zExtractFailure = z.strictObject({
   ok: z.literal(false),
   code: z.enum(EXTRACT_ERROR_CODES),
@@ -452,6 +499,7 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
   z.strictObject({ ok: z.literal(true), kind: z.literal('feed'), feed: zExtractedFeed }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('bank_statement'), statement: zExtractedBankStatement }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('marketplace_orders'), orders: zExtractedMarketplaceOrders }),
+  z.strictObject({ ok: z.literal(true), kind: z.literal('marketplace_income'), income: zExtractedMarketplaceIncome }),
 ]);
 export type ExtractSuccess = z.infer<typeof zExtractSuccess>;
 

@@ -73,6 +73,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
+import { meetingsCommands, meetingsManifest, meetingsQueries } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
@@ -84,6 +85,7 @@ import { exportSealer } from './export-seal.ts';
 import { webhookTarget, type WebhookTarget } from './alert.ts';
 import type { SecurityThresholds } from './security-signals.ts';
 import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
+import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
 import { createHttpApp, type StreamDeps } from './http.ts';
@@ -149,7 +151,7 @@ export interface KernelAdapters {
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -181,6 +183,8 @@ export interface Kernel {
   // After a restore: what the WORM archive holds that the database lacks, and with --reseed the number series raised
   // above it, as the worker (issue #2007, restore-report.ts). Resolves to the exit code.
   restoreReport(argv: readonly string[]): Promise<number>;
+  // After a restore (#2579): deletes again the meetings the shred references name, re-runs the retention and removes the objects that leaves; 0 or 1.
+  shredReplay(): Promise<number>;
 }
 
 // No-op defaults for the optional ports: nothing can be bound, no connector is installed, every module is on.
@@ -225,6 +229,7 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
     ads: () => ({ commands: adsCommands, queries: adsQueries }),
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
+    meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -249,6 +254,7 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   ads: adsManifest,
   crm: crmManifest,
   notes: notesManifest,
+  meetings: meetingsManifest,
   hr: hrManifest,
 };
 
@@ -763,7 +769,31 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     }
   }
 
-  return { config, modules: config.CROVE_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport };
+  // The shred replay role (#2579, ADR-0017 section 8): after a restore, every meeting a shred reference of the archive store names is deleted again, and the
+  // objects and file rows that leaves are removed. The worker does the same at start; this runs it on demand from the restore runbook.
+  async function shredReplay(): Promise<number> {
+    const workerUrl = config.WORKER_DATABASE_URL;
+    if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for shred-replay; run it in the worker container');
+    if (!config.CROVE_MODULES.includes('meetings')) {
+      console.log('[shred-replay] the meetings module is not enabled here; nothing to replay');
+      return 0;
+    }
+    const { pool, db, runtime } = buildRuntime(workerUrl, 'crove-restore', config.WORKER_DATABASE_POOL_MAX);
+    try {
+      await assertRlsEnforced(pool);
+      await assertSystemContextAccess(pool, 'granted');
+      const replay = await replayShreds({ runtime, workerDb: db, store: createArchiveStore(config) });
+      // What the retention shredded since the restore point came back too: shred it again before anything else opens.
+      const due = await runMeetingsRetention({ runtime, workerDb: db });
+      const sweep = await sweepMeetingMedia({ runtime, workerDb: db, store: resolved.storage });
+      return replay.failed > 0 || due.failed > 0 || sweep.failed > 0 ? 1 : 0;
+    } finally {
+      // Best effort: a failure to close never hides the run's own outcome.
+      await pool.end().catch((error: unknown) => console.error('[shred-replay] could not close the pool', error));
+    }
+  }
+
+  return { config, modules: config.CROVE_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport, shredReplay };
 }
 
 // The Social writer as the API uses it: drafts, rewrites, hashtags, post ideas (#1181) and period summaries (#1237) as

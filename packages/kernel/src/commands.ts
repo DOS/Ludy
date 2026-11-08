@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   ANOMALY_CHECK_PREFIX,
   MAX_IMPORT_BYTES,
+  MAX_MEETING_AUDIO_BYTES,
+  MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
   UPLOAD_PURPOSES,
@@ -31,6 +33,7 @@ import {
 } from '@crove/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
+import { extensionCommands } from './extension.ts';
 import { conversationCommands } from './conversations.ts';
 import {
   actorRef,
@@ -72,6 +75,7 @@ import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPre
 import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
+import { subjectKeyCommands } from './subject-key-reseal.ts';
 import { taxCalendarCommands } from './tax-calendar.ts';
 import { lockChartChanges, positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';
 
@@ -91,6 +95,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.stock.close_period',
   // The confirmation of a count of stock (#2513): writes the adjustment moves and posts their difference as a general journal voucher.
   'finance.stock.count_confirm',
+  // The posting of an approved pay run (#2532): posts the month's pay, the funds and the PIT as a general journal voucher that names the run.
+  'finance.payroll_posting.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',
@@ -347,11 +353,24 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
     risk: 'R1',
     sideEffect: 'internal',
     access: MEMBERS,
+    // The Ludy extension's meetings scope may ask for a grant for a meeting's audio or video, and for nothing else (#2582).
+    extension: { scope: 'meetings' },
     handler: async (ctx, input) => {
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
       const userId = ctx.actor.userId;
+      if (ctx.actor.extension && input.purpose !== 'meeting_audio' && input.purpose !== 'meeting_video') {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ tải lên được âm thanh và hình của cuộc họp', { rule: 'extension_scope' });
+      }
       // import: a spreadsheet for a module's import (#465), at most 10 MB.
-      const maxBytes = input.purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : input.purpose === 'import' ? MAX_IMPORT_BYTES : MAX_UPLOAD_BYTES;
+      const maxBytes = input.purpose === 'meeting_audio'
+        ? MAX_MEETING_AUDIO_BYTES
+        : input.purpose === 'meeting_video'
+          ? MAX_MEETING_VIDEO_BYTES
+          : input.purpose === 'social'
+            ? MAX_SOCIAL_VIDEO_BYTES
+            : input.purpose === 'import'
+              ? MAX_IMPORT_BYTES
+              : MAX_UPLOAD_BYTES;
       // Serializes begins of one user in one org, so concurrent requests cannot pass either cap together.
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.file_upload:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
       // Both counts use the database clock: the insert trigger sets created_at and expires_at from now(), the start
@@ -375,7 +394,7 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       }
       const row = await ctx.trx
         .insertInto('crove_kernel.file_upload')
-        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes) })
+        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes), purpose: input.purpose })
         .returning(['id', 'staging_key', 'max_bytes', 'expires_at'])
         .executeTakeFirstOrThrow();
       ctx.audit({ upload_id: row.id });
@@ -394,18 +413,22 @@ export const claimUpload = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
+  // The extension's meetings scope uses a grant it asked for, which is one for a meeting's audio or video (#2582).
+  extension: { scope: 'meetings' },
   target: (input) => ({ type: 'kernel.file_upload', id: input.uploadId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
     const row = await ctx.trx
       .selectFrom('crove_kernel.file_upload')
-      .select(['staging_key', 'created_by', 'max_bytes', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
+      .select(['staging_key', 'created_by', 'max_bytes', 'purpose', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .forUpdate()
       .executeTakeFirst();
     // Another user's grant reads as missing.
     if (!row || row.created_by !== ctx.actor.userId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
+    // A grant made for anything but a meeting's media reads as missing to an extension token.
+    if (ctx.actor.extension && row.purpose !== 'meeting_audio' && row.purpose !== 'meeting_video') throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy lượt tải lên');
     if (row.used_at) throw new DomainError('UPLOAD_USED', 409, 'Lượt tải lên này đã được dùng');
     if (row.expired) throw new DomainError('UPLOAD_EXPIRED', 409, 'Lượt tải lên đã hết hạn; hãy tải lại tệp');
     await ctx.trx
@@ -414,7 +437,7 @@ export const claimUpload = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .execute();
-    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes) };
+    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes), purpose: row.purpose };
   },
 });
 
@@ -1176,6 +1199,7 @@ const otherKernelCommands = [
   ...offboardingCommands,
   ...agentCommands,
   ...channelCommands,
+  ...extensionCommands,
   ...conversationCommands,
   setTaxCode,
   setVatFilingPeriod,
@@ -1196,6 +1220,7 @@ const otherKernelCommands = [
   ...aiBudgetCommands,
   ...userStatusCommands,
   ...personalDataCommands,
+  ...subjectKeyCommands,
 ];
 
 // The kernel's commands; options.orgCreateLimits sets the org creation limits (default DEFAULT_ORG_CREATE_LIMITS),

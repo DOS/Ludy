@@ -26,7 +26,7 @@ const KERNEL_SCREENS = {
   ],
   // Signing in and the screens before an org: the landing redirect, the home of several orgs, sign-in, the second
   // factor, a password reset, an invite to accept and a new org.
-  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
+  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
   nav: [
     { app: 'home', group: 'work', path: 'overview', label: 'overview' },
     { app: 'home', group: 'work', path: 'inbox', label: 'inbox' },
@@ -184,8 +184,18 @@ const ADS_SCREENS = {
 // HR (#2530, payroll plan 6.1): the people payroll is run for, in an app of its own (Ludy Nhân sự, owner decision 2026-11-04). Owners and admins only, which the database's policies and
 // every query enforce; the item is hidden from everyone else by the app's role check.
 const HR_SCREENS = {
-  routes: [{ path: 'hr/employees' }],
-  nav: [{ app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' }],
+  routes: [{ path: 'hr/employees' }, { path: 'hr/payroll' }],
+  nav: [
+    { app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' },
+    { app: 'hr', group: 'people', path: 'hr/payroll', label: 'payroll' },
+  ],
+} as const satisfies ModuleScreens;
+
+// AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): accessed through Cuoc hop tab inside Ludy Notes;
+// the in-app recorder at /o/$slug/meetings/record (M7, #2581); individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
+export const MEETINGS_SCREENS = {
+  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }],
+  nav: [],
 } as const satisfies ModuleScreens;
 
 export const MODULE_SCREENS = {
@@ -196,4 +206,5 @@ export const MODULE_SCREENS = {
   ads: ADS_SCREENS,
   crm: CRM_SCREENS,
   notes: NOTES_SCREENS,
+  meetings: MEETINGS_SCREENS,
 } as const;

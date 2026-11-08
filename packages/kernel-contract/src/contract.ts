@@ -191,7 +191,7 @@ import {
 } from './schemas.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -270,6 +270,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
+import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -301,6 +302,23 @@ import {
   zTodoUpdate,
   zTodoWritten,
 } from './notes.ts';
+import {
+  zMeetingCreate,
+  zMeetingCreated,
+  zMeetingDeleted,
+  zMeetingDetail,
+  zMeetingListInput,
+  zMeetingReaderAdd,
+  zMeetingReaderRemove,
+  zMeetingReaderResult,
+  zMeetingRef,
+  zMeetingSettings,
+  zMeetingExtensionStatus,
+  zMeetingSettingsGet,
+  zMeetingSettingsSet,
+  zMeetingSummary,
+} from './meetings.ts';
+import { zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -477,6 +495,14 @@ export const contract = {
     list: oc.input(z.object({ userId: zId })).output(z.array(zSession)),
     revoke: oc.input(zSessionRevoke).output(z.object({ revoked: z.array(zId) })),
   },
+  // The member's connected extension devices in the org of the request (issue #2582, ADR-0047 point 10): their tokens'
+  // standing, never a hash, and a revoke of one. Only the member's own; the extension itself cannot reach either.
+  extension: {
+    tokens: {
+      list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
+      revoke: oc.input(zExtensionTokenRevoke).output(zExtensionTokenRevoked),
+    },
+  },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
   channels: {
     list: oc.input(z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() })).output(z.array(zChannelConnection)),
@@ -625,6 +651,20 @@ export const contract = {
       },
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
+      // The monthly pay run (#2531): open a month, type its inputs, read the sheet, approve it (R3, a fresh second factor), and correct an approved month by an adjustment line in a later run.
+      // Every read is a sensitive query. The payslip is a view of a stored line.
+      runs: {
+        list: oc.input(zHrRunList).output(z.array(zHrRunSummary)),
+        sheet: oc.input(zHrRunRef).output(zHrRunSheet),
+        open: oc.input(zHrRunOpen).output(zHrRunWritten),
+        recalculate: oc.input(zHrRunRecalculate).output(zHrRunWritten),
+        approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      lines: {
+        setInputs: oc.input(zHrLineInputsSet).output(zHrRunWritten),
+        adjust: oc.input(zHrLineAdjust).output(zHrRunWritten),
+        payslip: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
@@ -665,6 +705,25 @@ export const contract = {
       myWork: oc.input(zMyWorkInput).output(zMyWork),
       // How many to-dos each member has, for an owner or admin before removing one; no text.
       counts: oc.input(z.strictObject({})).output(z.array(zTodoCount)),
+    },
+  },
+  // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2).
+  meetings: {
+    list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
+    get: oc.input(zMeetingRef).output(zMeetingDetail),
+    create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
+    extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
+    delete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
+    settings: {
+      get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
+      set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
+    readers: {
+      add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
+      remove: oc.input(zMeetingReaderRemove).output(zMeetingReaderResult),
     },
   },
   // Crove Social (Social plan §3.3), when the deployment runs the social module.
@@ -1422,6 +1481,9 @@ export const contract = {
           // The confirmation of a count of stock (#2513): the server works out the differences from the books and builds the entry; an owner or an admin approves, and approving writes
           // the adjustment moves. STOCK_COUNT_NOT_DRAFT, STOCK_COUNT_CLOSED, PERIOD_LOCKED, STOCK_COUNT_STALE (409), STOCK_COUNT_UNPRICED, STOCK_COUNT_NO_DIFFERENCE (422).
           z.object({ command: z.literal('finance.stock.count_confirm'), input: zStockCountIdInput, idempotencyKey: zId }),
+          // The posting of an approved pay run (#2532, ADR-0046): the server builds one line per account from the frozen run, with the account map of the entity's chart; an owner or an admin
+          // approves it. HR_RUN_NOT_FOUND (404), HR_RUN_NOT_APPROVED, HR_POSTING_OPEN, HR_POSTING_DONE, PERIOD_LOCKED (409), HR_POSTING_ADJUSTMENTS, HR_POSTING_MISMATCH (422).
+          z.object({ command: z.literal('finance.payroll_posting.record'), input: zHrPostingRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -1686,6 +1748,9 @@ export const contract = {
       delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
       // The request to issue a draft as the Inbox card shows it (#2502): the draft now, and whether it is still what was asked for. Owners, admins and members.
       issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
+      // The coworker's proposal for the form from a text a person typed (#2505): lines, the VAT rate the text states, and the buyer from the org's customers. Owners, admins and members. Read only;
+      // the model is asked outside any transaction, and an answer with a figure or a rate the text or the date does not allow is refused (ai: refused).
+      suggest: oc.input(zEInvoiceSuggestInput).output(zEInvoiceSuggested),
     },
   },
   // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.

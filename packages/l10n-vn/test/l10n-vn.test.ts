@@ -13,8 +13,11 @@ import {
   looksLikeEInvoiceXml,
   parseTaxCode,
   parseVatRate,
+  reducedRateApplies,
+  salesVatRatesOn,
   suggestDebitAccount,
   vatPercent,
+  writtenVatRate,
   type ParsedInvoice,
 } from '../src/index.ts';
 
@@ -244,6 +247,23 @@ describe('parseVatRate', () => {
 
   it('calls anything else unknown', () => {
     for (const text of [null, '', 'abc', '150%', '-5%', '10%%', '1e1', '10,5%']) expect(parseVatRate(text).kind, String(text)).toBe('unknown');
+  });
+});
+
+describe('the VAT rates of a sales invoice on a date (#2505)', () => {
+  it('allows 8% only in the periods of the reduced rate, to the day', () => {
+    expect(reducedRateApplies('2025-07-01')).toBe(true);
+    expect(reducedRateApplies('2026-12-31')).toBe(true);
+    expect(reducedRateApplies('2027-01-01')).toBe(false);
+    expect(reducedRateApplies('2025-01-01')).toBe(true);
+    expect(reducedRateApplies('2023-06-30')).toBe(false);
+    expect(salesVatRatesOn('2026-11-05')).toEqual(['0%', '5%', '8%', '10%', 'KCT', 'KKKNT']);
+    expect(salesVatRatesOn('2027-01-01')).toEqual(['0%', '5%', '10%', 'KCT', 'KKKNT']);
+  });
+
+  it('writes a plain rate or an exemption as it is printed, and nothing else', () => {
+    for (const [text, written] of [['10', '10%'], [' 8 % ', '8%'], ['0%', '0%'], ['kct', 'KCT'], ['KKKNT', 'KKKNT'], ['5.00%', '5%']] as const) expect(writtenVatRate(text), text).toBe(written);
+    for (const text of [null, '', 'abc', 'KHAC:5%', 'KHAC', '150%']) expect(writtenVatRate(text), String(text)).toBeNull();
   });
 });
 

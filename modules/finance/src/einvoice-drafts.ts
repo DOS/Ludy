@@ -21,6 +21,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money, parseTaxCode } from '@crove/l10n-vn';
 import { checkDraft, computeDraft, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
+import { einvoiceDraftSuggestSource } from './einvoice-suggest.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -371,4 +372,4 @@ export const einvoiceDraftDelete = defineCommand({
 });
 
 export const einvoiceCommands = [einvoiceSeriesSync, einvoiceDraftSave, einvoiceDraftDelete];
-export const einvoiceQueries = [einvoiceSeriesList, einvoiceDraftList, einvoiceDraftGet, einvoiceDraftCheck];
+export const einvoiceQueries = [einvoiceSeriesList, einvoiceDraftList, einvoiceDraftGet, einvoiceDraftCheck, einvoiceDraftSuggestSource];

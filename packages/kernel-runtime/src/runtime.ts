@@ -32,6 +32,25 @@ export function deriveRisk(sideEffect: SideEffect): Risk {
 // Authenticator assurance level of the user's access token: aal2 means the session passed MFA.
 export type Aal = 'aal1' | 'aal2';
 
+// The scopes an extension token may hold, one per feature of the Ludy extension (ADR-0047 point 10, issue #2582). A
+// command or query is reachable with an extension token only when it declares one of the token's scopes
+// (CommandDef.extension, QueryDef.extension): every other command, query and org-less call refuses the token.
+// crove_kernel.extension_token's CHECK lists the same scopes; a new one is a migration and an entry here.
+export const EXTENSION_SCOPES = Object.freeze(['meetings'] as const);
+export type ExtensionScope = (typeof EXTENSION_SCOPES)[number];
+
+// What an extension token proved at the HTTP edge: its id and the scopes it holds. It lives only on a user actor made
+// from a token, whose org the token names and the database re-checks on every transaction (checkSession).
+export interface ExtensionGrant {
+  tokenId: string;
+  scopes: readonly string[];
+}
+
+// The declaration that opens a command or query to an extension token holding `scope` (and to no other scope).
+export interface ExtensionAccess {
+  scope: ExtensionScope;
+}
+
 export interface UserActor {
   type: 'user';
   userId: string;
@@ -44,6 +63,11 @@ export interface UserActor {
   // so the token itself never travels with the actor. Resolves when Auth confirms the session's user; throws 401
   // or 503 otherwise.
   confirmLive?: () => Promise<void>;
+  // Set when the request carried a Ludy extension token instead of a browser session (issue #2582). There is no
+  // Supabase session then (no sessionId): the runtime checks the token itself in the request's transaction, and the
+  // actor reaches only the commands and queries that declare one of its scopes. The user is the token's member, so it
+  // can never do more than that member can.
+  extension?: ExtensionGrant;
 }
 
 // A position-holding agent acting in one of its runs (ADR-0029). It enters only in the worker, through
@@ -148,6 +172,9 @@ export interface CommandDef<I = unknown, O = unknown> {
   // permission.
   permissionScope?: 'org' | 'legal_entity';
   target?: (input: I) => { type: string; id: string } | null;
+  // Opens the command to a Ludy extension token that holds this scope (issue #2582, ADR-0047 point 10). Absent: an
+  // extension token never runs it. Only a command run by users with a role list, below R3.
+  extension?: ExtensionAccess;
   // Org-less commands (creating an org) start without an org. `bootstrap` calls a definer that creates the
   // org with the actor as a member, or returns the org an earlier request with the same idempotency key
   // created. executeOrgless() then enters that org as the actor, so membership is checked as on every other
@@ -266,6 +293,9 @@ export interface QueryDef<I = unknown, O = unknown> {
   access: readonly MemberRole[] | 'system';
   // Agents that may read it (absent: none).
   agent?: Pick<AgentAccess, 'roles'>;
+  // Opens the query to a Ludy extension token that holds this scope (absent: an extension token never reads it).
+  // Only a query with a role list.
+  extension?: ExtensionAccess;
   // A streamed read (the org export, #212): it runs only through Runtime.stream(), which hands the handler a sink for
   // its batches and opens one REPEATABLE READ, READ ONLY transaction, so every batch comes from the same snapshot.
   // Runtime.query() and ctx.query refuse it (STREAM_ONLY) after the usual context and access checks.
@@ -278,6 +308,9 @@ export interface QueryDef<I = unknown, O = unknown> {
   // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
   // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
   target?: (input: I) => { type: string; id: string } | null;
+  // Facts of the read to keep in its audit row's detail, from its parsed input: names of what is read (a table), never a value or personal data. The
+  // keys of the runtime's own detail (read, stage, the actor's) are kept as they are. Ignored without `sensitive`.
+  auditDetail?: (input: I) => Record<string, string>; // keys and values are names (AUDIT_DETAIL_KEY, TARGET_TYPE), checked before the row is written
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -556,14 +589,26 @@ export function hasFreshMfa(actor: UserActor, nowMs: number = Date.now()): boole
 }
 
 function sessionDetail(actor: UserActor): Record<string, unknown> {
-  return { aal: actor.aal, sessionId: actor.sessionId ?? null, mfaAt: actor.mfaAt ?? null };
+  const detail: Record<string, unknown> = { aal: actor.aal, sessionId: actor.sessionId ?? null, mfaAt: actor.mfaAt ?? null };
+  // Every audit row of a request made with an extension token names the token, so a device's acts can be listed.
+  if (actor.extension) detail.extensionToken = actor.extension.tokenId;
+  return detail;
+}
+
+// A user actor made from an extension token reaches a command or query only when it declares a scope the token holds.
+// Any other actor is not restricted here; a command or query that declares no extension scope is closed to a token.
+function authorizeExtension(access: ExtensionAccess | undefined, actor: Actor): void {
+  if (actor.type !== 'user' || !actor.extension) return;
+  if (!access || !actor.extension.scopes.includes(access.scope)) {
+    throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được thực hiện việc này', { rule: 'extension_scope' });
+  }
 }
 
 // Keys of a refusal audit row that only the runtime writes: the code, the policy rule, who refused with which
 // session and, for a refusal caught by ctx.tryRun, the command that ran it. A command's own facts (DomainError audit)
 // never set them, also when the error names no rule, the actor is a system actor, which has no session, or the
 // refusal was not caught by ctx.tryRun.
-const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
+const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'extensionToken', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
 
 // The statuses a refused command is audited for once its org was entered (executeIn, ctx.tryRun).
 const AUDITED_REFUSAL_STATUSES: ReadonlySet<number> = new Set([403, 404, 409, 422]);
@@ -594,7 +639,7 @@ export function isNeverRecovered(code: string): boolean {
 
 // Keys of an audit row only the runtime writes (a ctx.tryRun refusal's parent command, a proposal's link from a
 // command run under it, #1706), so ctx.audit never sets them.
-const RESERVED_OK_KEYS = ['parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
+const RESERVED_OK_KEYS = ['extensionToken', 'parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
 
 // A JSON copy of an error's details or audit facts, frozen all the way down (what the audit row stores is JSON), or
 // null when the value has no JSON form (a cycle, a BigInt).
@@ -689,6 +734,7 @@ interface Entered {
 function actorDetail(actor: Actor): Record<string, unknown> {
   if (actor.type === 'system') return { component: actor.component };
   if (actor.type === 'agent') return { agentRun: actor.runId };
+  if (actor.extension) return { extensionToken: actor.extension.tokenId };
   return {};
 }
 
@@ -939,6 +985,8 @@ function refuseStreamed(def: QueryDef<unknown, unknown>): void {
 
 // The type a sensitive read's audit row names its record by (QueryDef.target): a name, never free text.
 const TARGET_TYPE = /^[a-z][a-z0-9_.]{0,63}$/;
+// The key of a fact a query adds to its audit row (QueryDef.auditDetail).
+const AUDIT_DETAIL_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 
 // A sensitive query is audited before it reads, which only Runtime.query() and Runtime.stream() do.
 function refuseSensitiveLookup(def: QueryDef<unknown, unknown>): void {
@@ -1085,6 +1133,16 @@ function snapshotAgent(value: unknown, what: string): unknown {
   return Object.freeze(copy);
 }
 
+// What register() keeps of an extension access declaration: a frozen copy, its scope checked to be a known one.
+function snapshotExtension(value: unknown, what: string): unknown {
+  if (value === undefined) return undefined;
+  const copy = plainCopy(value, what);
+  if (typeof copy.scope !== 'string' || !(EXTENSION_SCOPES as readonly string[]).includes(copy.scope)) {
+    throw new Error(`${what}: the scope is one of ${EXTENSION_SCOPES.join(', ')}`);
+  }
+  return Object.freeze(copy);
+}
+
 // A command definition as register() checks, keeps and runs it (#1766): a frozen copy, with the policy fields it
 // holds (access, agent, agentApprovers, writes) copied and frozen as well; keys it did not have stay absent. The
 // handler and the other functions are kept as they are.
@@ -1095,6 +1153,7 @@ function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown
   if (Array.isArray(copy.sealedInput)) copy.sealedInput = frozenList(copy.sealedInput);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
   if (Object.hasOwn(copy, 'agentApprovers')) copy.agentApprovers = snapshotAgent(copy.agentApprovers, `${label}: agentApprovers`);
+  if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   if (Array.isArray(copy.writes)) {
     copy.writes = Object.freeze(
       copy.writes.map((w: unknown, i: number) => {
@@ -1118,6 +1177,7 @@ function snapshotQuery(def: QueryDef<any, any>): QueryDef<unknown, unknown> {
   const copy = plainCopy(def, `${label}: the definition`);
   if (Object.hasOwn(copy, 'access')) copy.access = frozenList(copy.access);
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
+  if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
   return Object.freeze(copy) as unknown as QueryDef<unknown, unknown>;
 }
 
@@ -1412,6 +1472,15 @@ export class Runtime {
     return this.#sessions?.mode ?? null;
   }
 
+  // What the reseal pass of the subject keys (#2643) may do with the subject vault, and no more: the key ids the vault opens and one wrapped key wrapped again under the current key.
+  // The vault itself stays private, so no caller gets an unwrap, an open or a data key out of this; null without a vault. The worker's runtime is built like the API's (serverRuntime),
+  // so the pass wraps under the key the API opens.
+  get subjectKeyReseal(): { keyId: string; keyIds: string[]; rewrap: (orgId: string, subjectId: string, keyId: string, wrapped: Buffer) => { keyId: string; wrapped: Buffer } } | null {
+    const vault = this.#subjectVault;
+    if (!vault) return null;
+    return { keyId: vault.keyId, keyIds: vault.keyIds, rewrap: (orgId, subjectId, keyId, wrapped) => vault.rewrap(orgId, subjectId, keyId, wrapped) };
+  }
+
   // Checks each definition on its own; validate() checks how they fit together once every module is registered.
   register(defs: { commands?: CommandDef<any, any>[]; queries?: QueryDef<any, any>[] }): this {
     for (const given of defs.commands ?? []) {
@@ -1476,6 +1545,9 @@ export class Runtime {
           throw new Error(`command ${c.name}: declares no contact or payment write (P04), so it may not declare ${jobs.join(', ')}: the job it starts runs later under its own declaration (#2107)`);
         }
       }
+      if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
+        throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
+      }
       if (c.agentApprovers !== undefined) {
         if (c.access !== 'proposal' || (c.risk !== 'R1' && c.risk !== 'R2')) {
           throw new Error(`command ${c.name}: agent approvers are declared only on an R1 or R2 proposal command (access 'proposal')`);
@@ -1515,6 +1587,9 @@ export class Runtime {
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
+      if (q.extension !== undefined && (!Array.isArray(q.access) || q.stream === true)) {
+        throw new Error(`query ${q.name}: an extension token reaches only a query with a role list as access, and no streamed one (ADR-0047 point 10)`);
+      }
       this.#queries.set(q.name, q as QueryDef<unknown, unknown>);
       this.#installedModules.add(moduleOf(q.name));
     }
@@ -1591,6 +1666,7 @@ export class Runtime {
   }
 
   private authorizeQuery(def: QueryDef<unknown, unknown>, actor: Actor, entered: Entered): void {
+    authorizeExtension(def.extension, actor);
     const { role, agent } = entered;
     if (actor.type === 'agent') {
       // Agents read only what a query declares for their role key (ADR-0029); never a system query.
@@ -1648,6 +1724,14 @@ export class Runtime {
   // The session status check, in the caller's transaction. Fails closed: a user actor without a session id is
   // refused whenever the runtime checks sessions.
   private async checkSession(trx: Transaction<Database>, actor: Actor, orgId: string | null): Promise<void> {
+    if (actor.type === 'user' && actor.extension) {
+      // An extension token has no Supabase session. Its standing (not revoked, not expired, the member still in this
+      // org, the org active, the user enabled) is read here, in the request's own transaction and before the context
+      // is entered, so a revoke or a removal applies at once. It names one org: org-less work is refused.
+      if (orgId === null) throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ dùng được trong tổ chức đã cấp', { rule: 'extension_org' });
+      await sql`SELECT crove_kernel.extension_token_check(${actor.extension.tokenId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
+      return;
+    }
     if (actor.type !== 'user' || !this.#sessions) return;
     const sessionId = actor.sessionId;
     if (!sessionId) throw new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập không hợp lệ');
@@ -1720,6 +1804,8 @@ export class Runtime {
   // Answers the legal entities the user was let in for when only an entity-scoped permission admitted them (#1507),
   // else null (their role, or the permission org-wide).
   private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): Promise<readonly string[] | null> {
+    // First of all: an extension token reaches a command only through the scope the command declares (ADR-0047 point 10).
+    authorizeExtension(def.extension, actor);
     try {
       this.authorizeRole(def, actor, entered, viaProposal);
       return null;
@@ -2662,6 +2748,11 @@ export class Runtime {
     // The record the read is about, named by a type of a fixed shape: a query's declaration cannot carry free text into the audit row.
     const target = def.target?.(input) ?? null;
     if (target !== null && !TARGET_TYPE.test(target.type)) throw new Error(`query ${def.name}: ${target.type} is not a target type`);
+    // The facts a query adds to its audit row are names of fixed shape, never free text: audit rows reach the WORM archive and the org's export.
+    const extra = def.auditDetail?.(input) ?? {};
+    for (const [key, value] of Object.entries(extra)) {
+      if (!AUDIT_DETAIL_KEY.test(key) || !TARGET_TYPE.test(value)) throw new Error(`query ${def.name}: audit detail ${key} is not a name`);
+    }
     const db = await this.#cells.resolveTenant(options.orgId);
     const refused: { by: DomainError | null } = { by: null };
     try {
@@ -2686,7 +2777,7 @@ export class Runtime {
           target,
           proposalId: null,
           // The row says a read was started: the handler may still fail after it.
-          detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+          detail: { ...extra, ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
           inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
         });
       });
