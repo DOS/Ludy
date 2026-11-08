@@ -198,11 +198,17 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
             OR (p.prosecdef AND p.prosrc ~ 'member_vy_(result|memory)')`,
       ),
     );
+    // The permission function has one signature, so the guarded cases below cannot go quiet on a renamed one; override and permission arrive together.
+    const permFns = rows.filter((f) => f.fn.startsWith('crove_kernel.member_has_permission(')).map((f) => f.fn);
+    expect(permFns, 'member_has_permission has exactly the signature the cases call').toEqual(has.permission ? ['crove_kernel.member_has_permission(uuid,uuid,text)'] : []);
+    expect(has.permission, 'member_has_permission and member_permission_override arrive together').toBe(has.override);
     for (const f of rows) {
+      // A function that decides who holds a permission is no definer once the tenant role may call it: it would answer for any org.
+      if (f.fn.startsWith('crove_kernel.member_has_permission(') && f.tenant_exec) expect(f.definer, `${f.fn} is executable by the tenant role, so it is not a SECURITY DEFINER`).toBe(false);
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
       // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the permission reader and the counts (an owner or admin's removal warning: ids and numbers, never text).
-      if (f.definer && !/member_has_permission|member_vy_private_counts/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      if (f.definer && !/member_vy_private_counts/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
@@ -212,11 +218,22 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     beforeAll(async () => {
       if (!has.results || !has.memory) return;
       await admin(async (c) => {
+        // The run behind the result is the member's own Vy run when the agent kind exists (seeded with the binding triggers set aside), an org-chart agent's before.
+        let agentId = agent.agentId;
+        if (has.kind) {
+          await c.query('SET session_replication_role = replica');
+          agentId = randomUUID();
+          await c.query(
+            `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+            [orgId, agentId, users.author],
+          );
+        }
         await c.query(
           `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
            VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
-          [orgId, ids.subject, agent.agentId],
+          [orgId, ids.subject, agentId],
         );
+        await c.query('SET session_replication_role = DEFAULT');
         await c.query(
           `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
            VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', $6, true, true, now() + interval '30 days')`,
@@ -283,6 +300,56 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     });
   });
 
+  // private_read goes from false to true and never back, on the result and on the run (ADR-0049 decision 4 and ruling 3).
+  describe('the private-read flag', () => {
+    it('is never cleared by the member, and false to true is allowed', async () => {
+      if (!has.results) return;
+      const rid = randomUUID();
+      await admin(async (c) => {
+        await c.query('SET session_replication_role = replica');
+        const runId = randomUUID();
+        const agentId = randomUUID();
+        if (has.kind) {
+          await c.query(
+            `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+            [orgId, agentId, users.limited],
+          );
+        }
+        await c.query(
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
+           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+          [orgId, runId, has.kind ? agentId : agent.agentId],
+        );
+        await c.query(
+          `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+           VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Ghi chú', true, false, now() + interval '30 days')`,
+          [orgId, rid, users.limited, runId, randomUUID()],
+        );
+        await c.query('SET session_replication_role = DEFAULT');
+      });
+      const limited = member('a member limited to a branch', () => users.limited);
+      const raise = await outcome(run(limited, (c) => c.query('UPDATE crove_kernel.member_vy_result SET private_read = true WHERE id = $1', [rid])));
+      expect(raise.ok, 'the member raising the flag (positive control)').toBe(true);
+      const result = await outcome(
+        inContext(limited.url(), limited.enter, async (c) => {
+          await c.query('UPDATE crove_kernel.member_vy_result SET private_read = true WHERE id = $1', [rid]);
+          const clear = await outcome(c.query('UPDATE crove_kernel.member_vy_result SET private_read = false WHERE id = $1', [rid]));
+          return clear;
+        }),
+      );
+      expect(result.ok && result.value.ok, 'the member clearing the flag').toBe(false);
+      // The run's own flag, when the column exists: the trigger holds for any writer.
+      const column = await admin((c) => c.query(`SELECT 1 FROM pg_attribute WHERE attrelid = 'crove_kernel.ai_run'::regclass AND attname = 'private_read' AND NOT attisdropped`));
+      if (column.rowCount) {
+        const cleared = await admin(async (c) => {
+          await c.query('UPDATE crove_kernel.ai_run SET private_read = true WHERE org_id = $1 AND id = $2', [orgId, agent.runId]);
+          return outcome(c.query('UPDATE crove_kernel.ai_run SET private_read = false WHERE org_id = $1 AND id = $2', [orgId, agent.runId]));
+        });
+        expect(cleared.ok, 'anyone clearing the flag of a run').toBe(false);
+      }
+    });
+  });
+
   describe('the member_vy agent and its runs', () => {
     // A member's own agent, inserted in their own user context and committed, so the worker login can be asked to enter it.
     const insertAgent = (actor: Actor, memberUser: string, template = 'kernel.member_vy') =>
@@ -293,7 +360,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
           (c) =>
             c.query(
               `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, $3, 'Vy', 'member_vy', $4, $5) RETURNING id`,
-              [orgId, randomUUID(), template, memberUser, users.owner],
+              [orgId, randomUUID(), template, memberUser, memberUser],
             ),
           false,
         ),
