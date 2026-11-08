@@ -138,6 +138,8 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
+  'crove_kernel.member_vy_memory': KernelMemberVyMemoryTable;
+  'crove_kernel.member_vy_result': KernelMemberVyResultTable;
   'crove_kernel.notification': KernelNotificationTable;
   'crove_kernel.notification_mute': KernelNotificationMuteTable;
   'crove_kernel.number_allocation': KernelNumberAllocationTable;
@@ -1537,6 +1539,8 @@ export interface KernelAgentTable {
   created_by: string;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  kind: Generated<string>;
+  member_user_id: string | null;
 }
 
 /** crove_kernel.agent_template */
@@ -1580,6 +1584,7 @@ export interface KernelAiRunTable {
   expires_at: ColumnType<Date, Date | string, Date | string>;
   finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   error: string | null;
+  private_read: Generated<boolean>;
 }
 
 /** crove_kernel.approval_preset */
@@ -2104,6 +2109,35 @@ export interface KernelMemberInviteTable {
   legal_entity_ids: ColumnType<string[] | null, string[] | null, NotGranted>;
   role_key: ColumnType<string | null, string | null, NotGranted>;
   role_scope: ColumnType<string | null, never, NotGranted>;
+}
+
+/** crove_kernel.member_vy_memory */
+export interface KernelMemberVyMemoryTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  member_user_id: ColumnType<string, string, NotGranted>;
+  body: string;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.member_vy_result */
+export interface KernelMemberVyResultTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  member_user_id: ColumnType<string, string, NotGranted>;
+  run_id: ColumnType<string, string, NotGranted>;
+  feature: ColumnType<string, string, NotGranted>;
+  subject_type: ColumnType<string, string, NotGranted>;
+  subject_id: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  error_code: string | null;
+  source_revision: number | null;
+  body: string | null;
+  tainted: Generated<boolean>;
+  private_read: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  expires_at: ColumnType<Date, Date | string, NotGranted>;
 }
 
 /** crove_kernel.notification_mute */
