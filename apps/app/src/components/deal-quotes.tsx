@@ -157,7 +157,10 @@ export function QuoteSuggestions({ dealId, room, vat, onApply }: { dealId: strin
   );
 }
 
-function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boolean; onClose: () => void }) {
+type SentState = { link: QuoteLinkCreated | null; mailed: string | null };
+
+// `sent` lives in the parent: a send bumps the quote's version, which remounts the editor (its key holds the version), and the link is shown once.
+function QuoteEditor({ quote, canEdit, sent, onSent, onClose }: { quote: Quote; canEdit: boolean; sent: SentState | null; onSent: (done: SentState) => void; onClose: () => void }) {
   const t = useTranslations('quotes');
   const { locale } = useLocaleSetting();
   const readOnly = quote.status !== 'draft';
@@ -168,7 +171,6 @@ function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boole
   const [terms, setTerms] = useState(quote.terms ?? '');
   const [lines, setLines] = useState<LineDraft[]>(() => fromQuote(quote));
   const [invalid, setInvalid] = useState<number | null>(null);
-  const [sent, setSent] = useState<{ link: QuoteLinkCreated | null; mailed: string | null } | null>(null);
   // What the form held when it opened: a send is of what was saved, so it waits while the form differs.
   const [opened] = useState(() => JSON.stringify([quote.validUntil, (quote.notes ?? '').trim(), (quote.terms ?? '').trim(), fromQuote(quote).map(toInput)]));
   const vat = defaults.data?.defaultVat ?? '10%';
@@ -340,7 +342,7 @@ function QuoteEditor({ quote, canEdit, onClose }: { quote: Quote; canEdit: boole
           {sent.mailed ? t('send.mailedTo', { to: sent.mailed }) : t('send.mailed')}
         </p>
       )}
-      {!readOnly && canEdit && !sent && <QuoteSendPanel quote={quote} dirty={dirty} onSent={(done) => setSent({ link: done.link, mailed: done.mailed })} />}
+      {!readOnly && canEdit && !sent && <QuoteSendPanel quote={quote} dirty={dirty} onSent={(done) => onSent({ link: done.link, mailed: done.mailed })} />}
       {readOnly && <QuoteLinks quote={quote} canEdit={canEdit} />}
       {invalid !== null && <ErrorText>{t('editor.lineInvalid', { n: String(invalid) })}</ErrorText>}
       {(save.error || copy.error) && <ErrorText>{errorMessage(save.error ?? copy.error)}</ErrorText>}
@@ -429,6 +431,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
   const t = useTranslations('quotes');
   const quotes = useQuery(orpc.crm.quotes.byDeal.queryOptions({ input: { dealId: deal.id } }));
   const [openId, setOpenId] = useState<string | null>(null);
+  const [sentFor, setSentFor] = useState<({ quoteId: string } & SentState) | null>(null);
   const [settings, setSettings] = useState(false);
   const org = useQuery(orpc.org.get.queryOptions());
   const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
@@ -478,7 +481,19 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
       )}
       <DealOrders dealId={deal.id} canEdit={canEdit} />
       {openId !== null && opened.error && <ErrorText>{errorMessage(opened.error)}</ErrorText>}
-      {openId !== null && opened.data && <QuoteEditor key={`${opened.data.id}:${opened.data.version}`} quote={opened.data} canEdit={canEdit} onClose={() => setOpenId(null)} />}
+      {openId !== null && opened.data && (
+        <QuoteEditor
+          key={`${opened.data.id}:${opened.data.version}`}
+          quote={opened.data}
+          canEdit={canEdit}
+          sent={sentFor?.quoteId === opened.data.id ? sentFor : null}
+          onSent={(done) => setSentFor({ quoteId: opened.data.id, ...done })}
+          onClose={() => {
+            setOpenId(null);
+            setSentFor(null);
+          }}
+        />
+      )}
     </section>
   );
 }
