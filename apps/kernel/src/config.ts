@@ -7,8 +7,10 @@ import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { exportSealer } from './export-seal.ts';
+import { STAGING_MAX_AGE_MS } from './retention.ts';
 
 // The product name when BRAND_NAME is unset (#1040).
+export const MEDIA_UPLOAD_REQUEST_TIMEOUT_MAX_S = STAGING_MAX_AGE_MS / 1000 - 300;
 export const DEFAULT_BRAND_NAME = 'Ludy';
 const BRAND_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{M}\p{N} .,&'+_!()-]*$/u;
 
@@ -173,8 +175,10 @@ const schema = z.object({
   // meeting recording that is uploaded through the kernel (STORAGE=local, or a raw body) over a slow uplink: 2 GB in 300 s needs
   // 6.7 MB/s. The default is 45 minutes (about 1 MB/s). With STORAGE=s3 the app and the extension send media straight to the bucket by a
   // presigned grant, so the kernel receives only a small request and the default matters less; set 300 to keep Node's own limit.
-  // A request that stops sending for a minute is cut whatever this is (upload-timeouts.ts).
-  MEDIA_UPLOAD_REQUEST_TIMEOUT_S: z.coerce.number().int().min(300).max(21_600).default(2700),
+  // A request that stops sending for a minute is cut whatever this is (upload-timeouts.ts). The most is the staging sweep's age
+  // (STAGING_MAX_AGE_MS, one hour) less a 5 minute margin (#2843 N5): a raw upload is staged under staging/ while it arrives, and a
+  // request that may outlive the sweep could have its staged object deleted under it.
+  MEDIA_UPLOAD_REQUEST_TIMEOUT_S: z.coerce.number().int().min(300).max(MEDIA_UPLOAD_REQUEST_TIMEOUT_MAX_S).default(2700),
   // Presigned upload grants (kernel.file.upload.begin) one user may open per org in any rolling minute, counted in the
   // database across API instances (issue #223). Bounds the staging objects an abandoned upload loop leaves behind.
   UPLOAD_BEGIN_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(20),
