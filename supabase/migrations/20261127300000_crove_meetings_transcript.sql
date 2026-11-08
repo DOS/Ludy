@@ -10,8 +10,9 @@
 -- recorder's one click of publishing (the summary step of the plan, M6): no row is inserted published here, and an attendee
 -- reads only published rows of a meeting they may read. Text is personal data (class pii in the manifest). A segment goes
 -- with its meeting (ON DELETE CASCADE: the recorder's delete, the retention shred, the org purge).
--- The write path that fills drafts for a recorder is a command, meetings.transcript.draft_store; the background run that
--- calls it as the recorder's own Vy is M4b (it waits for the member-scoped context of ADR-0049 stage B).
+-- The write path that fills drafts is a command for a signed-in member, meetings.transcript.draft_store. The background run of
+-- M4b (the recorder's own Vy, ADR-0049 stage B) writes only its own result, member_vy_result; the recorder's own action then
+-- copies that result into this table through the command, so no agent context ever writes here.
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_meetings.transcript_segment (

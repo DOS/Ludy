@@ -9,7 +9,10 @@
 //   (Whisper-class, the deployment's own choice: in Ludy Cloud a model run in Vietnam, chosen in the private layer; a
 //   self-hosted Ludy can point it at a local model). It is called only through transcribeChunks, which puts every call
 //   behind the AI budget meter (`metered('meetings.transcribe')`): the meter admits before the call and records after.
-//   Measuring by audio length and the member's own context come with M4b; here the call counts as one call.
+//   Measuring by audio length and the member's own context come with M4b; here the call counts as one call. In M4b the run
+//   is the recorder's own Vy and it writes only its own result (member_vy_result), never crove_meetings.transcript_segment:
+//   the recorder's own action then copies that result into the draft through meetings.transcript.draft_store (ADR-0049
+//   decision 8; decided on #2578 and #2756).
 //
 // Nothing here logs or returns the audio, a transcript or a provider's body: errors carry a kind and an HTTP status only.
 import { metered, type AiUsageSink } from './meter.ts';

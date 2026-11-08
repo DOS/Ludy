@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The transcript of a meeting on its page (#2578, M4a). The recorder sees their draft, line by line with the time and the
-// speaker, and corrects a line by hand; every other reader of the meeting sees only what was published. Vy writes the draft
-// for the recorder alone (the transcription run itself is M4b); without AI there is simply no transcript, and the recording
+// speaker, and corrects a line by hand; every other reader of the meeting sees only what was published. Vy's transcription (M4b)
+// lands in the recorder's own Vy result and the recorder's own action copies it here as the draft; without AI there is simply no transcript, and the recording
 // and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';

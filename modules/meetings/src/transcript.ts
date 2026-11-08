@@ -2,8 +2,9 @@
 // The transcript of a meeting (#2578, ADR-0047 points 2 and 3, ADR-0049 stage A, meetings plan M4a): the recorder's draft
 // segments, read, replaced by a transcription run and corrected by hand. Only the recorder reads or writes a draft (the RLS
 // policies of transcript_segment say so, and these commands check the recorder again); a reader of the meeting reads only
-// published segments. The audit rows carry ids and counts, never the text. The background run that calls draft_store as the
-// recorder's own Vy is M4b.
+// published segments. The audit rows carry ids and counts, never the text. Both commands are for a signed-in member (a user
+// actor): the background run of M4b is the recorder's own Vy and writes only its own result (member_vy_result); the recorder's
+// own action copies that result into the draft through draft_store, so no agent context ever writes this table.
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import {
