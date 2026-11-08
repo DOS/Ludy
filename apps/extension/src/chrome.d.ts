@@ -3,6 +3,7 @@
 // (ADR-0047 point 10: dependencies pinned and few). Add a member here only when the code uses it.
 declare namespace chrome {
   namespace runtime {
+    const id: string | undefined;
     const lastError: { message?: string } | undefined;
     function getURL(path: string): string;
     function getManifest(): { version: string; permissions?: string[]; optional_permissions?: string[]; host_permissions?: string[] };
@@ -17,6 +18,7 @@ declare namespace chrome {
       get(keys?: string | string[] | null): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
       remove(keys: string | string[]): Promise<void>;
+      clear(): Promise<void>;
     }
     const local: Area;
   }

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The background worker: the only code that reads the stored token and starts a recording. It starts nothing by itself:
+// The background worker: the only code that starts a recording (the popup also reads the stored token, for its own calls
+// to the configured address; the offscreen document gets it from here for one recording). It starts nothing by itself:
 // a recording begins only from the popup's message after the member's click, checks the consent gate and the browser
 // permissions again, and has the offscreen document capture the one tab the member clicked.
 import { consentBlocker, type ConsentMethod } from './consent.ts';
 import { loadState, activeAccount } from './state.ts';
-import { RECORDING_KEY, type CaptureStart, type PopupMessage, type RecordingState, type StartReply, type StopReply, type Tick } from './messages.ts';
+import { isOwnSender, parseStartRequest, RECORDING_KEY, type CaptureStart, type RecordingState, type StartReply, type StartRequest, type StopReply, type Tick } from './messages.ts';
 import { createClient } from './api.ts';
 import { formatClock } from '@crove/meeting-recorder';
 
@@ -22,7 +23,7 @@ async function setBadge(state: RecordingState | null, elapsedMs = 0): Promise<vo
   await chrome.action.setTitle({ title: state ? `Ludy đang ghi: ${state.title} (${formatClock(elapsedMs)})` : 'Ludy' });
 }
 
-async function start(request: Extract<PopupMessage, { type: 'start' }>): Promise<StartReply> {
+async function start(request: StartRequest): Promise<StartReply> {
   // The consent gate, again: the popup cannot skip it.
   const blocker = consentBlocker(request);
   if (blocker) return { ok: false, reason: blocker };
@@ -66,7 +67,9 @@ async function stop(): Promise<StopReply> {
   return reply;
 }
 
-chrome.runtime.onMessage.addListener((raw, _sender, respond) => {
+chrome.runtime.onMessage.addListener((raw, sender, respond) => {
+  // Only this extension's own pages and the offscreen document speak to the worker.
+  if (!isOwnSender(sender, chrome.runtime.id)) return undefined;
   const message = raw as { type?: string };
   if (message.type === 'tick') {
     void chrome.storage.local.get(RECORDING_KEY).then((stored) => {
@@ -76,7 +79,12 @@ chrome.runtime.onMessage.addListener((raw, _sender, respond) => {
     return undefined;
   }
   if (message.type === 'start') {
-    void start(message as Extract<PopupMessage, { type: 'start' }>).then(respond, () => respond({ ok: false, reason: 'setup' } satisfies StartReply));
+    const request = parseStartRequest(raw);
+    if (!request) {
+      respond({ ok: false, reason: 'invalid' } satisfies StartReply);
+      return undefined;
+    }
+    void start(request).then(respond, () => respond({ ok: false, reason: 'setup' } satisfies StartReply));
     return true;
   }
   if (message.type === 'stop') {
