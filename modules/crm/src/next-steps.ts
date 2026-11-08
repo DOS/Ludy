@@ -139,7 +139,8 @@ export const nextStepRaise = defineCommand({
   },
 });
 
-// A sent quote of an open deal that nobody answered (the follow-up of docs/plan/crm-quotes.md section 7): a quote sent QUOTE_UNANSWERED_DAYS ago or more, or valid for
+// A sent quote of an open deal that nobody answered (the follow-up of docs/plan/crm-quotes.md section 7), while it is still valid (expiry is not stored, so a quote past
+// its last day would stay `sent` and raise a step every week for ever): a quote sent QUOTE_UNANSWERED_DAYS ago or more, or valid for
 // QUOTE_EXPIRING_DAYS more or fewer, raises one next step for the member in charge of the deal. The reason code and the day are all it holds: no quote number, amount
 // or text. A step whose quote is no longer waiting (accepted, declined, replaced by a revision or deleted: no quote of the deal is `sent`) closes by itself with
 // quote_decided. A deal gets a step only when it has none open and none resolved in the last 7 days, as for a stale deal, so "done" does not raise it again tomorrow.
@@ -163,6 +164,7 @@ async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ ra
     FROM crove_crm.quote q
     JOIN crove_crm.deal d ON d.org_id = q.org_id AND d.id = q.deal_id
     WHERE q.org_id = ${ctx.orgId}::uuid AND q.status = 'sent' AND d.closed_at IS NULL
+      AND q.valid_until >= ${today}::date
       AND (${soon} OR coalesce(q.sent_at, q.created_at) <= ${new Date(ctx.now.getTime() - QUOTE_UNANSWERED_DAYS * DAY_MS)})
       AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${resolvedSince}))
     ORDER BY d.id, (CASE WHEN ${soon} THEN 0 ELSE 1 END), q.valid_until, q.id

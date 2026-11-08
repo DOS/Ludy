@@ -160,7 +160,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     expect(step).toMatchObject({ reason: 'quote_expiring', since_on: until });
   });
 
-  it('raises nothing for a draft, a fresh quote, a quote of a closed deal or one valid for more than 3 days', async () => {
+  it('raises nothing for a draft, a fresh quote, a quote of a closed deal, an expired quote or one valid for more than 3 days', async () => {
     const o = await org();
     const p = await o.party('Công ty C');
     const draftDeal = await o.newDeal(o.member, p);
@@ -170,6 +170,9 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     const won = await o.newDeal(o.member, p);
     await o.sentQuote(won.id, 9, 1);
     await o.exec(o.member, 'crm.deal.move', { dealId: won.id, stageId: (await o.stageNamed('Thắng')).id, version: won.version });
+    // Sent 20 days ago and valid until 3 days ago: past its last day, so it is not followed up (expiry is not stored, it would nag every week).
+    const expired = await o.newDeal(o.member, p);
+    await o.sentQuote(expired.id, 20, -3);
     expect(await o.raise()).toMatchObject({ raised: 0 });
     expect(await o.steps()).toEqual([]);
   });
@@ -195,15 +198,17 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
   it('closes the step with quote_decided once the quote is accepted, declined or replaced', async () => {
     const o = await org();
     const p = await o.party('Công ty E');
-    const [a, b] = [await o.newDeal(o.member, p), await o.newDeal(o.member, p)];
-    const quoteA = await o.sentQuote(a.id, 7, 9);
-    await o.sentQuote(b.id, 7, 9);
+    const [a, b, c, d] = [await o.newDeal(o.member, p), await o.newDeal(o.member, p), await o.newDeal(o.member, p), await o.newDeal(o.member, p)];
+    const [quoteA, quoteB, quoteC] = [await o.sentQuote(a.id, 7, 9), await o.sentQuote(b.id, 7, 9), await o.sentQuote(c.id, 7, 9)];
+    await o.sentQuote(d.id, 7, 9);
     await o.raise();
-    expect(await o.steps()).toHaveLength(2);
+    expect(await o.steps()).toHaveLength(4);
     await o.setStatus(quoteA.id, 'accepted');
-    expect(await o.raise()).toMatchObject({ raised: 0, closed: 1 });
-    expect((await o.stepsOf(a.id))[0]).toMatchObject({ status: 'closed', closed_reason: 'quote_decided' });
-    expect((await o.stepsOf(b.id))[0]).toMatchObject({ status: 'open' });
+    await o.setStatus(quoteB.id, 'declined');
+    await o.setStatus(quoteC.id, 'superseded');
+    expect(await o.raise()).toMatchObject({ raised: 0, closed: 3 });
+    for (const deal of [a, b, c]) expect((await o.stepsOf(deal.id))[0]).toMatchObject({ status: 'closed', closed_reason: 'quote_decided' });
+    expect((await o.stepsOf(d.id))[0]).toMatchObject({ status: 'open' });
   });
 
   it('lists an org with a quote to follow up for the nightly pass, and leaves no quote number, amount or text in an audit row or the Home read', async () => {

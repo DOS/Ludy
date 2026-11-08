@@ -39,7 +39,7 @@ BEGIN
                       WHERE n.org_id = d.org_id AND n.deal_id = d.id
                         AND (n.status = 'open' OR n.resolved_at > pg_catalog.now() - pg_catalog.make_interval(days => 7)))
     UNION
-    -- A sent quote the rule may follow up (sent 5 days ago or more, or valid for 3 more days or fewer) on an open deal with no open step, and no step
+    -- A sent quote the rule may follow up (still valid, and sent 5 days ago or more or valid for 3 more days or fewer) on an open deal with no open step, and no step
     -- resolved in the last 7 days; and an open quote step whose quote is no longer waiting (to be closed).
     SELECT d.org_id
     FROM crove_crm.deal d
@@ -48,6 +48,8 @@ BEGIN
       AND (p_after IS NULL OR d.org_id > p_after)
       AND ((EXISTS (SELECT 1 FROM crove_crm.quote q
                     WHERE q.org_id = d.org_id AND q.deal_id = d.id AND q.status = 'sent'
+                      -- Still valid: a quote past its last day is not followed up (expiry is not stored, so it would stay `sent` and nag for ever).
+                      AND q.valid_until >= (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
                       AND (q.sent_at < pg_catalog.now() - pg_catalog.make_interval(days => 5)
                            OR q.valid_until <= (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 3))
             AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n

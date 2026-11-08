@@ -54,9 +54,9 @@ export const crmToday = defineQuery({
           title: { key: expiring ? 'crm.quoteExpiring' : 'crm.quoteUnanswered', params: { days } },
           amount: step.amount,
           currency: 'VND',
-          ...(expiring ? { dueAt: `${step.sinceOn}T00:00:00${VIETNAM_OFFSET}` } : { severity: 'info' as const }),
+          ...(expiring ? { dueAt: `${step.sinceOn}T23:59:00${VIETNAM_OFFSET}` } : { severity: 'info' as const }),
           href: '/deals?tab=next',
-        } as TodayItem);
+        });
       } else if (step.reason === 'past_close') {
         items.push({
           kind: 'deadline',
