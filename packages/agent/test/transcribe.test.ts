@@ -13,6 +13,7 @@ import {
   speakerLabelOf,
   transcribeAudio,
   transcribeChunks,
+  withoutTrailingSlashes,
   withAiScope,
   type AiCall,
   type AiMeter,
@@ -142,6 +143,20 @@ function recordingMeter(refuseAfter = Number.POSITIVE_INFINITY) {
   };
   return { meter, events, calls };
 }
+
+describe('withoutTrailingSlashes', () => {
+  it('strips every trailing slash and nothing else, in linear time', () => {
+    expect(withoutTrailingSlashes('http://stt.test/v1')).toBe('http://stt.test/v1');
+    expect(withoutTrailingSlashes('http://stt.test/v1/')).toBe('http://stt.test/v1');
+    expect(withoutTrailingSlashes('http://stt.test//v1///')).toBe('http://stt.test//v1');
+    expect(withoutTrailingSlashes('///')).toBe('');
+    expect(withoutTrailingSlashes('')).toBe('');
+    const long = `http://stt.test/v1${'/'.repeat(2_000_000)}x${'/'.repeat(2_000_000)}`;
+    const started = performance.now();
+    expect(withoutTrailingSlashes(long)).toBe(`http://stt.test/v1${'/'.repeat(2_000_000)}x`);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});
 
 describe('the provider adapter (fake provider)', () => {
   it('posts the chunk to the OpenAI-compatible endpoint with the key, the model and the language, and parses the answer', async () => {

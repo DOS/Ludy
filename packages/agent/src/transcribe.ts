@@ -188,6 +188,13 @@ async function readCapped(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
+// The address without the slashes it ends with: a linear scan (a regex anchored at the end is polynomial on a long run of them).
+export function withoutTrailingSlashes(address: string): string {
+  let end = address.length;
+  while (end > 0 && address.charCodeAt(end - 1) === 47) end -= 1;
+  return address.slice(0, end);
+}
+
 function kindOf(status: number): TranscriptionErrorKind {
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
@@ -205,7 +212,7 @@ export async function transcribeAudio(config: TranscribeConfig, input: Transcrib
   form.set('language', input.language);
   form.set('response_format', 'verbose_json');
   form.set('temperature', '0');
-  const url = `${config.baseURL.replace(/\/+$/, '')}/audio/transcriptions`;
+  const url = `${withoutTrailingSlashes(config.baseURL)}/audio/transcriptions`;
   const send = config.fetch ?? fetch;
   let response: Response;
   try {
