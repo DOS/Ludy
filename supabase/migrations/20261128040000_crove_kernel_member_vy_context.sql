@@ -317,8 +317,10 @@ END $$;
 -- mode writes none of them: a trigger that fires before every other one refuses the member context outright (ai_run keeps its own-run
 -- rule and activity its stamp above). A background run claims no task, comments nowhere, emits nothing and counts no refusal in the tally.
 -- ---------------------------------------------------------------------------
+-- A definer: it reads the sealed context, which not every role that deletes from these tables may (a purge's own definer, for one), and a
+-- trigger function runs with the privileges of whoever fires it.
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_forbid() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF crove_kernel.ctx_verified() ->> 'kind' = 'member_vy' THEN
     RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
