@@ -20,13 +20,13 @@ describe('the logo as a PNG', () => {
       expect([...(image?.colour.data ?? [])]).toEqual([...samples]);
     }
     for (const [colorType, channels, space] of [[4, 2, 'DeviceGray'], [6, 4, 'DeviceRGB']] as const) {
-      const samples = gradient(5, 4, channels);
-      const image = readLogoImage(png({ width: 5, height: 4, colorType, samples, filters: FILTERS }), 'image/png');
-      expect(image).toMatchObject({ width: 5, height: 4, space });
+      const samples = gradient(5, 5, channels);
+      const image = readLogoImage(png({ width: 5, height: 5, colorType, samples, filters: FILTERS }), 'image/png');
+      expect(image).toMatchObject({ width: 5, height: 5, space });
       const colourChannels = channels - 1;
       const colour: number[] = [];
       const alpha: number[] = [];
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 25; i++) {
         for (let c = 0; c < colourChannels; c++) colour.push(samples[i * channels + c] as number);
         alpha.push(samples[i * channels + colourChannels] as number);
       }
@@ -51,6 +51,17 @@ describe('the logo as a PNG', () => {
     expect(readLogoImage(png({ width: 2, height: 2, colorType: 3, samples: new Uint8Array([0, 1, 2, 3]), palette }), 'image/png')).toBeNull();
     expect(readLogoImage(png({ width: 2, height: 2, colorType: 3, samples, palette: new Uint8Array([1, 2]) }), 'image/png')).toBeNull();
     expect(readLogoImage(png({ width: 2, height: 2, colorType: 3, samples }), 'image/png')).toBeNull();
+  });
+
+  it('turns the one transparent colour a gray or RGB PNG names (tRNS) into an alpha plane, and ignores a tRNS of the wrong length', () => {
+    const gray = new Uint8Array([10, 200, 10, 200]);
+    const grayImage = readLogoImage(png({ width: 2, height: 2, colorType: 0, samples: gray, transparency: new Uint8Array([0, 200]) }), 'image/png');
+    expect([...(grayImage?.alpha ?? [])]).toEqual([255, 0, 255, 0]);
+    const rgb = new Uint8Array([1, 2, 3, 9, 9, 9, 1, 2, 3, 1, 2, 4]);
+    const rgbImage = readLogoImage(png({ width: 2, height: 2, colorType: 2, samples: rgb, transparency: new Uint8Array([0, 1, 0, 2, 0, 3]) }), 'image/png');
+    expect([...(rgbImage?.alpha ?? [])]).toEqual([0, 255, 0, 255]);
+    expect(readLogoImage(png({ width: 2, height: 2, colorType: 2, samples: rgb, transparency: new Uint8Array([0, 1, 0, 2]) }), 'image/png')?.alpha).toBeNull();
+    expect(readLogoImage(png({ width: 2, height: 2, colorType: 2, samples: rgb, transparency: new Uint8Array([0, 7, 0, 7, 0, 7]) }), 'image/png')?.alpha).toBeNull();
   });
 
   it('leaves out what it does not take: 16-bit, interlaced, too large, damaged', () => {

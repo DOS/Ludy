@@ -8,6 +8,8 @@ import { readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtim
 import { sniffType } from './sniff.ts';
 
 export const QUOTE_VIEWS_PER_MINUTE = 60;
+// Logo reads (a file read whole, at most QUOTE_LOGO_MAX_BYTES) in flight at once in a process.
+export const QUOTE_LOGO_READS_MAX = 8;
 
 const zView = z.strictObject({ token: z.string().regex(QUOTE_TOKEN_PATTERN) });
 

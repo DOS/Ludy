@@ -143,7 +143,7 @@ import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
-import { quoteLogo, quoteView, readLogoFile, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
+import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
@@ -255,6 +255,8 @@ export interface HttpDeps {
   quoteLimit?: RateLimiter;
   // The public quote page's logo budget per client (#2814), apart from the page's. Unset: QUOTE_VIEWS_PER_MINUTE.
   quoteLogoLimit?: RateLimiter;
+  // How many logo reads (a stored file read whole into memory) run at once in this process, across every client (#2814). Unset: QUOTE_LOGO_READS_MAX.
+  quoteLogoReads?: ConcurrencyLimiter;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -1069,6 +1071,8 @@ export function createHttpApp(deps: HttpDeps) {
     });
     // The logo of that quote's letterhead (#2814), for the page to show: the token in the body again, the one refusal for a bad link or a quote with no logo, never cached.
     const quoteLogoLimit = deps.quoteLogoLimit ?? new RateLimiter({ perMinute: QUOTE_VIEWS_PER_MINUTE });
+    // Each client has a budget, but the route needs no account, so the reads in flight are also capped for the whole process: a slow store cannot pile up buffers across clients.
+    const quoteLogoReads = deps.quoteLogoReads ?? new ConcurrencyLimiter({ total: QUOTE_LOGO_READS_MAX, perKey: QUOTE_LOGO_READS_MAX });
     app.post('/api/quote/logo', bodyLimit({ maxSize: 1024 }), async (c) => {
       const decision = quoteLogoLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
       if (!decision.allowed) {
@@ -1078,6 +1082,11 @@ export function createHttpApp(deps: HttpDeps) {
       }
       c.header('cache-control', 'no-store');
       c.header('referrer-policy', 'no-referrer');
+      const release = quoteLogoReads.tryAcquire('quote-logo');
+      if (!release) {
+        c.header('retry-after', '2');
+        return c.json({ code: 'QUOTE_LOGO_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+      }
       try {
         const image = await quoteLogo(runtime, store, await c.req.json().catch(() => null));
         if (!image) return c.json({ code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
@@ -1086,6 +1095,8 @@ export function createHttpApp(deps: HttpDeps) {
         });
       } catch (error) {
         return problem(c, error);
+      } finally {
+        release();
       }
     });
   }
@@ -2478,7 +2489,8 @@ export function createHttpApp(deps: HttpDeps) {
             const file = await readLogoFile(store, logoFile);
             logo = file ? readLogoImage(file.bytes, file.contentType) : null;
           } catch (error) {
-            console.warn('[quote-pdf] logo left out:', error instanceof Error ? error.message : error);
+            if (error instanceof BlobIntegrityError) opsAlert('[http] ALERT evidence integrity: a stored file does not match its recorded sha256', error);
+            else console.warn('[quote-pdf] logo left out:', error instanceof Error ? error.message : error);
           }
         }
         const bytes = renderQuotePdf({ ...document, logo });

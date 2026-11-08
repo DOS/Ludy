@@ -162,8 +162,17 @@ function readPng(bytes: Uint8Array): PdfImage | null {
   if (!pixels) return null;
   const count = width * height;
   const alphaOf = (plane: Uint8Array): Uint8Array | null => (plane.every((v) => v === 255) ? null : plane);
-  if (colorType === 0) return { width, height, space: 'DeviceGray', colour: { kind: 'raw', data: pixels }, alpha: null };
-  if (colorType === 2) return { width, height, space: 'DeviceRGB', colour: { kind: 'raw', data: pixels }, alpha: null };
+  if (colorType === 0 || colorType === 2) {
+    // A tRNS chunk names one colour (a 16-bit value per channel; at 8 bits the low byte is the sample) that is fully transparent, so a logo with a see-through background is not drawn on white.
+    const key = colorType === 0 ? (transparency && transparency.length === 2 ? [transparency[1] as number] : null) : transparency && transparency.length === 6 ? [transparency[1] as number, transparency[3] as number, transparency[5] as number] : null;
+    let alpha: Uint8Array | null = null;
+    if (key) {
+      const plane = new Uint8Array(count).fill(255);
+      for (let i = 0; i < count; i++) if (key.every((v, c) => pixels[i * channels + c] === v)) plane[i] = 0;
+      alpha = alphaOf(plane);
+    }
+    return { width, height, space: colorType === 0 ? 'DeviceGray' : 'DeviceRGB', colour: { kind: 'raw', data: pixels }, alpha };
+  }
   if (colorType === 4 || colorType === 6) {
     const colourChannels = channels - 1;
     const colour = new Uint8Array(count * colourChannels);

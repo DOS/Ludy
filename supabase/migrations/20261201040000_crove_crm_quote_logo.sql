@@ -237,7 +237,7 @@ BEGIN
       -- Whether the quote's letterhead has a logo (the one frozen at the send, else the org's own); the image itself comes from quote_link_logo, by the same token.
       'hasLogo', EXISTS (
         SELECT 1 FROM crove_kernel.file f
-        WHERE f.org_id = v_quote.org_id AND f.content_type IN ('image/png', 'image/jpeg')
+        WHERE f.org_id = v_quote.org_id AND f.source = 'social' AND f.content_type IN ('image/png', 'image/jpeg')
           AND f.id = CASE WHEN v_quote.seller_logo_frozen THEN v_quote.seller_logo_file_id
                           ELSE (SELECT s.logo_file_id FROM crove_crm.quote_setting s WHERE s.org_id = v_quote.org_id) END),
       'buyer', pg_catalog.jsonb_build_object('name', v_quote.buyer_name, 'taxCode', v_quote.buyer_tax_code, 'address', v_quote.buyer_address),
@@ -287,7 +287,7 @@ BEGIN
       'contentType', f.content_type,
       'sizeBytes', f.size_bytes)
     FROM crove_kernel.file f
-    WHERE f.org_id = v_quote.org_id AND f.content_type IN ('image/png', 'image/jpeg')
+    WHERE f.org_id = v_quote.org_id AND f.source = 'social' AND f.content_type IN ('image/png', 'image/jpeg')
       AND f.id = CASE WHEN v_quote.seller_logo_frozen THEN v_quote.seller_logo_file_id
                       ELSE (SELECT s.logo_file_id FROM crove_crm.quote_setting s WHERE s.org_id = v_quote.org_id) END);
 END $$;

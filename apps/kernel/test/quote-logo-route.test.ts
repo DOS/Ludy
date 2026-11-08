@@ -6,11 +6,12 @@
 // crm-quote-send.db.test.ts on PostgreSQL.
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 
 const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent', BRAND_NAME: 'Ludy' });
@@ -23,13 +24,13 @@ const INVALID = { code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá kh
 const ref = (bytes: Uint8Array, contentType = 'image/png') => ({ storageKey: 'org/logo', generation: null, sha256: sha256Hex(bytes), contentType, sizeBytes: bytes.byteLength });
 
 // `found` is what the definer answers for the token: null for every refusal it has, else the logo's reference.
-function appWith(options: { crm?: boolean; found?: ReturnType<typeof ref> | null; stored?: Uint8Array; perMinute?: number } = {}) {
+function appWith(options: { crm?: boolean; found?: ReturnType<typeof ref> | null; stored?: Uint8Array; perMinute?: number; get?: () => Promise<Uint8Array>; reads?: ConcurrencyLimiter } = {}) {
   const runtime = {
     installed: (module: string) => (module === 'crm' ? (options.crm ?? true) : true),
     modules: () => ['kernel', 'crm'],
     orgless: async () => options.found ?? null,
   } as unknown as Runtime;
-  const store = { put: async () => '', get: async () => options.stored ?? PNG, delete: async () => undefined } as unknown as BlobStore;
+  const store = { put: async () => '', get: options.get ?? (async () => options.stored ?? PNG), delete: async () => undefined } as unknown as BlobStore;
   return createHttpApp({
     config,
     runtime,
@@ -38,6 +39,7 @@ function appWith(options: { crm?: boolean; found?: ReturnType<typeof ref> | null
     pool: {} as pg.Pool,
     aiEnabled: false,
     quoteLogoLimit: new RateLimiter({ perMinute: options.perMinute ?? 100 }),
+    ...(options.reads ? { quoteLogoReads: options.reads } : {}),
   });
 }
 
@@ -88,6 +90,20 @@ describe('POST /api/quote/logo (#2814)', () => {
     expect(refused.status).toBe(429);
     expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(await refused.json()).toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('caps the logo reads in flight for the whole process: one over the cap gets 503 with retry-after, and the slot is free again when a read ends', async () => {
+    let open: (bytes: Uint8Array) => void = () => undefined;
+    const reads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    const app = appWith({ found: ref(PNG), reads, get: () => new Promise<Uint8Array>((resolve) => { open = resolve; }) });
+    const first = post(app, JSON.stringify({ token: TOKEN }));
+    await vi.waitFor(() => expect(reads.inUse).toBe(1));
+    const busy = await post(app, JSON.stringify({ token: TOKEN }));
+    expect(busy.status).toBe(503);
+    expect(Number(busy.headers.get('retry-after'))).toBeGreaterThan(0);
+    open(PNG);
+    expect((await first).status).toBe(200);
+    expect(reads.inUse).toBe(0);
   });
 
   it('is not there without the CRM module, and takes no GET', async () => {

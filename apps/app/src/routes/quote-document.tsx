@@ -25,8 +25,10 @@ async function load(token: string): Promise<QuoteDocument | null> {
 // The logo of the letterhead (#2814), asked for apart by the same token in a POST body (never the URL) and shown from an object URL; null when there is none or it cannot be read,
 // and the page is the same without it.
 async function loadLogo(token: string): Promise<Blob | null> {
-  const res = await fetch(apiUrl('/api/quote/logo'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'omit', referrerPolicy: 'no-referrer' }).catch(() => null);
-  if (!res?.ok) return null;
+  // A 404 is the answer "no logo for this link" and is kept; a network failure, 429 or 5xx throws, so it is not cached as "no logo" and the next visit asks again.
+  const res = await fetch(apiUrl('/api/quote/logo'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'omit', referrerPolicy: 'no-referrer' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`quote logo: ${res.status}`);
   const blob = await res.blob();
   return blob.type === 'image/png' || blob.type === 'image/jpeg' ? blob : null;
 }

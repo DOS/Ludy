@@ -528,6 +528,9 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
     await point(webp);
     expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
+    // A file that did not come from the photo library (a document, a scan) is not a logo even when it is a PNG.
+    await point(await makeFile(o.orgId, new Uint8Array([...PNG_BYTES, 7]), { source: 'upload' }));
+    expect(await quoteLogo(rt, store, { token: linkB.token })).toBeNull();
     expect(((await quoteView(rt, { token: linkB.token })) as QuoteDocument).hasLogo).toBe(false);
     expect((await documentOf(o.viewer, sentB.id)).logoFile).toBeNull();
     await point(png);

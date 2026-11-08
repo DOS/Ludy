@@ -178,16 +178,16 @@ export interface QuoteLogoFile {
   sizeBytes: number;
 }
 
-// The logo a file id names, if it is still a file of this org that the upload checks let in (a PNG or a JPEG, small); else none. Used at the send, to freeze it, and by the PDF.
+// The logo a file id names, if it is still a file of this org that the upload checks let in (from the photo library, a PNG or a JPEG, small); else none. Used at the send, to freeze it, and by the PDF.
 export async function logoFileOf(ctx: Pick<Reader, 'trx' | 'orgId'>, fileId: string | null): Promise<QuoteLogoFile | null> {
   if (fileId === null) return null;
   const file = await ctx.trx
     .selectFrom('crove_kernel.file')
-    .select(['id', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes'])
+    .select(['id', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'source'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)
     .executeTakeFirst();
-  if (!file || !(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type) || Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) return null;
+  if (!file || file.source !== 'social' || !(QUOTE_LOGO_TYPES as readonly string[]).includes(file.content_type) || Number(file.size_bytes) > QUOTE_LOGO_MAX_BYTES) return null;
   return { id: file.id, storageKey: file.storage_key, generation: file.generation, sha256: file.sha256, contentType: file.content_type, sizeBytes: Number(file.size_bytes) };
 }
 
