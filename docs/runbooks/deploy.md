@@ -81,7 +81,7 @@ A rollback restores the **images and compose files** of the previous release. It
 - A broken migration is fixed by a new migration, never by editing or reverting the applied file (AGENTS.md, "Schema only via migrations").
 - The older release's `/readyz` still passes on the newer schema: it checks that its own migrations are in the ledger, not that there are no others.
 - Upgrade note: #1822 step 2 revokes `enter_context` at `migrate`. A deployment that never set the key has step 1's app (no key, so `enter_context`) refused on every user request between `migrate` and the recreate of the app, which then reads the key `migrate` made; install the key first (runbook section 1) to avoid that gap.
-- Exception: #1822 step 2 (`20261127010000_crove_kernel_context_token_required.sql`) revokes `enter_context` from `crove_app`. A rollback to a release from before step 1 is refused on every user request, and one to step 1 needs `CROVE_CONTEXT_TOKEN_KEY` in the env file first ([context-token-key.md](context-token-key.md), "Rolling back past step 2").
+- Exception: #1822 step 2 (`20261127110000_crove_kernel_context_token_required.sql`) revokes `enter_context` from `crove_app`. A rollback to a release from before step 1 is refused on every user request, and one to step 1 needs `CROVE_CONTEXT_TOKEN_KEY` in the env file first ([context-token-key.md](context-token-key.md), "Rolling back past step 2").
 
 ## One-time setup of the host
 
