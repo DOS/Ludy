@@ -9251,6 +9251,7 @@ export const vi = {
         list: 'Xem danh sách cơ hội bán hàng',
         move: 'Chuyển giai đoạn của cơ hội bán hàng',
         quotes: 'Xem các báo giá của một cơ hội bán hàng',
+        sales_orders: 'Xem các đơn hàng của một cơ hội bán hàng',
         update: 'Sửa cơ hội bán hàng',
       },
       deal_setting: {
@@ -9284,7 +9285,15 @@ export const vi = {
       pipeline: {
         setup: 'Tạo các giai đoạn mặc định của quy trình bán hàng',
       },
+      sales_order: {
+        cancel: 'Hủy đơn hàng',
+        get: 'Xem một đơn hàng',
+        handoff: 'Đọc đơn hàng để Kế toán lập hóa đơn',
+        list: 'Xem danh sách đơn hàng',
+      },
       quote: {
+        accept: 'Ghi nhận khách chấp nhận báo giá và tạo đơn hàng',
+        decline: 'Ghi nhận khách từ chối báo giá',
         send: 'Gửi báo giá bằng liên kết hoặc email',
         create_link: 'Tạo liên kết xem báo giá đã gửi',
         revoke_link: 'Thu hồi liên kết xem báo giá',
