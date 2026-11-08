@@ -33,11 +33,41 @@ import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
-const LINK = /(https?:\/\/|www\.)\S+/i;
-const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
-const PHONE = /(?:\+|\b)\d[\d\s.-]{7,}\d/;
+// Linear scans, no backtracking regex: a title is at most ITEM_TITLE_MAX (300) characters in the contract and in the table, and the scans are linear anyway.
+const hasLink = (lower: string): boolean => lower.includes('http://') || lower.includes('https://') || lower.includes('www.');
+// An email: a non-empty part before an '@' and, between two '@' or after the last, a part with a '.' that has a character on each side of it.
+function hasEmail(token: string): boolean {
+  const parts = token.split('@');
+  for (let i = 1; i < parts.length; i += 1) {
+    const before = parts[i - 1] as string;
+    const after = parts[i] as string;
+    const dot = after.indexOf('.', 1);
+    if (before.length > 0 && dot > 0 && dot < after.length - 1) return true;
+  }
+  return false;
+}
+// A phone-like run: digits with spaces, dots and dashes between them, nine characters or more from the first digit to the last.
+function hasPhone(text: string): boolean {
+  let start = -1;
+  let last = -1;
+  for (let i = 0; i <= text.length; i += 1) {
+    const c = i < text.length ? (text[i] as string) : '';
+    const digit = c >= '0' && c <= '9';
+    if (digit) {
+      if (start < 0) start = i;
+      last = i;
+    } else if (!(c === ' ' || c === '\t' || c === '\n' || c === '.' || c === '-')) {
+      if (start >= 0 && last - start + 1 >= 9) return true;
+      start = -1;
+      last = -1;
+    }
+  }
+  return false;
+}
 export function itemFlags(title: string): ItemFlag[] {
-  return LINK.test(title) || EMAIL.test(title) || PHONE.test(title) ? ['contact_in_title'] : [];
+  const lower = title.toLowerCase();
+  const found = hasLink(lower) || hasPhone(title) || lower.split(/\s+/).some((token) => hasEmail(token));
+  return found ? ['contact_in_title'] : [];
 }
 
 // A clean item: no flag, an attendee matched, a date parsed, exactly one seat held by that attendee. Anything else a person decides one by one.
