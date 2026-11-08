@@ -40,6 +40,27 @@ const zStagedResult = z.object({ kind: z.literal('marketplace_income'), summary:
 const NAMED_ORDERS = 10;
 const BATCH = 500;
 
+// What the table channel_settlement_line takes (numeric(20, 4), the deductions and the sale not below zero, net = sales - deductions + other), checked again on every line of a read before it is
+// staged: the sandbox's answer is trusted for its shape, not for these figures, so a reader that drifts fails here with the row named and not at confirm with a raw CHECK error (#2753).
+const MAX_AMOUNT = money('10000000000000000');
+const NON_NEGATIVE = ['sales', 'sellerDiscount', 'commission', 'serviceFee', 'paymentFee', 'shipping', 'taxWithheld', 'refund'] as const;
+export function badIncomeLines(lines: readonly StagedLine[]): number[] {
+  const bad: number[] = [];
+  for (const line of lines) {
+    const fits = (value: string) => {
+      const amount = money(value);
+      return amount.decimalPlaces() <= 4 && amount.abs().lt(MAX_AMOUNT);
+    };
+    const parts = [...NON_NEGATIVE.map((f) => line[f]), line.other, line.net];
+    const ok =
+      parts.every(fits) &&
+      NON_NEGATIVE.every((f) => !money(line[f]).isNegative()) &&
+      money(line.net).eq(money(line.sales).minus(line.sellerDiscount).minus(line.commission).minus(line.serviceFee).minus(line.paymentFee).minus(line.shipping).minus(line.taxWithheld).minus(line.refund).plus(line.other));
+    if (!ok) bad.push(line.rowNo);
+  }
+  return bad;
+}
+
 // The summary a staged read keeps: the file's own figures and the totals of its lines, nothing of the orders' content beyond counts.
 export function incomeSummaryOf(
   read: { platform: Platform; profile: { version: string; confirmed: boolean }; sheet: string | null; lines: readonly StagedLine[]; statedNet: string | null; skipped: ReadonlyArray<{ reason: string }> },
@@ -320,7 +341,10 @@ export const marketplaceIncomeConfirm = defineCommand({
       if (failure?.code === '23505' && String(failure.message).includes('CHANNEL_SETTLEMENT_LINE_DUPLICATE')) {
         throw new DomainError('MARKETPLACE_INCOME_REPEATED_LINES', 409, `Vừa có báo cáo thu nhập khác chứa các dòng bán này được nhập; hãy tải lại danh sách`);
       }
-      if (failure?.code === '23505') throw new DomainError('MARKETPLACE_INCOME_BUSY', 409, 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút');
+      // Only the period key (an import of the same period racing this one) is a concurrency problem; any other unique violation (a duplicate line key from a reader that drifted, say) is a real error.
+      if (failure?.code === '23505' && (failure as { constraint?: string }).constraint === 'channel_settlement_period_uq') {
+        throw new DomainError('MARKETPLACE_INCOME_BUSY', 409, 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút');
+      }
       throw error;
     }
     await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'imported', newLines: staged.lines.length, duplicateLines: 0, importId: settlementId });
@@ -422,6 +446,14 @@ export async function readMarketplaceIncomeFile(deps: MarketplaceIncomeFileDeps,
         ? `Báo cáo thu nhập ${income.platform} có ${blocking.length} dòng không đọc được (dòng ${rows.join(', ')} của tệp): số tiền, ngày hoặc mã đơn không đúng định dạng; hãy kiểm tra lại tệp hoặc báo cho người hỗ trợ nếu sàn đã đổi mẫu báo cáo`
         : 'Không nhận ra báo cáo thu nhập của Shopee hoặc TikTok Shop'
       ).slice(0, 2000),
+    });
+    return { handled: true };
+  }
+  const bad = badIncomeLines(income.lines);
+  if (bad.length > 0) {
+    const rows = [...new Set(bad)].slice(0, 20);
+    await record('failed', {
+      error: `Báo cáo thu nhập ${income.platform} có ${bad.length} dòng có số tiền không hợp lệ (dòng ${rows.join(', ')} của tệp): số tiền âm, quá 4 chữ số thập phân hoặc thực nhận không khớp các khoản; hãy kiểm tra lại tệp hoặc báo cho người hỗ trợ nếu sàn đã đổi mẫu báo cáo`.slice(0, 2000),
     });
     return { handled: true };
   }

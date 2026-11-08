@@ -740,7 +740,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         return;
       }
       // A marketplace income report (#2516) is tried next: its headers carry an order number and a released amount, which no order report or bank statement has.
-      const income = await readMarketplaceIncomeFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      // The order report's call already said whether the file is an income report (#2753): a sheet that is none, a bank statement among them, is not parsed a second time for it.
+      const income = report.notIncome ? { handled: false } : await readMarketplaceIncomeFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
       if (income.handled) {
         console.log(`[extract] file ${fileId}: marketplace income report`);
         return;

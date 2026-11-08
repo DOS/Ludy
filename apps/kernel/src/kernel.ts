@@ -75,7 +75,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
@@ -213,6 +213,11 @@ export function transcribeEnabled(config: Pick<Config, 'MEETINGS_TRANSCRIBE' | '
   return config.MEETINGS_TRANSCRIBE === 'on' && Boolean(config.TRANSCRIBE_BASE_URL) && Boolean(config.TRANSCRIBE_MODEL);
 }
 
+// The recorder's Vy may summarize a meeting only with MEETINGS_SUMMARY=on (#2580, M6); the module works with it off.
+export function summaryEnabled(config: Pick<Config, 'MEETINGS_SUMMARY'>): boolean {
+  return config.MEETINGS_SUMMARY === 'on';
+}
+
 // The commands and queries of the modules CROVE_MODULES enables (plan Decision 12, ADR-0031). A module left out has
 // none registered, so its commands answer COMMAND_NOT_FOUND, a ctx.query into it answers not_installed (with the
 // absentModules buildRuntime passes), and the
@@ -223,6 +228,7 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   // Whether the recorder may start a transcription here (#2578, M4b): MEETINGS_TRANSCRIBE=on with a provider.
   setTranscribeEnabled(transcribeEnabled(config));
+  setSummaryEnabled(summaryEnabled(config));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({

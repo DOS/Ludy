@@ -3,3 +3,5 @@ export * from './manifest.ts';
 export * from './meetings.ts';
 export * from './retention.ts';
 export * from './transcribe.ts';
+export { itemFlags, itemIsClean } from './results.ts';
+export { matchAttendee, parseWhen, plainName, setSummaryEnabled } from './summary.ts';

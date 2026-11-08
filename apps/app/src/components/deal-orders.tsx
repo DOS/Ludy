@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The customer's decision on a sent quote and the deal's sales orders (#2696, ADR-0050, docs/plan/crm-quotes.md step Q4). A person records that the customer agreed
 // (which makes one sales order from the quote as it was sent) or declined; nothing here invoices or moves stock. A person marks each goods line of an order delivered (#2697,
-// Q4b); the stock move is Kế toán's own command and is shown as "Chưa ghi kho", off, until it exists. "Lập hóa đơn" is Kế toán's command, called on a click
-// with the order's facts: it is shown disabled with a note until that command exists, and the screen never writes a finance table. The core works with AI off; the sales
-// coworker may suggest moving the deal, but never records a decision.
+// Q4b). Kế toán's two commands (#2818) are called on a person's click with the order's facts, read fresh from `crm.salesOrders.handoff`: "Lập hóa đơn" makes a draft
+// from the lines without a discount, and the stock move follows the click on "Đã giao" or "Hoàn giao" ("Chưa ghi kho" and a retry when it fails, the same key each time so a
+// retry never moves stock twice). Both show only when the finance module runs, and the screen never writes a finance table. The core works with AI off; the sales coworker
+// may suggest moving the deal, but never records a decision.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { Link, useParams } from '@tanstack/react-router';
+import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrder, type SalesOrderSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -15,8 +17,16 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { keyFor, type KeyHolder } from '../lib/ads.ts';
+import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { getConfig } from '../lib/auth.ts';
+import { ApiError } from '../lib/errors.ts';
+import { allDiscounted, invoiceInput, invoicePlan } from '../lib/order-handoff.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+
+// Kế toán's commands exist only where its module runs; a business without it sees the order screen as before, with no invoice or stock button.
+const financeInstalled = () => getConfig().modules.includes('finance');
+const errorCode = (e: unknown): string | null => (typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string' ? e.code : null);
 
 const refreshOrderQueries = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.crm.salesOrders.key() });
@@ -161,18 +171,57 @@ function CancelPanel({ order, onDone }: { order: SalesOrderSummary; onDone: () =
 }
 
 // The goods lines of one order and whether each was delivered (Q4b, #2697). "Đã giao" records the delivery of a whole line (today, or the day the goods left), "Hoàn giao"
-// takes it back; a service line has none. Stock moves only through Kế toán's own command, which does not exist yet: the line says so and the screen never pretends it did.
+// takes it back; a service line has none. Where Kế toán runs, the same click then asks it to move the stock (#2818): "Chưa ghi kho" and a retry say it did not, and a retry keeps
+// the key so it cannot move stock twice. A stock failure never undoes the delivery; the two are separate commands.
+type StockStep = { action: 'deliver' | 'return'; date: string };
+
 function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesOrder['lines'][number]; canEdit: boolean }) {
   const t = useTranslations('quotes.orders.delivery');
   const { locale } = useLocaleSetting();
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const withStock = financeInstalled();
   const delivery = order.deliveries.find((d) => d.lineNo === line.lineNo);
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: orpc.crm.salesOrders.key() });
   };
-  const deliver = useMutation(orpc.crm.salesOrders.deliver.mutationOptions({ onSuccess: refresh, onError: refresh }));
-  const undeliver = useMutation(orpc.crm.salesOrders.undeliver.mutationOptions({ onSuccess: refresh, onError: refresh }));
+  const attempt = useRef<KeyHolder | null>(null);
+  const stock = useMutation({
+    mutationFn: async (step: StockStep) => {
+      const handoff = await client.crm.salesOrders.handoff({ orderId: order.id });
+      attempt.current = keyFor(attempt.current, JSON.stringify({ orderId: order.id, lineNo: line.lineNo, ...step }));
+      return client.stock.moveFromOrderLine({ handoff, lineNo: line.lineNo, date: step.date, action: step.action, idempotencyKey: attempt.current.key });
+    },
+    onSuccess: () => {
+      attempt.current = null;
+      void queryClient.invalidateQueries({ queryKey: orpc.stock.key() });
+    },
+  });
+  const deliver = useMutation(
+    orpc.crm.salesOrders.deliver.mutationOptions({
+      onSuccess: (done) => {
+        refresh();
+        if (withStock) stock.mutate({ action: 'deliver', date: done.delivery.deliveredOn });
+      },
+      onError: refresh,
+    }),
+  );
+  const undeliver = useMutation(
+    orpc.crm.salesOrders.undeliver.mutationOptions({
+      onSuccess: () => {
+        refresh();
+        if (withStock) stock.mutate({ action: 'return', date: vietnamToday() });
+      },
+      onError: refresh,
+    }),
+  );
   const error = deliver.error ?? undeliver.error;
   const live = delivery !== undefined && !delivery.reversed;
+  // What the stock command last said, or what to ask when nothing was asked in this session (the order does not remember: asking again is safe, the answer is the same).
+  const step: StockStep | null = delivery === undefined ? null : delivery.reversed ? { action: 'return', date: vietnamToday() } : { action: 'deliver', date: delivery.deliveredOn };
+  // A stock answer counts only for the step the row is at now (another person may have reversed the delivery since), else the row offers the current step.
+  const stockCurrent = stock.variables?.action === step?.action;
+  const stockOk = stock.isSuccess && stockCurrent;
+  const stockShown = withStock && canEdit && step !== null && !(stockOk && stock.data.status === 'service');
   return (
     <li className="space-y-1 rounded-md border border-border px-3 py-2 text-sm" data-testid="order-delivery-line">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -194,17 +243,34 @@ function DeliveryRow({ order, line, canEdit }: { order: SalesOrder; line: SalesO
             </Button>
           )}
           {canEdit && live && (
-            <Button size="sm" variant="ghost" loading={undeliver.isPending} onClick={() => undeliver.mutate({ orderId: order.id, lineNo: line.lineNo })} data-testid="order-delivery-undo">
+            <Button size="sm" variant="ghost" loading={undeliver.isPending} disabled={stock.isPending} onClick={() => undeliver.mutate({ orderId: order.id, lineNo: line.lineNo })} data-testid="order-delivery-undo">
               {t('takeBack')}
             </Button>
           )}
         </div>
       </div>
-      {live && (
-        <p className="text-xs text-muted-foreground" data-testid="order-delivery-stock">
-          {t('stockPending')}: {t('stockSoon')}
-        </p>
+      {stockShown && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="order-delivery-stock">
+          {stock.isPending ? (
+            <span>{t('stockWriting')}</span>
+          ) : stockOk ? (
+            <span>{stock.variables.action === 'return' ? t('stockReturned') : t('stockDone')}</span>
+          ) : (
+            <span>{stock.isError && stockCurrent ? t('stockPending') : t('stockUnknown')}</span>
+          )}
+          {canEdit && !stock.isPending && !stockOk && (
+            <Button size="sm" variant="outline" onClick={() => stock.mutate(stockCurrent && stock.variables ? stock.variables : step)} data-testid="order-delivery-stock-retry">
+              {stock.isError && stockCurrent ? t('stockRetry') : step.action === 'return' ? t('stockRecordReturn') : t('stockRecord')}
+            </Button>
+          )}
+          {stock.isError && errorCode(stock.error) === 'STOCK_ORDER_LINE_NO_ITEM' && (
+            <Link to="/o/$slug/stock" params={{ slug }} className="text-link hover:underline" data-testid="order-delivery-stock-teach">
+              {t('stockTeach')}
+            </Link>
+          )}
+        </div>
       )}
+      {stock.isError && <ErrorText>{errorMessage(stock.error)}</ErrorText>}
       {error && <ErrorText>{errorMessage(error)}</ErrorText>}
     </li>
   );
@@ -234,12 +300,65 @@ export function DeliveryPanel({ orderId, canEdit }: { orderId: string; canEdit: 
   );
 }
 
+// "Lập hóa đơn" (#2818): Kế toán makes a draft from the order's lines. A line with a discount is not invoiced yet (the draft takes a price after the discount), so those
+// lines are left out and named; the click sends the rest, read fresh from the order, and a retry of the same call keeps its key. The draft is Kế toán's: a link opens its list.
+function useInvoiceDraft(order: SalesOrderSummary, enabled: boolean) {
+  const read = useQuery({ ...orpc.crm.salesOrders.handoff.queryOptions({ input: { orderId: order.id } }), enabled });
+  const attempt = useRef<KeyHolder | null>(null);
+  const plan = invoicePlan(read.data?.lines ?? []);
+  const skipped = plan.skipped;
+  const allSkipped = allDiscounted(plan);
+  const invoice = useMutation({
+    mutationFn: async () => {
+      const handoff = await client.crm.salesOrders.handoff({ orderId: order.id });
+      const input = invoiceInput(handoff);
+      if (input === null) throw new ApiError('ORDER_LINE_DISCOUNTED', 409, null);
+      attempt.current = keyFor(attempt.current, JSON.stringify(input));
+      const draft = await client.einvoice.drafts.fromOrder({ ...input, idempotencyKey: attempt.current.key });
+      // The lines left out are those of this handoff, not of the preview, which may be old or not loaded.
+      return { draft, skipped: invoicePlan(handoff.lines).skipped };
+    },
+    onSuccess: () => {
+      attempt.current = null;
+      void queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.key() });
+    },
+    // A refusal (the order changed, a line was already invoiced) leaves the reading stale: read the order again.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: orpc.crm.salesOrders.key() });
+    },
+  });
+  return { invoice, skipped, allSkipped };
+}
+
+function InvoiceNote({ orderId, draft }: { orderId: string; draft: ReturnType<typeof useInvoiceDraft> }) {
+  const t = useTranslations('quotes.orders');
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const { invoice, skipped, allSkipped } = draft;
+  return (
+    <p id={`order-invoice-note-${orderId}`} className="w-full space-y-1 text-xs text-muted-foreground">
+      <span className="block">{t('invoiceHint')}</span>
+      {allSkipped ? <span className="block">{t('invoiceAllDiscounted')}</span> : skipped.length > 0 ? <span className="block">{t('invoiceDiscounted', { lines: skipped.join(', ') })}</span> : null}
+      {invoice.isSuccess && (
+        <span className="block" data-testid="order-invoice-done">
+          {t('invoiceDone')} {invoice.data.skipped.length > 0 ? `${t('invoiceDiscounted', { lines: invoice.data.skipped.join(', ') })} ` : ''}
+          <Link to="/o/$slug/sales-invoices" params={{ slug }} className="text-link hover:underline">
+            {t('invoiceOpen')}
+          </Link>
+        </span>
+      )}
+      {invoice.error && <ErrorText>{errorMessage(invoice.error)}</ErrorText>}
+    </p>
+  );
+}
+
 function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boolean }) {
   const t = useTranslations('quotes.orders');
   const { locale } = useLocaleSetting();
   const [cancelling, setCancelling] = useState(false);
   const [delivering, setDelivering] = useState(false);
   const confirmed = order.status === 'confirmed';
+  const withFinance = financeInstalled();
+  const draft = useInvoiceDraft(order, confirmed && withFinance && canEdit);
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" data-testid="order-row">
       <div className="min-w-0 space-y-0.5">
@@ -250,10 +369,8 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
         {order.quoteNumber && <p className="text-xs text-muted-foreground">{t('fromQuote', { quote: order.quoteNumber })}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        {confirmed && (
-          // Kế toán makes the invoice draft with its own command, called with the order's facts (`crm.sales_order.handoff`). Until that command exists the button
-          // is off and says so, so a person never believes an invoice was made.
-          <Button size="sm" variant="outline" disabled aria-describedby={`order-invoice-note-${order.id}`} data-testid="order-invoice">
+        {confirmed && withFinance && canEdit && (
+          <Button size="sm" variant="outline" loading={draft.invoice.isPending} disabled={draft.allSkipped} aria-describedby={`order-invoice-note-${order.id}`} onClick={() => draft.invoice.mutate()} data-testid="order-invoice">
             {t('invoice')}
           </Button>
         )}
@@ -268,11 +385,7 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
           </Button>
         )}
       </div>
-      {confirmed && (
-        <p id={`order-invoice-note-${order.id}`} className="w-full text-xs text-muted-foreground">
-          {t('invoiceSoon')}
-        </p>
-      )}
+      {confirmed && withFinance && canEdit && <InvoiceNote orderId={order.id} draft={draft} />}
       {delivering && confirmed && <DeliveryPanel orderId={order.id} canEdit={canEdit} />}
       {cancelling && confirmed && canEdit && <CancelPanel order={order} onDone={() => setCancelling(false)} />}
     </li>

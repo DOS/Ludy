@@ -158,6 +158,13 @@ export function socialPostOf(sourceRef: unknown): string | null {
   return type === 'social.post' && typeof id === 'string' && UUID.test(id) ? id : null;
 }
 
+/** The action item of a meeting a task was made from (#2580), or null. The meeting itself is asked of the kernel, which answers only a reader of it. */
+export function meetingItemOf(sourceRef: unknown): string | null {
+  if (typeof sourceRef !== 'object' || sourceRef === null) return null;
+  const { type, id } = sourceRef as { type?: unknown; id?: unknown };
+  return type === 'meetings.action_item' && typeof id === 'string' && UUID.test(id) ? id : null;
+}
+
 /** The YYYY-MM-DD day of a task's ISO due timestamp in `timeZone`, or '' when there is none (#2588). */
 export function taskDueDay(due: string | null | undefined, timeZone: string): string {
   if (!due) return '';

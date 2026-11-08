@@ -35,6 +35,14 @@ export interface Tick {
   elapsedMs: number;
 }
 
+// The offscreen document's once-a-second tick, or null when its time is not a finite, non-negative number: the badge clock is
+// built from it, and a NaN, an Infinity, a string or a negative value must not reach `formatClock` or the toolbar title.
+export function parseTick(raw: unknown): Tick | null {
+  if (!isObject(raw) || raw.type !== 'tick') return null;
+  const { elapsedMs } = raw;
+  return typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0 ? { type: 'tick', elapsedMs } : null;
+}
+
 export type StartFailure = 'invalid' | 'title' | 'consentMethod' | 'consentAgreed' | 'permission' | 'busy' | 'signedOut' | 'device' | 'store' | 'setup';
 export type StartReply = { ok: true; meetingId: string; startedAt: number; micMissing: boolean } | { ok: false; reason: StartFailure };
 export type StopReply = { ok: true; uploaded: boolean; meetingId: string; message?: string } | { ok: false; reason: 'idle' };

@@ -5,6 +5,8 @@ import type { MemberRole } from '@crove/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList, transcribeQueryList } from './transcribe.ts';
+import { resultCommands, resultQueries } from './results.ts';
+import { summaryCommands } from './summary.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -878,6 +880,8 @@ export const meetingsCommands = [
   transcriptDraftStore,
   transcriptCorrect,
   ...transcribeCommandList,
+  ...resultCommands,
+  ...summaryCommands,
 ];
 
 export const meetingsQueries = [
@@ -891,4 +895,5 @@ export const meetingsQueries = [
   meetingMediaOrphanKeys,
   transcriptGet,
   ...transcribeQueryList,
+  ...resultQueries,
 ];

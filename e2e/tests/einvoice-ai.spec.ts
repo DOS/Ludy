@@ -28,6 +28,15 @@ test('with AI off the coworker says so, fills nothing, and the draft form works 
     await expect(page.getByTestId('invoice-buyer-ai')).toHaveCount(0);
   });
 
+  await test.step('the previous-invoice source is there, offers no copy until a customer with an issued invoice is chosen, and needs no model (#2721)', async () => {
+    const picker = page.getByTestId('invoice-previous-customer');
+    await expect(picker).toBeVisible();
+    await expect(page.getByTestId('invoice-previous-copy')).toHaveCount(0);
+    await expect(page.getByTestId('invoice-ai-source')).toHaveCount(0);
+    // A new org has no CRM deal or booking yet: the CRM source shows nothing and the form is unchanged (#2721).
+    await expect(page.getByTestId('invoice-crm')).toHaveCount(0);
+  });
+
   await test.step('the person types the lines and the server computes the amounts', async () => {
     await form.getByLabel('Tên hàng hóa, dịch vụ').first().fill('Bánh A');
     await form.getByLabel('Số lượng').first().fill('10');

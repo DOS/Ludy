@@ -492,7 +492,7 @@ export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
   G.FinanceStockItemTable,
@@ -1062,6 +1062,31 @@ export type MeetingsTranscriptSegmentTable = Refine<
   }
 >;
 
+// The summary and the action items of a meeting (#2580): a row is a draft, the recorder's own, until the recorder publishes it.
+export const MEETING_RESULT_STAGES = ['draft', 'published'] as const;
+export type MeetingResultStage = (typeof MEETING_RESULT_STAGES)[number];
+export const MEETING_RESULT_FEATURES = ['manual', 'meetings.summary'] as const;
+export type MeetingResultFeature = (typeof MEETING_RESULT_FEATURES)[number];
+export const ACTION_ITEM_STATUSES = ['suggested', 'accepted'] as const;
+export type ActionItemStatus = (typeof ACTION_ITEM_STATUSES)[number];
+
+export type MeetingsMeetingResultTable = Refine<
+  G.MeetingsMeetingResultTable,
+  {
+    feature: MeetingResultFeature;
+    stage: Generated<MeetingResultStage>;
+  }
+>;
+
+// status is written only by crove_meetings.action_item_accept (the generated type keeps it NotGranted for update).
+export type MeetingsActionItemTable = Refine<
+  G.MeetingsActionItemTable,
+  {
+    stage: Generated<MeetingResultStage>;
+    status: Generated<ActionItemStatus>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1089,7 +1114,9 @@ type Refined = Tables<{
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
+  'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
