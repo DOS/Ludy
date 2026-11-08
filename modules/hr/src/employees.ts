@@ -71,7 +71,7 @@ const iso = (value: Date | string): string => (typeof value === 'string' ? value
 type Ctx = CommandContext;
 
 // The org's legal entity a new employee belongs to: the one named (it must exist), else the org's default entity.
-async function resolveEntity(ctx: Ctx, requested: string | undefined): Promise<string> {
+export async function resolveEntity(ctx: Pick<QueryContext, 'trx' | 'orgId'>, requested: string | undefined): Promise<string> {
   const row = requested
     ? await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', requested).executeTakeFirst()
     : await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();

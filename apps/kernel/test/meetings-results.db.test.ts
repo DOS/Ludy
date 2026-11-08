@@ -222,6 +222,27 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('rec2', 'meetings.action_item.accept_clean', { meetingId, confirmed: true }))).toBe('NO_CLEAN_ITEMS');
   });
 
+  it('lets accept_clean and a reader accept the same item at once: one task, no server error', async () => {
+    await newMember('rec3');
+    await newMember('rd3');
+    const meetingId = await seedMeeting('rec3', ['rd3']);
+    await seedPosition('rd3', 'Bán hàng');
+    const { itemId } = await exec<{ itemId: string }>('rec3', 'meetings.action_item.create', item(meetingId, { whoUserId: users.rd3 }));
+    await exec('rec3', 'meetings.result.publish', { meetingId, confirmed: true });
+    const seat = (await results('rd3', meetingId)).items[0]?.positions[0]?.id as string;
+    const [clean, single] = await Promise.allSettled([
+      exec('rec3', 'meetings.action_item.accept_clean', { meetingId, confirmed: true }),
+      exec('rd3', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'Gửi báo giá cho khách', due: null, positionId: seat }),
+    ]);
+    const code = (r: PromiseSettledResult<unknown>) => (r.status === 'rejected' ? ((r.reason as { code?: string }).code ?? 'ERR') : 'ok');
+    // Whichever came second leaves the item to the first: a refusal of the single accept, or a skipped item (then NO_CLEAN_ITEMS) of the batch.
+    expect(['ok', 'NO_CLEAN_ITEMS']).toContain(code(clean));
+    expect(['ok', 'ACTION_ITEM_ACCEPTED']).toContain(code(single));
+    expect([code(clean), code(single)]).toContain('ok');
+    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
+    expect(tasks.rows[0]?.n).toBe('1');
+  });
+
   it('tells a task where it came from only to a person who may read the meeting', async () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId));

@@ -77,8 +77,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  'crove_meetings.action_item',
-  'crove_meetings.meeting_result',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -136,6 +134,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.conversation_message', () => 'false'], // Reads through its conversation.
   ['crove_kernel.conversation_note', () => 'false'], // Reads through its conversation.
   ['crove_kernel.conversation_read', () => 'false'], // Per member.
+  ['crove_kernel.file', () => `t.source OPERATOR(pg_catalog.<>) ALL (ARRAY['meeting_audio', 'meeting_video'])`], // Meeting media rows are the meeting's readers' alone (#2874); a member Vy reads one only through its own run's meeting, which the matrix's Vy has none of.
   ['crove_kernel.inbox_item', () => 'false'], // Per member.
   ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
   ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
@@ -2871,14 +2870,6 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     );
     return { rule, count: counted[0]?.n ?? 0, total: total[0]?.n ?? 0, ids };
   }
-  // #2875 step 1: the ids of org A's crove_kernel.file rows that are not meeting media (the rows member mode reads once meeting media is readers-only).
-  async function memberVyFileRowsWithoutMeetingMedia(): Promise<string[]> {
-    const { rows } = await admin.query<{ id: string }>(
-      `SELECT t.id::text AS id FROM crove_kernel.file t WHERE t.org_id OPERATOR(pg_catalog.=) $1::uuid AND t.source OPERATOR(pg_catalog.<>) ALL (ARRAY['meeting_audio', 'meeting_video'])`,
-      [orgs.A.id],
-    );
-    return rows.map((r) => r.id).sort();
-  }
   // The denial the matrix expects of an actor's insert: for the Vy in member mode, the guard's AGENT_FORBIDDEN; for everyone else the case's own pattern.
   const guardedWrite = (actor: Actor) => actor.memberMode === true;
   const denialPattern = (actor: Actor, normal: RegExp) => (guardedWrite(actor) ? AGENT_FORBIDDEN : normal);
@@ -3345,20 +3336,10 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
               expect(read.rows.map((r) => r.org).sort(), `${where}: its own org's rows that the system context reads, by id (AUTHOR_ONLY)`).toEqual(systemIds);
             } else if (actor.memberMode) {
               // Member mode reads like its member, in the tables that admit it: MEMBER_VY_READS lists where that is fewer rows.
-              // Step 1 of #2875 (meeting media rows of crove_kernel.file, #2874): until that policy is on main, member mode reads every row of the table; once it is, it
-              // reads every row except the meeting media rows (source meeting_audio, meeting_video) of a meeting that is not its run's subject, which the matrix's Vy has none of.
-              // Either passes, for this table and member mode only; step 2 pins the second behavior in MEMBER_VY_READS and drops this exception.
-              const mediaRows = table === 'crove_kernel.file' ? await memberVyFileRowsWithoutMeetingMedia() : undefined;
-              if (mediaRows === undefined) {
-                expect(rows.length, `${where}: its own org's rows that member mode reads (MEMBER_VY_READS)`).toBe(memberVyReads.count);
-              } else {
-                expect([memberVyReads.count, mediaRows.length], `${where}: member mode reads every row, or every row but meeting media (#2875 step 1)`).toContain(rows.length);
-              }
+              expect(rows.length, `${where}: its own org's rows that member mode reads (MEMBER_VY_READS)`).toBe(memberVyReads.count);
               if (memberVyReads.ids) {
                 const read = expectRows(await probe(actor, (c) => c.query(`SELECT id::text AS org FROM ${table}`)), where);
-                const got = read.rows.map((r) => r.org).sort();
-                if (mediaRows === undefined) expect(got, `${where}: its own org's rows that member mode reads, by id`).toEqual(memberVyReads.ids);
-                else expect([memberVyReads.ids, mediaRows], `${where}: its own org's rows that member mode reads, by id (#2875 step 1)`).toContainEqual(got);
+                expect(read.rows.map((r) => r.org).sort(), `${where}: its own org's rows that member mode reads, by id`).toEqual(memberVyReads.ids);
               }
             } else {
               expect(rows.length, `${where}: its own org's rows`).toBe(count(orgs.A) - hiddenFromOthers);
