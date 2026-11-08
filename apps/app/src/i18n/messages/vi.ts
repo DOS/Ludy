@@ -8623,6 +8623,8 @@ export const vi = {
       HR_POSTING_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này',
       HR_BANK_ACCOUNT_MISSING: 'Có người trong bảng lương chưa có số tài khoản ngân hàng; hãy bổ sung rồi xuất lại',
       HR_BANK_FILE_EMPTY: 'Bảng lương này không có khoản thực nhận nào để chuyển',
+      HR_BANK_FILE_ADJUSTMENTS: 'Bảng lương có dòng điều chỉnh; chưa xuất được file chuyển lương loại bảng lương này',
+      HR_BANK_FILE_MISMATCH: 'Bảng lương có dòng chưa tính hoặc tổng tiền không khớp lúc duyệt; không xuất được file chuyển lương',
       HR_POSTING_MISMATCH: 'Số liệu của bảng lương không khớp hoặc chế độ kế toán đã đổi; không lập được bút toán',
       HR_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán lương chưa được kế toán xác nhận; chưa hạch toán được',
       HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương hoặc chi lương, vì người duyệt phải đối chiếu được với bảng lương',

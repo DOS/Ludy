@@ -8626,6 +8626,8 @@ export const en = {
       HR_POSTING_ADJUSTMENTS: 'This pay run has adjustment lines; a run like that cannot be posted yet',
       HR_BANK_ACCOUNT_MISSING: 'Some people in this pay run have no bank account number; add them and export again',
       HR_BANK_FILE_EMPTY: 'This pay run has no net pay to transfer',
+      HR_BANK_FILE_ADJUSTMENTS: 'This pay run has adjustment lines; a bank file for a run like that cannot be made yet',
+      HR_BANK_FILE_MISMATCH: 'This pay run has a line not calculated, or its total does not match what was approved; no bank file',
       HR_POSTING_MISMATCH: 'The pay run does not match its totals or the accounting regime changed; the entry cannot be built',
       HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
       HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting or a pay payment, because the approver has to compare it with the pay run',

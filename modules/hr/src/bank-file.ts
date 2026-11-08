@@ -5,7 +5,7 @@
 // `hr.payroll.bank_file.get` is a sensitive query in the requesting owner's or admin's own context (never a worker or a stored job): its audit row is committed before it reads, it needs a second
 // factor used in the last 5 minutes (policy P11, as the declaration exports), and it opens each person's sealed account number here and nowhere else, in one batch after the audit row. Nothing
 // decrypted reaches an audit fact or a log, and the answer is returned to the caller and never stored. Only the lines of an approved run that are paid (a pay line, calculated, with a net above zero)
-// are in it. A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist. More people than the cap is
+// are in it, and a run with an adjustment line or a line not calculated gets no file; the total must equal the run's frozen net pay. A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist. More people than the cap is
 // refused too.
 //
 // `hr.payroll.bank_file.export` is the audit row of a downloaded file: the run and a count, never a name, an account number or an amount. The route writes it before it answers, so no row, no download.
@@ -16,7 +16,8 @@ import { Decimal, money } from '@crove/l10n-vn';
 import { ACCOUNT_PLACE, subjectOf } from './employees.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const APPROVED = ['approved', 'paid', 'closed'] as const;
+// Only an approved run: one that is paid or closed has had its money moved, so it must not give a second file to upload.
+const APPROVED = ['approved'] as const;
 
 // "03/2026", as a bank's remark line writes the month.
 const monthText = (month: string): string => `${month.slice(5, 7)}/${month.slice(0, 4)}`;
@@ -37,17 +38,19 @@ export const bankFileGet = defineQuery({
   handler: async (ctx, input): Promise<HrBankFile> => {
     // Opening the account numbers of the whole staff needs a second factor used within the last 5 minutes (policy P11), checked before anything is read or opened.
     if (ctx.actor.type !== 'user' || !hasFreshMfa(ctx.actor)) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
-    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
+    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
     if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
     if (!(APPROVED as readonly string[]).includes(run.status)) throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới xuất được file chuyển lương');
     const lines = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
-      .select(['employee_id', 'net'])
+      .select(['employee_id', 'net', 'kind', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
-      .where('kind', '=', 'pay')
-      .where('status', '=', 'calculated')
       .execute();
+    // A run with an adjustment line (a signed correction of an earlier month, carried in this run) pays a different amount than its pay lines add up to, and a line not calculated has no net: such a
+    // run gets no file (the same refusal as the posting), never a file that pays the wrong amount.
+    if (lines.some((l) => l.kind !== 'pay')) throw new DomainError('HR_BANK_FILE_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa xuất được file chuyển lương loại bảng lương này');
+    if (lines.some((l) => l.status !== 'calculated')) throw new DomainError('HR_BANK_FILE_MISMATCH', 422, 'Bảng lương có dòng chưa tính; không xuất được file chuyển lương');
     const paid = lines.filter((l) => l.net !== null && money(l.net as string).greaterThan(0));
     if (paid.length === 0) throw new DomainError('HR_BANK_FILE_EMPTY', 422, 'Bảng lương này không có khoản thực nhận nào để chuyển');
     if (paid.length > HR_BANK_FILE_MAX_PEOPLE) throw new DomainError('EXPORT_TOO_LARGE', 422, `Có hơn ${HR_BANK_FILE_MAX_PEOPLE} người trong bảng lương này; không xuất được một lần`);
@@ -80,6 +83,9 @@ export const bankFileGet = defineQuery({
       .sort((a, b) => a.name.localeCompare(b.name, 'vi') || a.account.localeCompare(b.account))
       .map((r, i) => ({ seq: String(i + 1), name: r.name, account: r.account, bank, amount: r.amount, content }));
     const total = rows.reduce((acc, r) => acc.plus(r.amount), new Decimal(0));
+    // The file pays what the approver saw: its total equals the net pay frozen with the run's approval, to the dong, or there is no file.
+    const approvedNet = (run.approval as { totals?: { net?: string } } | null)?.totals?.net;
+    if (approvedNet === undefined || !money(approvedNet).equals(total)) throw new DomainError('HR_BANK_FILE_MISMATCH', 422, 'Tổng tiền của file chuyển lương không khớp tổng thực nhận lúc duyệt bảng lương; không xuất được file');
     const columns = input.columns ?? [...HR_BANK_FILE_COLUMNS];
     return { runId: run.id, month: run.month, columns, rows, total: total.toFixed() };
   },
