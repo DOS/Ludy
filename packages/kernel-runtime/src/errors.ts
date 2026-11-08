@@ -135,6 +135,10 @@ export function toDomainError(error: unknown): DomainError {
       if (pg.message === 'OAUTH_CLIENT_SESSION') {
         return new DomainError('OAUTH_CLIENT_TOKEN_REFUSED', 401, 'Mã truy cập này được cấp cho một ứng dụng bên thứ ba, không dùng để đăng nhập');
       }
+      // crove_kernel.extension_token_check (issue #2582): the Ludy extension's token is revoked, expired or its member left.
+      if (pg.message === 'EXTENSION_TOKEN_INVALID') {
+        return new DomainError('EXTENSION_TOKEN_INVALID', 401, 'Mã của tiện ích Ludy không còn hiệu lực, hãy đăng nhập lại tiện ích');
+      }
       return new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập đã hết hiệu lực, hãy đăng nhập lại');
     case '55000':
       if (pg.message?.includes('AUTH_GRANTS_MISSING')) {

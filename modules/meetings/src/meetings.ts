@@ -18,6 +18,7 @@ import {
 import {
   auditValue,
   zMeetingCreate,
+  zMeetingExtensionStatus,
   zMeetingListInput,
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
@@ -27,6 +28,7 @@ import {
   zMeetingRef,
   type ConsentMethod,
   type MeetingDetail,
+  type MeetingExtensionStatus,
   type MeetingLanguage,
   type MeetingStatus,
   type MeetingSummary,
@@ -139,8 +141,11 @@ export const meetingCreate = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
+  // The Ludy extension's meetings scope may create a meeting (ADR-0047 point 10, #2582); it is stamped with the token.
+  extension: { scope: 'meetings' },
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
+    const extensionTokenId = ctx.actor.type === 'user' ? (ctx.actor.extension?.tokenId ?? null) : null;
     const meetingId = randomUUID();
     const startedAt = ctx.now;
     // The periods the org's settings give today, stamped on the meeting so the period the participants were told stays true (plan section 9).
@@ -166,6 +171,7 @@ export const meetingCreate = defineCommand({
         consent_notice_version: CONSENT_NOTICE_VERSION,
         audio_retention_date: dates.audio,
         text_retention_date: dates.text,
+        extension_token_id: extensionTokenId,
       })
       .execute();
 
@@ -214,12 +220,14 @@ export const meetingMediaRecord = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
+  // The extension's meetings scope finishes the upload of a meeting its own token created, and no other (#2582).
+  extension: { scope: 'meetings' },
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id', 'recorder_user_id', 'keep_video', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
+      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
@@ -228,6 +236,10 @@ export const meetingMediaRecord = defineCommand({
     }
     if (meeting.recorder_user_id !== userId) {
       throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may record media');
+    }
+    // An extension token reaches only the meetings it created: any other is answered as one that does not exist.
+    if (ctx.actor.type === 'user' && ctx.actor.extension && meeting.extension_token_id !== ctx.actor.extension.tokenId) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
     if (input.kind === 'video' && !meeting.keep_video) {
       throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
@@ -583,6 +595,57 @@ export const meetingGet = defineQuery({
   },
 });
 
+// What the Ludy extension may read of a meeting (#2582, ADR-0047 point 10): its status, whether its audio and video arrived
+// and its length, never its title, readers, transcript or media. A token reaches only the meetings it created, and the
+// recorder of one (an owner or admin included) no other; every other case is the same 404. Each read leaves an audit
+// row that names the token, so a device's use of the meetings scope can be listed.
+export const meetingExtensionStatus = defineQuery({
+  name: 'meetings.meeting.extension_status',
+  input: zMeetingRef,
+  access: READERS,
+  extension: { scope: 'meetings' },
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<MeetingExtensionStatus> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'recorder_user_id', 'status', 'keep_video', 'length_seconds', 'extension_token_id', sql<string | null>`text_retention_date::text`.as('text_day')])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    const tokenId = ctx.actor.type === 'user' ? (ctx.actor.extension?.tokenId ?? null) : null;
+    if (
+      !meeting ||
+      meeting.recorder_user_id !== userId ||
+      (tokenId !== null && meeting.extension_token_id !== tokenId) ||
+      (meeting.text_day !== null && meeting.text_day <= vnDay(new Date()))
+    ) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    const audio = await ctx.trx
+      .selectFrom('crove_meetings.audio_segment')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+    const video = await ctx.trx
+      .selectFrom('crove_meetings.meeting_video')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+    return zMeetingExtensionStatus.parse({
+      meetingId: input.meetingId,
+      status: meeting.status,
+      keepVideo: meeting.keep_video,
+      hasAudio: audio !== undefined,
+      hasVideo: video !== undefined,
+      lengthSeconds: meeting.length_seconds,
+    });
+  },
+});
+
 export const meetingAudioRead = defineQuery({
   name: 'meetings.meeting.audio_read',
   input: zMeetingRef,
@@ -815,6 +878,7 @@ export const meetingsCommands = [
 export const meetingsQueries = [
   meetingList,
   meetingGet,
+  meetingExtensionStatus,
   meetingAudioRead,
   meetingVideoRead,
   meetingMediaMeta,
