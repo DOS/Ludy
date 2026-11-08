@@ -24,3 +24,11 @@ describe('itemFlags', () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
+
+describe('vnDayStart', () => {
+  it('is the instant a Vietnam day begins, in UTC', async () => {
+    const { vnDayStart } = await import('../src/retention.ts');
+    expect(vnDayStart('2026-11-13')).toBe('2026-11-12T17:00:00.000Z');
+    expect(vnDayStart('2026-01-01')).toBe('2025-12-31T17:00:00.000Z');
+  });
+});
