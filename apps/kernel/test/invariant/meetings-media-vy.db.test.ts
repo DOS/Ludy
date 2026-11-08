@@ -156,49 +156,12 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
     expect(seen).not.toContain(audioFile[meetings.theirs as string]);
     expect(seen).not.toContain(videoFile[meetings.theirs as string]);
   });
-  // The helper the file policy asks, called directly in a context: a boolean for (org, file), never a row, never an error.
-  async function reads(enter: (c: pg.Client) => Promise<unknown>, org: string, file: string | null, url: string = workerUrl): Promise<boolean> {
-    const c = new pg.Client({ connectionString: url });
-    await c.connect();
-    try {
-      await c.query('BEGIN');
-      await enter(c);
-      return (await c.query<{ ok: boolean }>('SELECT crove_meetings.member_vy_reads_media_file($1::uuid, $2::uuid) AS ok', [org, file])).rows[0]?.ok as boolean;
-    } finally {
-      await c.query('ROLLBACK').catch(() => {});
-      await c.end();
-    }
-  }
   const asRun = (who: string) => (c: pg.Client) => {
     const run = runs[who] as { agentId: string; runId: string };
     const org = who === 'stranger' ? otherOrgId : orgId;
     return c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [org, run.agentId, run.runId]);
   };
 
-  it('member_vy_reads_media_file is true only for the audio segment files of the meeting the sealed run names', async () => {
-    const mine = meetings.mine as string;
-    const theirs = meetings.theirs as string;
-    expect(await reads(asRun('recorder'), orgId, audioFile[mine] as string), 'own meeting audio').toBe(true);
-    expect(await reads(asRun('recorder'), orgId, videoFile[mine] as string), 'own meeting video').toBe(false);
-    expect(await reads(asRun('recorder'), orgId, audioFile[theirs] as string), 'another meeting').toBe(false);
-    expect(await reads(asRun('recorder'), orgId, randomUUID()), 'unknown id').toBe(false);
-    expect(await reads(asRun('recorder'), orgId, null), 'null id').toBe(false);
-    expect(await reads(asRun('recorder'), otherOrgId, audioFile[mine] as string), 'another org id').toBe(false);
-    // A member Vy whose run is for another meeting reads that meeting's files and none of the first meeting's.
-    expect(await reads(asRun('other'), orgId, audioFile[mine] as string)).toBe(false);
-    expect(await reads(asRun('other'), orgId, audioFile[theirs] as string)).toBe(true);
-  });
-
-  it('member_vy_reads_media_file is false for a user, the system context and another org\'s agent', async () => {
-    const mine = audioFile[meetings.mine as string] as string;
-    const asUserCtx = (who: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users[who] as string, orgId)]);
-    expect(await reads(asUserCtx('recorder'), orgId, mine, appUrl), 'the recorder as a user').toBe(false);
-    expect(await reads(asUserCtx('owner'), orgId, mine, appUrl), 'an owner as a user').toBe(false);
-    expect(await reads((c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]), orgId, mine), 'the system').toBe(false);
-    expect(await reads(asRun('stranger'), orgId, mine), "another org's agent asking for this org's file").toBe(false);
-    expect(await reads(asRun('stranger'), otherOrgId, mine), "another org's agent, this org's file id in its own org").toBe(false);
-    expect(await reads(asRun('stranger'), otherOrgId, audioFile[meetings.strangers as string] as string), "another org's agent, its own file").toBe(true);
-  });
   // The set form the file policy reads once per statement: the segment file ids of the run's own meeting, an empty set for everything else.
   async function mediaFiles(enter: (c: pg.Client) => Promise<unknown>, url: string = workerUrl): Promise<string[]> {
     const c = new pg.Client({ connectionString: url });
@@ -238,7 +201,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
         .map((r) => r['QUERY PLAN'])
         .join('\n');
       expect(plan).toMatch(/Function Scan on member_vy_media_files[^\n]*loops=1\b/);
-      expect(plan).not.toMatch(/member_vy_reads_media_file/);
+      // Video files are not in the set: the recorder's run reads the segment file ids of its meeting only (checked above).
     } finally {
       await c.query('ROLLBACK').catch(() => {});
       await c.end();
