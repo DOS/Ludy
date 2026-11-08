@@ -30,6 +30,7 @@ import {
   assertListArgs,
   assertRange,
   assertReadCap,
+  assertStagedKey,
   assertStorageKey,
   contentGeneration,
   isListedKey,
@@ -364,8 +365,10 @@ export class S3BlobStore implements BlobStore {
   // its org key (CopyObject, one request for the 2 GB the caps allow) before the staging key is deleted. A key that already
   // exists is accepted only if its bytes hash to the same sha256 (digestCurrent streams them), as put does. CopyObject has no
   // create-only condition, so two identical writes racing may each copy once: the same bytes, one more version. Memory is one
-  // part, whatever the blob's size. Nothing is left on the staging key after commit or abort (best effort; the daily
-  // staging sweep catches a crash).
+  // part, whatever the blob's size. Nothing is left on the staging key after commit or abort (best effort). A crash leaves an
+  // incomplete multipart upload, which neither the daily staging sweep (ListObjectsV2 never lists incomplete uploads) nor
+  // s3:AbortMultipartUpload reaches: the bucket's AbortIncompleteMultipartUpload lifecycle rule on staging/ is required
+  // (docs/runbooks/provision-pilot.md), and so is the s3:AbortMultipartUpload permission for the cleanup above.
   async beginStagedWrite(directory: string): Promise<StagedWrite> {
     if (!/^(?:org|export|conversation)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
     const staging = newStagingKey();
@@ -426,7 +429,7 @@ export class S3BlobStore implements BlobStore {
           const sha256 = whole.digest('hex');
           const key = place({ sha256, size });
           assertStorageKey(key);
-          assertContentAddress(key, sha256);
+          assertStagedKey(key, directory, sha256);
           // The object S3 holds is the size that was sent, or it is not recorded.
           const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: staging }));
           if (head.ContentLength !== size) throw new Error(`staged object has ${head.ContentLength} bytes, ${size} were written: ${staging}`);
@@ -439,7 +442,7 @@ export class S3BlobStore implements BlobStore {
           if (existing !== null) {
             const current = await this.digestCurrent(key, size);
             if (current.sha256 !== sha256) throw new BlobConflictError(key);
-            return { key, generation: this.generation(key, current.versionId, sha256), sha256, size };
+            return { key, generation: this.generation(key, current.versionId, sha256), sha256, size, created: false };
           }
           const copied = await this.client.send(
             new CopyObjectCommand({
@@ -455,7 +458,7 @@ export class S3BlobStore implements BlobStore {
             await this.delete(key).catch(() => undefined);
             throw new Error(`stored blob has ${landed.ContentLength} bytes, ${size} were written: ${key}`);
           }
-          return { key, generation: this.generation(key, copied.VersionId ?? landed.VersionId, sha256), sha256, size };
+          return { key, generation: this.generation(key, copied.VersionId ?? landed.VersionId, sha256), sha256, size, created: true };
         } finally {
           await cleanup();
         }
@@ -834,7 +837,7 @@ export class S3BlobStore implements BlobStore {
 
   // A staged object as a stream of its pieces: the declared length above maxBytes is refused before a byte is read, and a body
   // that passes maxBytes while it streams stops with the same error. Nothing is held beyond the piece in hand.
-  private async openStaged(key: string, maxBytes: number): Promise<{ size: number | null; chunks: AsyncIterable<Uint8Array> }> {
+  private async openStaged(key: string, maxBytes: number): Promise<{ size: number; chunks: AsyncIterable<Uint8Array> }> {
     if (!isStagingKey(key)) throw new Error('invalid staging key');
     assertReadCap(maxBytes);
     let out;
@@ -847,7 +850,12 @@ export class S3BlobStore implements BlobStore {
     }
     if (!out.Body) throw new BlobNotFoundError(key);
     const stream = out.Body.transformToWebStream();
-    if (out.ContentLength !== undefined && out.ContentLength > maxBytes) {
+    // A staged object always declares its length; one that does not is refused, and its body closed rather than left open.
+    if (out.ContentLength === undefined) {
+      await stream.cancel().catch(() => undefined);
+      throw new Error(`staged object declares no length: ${key}`);
+    }
+    if (out.ContentLength > maxBytes) {
       await stream.cancel().catch(() => undefined);
       throw new BlobTooLargeError(key, maxBytes);
     }
@@ -866,7 +874,7 @@ export class S3BlobStore implements BlobStore {
         await reader.cancel().catch(() => undefined);
       }
     }
-    return { size: out.ContentLength ?? null, chunks: chunks() };
+    return { size: out.ContentLength, chunks: chunks() };
   }
 
   // Streams the staged object through sha256 and a byte count, and stops reading as soon as it passes maxBytes.

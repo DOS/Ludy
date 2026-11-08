@@ -107,7 +107,7 @@ describe('S3BlobStore streamed write', () => {
     const write = await store.beginStagedWrite(directory);
     for (let at = 0; at < bytes.length; at += 3_000_000) await write.write(bytes.subarray(at, at + 3_000_000));
     const stored = await write.commit(place, 'video/webm');
-    expect(stored).toEqual({ key: fileKey(orgId, sha256Hex(bytes)), generation: 's3:v1', sha256: sha256Hex(bytes), size: bytes.length });
+    expect(stored).toEqual({ key: fileKey(orgId, sha256Hex(bytes)), generation: 's3:v1', sha256: sha256Hex(bytes), size: bytes.length, created: true });
     expect([...objects.keys()]).toEqual([stored.key]);
     expect(objects.get(stored.key)!.equals(bytes)).toBe(true);
     expect(sent.filter((c) => c === 'UploadPartCommand')).toHaveLength(3);
@@ -131,7 +131,7 @@ describe('S3BlobStore streamed write', () => {
     same.objects.set(fileKey(orgId, sha256Hex(bytes)), Buffer.from(bytes));
     const write = await same.store.beginStagedWrite(directory);
     await write.write(bytes);
-    await expect(write.commit(place, 'audio/webm')).resolves.toMatchObject({ sha256: sha256Hex(bytes), generation: 's3:v1' });
+    await expect(write.commit(place, 'audio/webm')).resolves.toMatchObject({ sha256: sha256Hex(bytes), generation: 's3:v1', created: false });
     expect(same.sent).not.toContain('CopyObjectCommand');
     expect(same.objects.size).toBe(1);
 
@@ -141,6 +141,15 @@ describe('S3BlobStore streamed write', () => {
     await second.write(bytes);
     await expect(second.commit(place, 'audio/webm')).rejects.toBeInstanceOf(BlobConflictError);
     expect([...other.objects.keys()]).toEqual([fileKey(orgId, sha256Hex(bytes))]);
+  });
+
+  it('refuses a key outside the directory of the write, and cleans up', async () => {
+    const { store, objects, sent } = fakeS3();
+    const write = await store.beginStagedWrite(directory);
+    await write.write(randomBytes(100));
+    await expect(write.commit(({ sha256 }) => fileKey(randomUUID(), sha256), 'audio/webm')).rejects.toThrow(/outside the directory/);
+    expect(objects.size).toBe(0);
+    expect(sent).not.toContain('CopyObjectCommand');
   });
 
   it('refuses a key that is not the content address of what was written', async () => {
@@ -183,24 +192,29 @@ describe('S3BlobStore openStaged', () => {
     await expect(store.direct!.openStaged!(key, Number.NaN)).rejects.toThrow(/invalid read cap/);
   });
 
-  it('stops a body that passes the cap while it streams (no declared length)', async () => {
-    const client = {
-      send: async () => ({
-        Body: {
-          transformToWebStream: () =>
-            new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.enqueue(new Uint8Array(600));
-                controller.enqueue(new Uint8Array(600));
-                controller.close();
-              },
-            }),
+  const bodyOf = (pieces: number[], onCancel?: () => void) => ({
+    transformToWebStream: () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const size of pieces) controller.enqueue(new Uint8Array(size));
+          controller.close();
         },
+        cancel: () => onCancel?.(),
       }),
-    } as unknown as S3Sender;
-    const store = new S3BlobStore(client, 'crove-files', { presigner: {} as never });
+  });
+  const storeAnswering = (answer: () => unknown) => new S3BlobStore({ send: async () => answer() } as unknown as S3Sender, 'crove-files', { presigner: {} as never });
+
+  it('stops a body that passes the cap while it streams, though it declared less', async () => {
+    const store = storeAnswering(() => ({ ContentLength: 500, Body: bodyOf([600, 600]) }));
     const opened = await store.direct!.openStaged!(newStagingKey(), 1000);
-    expect(opened.size).toBeNull();
-    await expect((async () => { for await (const _ of opened.chunks) void _; })()).rejects.toBeInstanceOf(BlobTooLargeError);
+    expect(opened.size).toBe(500);
+    await expect((async () => { for await (const piece of opened.chunks) void piece; })()).rejects.toBeInstanceOf(BlobTooLargeError);
+  });
+
+  it('refuses an object that declares no length and closes its body instead of leaving the read open', async () => {
+    let cancelled = false;
+    const store = storeAnswering(() => ({ Body: bodyOf([10], () => (cancelled = true)) }));
+    await expect(store.direct!.openStaged!(newStagingKey(), 1000)).rejects.toThrow(/declares no length/);
+    expect(cancelled).toBe(true);
   });
 });

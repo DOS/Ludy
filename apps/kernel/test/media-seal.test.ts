@@ -145,6 +145,70 @@ describe('sealMedia', () => {
     await expect(run({ source: never(), length: 10 }, { length: -1 })).rejects.toThrow(/declared length/);
   });
 
+  it('cancels a body that stops arriving, refuses it, and stores nothing (stall timeout)', async () => {
+    const before = await filesLeft();
+    let cancelled = false;
+    let sent = false;
+    // One piece, then silence: the connection is alive but no byte comes.
+    const stalled = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(Buffer.concat([WEBM, randomBytes(1000)]));
+        }
+        return new Promise(() => undefined);
+      },
+      cancel: () => {
+        cancelled = true;
+      },
+    });
+    const started = Date.now();
+    await expect(run({ source: streamPieces(stalled, 80), length: 5000 })).rejects.toMatchObject({ code: 'BAD_REQUEST', status: 400 });
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(cancelled).toBe(true);
+    expect(await filesLeft()).toEqual(before);
+  });
+
+  it('does not cut a slow upload that keeps moving: the stall timer runs per piece', async () => {
+    const body = Buffer.concat([WEBM, randomBytes(400)]);
+    const slow = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let at = 0; at < body.length; at += 100) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          controller.enqueue(body.subarray(at, at + 100));
+        }
+        controller.close();
+      },
+    });
+    const sealed = await run({ source: streamPieces(slow, 200), length: body.length });
+    expect(sealed.plaintextBytes).toBe(body.length);
+  });
+
+  it('deletes a sealed blob that has no row only when this write created it', async () => {
+    const deleted: string[] = [];
+    const orgDir = `org/${orgId}`;
+    const make = (created: boolean) => ({
+      put: async () => 'content:x',
+      get: async () => new Uint8Array(),
+      delete: async (key: string) => void deleted.push(key),
+      beginStagedWrite: async () => ({
+        write: async () => undefined,
+        commit: async (place: (done: { sha256: string; size: number }) => string) => {
+          const sha256 = 'a'.repeat(64);
+          return { key: place({ sha256, size: 7 }), generation: 'content:x', sha256, size: 7, created };
+        },
+        abort: async () => undefined,
+      }),
+    });
+    const input = (created: boolean) =>
+      sealMedia({ source: onepiece(Buffer.concat([WEBM, randomBytes(50)])), expectedLength: 63, kind: 'audio', dataKey, binding, maxBytes: 1000, store: make(created), orgId });
+    await expect(input(true)).rejects.toThrow(/not 63 bytes of plaintext/);
+    expect(deleted).toEqual([`${orgDir}/${'a'.repeat(64)}`]);
+    deleted.length = 0;
+    await expect(input(false)).rejects.toThrow(/not 63 bytes of plaintext/);
+    expect(deleted).toEqual([]);
+  });
+
   it('writes through a store without a streamed write (held whole, put at the end)', async () => {
     const puts = new Map<string, Uint8Array>();
     const plain = { put: async (k: string, b: Uint8Array) => (puts.set(k, b), 'content:x'), get: async () => new Uint8Array(), delete: async (k: string) => void puts.delete(k) };

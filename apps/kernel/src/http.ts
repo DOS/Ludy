@@ -120,6 +120,7 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
+import { MEDIA_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
 import { corsMiddleware } from './cors.ts';
@@ -267,6 +268,8 @@ export interface HttpDeps {
   largeUploads?: ConcurrencyLimiter;
   // Meeting video uploads (up to 2 GB held in memory): one per process at a time.
   videoUploads?: ConcurrencyLimiter;
+  // How long a raw meeting upload may go without receiving a byte before it is cancelled (tests shorten it).
+  mediaStallMs?: number;
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
@@ -1556,6 +1559,7 @@ export function createHttpApp(deps: HttpDeps) {
   const large = deps.largeUploads ?? new ConcurrencyLimiter({ total: 2, perKey: 1 });
   // A meeting video upload is held whole in memory several times over (body, copy, ciphertext), so the process takes one at a time.
   const videoTransfers = deps.videoUploads ?? new ConcurrencyLimiter({ total: 1, perKey: 1 });
+  const mediaStallMs = deps.mediaStallMs ?? MEDIA_STALL_TIMEOUT_MS;
   const busy = (c: Context) => {
     c.header('retry-after', String(UPLOAD_BUSY_RETRY_SECONDS));
     return new DomainError('UPLOAD_BUSY', 503, 'Máy chủ đang xử lý nhiều tệp; hãy thử lại sau vài giây');
@@ -2085,8 +2089,8 @@ export function createHttpApp(deps: HttpDeps) {
       // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
       // count it, which is what streaming is for). Browsers send the length of a File they upload.
       const rawFile = /^(?:audio\/|video\/|application\/octet-stream)/i.test(c.req.header('content-type') ?? '');
-      if (rawFile && (c.req.header('transfer-encoding') !== undefined || c.req.header('content-length') === undefined)) {
-        throw new DomainError('BAD_REQUEST', 400, 'Tệp phải được gửi kèm Content-Length');
+      if (rawFile && (c.req.header('transfer-encoding') !== undefined || !/^\d+$/.test(c.req.header('content-length') ?? ''))) {
+        throw new DomainError('BAD_REQUEST', 400, 'Tệp phải được gửi kèm Content-Length hợp lệ');
       }
       const declared = Number(c.req.header('content-length') ?? '0');
       if (!Number.isFinite(declared) || declared < 0) throw new DomainError('BAD_REQUEST', 400, 'Content-Length is not valid');
@@ -2124,8 +2128,9 @@ export function createHttpApp(deps: HttpDeps) {
       const release = completes.tryAcquire(user.userId);
       if (!release) throw busy(c);
 
-      let dataKey: Buffer | null = null;
-      let wrapSubkey: Buffer | null = null;
+      // Set by prepareKeys inside the try (a closure, so the compiler cannot see it): typed as what they may hold.
+      let dataKey = null as Buffer | null;
+      let wrapSubkey = null as Buffer | null;
       let stagingKeyToDelete: string | null = null;
       let releaseJsonVideo: (() => void) | null = null;
 
@@ -2145,6 +2150,28 @@ export function createHttpApp(deps: HttpDeps) {
           if (mediaKind === 'video' && !meeting.keepVideo) {
             throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
           }
+        };
+
+        // The key is checked before anything is opened or stored, so a 503 leaves no orphaned blob and no open staged read.
+        let keys = undefined as { keyId: string; wrappedKey: Buffer; binding: BlobMediaBinding } | undefined;
+        const prepareKeys = (mediaKind: 'audio' | 'video') => {
+          dataKey = generateMediaDataKey();
+          const binding: BlobMediaBinding = { orgId, meetingId, kind: mediaKind };
+          const broker = deps.broker ?? createCredentialBroker(config);
+          const keyId = broker.keyId;
+          if (!keyId || (!broker.derive && !broker.deriveKey)) {
+            throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
+          }
+          wrapSubkey = broker.deriveKey
+            ? broker.deriveKey(keyId, 'crove.meetings.v1|wrap')
+            : broker.derive && broker.keyId === keyId
+              ? broker.derive('crove.meetings.v1|wrap')
+              : null;
+          if (!wrapSubkey) {
+            throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key derivation failed');
+          }
+          const keyBinding: MediaKeyBinding = { ...binding, keyId };
+          keys = { keyId, binding, wrappedKey: wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey) };
         };
 
         if (contentTypeHeader.includes('application/json')) {
@@ -2183,6 +2210,7 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
           }
 
+          prepareKeys(kind);
           const missing = (error: unknown): never => {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
             throw error;
@@ -2191,7 +2219,6 @@ export function createHttpApp(deps: HttpDeps) {
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
             const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
-            if (opened.size === null) throw new Error('The staged object has no declared size');
             source = opened.chunks;
             declaredLength = opened.size;
           } else {
@@ -2227,6 +2254,7 @@ export function createHttpApp(deps: HttpDeps) {
             }
             lengthSeconds = parsedLen;
           }
+          prepareKeys(kind);
           // The form was parsed whole by the body reader (use the raw body below for a large file); the sealing still streams.
           source = streamPieces(fileVal.stream() as ReadableStream<Uint8Array>);
           declaredLength = fileVal.size;
@@ -2247,35 +2275,18 @@ export function createHttpApp(deps: HttpDeps) {
           }
           const rawBody = c.req.raw.body;
           if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
-          source = streamPieces(rawBody as ReadableStream<Uint8Array>);
+          prepareKeys(kind);
+          // A body that stops arriving for mediaStallMs is cancelled and refused, which frees the video slot: a large upload may
+          // take long, but never silently.
+          source = streamPieces(rawBody as ReadableStream<Uint8Array>, mediaStallMs);
           // The gate required a Content-Length; the sealing refuses a body that ends short of it or runs past it.
           declaredLength = Number(c.req.header('content-length'));
         } else {
           throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be application/json, multipart/form-data or the file itself (audio/*, video/*, application/octet-stream)');
         }
 
-        dataKey = generateMediaDataKey();
-        const binding: BlobMediaBinding = {
-          orgId,
-          meetingId,
-          kind,
-        };
-        // The key is checked before the sealed bytes are stored, so a 503 leaves no orphaned blob.
-        const broker = deps.broker ?? createCredentialBroker(config);
-        const keyId = broker.keyId;
-        if (!keyId || (!broker.derive && !broker.deriveKey)) {
-          throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
-        }
-        wrapSubkey = broker.deriveKey
-          ? broker.deriveKey(keyId, 'crove.meetings.v1|wrap')
-          : broker.derive && broker.keyId === keyId
-            ? broker.derive('crove.meetings.v1|wrap')
-            : null;
-        if (!wrapSubkey) {
-          throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key derivation failed');
-        }
-        const keyBinding: MediaKeyBinding = { ...binding, keyId };
-        const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
+        if (!keys || !dataKey) throw new Error('media keys were not prepared');
+        const { keyId, wrappedKey, binding } = keys;
 
         // Sealed as it streams: the container is sniffed from the first bytes, the cap is counted as the bytes arrive, and the
         // ciphertext goes to the store's streamed write, which hashes it and stores it under its content address.
@@ -2311,7 +2322,7 @@ export function createHttpApp(deps: HttpDeps) {
           );
         } catch (error) {
           // The record was refused (a second upload of the kind, a lost race): the sealed bytes have no row, so drop them.
-          await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
+          if (sealed.created) await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
           throw error;
         }
 

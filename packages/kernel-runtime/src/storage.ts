@@ -126,7 +126,8 @@ export interface DirectTransfers {
   // Opens a staged object as a stream, for a caller that never holds it whole (sealed meeting media). The declared size
   // above maxBytes is refused (BlobTooLargeError) before a byte is read, and a stream that passes maxBytes while it is
   // read stops with the same error. BlobNotFoundError when nothing is staged under the key.
-  openStaged?(stagingKey: string, maxBytes: number): Promise<{ size: number | null; chunks: AsyncIterable<Uint8Array> }>;
+  // The size is the object's declared length: a store that cannot declare one refuses the object (and closes it).
+  openStaged?(stagingKey: string, maxBytes: number): Promise<{ size: number; chunks: AsyncIterable<Uint8Array> }>;
 }
 
 // A blob written by a StagedWrite: where it is, the generation of that object, and what was written.
@@ -135,6 +136,9 @@ export interface StoredBlob {
   generation: string;
   sha256: string;
   size: number;
+  // True when this write created the object; false when the key already held the same bytes. A caller that undoes its
+  // write (a refusal after the commit) deletes the object only when it created it, never one that was already there.
+  created: boolean;
 }
 
 // One write of a blob that arrives in pieces. write() in order, then commit() once, or abort(); abort() is also safe
@@ -142,15 +146,16 @@ export interface StoredBlob {
 export interface StagedWrite {
   write(bytes: Uint8Array): Promise<void>;
   // Ends the bytes and stores them create-only under place(...), which must be the org key of the sha256 the store
-  // computed over everything written (a content address, like put). The same bytes already there dedupe; different
-  // bytes raise BlobConflictError. The returned size is the number of bytes written.
+  // computed over everything written (a content address, like put) and lie in the directory the write began with. The
+  // same bytes already there dedupe; different bytes raise BlobConflictError. The returned size is the number of bytes
+  // written.
   commit(place: (done: { sha256: string; size: number }) => string, contentType: string): Promise<StoredBlob>;
   abort(): Promise<void>;
 }
 
 // A StagedWrite for a store without its own: the pieces are held whole and handed to put() at the end, so memory is the
 // blob's size.
-export function bufferedStagedWrite(store: Pick<BlobStore, 'put'>): StagedWrite {
+export function bufferedStagedWrite(store: Pick<BlobStore, 'put'>, directory: string): StagedWrite {
   const pieces: Uint8Array[] = [];
   return {
     async write(bytes) {
@@ -162,9 +167,11 @@ export function bufferedStagedWrite(store: Pick<BlobStore, 'put'>): StagedWrite 
       const sha256 = sha256Hex(bytes);
       const key = place({ sha256, size: bytes.byteLength });
       assertStorageKey(key);
-      assertContentAddress(key, sha256);
+      assertStagedKey(key, directory, sha256);
       const generation = (await store.put(key, bytes, contentType)) ?? contentGeneration(sha256);
-      return { key, generation, sha256, size: bytes.byteLength };
+      // put() cannot say whether it created the object. Media is sealed with random IVs, so two writes never hold the same
+      // bytes and the object is this write's own.
+      return { key, generation, sha256, size: bytes.byteLength, created: true };
     },
     async abort() {
       pieces.length = 0;
@@ -174,7 +181,14 @@ export function bufferedStagedWrite(store: Pick<BlobStore, 'put'>): StagedWrite 
 
 // The write to use for a store: its own streamed one, or the buffered stand-in.
 export const stagedWriteFor = (store: BlobStore, directory: string): Promise<StagedWrite> =>
-  store.beginStagedWrite ? store.beginStagedWrite(directory) : Promise.resolve(bufferedStagedWrite(store));
+  store.beginStagedWrite ? store.beginStagedWrite(directory) : Promise.resolve(bufferedStagedWrite(store, directory));
+
+// What every StagedWrite checks of the key place() chose: a content address of the bytes written, inside the directory the write
+// began with (so a write begun for one org cannot land in another's).
+export function assertStagedKey(key: string, directory: string, sha256: string): void {
+  if (!key.startsWith(`${directory}/`)) throw new Error('storage key is outside the directory of the write');
+  assertContentAddress(key, sha256);
+}
 
 // A short-lived read-only URL that a platform fetches an org file from, right after the call that names it.
 export interface FetchUrls {
@@ -513,11 +527,11 @@ export class LocalDiskStore implements BlobStore {
           await close();
           const sha256 = hash.digest('hex');
           const key = place({ sha256, size });
-          assertContentAddress(key, sha256);
+          assertStagedKey(key, directory, sha256);
           const target = this.path(key);
-          await this.place(tmp, target, key, sha256);
+          const created = await this.place(tmp, target, key, sha256);
           await syncDirectory(dirname(target));
-          return { key, generation: contentGeneration(sha256), sha256, size };
+          return { key, generation: contentGeneration(sha256), sha256, size, created };
         } finally {
           await rm(tmp, { force: true });
         }
@@ -530,13 +544,13 @@ export class LocalDiskStore implements BlobStore {
   }
 
   // Links the finished temporary file to its key, or accepts the same bytes already there (hashed as a stream).
-  private async place(tmp: string, target: string, key: string, sha256: string): Promise<void> {
+  private async place(tmp: string, target: string, key: string, sha256: string): Promise<boolean> {
     for (let attempt = 1; ; attempt++) {
       try {
         if (this.hardLinks) {
           try {
             await this.link(tmp, target);
-            return;
+            return true;
           } catch (error) {
             const code = errorCode(error);
             if (code === 'EEXIST') throw error;
@@ -553,7 +567,7 @@ export class LocalDiskStore implements BlobStore {
           if (errorCode(error) !== 'ENOENT') throw error;
         }
         await rename(tmp, target);
-        return;
+        return true;
       } catch (error) {
         if (errorCode(error) !== 'EEXIST') throw error;
       }
@@ -566,7 +580,7 @@ export class LocalDiskStore implements BlobStore {
         throw error;
       }
       if (existing !== sha256) throw new BlobConflictError(key);
-      return;
+      return false;
     }
   }
 

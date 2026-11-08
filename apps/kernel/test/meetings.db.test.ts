@@ -1048,4 +1048,88 @@ suite('meetings module database integration tests (#2576)', () => {
     const played = await app.request(`/api/meetings/${meetingId}/video`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
     expect(Buffer.from(await played.arrayBuffer()).equals(mp4)).toBe(true);
   });
+  it('17. a malformed Content-Length on a raw body is refused with 400, not left to fail later (#2780)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Bad length', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const before = store.storage.size;
+    for (const length of ['abc', '-5', '1e3', '12 34', '']) {
+      const res = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': length },
+        body: new Uint8Array(Buffer.from('OggS-not-reached')),
+      });
+      expect(res.status, `content-length "${length}"`).toBe(400);
+    }
+    expect(store.storage.size).toBe(before);
+  });
+
+  it('18. a raw video upload that stops sending is cancelled, stores nothing and frees the video slot (#2780)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Stalled upload', visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const videoUploads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    const stallingApp = createHttpApp({ ...deps, videoUploads, mediaStallMs: 150 });
+    const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(500, 3)]);
+    let cancelled = false;
+    let sent = false;
+    // The first piece arrives, then nothing: the connection is open but silent.
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (!sent) {
+            sent = true;
+            controller.enqueue(new Uint8Array(mp4));
+          }
+          return new Promise(() => undefined);
+        },
+        cancel: () => {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const before = store.storage.size;
+    const res = await stallingApp.request(`/api/meetings/${meetingId}/media?kind=video`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'video/mp4', 'content-length': String(mp4.length + 5000) },
+      body,
+      duplex: 'half',
+    } as RequestInit);
+    expect(res.status).toBe(400);
+    expect(cancelled).toBe(true);
+    expect(store.storage.size).toBe(before);
+    await vi.waitFor(() => expect(videoUploads.inUse).toBe(0));
+    // The slot is free again: a whole upload of the same meeting now goes through.
+    const again = await stallingApp.request(`/api/meetings/${meetingId}/media?kind=video`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'video/mp4', 'content-length': String(mp4.length) },
+      body: new Uint8Array(mp4),
+    });
+    expect(again.status).toBe(200);
+  });
+
+  it('19. a missing media key refuses a staged upload before its object is opened (#2780)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'No key', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const uploadId = randomUUID();
+    const stagingKey = `staging/${randomBytes(32).toString('hex')}`;
+    store.staged.set(stagingKey, Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(100, 5)]));
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
+        [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
+      );
+    });
+    const keyless = createHttpApp({ ...deps, broker: { ...broker, keyId: undefined } as unknown as CredentialBroker });
+    const opened = store.opened.length;
+    const res = await keyless.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      body: JSON.stringify({ uploadId, kind: 'audio' }),
+    });
+    expect(res.status).toBe(503);
+    // The key is checked first: no staged read was opened, so none is left open, and the staged object is dropped with the claim.
+    expect(store.opened.length).toBe(opened);
+    expect(store.staged.has(stagingKey)).toBe(false);
+  });
 });

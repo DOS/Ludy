@@ -16,6 +16,7 @@ import {
   fileKey,
   plaintextLengthFromCiphertextLength,
   stagedWriteFor,
+  type BlobEncryptor,
   type BlobMediaBinding,
   type BlobStore,
   type StoredBlob,
@@ -47,14 +48,25 @@ const lengthMismatch = (declared: number, got: number) =>
   new DomainError('BAD_REQUEST', 400, `Tệp có ${got} byte, không khớp kích thước đã khai báo (${declared} byte)`);
 const tooLarge = (kind: 'audio' | 'video') => new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${kind === 'video' ? '2 GB' : '300 MB'})`);
 
-// The pieces of a web stream (a request body, a Blob), whatever the runtime's typing of it.
-export async function* streamPieces(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
+// The pieces of a web stream (a request body, a Blob), whatever the runtime's typing of it. With stallMs, a stream that delivers
+// nothing for that long is cancelled and refused: a client that stops sending (a dead connection, a slow-loris) cannot hold the
+// upload, and with it the video slot, for longer. The timer is per piece, so a slow but moving upload is never cut.
+export async function* streamPieces(stream: ReadableStream<Uint8Array>, stallMs?: number): AsyncGenerator<Uint8Array> {
   const reader = stream.getReader();
   try {
     for (;;) {
-      const { done, value } = await reader.read();
-      if (done) return;
-      yield value;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<'stalled'>((resolve) => {
+        if (stallMs !== undefined) timer = setTimeout(() => resolve('stalled'), stallMs);
+      });
+      const step = await Promise.race([reader.read(), stalled]).finally(() => clearTimeout(timer));
+      if (step === 'stalled') {
+        // Cancelling ends the pending read, so nothing is left waiting on the dead body.
+        await reader.cancel().catch(() => undefined);
+        throw new DomainError('BAD_REQUEST', 400, 'Quá lâu không nhận được dữ liệu của tệp, hãy tải lên lại');
+      }
+      if (step.done) return;
+      yield step.value;
     }
   } finally {
     await reader.cancel().catch(() => undefined);
@@ -103,10 +115,13 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
     if (!contentType) throw new DomainError('INVALID_MEDIA_CONTAINER', 400, 'Uploaded media is not a supported audio/video container');
 
     const write = await stagedWriteFor(input.store, `org/${orgId}`);
+    // Declared outside the try so every refusal below ends it and wipes the plaintext it holds.
+    let encryptor: BlobEncryptor | undefined;
     try {
-      const encryptor = createBlobEncryptor(input.dataKey, binding, expectedLength);
+      encryptor = createBlobEncryptor(input.dataKey, binding, expectedLength);
+      const sealing = encryptor;
       const put = async (piece: Uint8Array) => {
-        for (const sealed of encryptor.push(piece)) await write.write(sealed);
+        for (const sealed of sealing.push(piece)) await write.write(sealed);
       };
       for (const piece of held) await put(piece);
       held.length = 0;
@@ -120,15 +135,23 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
       }
       // A source that ended short of what it declared (an aborted body) is refused here, before the last chunk is sealed.
       if (total !== expectedLength) throw lengthMismatch(expectedLength, total);
-      for (const sealed of encryptor.finish()) await write.write(sealed);
+      for (const sealed of sealing.finish()) await write.write(sealed);
       const stored = await write.commit(({ sha256 }) => fileKey(orgId, sha256), contentType);
-      // The object holds as many bytes as the plaintext seals to, or it is not recorded.
-      if (plaintextLengthFromCiphertextLength(stored.size) !== total) {
-        await input.store.delete(stored.key).catch(() => undefined);
+      // The object holds as many bytes as the plaintext seals to, or it is not recorded. A blob left without a row is deleted,
+      // but only when this write created it: one that was already there is not ours to delete.
+      let sealedLength: number | null = null;
+      try {
+        sealedLength = plaintextLengthFromCiphertextLength(stored.size);
+      } catch {
+        // Not a length a blob of this format can have: treated like a mismatch.
+      }
+      if (sealedLength !== total) {
+        if (stored.created) await input.store.delete(stored.key).catch(() => undefined);
         throw new Error(`sealed media has ${stored.size} bytes, which is not ${total} bytes of plaintext`);
       }
       return { ...stored, contentType, plaintextBytes: total };
     } catch (error) {
+      encryptor?.abort();
       await write.abort();
       throw error;
     }

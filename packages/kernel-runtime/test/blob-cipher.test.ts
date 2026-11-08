@@ -315,6 +315,20 @@ describe('streaming blob encryptor (#2780)', () => {
     expect(() => createBlobEncryptor(Buffer.alloc(16), BLOB_BINDING, 0)).toThrow(/32 bytes/);
   });
 
+  it('abort() ends it without sealing, from any state, and a later push or finish throws', () => {
+    const encryptor = createBlobEncryptor(DATA_KEY, BLOB_BINDING, 100);
+    encryptor.push(Buffer.alloc(50, 7));
+    encryptor.abort();
+    expect(() => encryptor.push(Buffer.alloc(1))).toThrow(/finished or failed/);
+    expect(() => encryptor.finish()).toThrow(/finished or failed/);
+    // Safe to call again, after finish, and before anything was pushed.
+    expect(() => encryptor.abort()).not.toThrow();
+    const done = createBlobEncryptor(DATA_KEY, BLOB_BINDING, 0);
+    done.finish();
+    expect(() => done.abort()).not.toThrow();
+    expect(() => createBlobEncryptor(DATA_KEY, BLOB_BINDING, 1).abort()).not.toThrow();
+  });
+
   it('validates the binding at creation and keeps its own frozen copy of it', () => {
     expect(() => createBlobEncryptor(DATA_KEY, { ...BLOB_BINDING, orgId: '' }, 0)).toThrow(/non-empty/);
     expect(() => createBlobEncryptor(DATA_KEY, { ...BLOB_BINDING, meetingId: 'a\u0000b' }, 0)).toThrow(/NUL/);

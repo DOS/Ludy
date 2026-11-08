@@ -32,7 +32,7 @@ describe('LocalDiskStore streamed write', () => {
     const write = await store.beginStagedWrite(directory);
     await writeAll(write, bytes, 70_001);
     const stored = await write.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/webm');
-    expect(stored).toMatchObject({ key: fileKey(orgId, sha256Hex(bytes)), sha256: sha256Hex(bytes), size: bytes.length, generation: `content:${sha256Hex(bytes)}` });
+    expect(stored).toMatchObject({ key: fileKey(orgId, sha256Hex(bytes)), sha256: sha256Hex(bytes), size: bytes.length, generation: `content:${sha256Hex(bytes)}`, created: true });
     expect(Buffer.from(await store.get(stored.key))).toEqual(bytes);
     expect(await filesIn()).toEqual([sha256Hex(bytes)]);
     await write.abort();
@@ -47,10 +47,30 @@ describe('LocalDiskStore streamed write', () => {
     const second = await store.beginStagedWrite(directory);
     await second.write(bytes);
     const b = await second.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/webm');
-    expect(b).toEqual(a);
+    expect(b).toEqual({ ...a, created: false });
     const wrong = await store.beginStagedWrite(directory);
     await wrong.write(bytes);
     await expect(wrong.commit(() => fileKey(orgId, sha256Hex('something else')), 'audio/webm')).rejects.toThrow(/does not match/);
+    expect((await filesIn()).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('says whether it created the object: the first write did, the same bytes again did not', async () => {
+    const bytes = randomBytes(2500);
+    const first = await store.beginStagedWrite(directory);
+    await first.write(bytes);
+    expect((await first.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/webm')).created).toBe(true);
+    const second = await store.beginStagedWrite(directory);
+    await second.write(bytes);
+    expect((await second.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/webm')).created).toBe(false);
+  });
+
+  it('refuses a key outside the directory the write began with (another org\'s), and writes nothing there', async () => {
+    const other = randomUUID();
+    const write = await store.beginStagedWrite(directory);
+    const bytes = randomBytes(900);
+    await write.write(bytes);
+    await expect(write.commit(({ sha256 }) => fileKey(other, sha256), 'audio/webm')).rejects.toThrow(/outside the directory/);
+    expect(await readdir(join(root, 'org', other)).catch(() => [] as string[])).toEqual([]);
     expect((await filesIn()).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
@@ -92,7 +112,7 @@ describe('LocalDiskStore streamed write', () => {
     // The key now exists: the same bytes dedupe through the same path.
     const again = await noLinks.beginStagedWrite(directory);
     await again.write(bytes);
-    await expect(again.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/webm')).resolves.toEqual(stored);
+    await expect(again.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/webm')).resolves.toEqual({ ...stored, created: false });
   });
 
   it('refuses a directory that is not an org directory, and a store without a streamed write falls back to the buffered one', async () => {
@@ -104,9 +124,9 @@ describe('LocalDiskStore streamed write', () => {
     await write.write(Buffer.from('abc'));
     await write.write(Buffer.from('def'));
     const stored = await write.commit(({ sha256 }) => fileKey(orgId, sha256), 'audio/ogg');
-    expect(stored).toMatchObject({ sha256: sha256Hex('abcdef'), size: 6 });
+    expect(stored).toMatchObject({ sha256: sha256Hex('abcdef'), size: 6, created: true });
     expect(puts).toEqual([{ key: fileKey(orgId, sha256Hex('abcdef')), bytes: 6, contentType: 'audio/ogg' }]);
-    expect(bufferedStagedWrite(plain)).toBeDefined();
+    expect(bufferedStagedWrite(plain, directory)).toBeDefined();
   });
 
   it('keeps the memory of a large write at a piece: 256 MiB written in 1 MiB pieces', async () => {

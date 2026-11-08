@@ -280,6 +280,9 @@ export interface BlobEncryptor {
   push(plaintext: Uint8Array): Buffer[];
   // Seals what is left as the last chunk, after checking the declared length. Call once, after the last push.
   finish(): Buffer[];
+  // Ends the encryptor without sealing and wipes the plaintext it holds. For a caller that stops before finish() (a refusal, a
+  // failed write); safe to call at any time, also after finish() or an error.
+  abort(): void;
 }
 
 export function createBlobEncryptor(dataKey: Buffer, binding: BlobMediaBinding, expectedLength: number): BlobEncryptor {
@@ -360,6 +363,7 @@ export function createBlobEncryptor(dataKey: Buffer, binding: BlobMediaBinding, 
         end();
       }
     },
+    abort: end,
   };
 }
 
