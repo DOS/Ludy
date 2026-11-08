@@ -8739,6 +8739,13 @@ export const en = {
       TOO_MANY_ITEMS: 'A meeting holds at most 100 action items.',
       NOTHING_TO_PUBLISH: 'There is nothing to share yet: write a summary or add an action item first.',
       NO_CLEAN_ITEMS: 'No action item is clean: pick the person, the date and the seat of each one yourself.',
+      DRAFT_NOT_REVIEWED: 'Some items Vy suggested have not been reviewed by you yet. Read and confirm them before sharing.',
+      DRAFT_SUMMARY_EXISTS: 'You already have a summary draft. Share it or save over it, then copy Vy\'s summary.',
+      SUMMARY_ALREADY_COPIED: 'This summary was already copied into your draft.',
+      SUMMARY_OFF: 'Summaries by Vy are not turned on on this system. Type the summary by hand.',
+      SUMMARY_RESULT_INVALID: 'The summary result cannot be read. Ask Vy to summarize again.',
+      SUMMARY_RESULT_NOT_FOUND: 'There is no summary result for this meeting.',
+      SUMMARY_RESULT_NOT_READY: 'Vy has not finished the summary yet.',
       INVALID_READER: 'A reader must be an active owner, admin or member of this organization.',
       INVALID_MEDIA_CONTAINER: 'This file is not a supported audio or video format.',
       VIDEO_NOT_ENABLED: 'This meeting was not set up to keep video.',
@@ -10349,12 +10356,16 @@ export const en = {
         edit: 'Edit a draft action item',
         source: 'See which meeting a task came from',
       },
+      draft: {
+        review: 'Mark the draft Vy wrote as read, so it can be shared',
+      },
       result: {
         get: 'Read the summary and the action items of a meeting',
         publish: 'Share the summary and the action items with the meeting\'s attendees',
       },
       summary: {
         save: 'Save the summary and the decisions of a meeting',
+        copy_result: 'Copy the summary Vy finished for a meeting into the draft',
       },
       reader: {
         add: 'Add meeting reader',

@@ -40,6 +40,16 @@ suite('the summary and the action items of a meeting (#2580)', () => {
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
 
+  // Pretend the model wrote an item: the taint trigger lets an update only clear the mark, so the test switches triggers off for this one statement (as a
+  // superuser, in its own transaction), the way a copied Vy result would have been inserted tainted.
+  async function taint(itemId: string): Promise<void> {
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(`SET LOCAL session_replication_role = replica`);
+      await c.query(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+      await c.query('COMMIT');
+    });
+  }
   // A meeting recorded by `recorder`, shared with `readers` (attendees), as the earlier steps leave it.
   async function seedMeeting(recorder: string, readers: string[]): Promise<string> {
     const meetingId = randomUUID();
@@ -149,7 +159,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: null, whenDate: null }));
     // Pretend the model wrote it (part B copies it tainted): the recorder's own edit makes it theirs.
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+    await taint(itemId);
     expect((await results('recorder', meetingId)).items[0]).toMatchObject({ tainted: true, clean: false });
     await exec('recorder', 'meetings.action_item.edit', { itemId, title: 'Gọi 0912 345 678', whoUserId: users.attendee, whenDate: '2026-11-14' });
     expect((await results('recorder', meetingId)).items[0]).toMatchObject({ title: 'Gọi 0912 345 678', tainted: false, flags: ['contact_in_title'], clean: false });
@@ -190,12 +200,12 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     const seat = await seedPosition('recorder', 'Quản lý');
     const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: users.recorder }));
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+    await taint(itemId);
     const kept = await exec<{ taskId: string }>('recorder', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'Gửi báo giá cho khách', due: null, positionId: seat });
     const row = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, kept.taskId]);
     expect(row.rows[0]?.tainted).toBe(true);
     const { itemId: second } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: users.recorder }));
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, second]);
+    await taint(second);
     const changed = await exec<{ taskId: string }>('recorder', 'meetings.action_item.accept', { itemId: second, confirmed: true, title: 'Gửi báo giá, bản sửa', due: null, positionId: seat });
     const row2 = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, changed.taskId]);
     expect(row2.rows[0]?.tainted).toBe(false);
@@ -259,10 +269,13 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     const seat = await seedPosition('attendee', 'Bán hàng');
     const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId));
-    await sqlAdmin(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+    await taint(itemId);
     await exec('recorder', 'meetings.action_item.edit', { itemId, whenDate: '2026-11-20' });
     expect((await results('recorder', meetingId)).items[0]).toMatchObject({ tainted: true, whenDate: '2026-11-20' });
     expect(await refuses(exec('recorder', 'meetings.action_item.edit', { itemId, whenDate: '2026-13-45' }))).toBe('VALIDATION');
+    // Text the model wrote is not shared before the recorder has read it.
+    expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
+    await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: (await results('recorder', meetingId)).items.map((i) => i.id) });
     await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
     await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
     expect(await refuses(exec('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('MEETING_NOT_FOUND');
