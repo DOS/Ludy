@@ -192,6 +192,15 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(logged.join('\n')).toContain('SUMMARY_FAILED');
   });
 
+  it('spends no rate on a member who is refused: only the recorder\'s own asks count against the org\'s few a minute', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users.attendee]);
+    const budget = new DraftBudget({ perUserPerMinute: 100, perOrgPerMinute: 1 });
+    for (let i = 0; i < 3; i += 1) expect(await refuses(runMeetingSummary(deps({ budget }), orgId, asUser('attendee'), meetingId))).toBe('FORBIDDEN');
+    expect((await runMeetingSummary(deps({ budget }), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
+    expect(modelCalls).toBe(1);
+  });
+
   it('is rate limited per member, one at a time', async () => {
     const meetingId = await seedMeeting('recorder');
     const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 100 });

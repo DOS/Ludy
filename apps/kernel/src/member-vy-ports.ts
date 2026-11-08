@@ -86,6 +86,13 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
   const model = deps.model;
   const meter = deps.meter(actor);
   if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
+  // Only the recorder with the switch on spends the member's and the org's rate: anyone else is refused here with the precise answer, before a ticket is taken
+  // (so a member cannot use up the org's few summaries a minute by asking about meetings they did not record).
+  const allowed = await deps.runtime.query<{ enabled: boolean }>('meetings.summary.status', { meetingId }, as);
+  if (!allowed.enabled) {
+    await deps.runtime.execute('meetings.summary.start', { meetingId }, as);
+    throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
+  }
   const ticket = deps.budget.take(orgId, actor.userId);
   if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
   try {
@@ -97,6 +104,7 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
       console.error(`[meetings-summary] run failed: ${errorCode}`);
       return { meetingId, runId, state: 'failed', errorCode };
     };
+    let body: string;
     try {
       // 2. The recorder's own read of the transcript, and of the meeting's language.
       const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
@@ -108,14 +116,25 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
         withAiScope({ orgId, memberRunId: runId, meter }, () => summarizeMeeting({ segments, language: meeting.language }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
         timeoutMs,
       );
-      // 4. Stored in the recorder's own Vy result, bound to this run.
-      await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body: revealPrivateText(result.body) } }, as);
-      return { meetingId, runId, state: 'ready', errorCode: null };
+      body = revealPrivateText(result.body);
     } catch (error: unknown) {
-      // A store that itself was refused (the run ended, a kill switch) is the caller's to see; every other failure is named and stored.
-      if (error instanceof DomainError && (error.code === 'VY_RUN_NOT_LIVE' || error.code === 'FORBIDDEN')) throw error;
+      // Any failure before the answer is named by a fixed code and stored as the run's failed result (a refusal of a read included: the run must not stay open).
       return await fail(codeOf(error));
     }
+    // 4. Stored in the recorder's own Vy result, bound to this run. The kernel re-checks the switches and the budget here and may keep the text out: its answer is the state.
+    // A run that is no longer live is the caller's to see (VY_RUN_NOT_LIVE); another refusal of the store is named and stored like any failure.
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') throw error;
+      return await fail(codeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-summary] run failed: AI_STOPPED');
+      return { meetingId, runId, state: 'failed', errorCode: 'AI_STOPPED' };
+    }
+    return { meetingId, runId, state: 'ready', errorCode: null };
   } finally {
     ticket.release();
   }

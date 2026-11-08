@@ -19,10 +19,13 @@ export class SummaryModelError extends Error {
 /** The hard limit of one summary call, in milliseconds: the member waits for it, so it is short (a longer meeting is refused before the call). */
 export const SUMMARY_TIMEOUT_MS = 60_000;
 
+/** The most the model may write: the checks cap what is stored, this caps what is paid for (a longer answer is cut and then refused as unusable). */
+export const SUMMARY_MAX_OUTPUT_TOKENS = 6000;
+
 export async function generateMeetingSummaryText(config: AiConfig, prompt: { system: string; user: string }, timeoutMs: number = SUMMARY_TIMEOUT_MS): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
   try {
     const { text, usage } = await metered('meetings.summary', () =>
-      generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, abortSignal: AbortSignal.timeout(timeoutMs), maxRetries: 0 }),
+      generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, abortSignal: AbortSignal.timeout(timeoutMs), maxRetries: 0, maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS }),
     );
     return { text, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
   } catch (error: unknown) {
