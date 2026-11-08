@@ -371,5 +371,44 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
     tampered.searchParams.delete('versionId');
     expect((await fetch(tampered)).status).toBe(403);
   });
+  // #2780: a blob that arrives in pieces goes to a multipart upload under a staging key, then to its content address.
+  it('stores a streamed write of two parts under its sha256, accepts the same bytes again, and leaves no staging object', async () => {
+    const { randomBytes } = await import('node:crypto');
+    const bytes = randomBytes(12 * 1024 * 1024 + 321);
+    const { store, sent } = recording();
+    const write = await store.beginStagedWrite!(`org/${orgId}`);
+    for (let at = 0; at < bytes.length; at += 1_500_000) await write.write(bytes.subarray(at, at + 1_500_000));
+    const stored = await write.commit(({ sha256 }) => fileKey(orgId, sha256), 'video/webm');
+    expect(stored.sha256).toBe(sha256Hex(bytes));
+    expect(stored.size).toBe(bytes.length);
+    expect(stored.key).toBe(fileKey(orgId, sha256Hex(bytes)));
+    const head = await client.send(new HeadObjectCommand({ Bucket: options.bucket, Key: stored.key }));
+    expect(head.ContentLength).toBe(bytes.length);
+    expect(head.ContentType).toBe('video/webm');
+    expect(stored.generation).toBe(`s3:${head.VersionId}`);
+    expect(Buffer.from(await readVerified(store, { key: stored.key, generation: stored.generation, sha256: stored.sha256 })).equals(bytes)).toBe(true);
+    // The staging object is deleted after the copy (the last command), and nothing is left to abort.
+    expect(sent).toContain('CopyObjectCommand');
+    expect(sent.at(-1)).toBe('DeleteObjectCommand');
+    // The same bytes again (a retry): accepted, and it records the version that already holds them.
+    const again = await store.beginStagedWrite!(`org/${orgId}`);
+    await again.write(bytes);
+    await expect(again.commit(({ sha256 }) => fileKey(orgId, sha256), 'video/webm')).resolves.toEqual(stored);
+  }, 120_000);
+
+  it('opens a staged object as a stream, and refuses one larger than the cap before reading', async () => {
+    const { randomBytes } = await import('node:crypto');
+    const bytes = randomBytes(3_000_000);
+    const key = newStagingKey();
+    await client.send(new PutObjectCommand({ Bucket: options.bucket, Key: key, Body: bytes }));
+    const store = S3BlobStore.connect(options);
+    const opened = await store.direct!.openStaged!(key, bytes.length);
+    expect(opened.size).toBe(bytes.length);
+    const pieces: Buffer[] = [];
+    for await (const piece of opened.chunks) pieces.push(Buffer.from(piece));
+    expect(Buffer.concat(pieces).equals(bytes)).toBe(true);
+    await expect(store.direct!.openStaged!(key, bytes.length - 1)).rejects.toBeInstanceOf(BlobTooLargeError);
+    await store.delete(key);
+  });
 });
 

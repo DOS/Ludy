@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { link as fsLink, mkdir, open, opendir, readFile, readdir, rm, stat, type FileHandle } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { link as fsLink, mkdir, open, opendir, readFile, readdir, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 
 // Object storage adapter. Local disk is the default; S3-compatible stores implement the same interface.
@@ -36,6 +37,11 @@ export interface BlobStore {
   getRange?(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
   // Removes the blob; a missing key is not an error.
   delete(key: string): Promise<void>;
+  // Starts a write whose bytes arrive in pieces and whose content address is known only at the end (sealed meeting
+  // media: the key is the sha256 of the ciphertext). Memory is bounded by a piece (local disk) or a multipart part (S3),
+  // not by the blob. `directory` is the key's directory, org/<org_id>. A store without it is written through
+  // bufferedStagedWrite, which holds the blob whole. See StagedWrite.
+  beginStagedWrite?(directory: string): Promise<StagedWrite>;
   // Present when browsers transfer bytes to and from the store directly (S3 presigned URLs); absent for local
   // disk, where uploads and downloads stream through the kernel.
   direct?: DirectTransfers | undefined;
@@ -117,7 +123,58 @@ export interface DirectTransfers {
   presignDownload(ref: BlobRef, file: { filename: string; contentType: string }): Promise<string | null>;
   // Streams a staged object, refusing more than maxBytes, and returns its bytes with their sha256.
   readStaged(stagingKey: string, maxBytes: number): Promise<{ bytes: Uint8Array; sha256: string }>;
+  // Opens a staged object as a stream, for a caller that never holds it whole (sealed meeting media). The declared size
+  // above maxBytes is refused (BlobTooLargeError) before a byte is read, and a stream that passes maxBytes while it is
+  // read stops with the same error. BlobNotFoundError when nothing is staged under the key.
+  openStaged?(stagingKey: string, maxBytes: number): Promise<{ size: number | null; chunks: AsyncIterable<Uint8Array> }>;
 }
+
+// A blob written by a StagedWrite: where it is, the generation of that object, and what was written.
+export interface StoredBlob {
+  key: string;
+  generation: string;
+  sha256: string;
+  size: number;
+}
+
+// One write of a blob that arrives in pieces. write() in order, then commit() once, or abort(); abort() is also safe
+// after commit() and after a failed one, and leaves nothing behind.
+export interface StagedWrite {
+  write(bytes: Uint8Array): Promise<void>;
+  // Ends the bytes and stores them create-only under place(...), which must be the org key of the sha256 the store
+  // computed over everything written (a content address, like put). The same bytes already there dedupe; different
+  // bytes raise BlobConflictError. The returned size is the number of bytes written.
+  commit(place: (done: { sha256: string; size: number }) => string, contentType: string): Promise<StoredBlob>;
+  abort(): Promise<void>;
+}
+
+// A StagedWrite for a store without its own: the pieces are held whole and handed to put() at the end, so memory is the
+// blob's size.
+export function bufferedStagedWrite(store: Pick<BlobStore, 'put'>): StagedWrite {
+  const pieces: Uint8Array[] = [];
+  return {
+    async write(bytes) {
+      pieces.push(Uint8Array.from(bytes));
+    },
+    async commit(place, contentType) {
+      const bytes = Buffer.concat(pieces);
+      pieces.length = 0;
+      const sha256 = sha256Hex(bytes);
+      const key = place({ sha256, size: bytes.byteLength });
+      assertStorageKey(key);
+      assertContentAddress(key, sha256);
+      const generation = (await store.put(key, bytes, contentType)) ?? contentGeneration(sha256);
+      return { key, generation, sha256, size: bytes.byteLength };
+    },
+    async abort() {
+      pieces.length = 0;
+    },
+  };
+}
+
+// The write to use for a store: its own streamed one, or the buffered stand-in.
+export const stagedWriteFor = (store: BlobStore, directory: string): Promise<StagedWrite> =>
+  store.beginStagedWrite ? store.beginStagedWrite(directory) : Promise.resolve(bufferedStagedWrite(store));
 
 // A short-lived read-only URL that a platform fetches an org file from, right after the call that names it.
 export interface FetchUrls {
@@ -363,6 +420,13 @@ async function syncDirectory(dir: string): Promise<void> {
   }
 }
 
+// The sha256 of a file, read as a stream (never whole). ENOENT when it is not there.
+async function hashFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const piece of createReadStream(path)) hash.update(piece as Buffer);
+  return hash.digest('hex');
+}
+
 export class LocalDiskStore implements BlobStore {
   private readonly root: string;
   private readonly link: (existing: string, target: string) => Promise<void>;
@@ -412,6 +476,98 @@ export class LocalDiskStore implements BlobStore {
     }
     await this.createOrCompare(key, sha256, () => writeNewFileDurably(target, bytes), false);
     return contentGeneration(sha256);
+  }
+
+  // A streamed create-only write (see StagedWrite): the pieces go to a temporary file in the key's directory, hashed as they
+  // are written, and commit() fsyncs it and hard links it to the key the caller derives from the hash, as put does. A key
+  // that already exists is compared by hashing the file as a stream (never read whole): the same bytes dedupe. On a
+  // filesystem without hard links the file is renamed to the key when the key is free, with the weaker guarantees put
+  // documents for its own fallback. The temporary file is removed on every path; one a crash leaves is swept at startup.
+  async beginStagedWrite(directory: string): Promise<StagedWrite> {
+    if (!/^(?:org|export|conversation)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
+    const dir = dirname(this.path(`${directory}/${'0'.repeat(64)}`));
+    await mkdir(dir, { recursive: true });
+    const tmp = join(dir, `${randomBytes(32).toString('hex')}.${process.pid}.${randomUUID()}.tmp`);
+    const handle = await open(tmp, 'wx');
+    const hash = createHash('sha256');
+    let size = 0;
+    let open_ = true;
+    const close = async () => {
+      if (!open_) return;
+      open_ = false;
+      await handle.close().catch(() => undefined);
+    };
+    return {
+      write: async (bytes) => {
+        let at = 0;
+        while (at < bytes.byteLength) {
+          const { bytesWritten } = await handle.write(bytes, at, bytes.byteLength - at);
+          at += bytesWritten;
+        }
+        hash.update(bytes);
+        size += bytes.byteLength;
+      },
+      commit: async (place) => {
+        try {
+          await handle.sync();
+          await close();
+          const sha256 = hash.digest('hex');
+          const key = place({ sha256, size });
+          assertContentAddress(key, sha256);
+          const target = this.path(key);
+          await this.place(tmp, target, key, sha256);
+          await syncDirectory(dirname(target));
+          return { key, generation: contentGeneration(sha256), sha256, size };
+        } finally {
+          await rm(tmp, { force: true });
+        }
+      },
+      abort: async () => {
+        await close();
+        await rm(tmp, { force: true });
+      },
+    };
+  }
+
+  // Links the finished temporary file to its key, or accepts the same bytes already there (hashed as a stream).
+  private async place(tmp: string, target: string, key: string, sha256: string): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        if (this.hardLinks) {
+          try {
+            await this.link(tmp, target);
+            return;
+          } catch (error) {
+            const code = errorCode(error);
+            if (code === 'EEXIST') throw error;
+            if (code === undefined || !NO_HARD_LINKS.has(code)) throw error;
+            if (this.hardLinks) this.log(`${this.root} does not support hard links (${code}); writes fall back to a rename onto a free key.`);
+            this.hardLinks = false;
+          }
+        }
+        // No hard links: the key must be free (stat), then the file moves there.
+        try {
+          await stat(target);
+          throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+        } catch (error) {
+          if (errorCode(error) !== 'ENOENT') throw error;
+        }
+        await rename(tmp, target);
+        return;
+      } catch (error) {
+        if (errorCode(error) !== 'EEXIST') throw error;
+      }
+      // The key exists: the same bytes dedupe, other bytes conflict. Deleted in between: create it once more.
+      let existing: string;
+      try {
+        existing = await hashFile(target);
+      } catch (error) {
+        if (errorCode(error) === 'ENOENT' && attempt < 2) continue;
+        throw error;
+      }
+      if (existing !== sha256) throw new BlobConflictError(key);
+      return;
+    }
   }
 
   // Runs create() until it makes the key, or compares the bytes already stored there. Returns false when link()

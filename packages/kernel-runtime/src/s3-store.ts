@@ -1,14 +1,20 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   GetObjectLockConfigurationCommand,
   GetObjectRetentionCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   PutObjectRetentionCommand,
   S3Client,
+  UploadPartCommand,
   type S3ClientConfig,
 } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
@@ -28,6 +34,7 @@ import {
   contentGeneration,
   isListedKey,
   isStagingKey,
+  newStagingKey,
   sha256Hex,
   versionOf,
   type BlobListing,
@@ -39,12 +46,16 @@ import {
   type ListPrefix,
   type ListedBlob,
   type PresignedUpload,
+  type StagedWrite,
   type StagingSweep,
 } from './storage.ts';
 
 // required: every write must come back with an object version (S3 VersionId, GCS generation), or the store fails
 // closed; this is the default and what evidence buckets need (ADR-0013). off: the bucket has no versioning (for
 // example Cloudflare R2), generations are content:<sha256> and integrity rests on the sha256 check alone.
+// Parts of a streamed write (S3 needs at least 5 MiB for all but the last).
+const MULTIPART_PART_BYTES = 8 * 1024 * 1024;
+
 export type S3Versioning = 'required' | 'off';
 
 export interface S3StoreOptions {
@@ -302,6 +313,7 @@ export class S3BlobStore implements BlobStore {
           presignUpload: (key, maxBytes) => this.presignUpload(presigner, key, maxBytes),
           presignDownload: (ref, file) => this.presignDownload(presigner, ref, file),
           readStaged: (key, maxBytes) => this.readStaged(key, maxBytes),
+          openStaged: (key, maxBytes) => this.openStaged(key, maxBytes),
         }
       : undefined;
     const fetchSigner = options.fetchSigner;
@@ -344,6 +356,112 @@ export class S3BlobStore implements BlobStore {
   // earlier release recorded as s3:<id> on R2 still read (integrity rests on the sha256 check there, as for content:).
   private pinned(generation: string | null | undefined): string | null {
     return this.versioning === 'off' ? null : versionOf(generation);
+  }
+
+  // A streamed create-only write (see StagedWrite). The content address is the sha256 of the whole object, known only at the
+  // end, so the pieces go to a multipart upload under a random staging key (parts of MULTIPART_PART_BYTES, each sent with its
+  // own SHA-256 checksum, which S3 verifies), and commit() completes it, checks the stored size, and copies the object to
+  // its org key (CopyObject, one request for the 2 GB the caps allow) before the staging key is deleted. A key that already
+  // exists is accepted only if its bytes hash to the same sha256 (digestCurrent streams them), as put does. CopyObject has no
+  // create-only condition, so two identical writes racing may each copy once: the same bytes, one more version. Memory is one
+  // part, whatever the blob's size. Nothing is left on the staging key after commit or abort (best effort; the daily
+  // staging sweep catches a crash).
+  async beginStagedWrite(directory: string): Promise<StagedWrite> {
+    if (!/^(?:org|export|conversation)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
+    const staging = newStagingKey();
+    const created = await this.client.send(
+      new CreateMultipartUploadCommand({ Bucket: this.bucket, Key: staging, ContentType: 'application/octet-stream', ChecksumAlgorithm: 'SHA256' }),
+    );
+    const uploadId = created.UploadId;
+    if (!uploadId) throw new Error(`multipart upload not started: ${staging}`);
+    const parts: Array<{ ETag: string; PartNumber: number; ChecksumSHA256: string }> = [];
+    const whole = createHash('sha256');
+    const part = Buffer.allocUnsafe(MULTIPART_PART_BYTES);
+    let partLength = 0;
+    let size = 0;
+    let completed = false;
+    const sendPart = async () => {
+      const body = part.subarray(0, partLength);
+      const checksum = createHash('sha256').update(body).digest('base64');
+      const out = await this.client.send(
+        new UploadPartCommand({
+          Bucket: this.bucket,
+          Key: staging,
+          UploadId: uploadId,
+          PartNumber: parts.length + 1,
+          Body: body,
+          ContentLength: body.byteLength,
+          ChecksumSHA256: checksum,
+        }),
+      );
+      if (!out.ETag) throw new Error(`part ${parts.length + 1} was not acknowledged: ${staging}`);
+      if (out.ChecksumSHA256 !== undefined && out.ChecksumSHA256 !== checksum) throw new Error(`part ${parts.length + 1} failed its sha256 check: ${staging}`);
+      parts.push({ ETag: out.ETag, PartNumber: parts.length + 1, ChecksumSHA256: checksum });
+      partLength = 0;
+    };
+    const cleanup = async () => {
+      if (!completed) await this.client.send(new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: staging, UploadId: uploadId })).catch(() => undefined);
+      await this.delete(staging).catch(() => undefined);
+    };
+    return {
+      write: async (bytes) => {
+        let at = 0;
+        while (at < bytes.byteLength) {
+          const take = Math.min(MULTIPART_PART_BYTES - partLength, bytes.byteLength - at);
+          part.set(bytes.subarray(at, at + take), partLength);
+          partLength += take;
+          at += take;
+          if (partLength === MULTIPART_PART_BYTES) await sendPart();
+        }
+        whole.update(bytes);
+        size += bytes.byteLength;
+      },
+      commit: async (place, contentType) => {
+        try {
+          if (partLength > 0 || parts.length === 0) await sendPart();
+          await this.client.send(
+            new CompleteMultipartUploadCommand({ Bucket: this.bucket, Key: staging, UploadId: uploadId, MultipartUpload: { Parts: parts } }),
+          );
+          completed = true;
+          const sha256 = whole.digest('hex');
+          const key = place({ sha256, size });
+          assertStorageKey(key);
+          assertContentAddress(key, sha256);
+          // The object S3 holds is the size that was sent, or it is not recorded.
+          const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: staging }));
+          if (head.ContentLength !== size) throw new Error(`staged object has ${head.ContentLength} bytes, ${size} were written: ${staging}`);
+          let existing: string | null = null;
+          try {
+            existing = (await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }))).VersionId ?? 'unversioned';
+          } catch (error) {
+            if (!isMissingObject(error)) throw error;
+          }
+          if (existing !== null) {
+            const current = await this.digestCurrent(key, size);
+            if (current.sha256 !== sha256) throw new BlobConflictError(key);
+            return { key, generation: this.generation(key, current.versionId, sha256), sha256, size };
+          }
+          const copied = await this.client.send(
+            new CopyObjectCommand({
+              Bucket: this.bucket,
+              Key: key,
+              CopySource: `${this.bucket}/${staging}`,
+              ContentType: contentType || 'application/octet-stream',
+              MetadataDirective: 'REPLACE',
+            }),
+          );
+          const landed = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+          if (landed.ContentLength !== size) {
+            await this.delete(key).catch(() => undefined);
+            throw new Error(`stored blob has ${landed.ContentLength} bytes, ${size} were written: ${key}`);
+          }
+          return { key, generation: this.generation(key, copied.VersionId ?? landed.VersionId, sha256), sha256, size };
+        } finally {
+          await cleanup();
+        }
+      },
+      abort: cleanup,
+    };
   }
 
   async put(key: string, bytes: Uint8Array, contentType: string): Promise<string> {
@@ -712,6 +830,43 @@ export class S3BlobStore implements BlobStore {
       throw error;
     }
     return { sha256: hash.digest('hex'), versionId: out.VersionId };
+  }
+
+  // A staged object as a stream of its pieces: the declared length above maxBytes is refused before a byte is read, and a body
+  // that passes maxBytes while it streams stops with the same error. Nothing is held beyond the piece in hand.
+  private async openStaged(key: string, maxBytes: number): Promise<{ size: number | null; chunks: AsyncIterable<Uint8Array> }> {
+    if (!isStagingKey(key)) throw new Error('invalid staging key');
+    assertReadCap(maxBytes);
+    let out;
+    try {
+      out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    } catch (error) {
+      if (isMissingObject(error)) throw new BlobNotFoundError(key);
+      if (httpStatus(error) === 403) throw new BlobStoreAccessError(this.bucket, key, error);
+      throw error;
+    }
+    if (!out.Body) throw new BlobNotFoundError(key);
+    const stream = out.Body.transformToWebStream();
+    if (out.ContentLength !== undefined && out.ContentLength > maxBytes) {
+      await stream.cancel().catch(() => undefined);
+      throw new BlobTooLargeError(key, maxBytes);
+    }
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      const reader = stream.getReader();
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          size += value.byteLength;
+          if (size > maxBytes) throw new BlobTooLargeError(key, maxBytes);
+          yield value;
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+    }
+    return { size: out.ContentLength ?? null, chunks: chunks() };
   }
 
   // Streams the staged object through sha256 and a byte count, and stops reading as soon as it passes maxBytes.

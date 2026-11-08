@@ -96,6 +96,23 @@ describe('no request goes anywhere but the configured address', () => {
     expect(() => assertGrantUrl('http://bucket.example/stage', 'http://localhost:8080')).toThrow(/Refused/);
   });
 
+  it('a direct upload sends the file itself as the body, with its type and the kind and length in the query', async () => {
+    const seen: Array<{ url: string; type: string | null; body: unknown }> = [];
+    const fetchImpl = vi.fn(async (input: string, init?: RequestInit) => {
+      seen.push({ url: input, type: new Headers(init?.headers).get('content-type'), body: init?.body });
+      return Response.json({ fileId: 'f1' });
+    });
+    const file = new File(['abc'], 'a.webm', { type: 'video/webm' });
+    await createClient('https://app.ludy.vn', 'crx_t', fetchImpl).uploadMedia({ meetingId: '11111111-1111-4111-8111-111111111111', kind: 'video', file, lengthSeconds: 90, uploads: 'direct' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.url).toBe('https://app.ludy.vn/api/meetings/11111111-1111-4111-8111-111111111111/media?kind=video&lengthSeconds=90');
+    expect(seen[0]!.type).toBe('video/webm');
+    expect(seen[0]!.body).toBe(file);
+    // A type that is not audio or video goes as an opaque body.
+    await createClient('https://app.ludy.vn', 'crx_t', fetchImpl).uploadMedia({ meetingId: '11111111-1111-4111-8111-111111111111', kind: 'audio', file: new File(['x'], 'a.bin', { type: 'text/html' }), lengthSeconds: 1, uploads: 'direct' });
+    expect(seen[1]!.type).toBe('application/octet-stream');
+  });
+
   it('never follows a redirect: every request says so', async () => {
     const seen: Array<RequestInit | undefined> = [];
     const fetchImpl = vi.fn(async (input: string, init?: RequestInit) => {

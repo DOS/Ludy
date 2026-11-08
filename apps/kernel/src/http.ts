@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -46,7 +46,6 @@ import {
   readVerified,
   sha256Hex,
   decryptBlobChunks,
-  encryptBlobBuffer,
   generateMediaDataKey,
   hasFreshMfa,
   mapPlaintextRangeToChunks,
@@ -61,7 +60,6 @@ import {
   type Runtime,
   type UserActor,
 } from '@crove/kernel-runtime';
-import { detectMediaContainer } from '@crove/mod-meetings';
 import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
@@ -121,6 +119,7 @@ import {
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
+import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
 import { corsMiddleware } from './cors.ts';
@@ -2082,6 +2081,13 @@ export function createHttpApp(deps: HttpDeps) {
       if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
       const videoSize = !json && meeting.keepVideo && hint !== 'audio';
       const cap = json ? META_BODY_MAX_BYTES : (videoSize ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES) + 1024 * 1024;
+      // The raw body of the file (#2780) is sealed as it streams, so its size is declared up front: a body without a
+      // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
+      // count it, which is what streaming is for). Browsers send the length of a File they upload.
+      const rawFile = /^(?:audio\/|video\/|application\/octet-stream)/i.test(c.req.header('content-type') ?? '');
+      if (rawFile && (c.req.header('transfer-encoding') !== undefined || c.req.header('content-length') === undefined)) {
+        throw new DomainError('BAD_REQUEST', 400, 'Tệp phải được gửi kèm Content-Length');
+      }
       const declared = Number(c.req.header('content-length') ?? '0');
       if (!Number.isFinite(declared) || declared < 0) throw new DomainError('BAD_REQUEST', 400, 'Content-Length is not valid');
       if (declared > cap) {
@@ -2127,7 +2133,8 @@ export function createHttpApp(deps: HttpDeps) {
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         let lengthSeconds: number | undefined;
-        let plaintext: Buffer | null = null;
+        // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole.
+        let source: AsyncIterable<Uint8Array>;
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2175,19 +2182,18 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
           }
 
-          const limit = kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
-          if (direct) {
-            const staged = await direct.readStaged(claim.stagingKey, Math.min(claim.maxBytes, limit)).catch((error: unknown) => {
-              if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
-              throw error;
-            });
-            plaintext = Buffer.from(staged.bytes);
+          const missing = (error: unknown): never => {
+            if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
+            throw error;
+          };
+          const cap = Math.min(claim.maxBytes, kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES);
+          if (direct?.openStaged) {
+            // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
+            source = (await direct.openStaged(claim.stagingKey, cap).catch(missing)).chunks;
+          } else if (direct) {
+            source = onepiece((await direct.readStaged(claim.stagingKey, cap).catch(missing)).bytes);
           } else {
-            const raw = await store.get(claim.stagingKey, null, Math.min(claim.maxBytes, limit)).catch((error: unknown) => {
-              if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
-              throw error;
-            });
-            plaintext = Buffer.from(raw);
+            source = onepiece(await store.get(claim.stagingKey, null, cap).catch(missing));
           }
         } else if (contentTypeHeader.includes('multipart/form-data')) {
           const formData = await c.req.formData().catch(() => null);
@@ -2217,18 +2223,28 @@ export function createHttpApp(deps: HttpDeps) {
             }
             lengthSeconds = parsedLen;
           }
-          plaintext = Buffer.from(await fileVal.arrayBuffer());
+          // The form was parsed whole by the body reader (use the raw body below for a large file); the sealing still streams.
+          source = streamPieces(fileVal.stream() as ReadableStream<Uint8Array>);
+        } else if (/^(?:audio\/|video\/|application\/octet-stream)/i.test(contentTypeHeader)) {
+          // The raw body of the file (#2780): sealed as it arrives, so a large recording is never held. The kind and the
+          // length come in the query, because the body is the file and nothing else; the gate capped it by the same kind.
+          const kindVal = c.req.query('kind');
+          if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
+          kind = kindVal;
+          await verifyRecorderAndKind(kind);
+          const lengthVal = c.req.query('lengthSeconds');
+          if (lengthVal !== undefined) {
+            const parsedLen = Number(lengthVal.trim());
+            if (lengthVal.trim() === '' || !Number.isInteger(parsedLen) || parsedLen <= 0) {
+              throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
+            }
+            lengthSeconds = parsedLen;
+          }
+          const rawBody = c.req.raw.body;
+          if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
+          source = streamPieces(rawBody as ReadableStream<Uint8Array>);
         } else {
-          throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be application/json or multipart/form-data');
-        }
-
-        if (plaintext.length === 0) {
-          throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
-        }
-
-        const sniffedContentType = detectMediaContainer(plaintext, kind);
-        if (!sniffedContentType) {
-          throw new DomainError('INVALID_MEDIA_CONTAINER', 400, 'Uploaded media is not a supported audio/video container');
+          throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be application/json, multipart/form-data or the file itself (audio/*, video/*, application/octet-stream)');
         }
 
         dataKey = generateMediaDataKey();
@@ -2254,12 +2270,18 @@ export function createHttpApp(deps: HttpDeps) {
         const keyBinding: MediaKeyBinding = { ...binding, keyId };
         const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
 
-        const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
-        plaintext = null;
-        const sha256 = createHash('sha256').update(ciphertext).digest('hex');
-        const storageKey = fileKey(orgId, sha256);
-
-        const generation = await store.put(storageKey, ciphertext, sniffedContentType);
+        // Sealed as it streams: the container is sniffed from the first bytes, the cap is counted as the bytes arrive, and the
+        // ciphertext goes to the store's streamed write, which hashes it and stores it under its content address.
+        const sealed = await sealMedia({
+          source,
+          kind,
+          dataKey,
+          binding,
+          maxBytes: kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES,
+          store,
+          orgId,
+        });
+        const { key: storageKey, generation, sha256, contentType: sniffedContentType } = sealed;
 
         let result: { fileId: string };
         try {
@@ -2272,7 +2294,7 @@ export function createHttpApp(deps: HttpDeps) {
               wrappedKeyHex: wrappedKey.toString('hex'),
               storageKey,
               generation,
-              sizeBytes: ciphertext.length,
+              sizeBytes: sealed.size,
               sha256,
               contentType: sniffedContentType,
               lengthSeconds: lengthSeconds ?? 1800,
