@@ -649,7 +649,7 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     it('does not store as an image a file whose name or type says image but whose bytes are not one, nor an oversized image, and the text still arrives', async () => {
       const o = await org();
       const huge = Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024 + 10)]);
-      await deliver(o.address, raw({ to: o.address, messageId: '<img2@mau.test>', body: 'Chữ vẫn phải đến.', files: [{ name: 'gia-mao.png', bytes: PDF, type: 'image/png' }, { name: 'lon.png', bytes: huge, type: 'image/png' }] }));
+      await deliver(o.address, raw({ to: o.address, messageId: '<img2@mau.test>', body: 'Chữ vẫn phải đến.', files: [{ name: 'gia-mao.png', bytes: Buffer.from('khong phai anh, chi la chu'), type: 'image/png' }, { name: 'lon.png', bytes: huge, type: 'image/png' }] }));
       expect(await attachmentRows(o)).toEqual([]);
       const [thread] = await threads(o);
       const [message] = await messagesOf(thread?.id as string);
@@ -707,7 +707,8 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
       await deliver(o.address, raw({ to: o.address, messageId: '<budget1@mau.test>', files: [{ name: 'mot.png', bytes: padded, type: 'image/png' }] }), limits);
       expect(await attachmentRows(o)).toHaveLength(1);
       const [used] = await rows<{ n: string }>("SELECT coalesce(sum(amount), 0)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'attachment_bytes'", [o.orgId]);
-      expect(used?.n).toBe(String(padded.byteLength));
+      // NUMERIC comes back with its scale ('370.000000'): compare the number.
+      expect(Number(used?.n)).toBe(padded.byteLength);
       // More than the 250 bytes a day that mailed images may use: the next mail's text arrives and its image is a line.
       const out = await deliver(o.address, raw({ to: o.address, messageId: '<budget2@mau.test>', body: 'Chữ vẫn đến.', files: [{ name: 'hai.png', bytes: padded, type: 'image/png' }] }), limits);
       expect(out).toMatchObject({ conversation: 'stored' });
