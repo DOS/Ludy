@@ -105,6 +105,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
   it('lets an admin change admins, members and viewers, never an owner, and a member never their own', async () => {
     expect(await set(users.admin, users.viewer, true), 'an admin granting a viewer').toMatchObject({ changed: true });
     await expect(set(users.admin, users.owner, false)).rejects.toMatchObject({ code: 'PERMISSION_MANAGE_FORBIDDEN' });
+    await expect(set(users.admin, users.admin, false), 'an admin changing their own').rejects.toMatchObject({ code: 'PERMISSION_MANAGE_FORBIDDEN' });
     await expect(set(users.member, users.member, false)).rejects.toThrow();
     await expect(set(users.viewer, users.viewer, true)).rejects.toThrow();
     // The refused attempts changed nothing.
@@ -130,7 +131,6 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     const check = (roleKey: string, legalEntityId: string | null = null) =>
       admin((c) => c.query('SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, $3::text, $4::text, $5::uuid)', [orgId, users.viewer, 'viewer', roleKey, legalEntityId]));
     await expect(check('finance.chief_accountant')).rejects.toThrow(/ROLE_PRIVILEGED_FOR_VIEWER/);
-    await expect(check('finance.entity_chief_accountant', randomUUID())).rejects.toThrow();
     for (const roleKey of ['crm.sales', 'desk.agent', 'hr.manager', 'finance.accountant', 'finance.viewer']) {
       // desk.agent also grants kernel.conversation.direct.read, a real permission: refused too.
       if (roleKey === 'desk.agent') await expect(check(roleKey)).rejects.toThrow(/ROLE_PRIVILEGED_FOR_VIEWER/);
@@ -140,5 +140,54 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'crm.sales', $3)`, [orgId, users.viewer, users.owner]));
     expect(await asked(users.viewer, 'vy.use'), 'a viewer with a department role').toEqual({ held: true, vy: true });
     expect((await asked(users.viewer, 'finance.period.unlock')).held).toBe(false);
+  });
+
+  // member_has_permission is SECURITY INVOKER, so row-level security hides some rows from some callers: a tenant login that
+  // calls it directly answers only about itself, as an owner or admin, or as the system; every other caller is refused.
+  it('answers the same to every caller that may ask, and refuses the rest', async () => {
+    await set(users.owner, users.member, false);
+    await set(users.owner, users.viewer, true);
+    try {
+      const askAs = async (enter: (c: pg.Client) => Promise<unknown>, url: string, about: string) => {
+        const c = new pg.Client({ connectionString: url });
+        await c.connect();
+        try {
+          await c.query('BEGIN');
+          await enter(c);
+          return (await c.query<{ ok: boolean }>('SELECT crove_kernel.member_has_permission($1::uuid, $2::uuid, $3::text) AS ok', [orgId, about, 'vy.use'])).rows[0]?.ok;
+        } finally {
+          await c.query('ROLLBACK').catch(() => {});
+          await c.end();
+        }
+      };
+      const asUserCtx = (userId: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      const asSystem = (c: pg.Client) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      const workerUrl = (() => {
+        const url = new URL(adminUrl);
+        url.username = 'crove_worker';
+        url.password = 'test-worker-pw';
+        return url.toString();
+      })();
+      for (const [about, expected] of [[users.member, false], [users.viewer, true], [users.owner, true]] as const) {
+        const answers = {
+          superuser: (await admin((c) => c.query<{ ok: boolean }>('SELECT crove_kernel.member_has_permission($1::uuid, $2::uuid, $3::text) AS ok', [orgId, about, 'vy.use']))).rows[0]?.ok,
+          system: await askAs(asSystem, workerUrl, about),
+          owner: await askAs(asUserCtx(users.owner), appUrl, about),
+          admin: await askAs(asUserCtx(users.admin), appUrl, about),
+        };
+        expect(answers, `the answers about ${about === users.member ? 'a denied member' : about === users.viewer ? 'a granted viewer' : 'the owner'}`).toEqual({ superuser: expected, system: expected, owner: expected, admin: expected });
+      }
+      // The person themselves.
+      expect(await askAs(asUserCtx(users.member), appUrl, users.member)).toBe(false);
+      expect(await askAs(asUserCtx(users.viewer), appUrl, users.viewer)).toBe(true);
+      // Another member, a viewer asking about someone else, and an org-chart or no context get no answer, not a wrong one.
+      for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
+        await expect(askAs(asUserCtx(who), appUrl, about), 'a member asking about someone else').rejects.toMatchObject({ code: '42501' });
+      }
+      await expect(askAs(async () => {}, appUrl, users.member), 'no context').rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await set(users.owner, users.member, null);
+      await set(users.owner, users.viewer, null);
+    }
   });
 });

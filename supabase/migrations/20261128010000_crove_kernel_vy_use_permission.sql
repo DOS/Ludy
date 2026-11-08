@@ -13,12 +13,14 @@ SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_kernel.permission_catalog (
   permission text PRIMARY KEY CHECK (permission ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),
-  grantable_to_viewer boolean NOT NULL DEFAULT false
+  grantable_to_viewer boolean NOT NULL DEFAULT false,
+  -- Whether a role assignment for one legal entity counts for it (the permission has no entity meaning).
+  entity_roles_count boolean NOT NULL DEFAULT false
 );
 REVOKE ALL ON crove_kernel.permission_catalog FROM PUBLIC;
 GRANT SELECT ON crove_kernel.permission_catalog TO crove_tenant;
 SELECT crove_kernel.agent_write_guard_install('crove_kernel.permission_catalog');
-INSERT INTO crove_kernel.permission_catalog (permission, grantable_to_viewer) VALUES ('vy.use', true) ON CONFLICT (permission) DO NOTHING;
+INSERT INTO crove_kernel.permission_catalog (permission, grantable_to_viewer, entity_roles_count) VALUES ('vy.use', true, true) ON CONFLICT (permission) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS crove_kernel.permission_default (
   base_role text NOT NULL CHECK (base_role IN ('owner', 'admin', 'member', 'viewer')),
@@ -114,13 +116,32 @@ LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_role text;
   v_grantable boolean;
+  v_entity_roles boolean;
   v_override boolean;
 BEGIN
+  -- Row-level security hides some override and assignment rows from some callers, so a tenant login asking about someone
+  -- else would get another answer than the definer or the system gets. A tenant login that calls this directly therefore
+  -- gets an answer only about itself, as an owner or admin, or as the system context; a definer (its owner is not the
+  -- session user) and a superuser read every row and are unaffected.
+  IF current_user = session_user
+     AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user AND r.rolsuper)
+     AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER') THEN
+    IF NOT COALESCE(
+      crove_kernel.ctx_actor_type() = 'system'
+      OR (crove_kernel.ctx_actor_type() = 'user' AND crove_kernel.ctx_org_id() IS NOT DISTINCT FROM p_org
+          AND (p_user IS NOT DISTINCT FROM crove_kernel.ctx_user_id()
+               OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m
+                          WHERE m.org_id = p_org AND m.user_id = crove_kernel.ctx_user_id() AND m.role IN ('owner', 'admin'))))
+    , false) THEN
+      RAISE EXCEPTION 'PERMISSION_QUERY_FORBIDDEN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
   SELECT m.role INTO v_role FROM crove_kernel.tenant_member m WHERE m.org_id = p_org AND m.user_id = p_user;
   IF v_role IS NULL THEN
     RETURN false;
   END IF;
-  SELECT COALESCE((SELECT c.grantable_to_viewer FROM crove_kernel.permission_catalog c WHERE c.permission = p_permission), false) INTO v_grantable;
+  SELECT COALESCE(c.grantable_to_viewer, false), COALESCE(c.entity_roles_count, false) INTO v_grantable, v_entity_roles
+  FROM (SELECT 1) x LEFT JOIN crove_kernel.permission_catalog c ON c.permission = p_permission;
   SELECT o.allowed INTO v_override FROM crove_kernel.member_permission_override o
   WHERE o.org_id = p_org AND o.user_id = p_user AND o.permission = p_permission;
   IF v_override IS NOT NULL AND NOT v_override THEN
@@ -140,7 +161,7 @@ BEGIN
     SELECT 1 FROM crove_kernel.role_assignment a
     JOIN crove_kernel.role_permission p ON p.role_key = a.role_key
     WHERE a.org_id = p_org AND a.user_id = p_user AND p.permission = p_permission
-      AND (a.legal_entity_id IS NULL OR v_grantable));
+      AND (a.legal_entity_id IS NULL OR v_entity_roles));
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_has_permission(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.member_has_permission(uuid, uuid, text) TO crove_tenant;
@@ -148,8 +169,9 @@ GRANT EXECUTE ON FUNCTION crove_kernel.member_has_permission(uuid, uuid, text) T
 -- ctx_has_permission: a user context asks the one resolution about itself; every other actor, and no context, holds none.
 CREATE OR REPLACE FUNCTION crove_kernel.ctx_has_permission(p_permission text) RETURNS boolean
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
-  SELECT COALESCE(crove_kernel.ctx_actor_type() = 'user', false)
-    AND COALESCE(crove_kernel.member_has_permission(crove_kernel.ctx_org_id(), crove_kernel.ctx_user_id(), p_permission), false)
+  SELECT CASE WHEN crove_kernel.ctx_actor_type() = 'user'
+              THEN COALESCE(crove_kernel.member_has_permission(crove_kernel.ctx_org_id(), crove_kernel.ctx_user_id(), p_permission), false)
+              ELSE false END
 $$;
 REVOKE ALL ON FUNCTION crove_kernel.ctx_has_permission(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.ctx_has_permission(text) TO crove_tenant;
@@ -163,7 +185,7 @@ REVOKE ALL ON FUNCTION crove_kernel.ctx_vy_use() FROM PUBLIC, crove_tenant, crov
 GRANT EXECUTE ON FUNCTION crove_kernel.ctx_vy_use() TO crove_tenant;
 
 -- Sets (p_allowed true or false) or clears (NULL) the exception of p_user in the org in context. Who may: an owner for anyone;
--- an admin for admins, members and viewers, never for an owner; nobody else, and nobody who is not a member of the org.
+-- an admin for other admins, members and viewers, never for an owner, themselves, or a row an owner set; nobody else, and nobody who is not a member of the org.
 -- Refusals (P0001): PERMISSION_UNKNOWN, PERMISSION_MANAGE_FORBIDDEN, PERMISSION_MEMBER_NOT_FOUND. Returns whether anything changed.
 CREATE OR REPLACE FUNCTION crove_kernel.member_permission_set(p_user uuid, p_permission text, p_allowed boolean) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -173,6 +195,7 @@ DECLARE
   v_actor_role text;
   v_target_role text;
   v_old boolean;
+  v_set_by uuid;
   v_n integer;
 BEGIN
   IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' THEN
@@ -190,10 +213,15 @@ BEGIN
   IF v_target_role IS NULL THEN
     RAISE EXCEPTION 'PERMISSION_MEMBER_NOT_FOUND';
   END IF;
-  IF v_actor_role = 'admin' AND v_target_role = 'owner' THEN
+  -- An admin never changes an owner's exception, nor their own, nor one an owner set.
+  IF v_actor_role = 'admin' AND (v_target_role = 'owner' OR p_user = v_actor) THEN
     RAISE EXCEPTION 'PERMISSION_MANAGE_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
-  SELECT o.allowed INTO v_old FROM crove_kernel.member_permission_override o WHERE o.org_id = v_org AND o.user_id = p_user AND o.permission = p_permission;
+  SELECT o.allowed, o.set_by INTO v_old, v_set_by FROM crove_kernel.member_permission_override o WHERE o.org_id = v_org AND o.user_id = p_user AND o.permission = p_permission;
+  IF v_actor_role = 'admin' AND v_set_by IS NOT NULL AND EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = v_set_by AND m.role = 'owner') THEN
+    RAISE EXCEPTION 'PERMISSION_MANAGE_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
   IF p_allowed IS NULL THEN
     DELETE FROM crove_kernel.member_permission_override o WHERE o.org_id = v_org AND o.user_id = p_user AND o.permission = p_permission;
     GET DIAGNOSTICS v_n = ROW_COUNT;

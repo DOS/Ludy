@@ -86,7 +86,7 @@ export const kernelManifest = defineModule({
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
       party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
-      permission_catalog: columns(['permission', 'grantable_to_viewer']),
+      permission_catalog: columns(['permission', 'grantable_to_viewer', 'entity_roles_count']),
       permission_default: columns(['base_role', 'permission']),
       position: columns(['org_id', 'id', 'title', 'module', 'role_key', 'reports_to', 'holder_user_id', 'holder_agent_id', 'le_scope', 'flags', 'job_description', 'status', 'created_at', 'updated_at']),
       prober_alert_state: columns(['id', 'problem', 'started_at', 'notified_at', 'updated_at']),

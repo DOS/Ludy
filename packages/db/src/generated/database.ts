@@ -2217,6 +2217,7 @@ export interface KernelPartyTable {
 export interface KernelPermissionCatalogTable {
   permission: ColumnType<string, NotGranted, NotGranted>;
   grantable_to_viewer: ColumnType<boolean, NotGranted, NotGranted>;
+  entity_roles_count: ColumnType<boolean, NotGranted, NotGranted>;
 }
 
 /** crove_kernel.permission_default */

@@ -73,22 +73,17 @@ export const memberRolesQuery = defineQuery({
   },
 });
 
-// The sorted permissions the signed-in user holds in the org in context through org-wide assignments (org.get).
+// The sorted permissions the signed-in user holds in the org in context (org.get): every permission a role grants or the catalog
+// names, asked of the one resolution (crove_kernel.member_has_permission), so a default, a grant and a deny count as they do for
+// ctx_has_permission.
 export async function myPermissions(ctx: QueryContext): Promise<string[]> {
   if (ctx.actor.type !== 'user') return [];
-  const rows = await ctx.trx
-    .selectFrom('crove_kernel.role_assignment as a')
-    .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
-    // A viewer holds no permission (crove_kernel.ctx_has_permission says the same).
-    .innerJoin('crove_kernel.tenant_member as m', (join) => join.onRef('m.org_id', '=', 'a.org_id').onRef('m.user_id', '=', 'a.user_id'))
-    .select('p.permission')
-    .distinct()
-    .where('a.org_id', '=', ctx.orgId)
-    .where('a.user_id', '=', ctx.actor.userId)
-    .where('a.legal_entity_id', 'is', null)
-    .where('m.role', '<>', 'viewer')
-    .orderBy('p.permission')
-    .execute();
+  const { rows } = await sql<{ permission: string }>`
+    SELECT k.permission FROM (
+      SELECT permission FROM crove_kernel.role_permission
+      UNION SELECT permission FROM crove_kernel.permission_catalog) k
+    WHERE crove_kernel.member_has_permission(${ctx.orgId}::uuid, ${ctx.actor.userId}::uuid, k.permission)
+    ORDER BY k.permission`.execute(ctx.trx);
   return rows.map((r) => r.permission);
 }
 
