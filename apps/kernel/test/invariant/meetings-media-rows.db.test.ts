@@ -309,6 +309,15 @@ suite('meeting media file rows are visible to readers only (#2874, ADR-0047)', (
     expect(rows).not.toContain(ids.demotedUpload);
   });
 
+  it('the policy reads the context once per statement: its context calls are InitPlans, not per-row calls', async () => {
+    const plan = await run(member('another member', () => users.member), async (c) =>
+      (await c.query<{ 'QUERY PLAN': string }>('EXPLAIN (COSTS OFF) SELECT id FROM crove_kernel.file WHERE org_id = $1', [orgId])).rows.map((r) => r['QUERY PLAN']).join('\n'),
+    );
+    expect(plan).toMatch(/InitPlan/);
+    // A per-row call would show the function by name in the filter; an InitPlan shows as (InitPlan n).colN.
+    expect(plan).not.toMatch(/ctx_actor_type\(\)|ctx_user_id\(\)/);
+  });
+
   it('the org export carries no meeting media row', async () => {
     const from = EXPORT_TABLES['kernel.file'].from;
     for (const actor of [system, member('an owner', () => users.owner)]) {
