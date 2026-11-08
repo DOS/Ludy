@@ -58,6 +58,13 @@ describe('CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET', () => {
     expect(() => loadConfig({ ...BASE, ...token })).toThrow(/needs CHANNEL_META_APP_ID/);
   });
 
+  it('let the previous webhook secret go with the Instagram app alone, and refuse it without any app or equal to the current one', () => {
+    const previous = { CHANNEL_META_APP_SECRET_PREVIOUS: 'previous-secret-0123456789abcdef' };
+    expect(() => loadConfig({ ...BASE, ...INSTAGRAM, ...previous })).not.toThrow();
+    expect(() => loadConfig({ ...BASE, ...previous })).toThrow(/set without CHANNEL_META_APP_SECRET/);
+    expect(() => loadConfig({ ...BASE, ...INSTAGRAM, CHANNEL_META_APP_SECRET_PREVIOUS: INSTAGRAM.CHANNEL_INSTAGRAM_APP_SECRET })).toThrow(/same as CHANNEL_META_APP_SECRET/);
+  });
+
   it('count the Instagram app as shared with the ads write app, as the Pages app is', () => {
     const config = (write: string, instagram: string | undefined) => ({ CHANNEL_META_ADS_WRITE_APP_ID: write, CHANNEL_META_ADS_APP_ID: undefined, CHANNEL_META_APP_ID: undefined, CHANNEL_INSTAGRAM_APP_ID: instagram });
     expect(metaWriteAppShared(config('2222222223', '2222222223'))).toBe(true);

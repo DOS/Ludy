@@ -695,9 +695,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('CHANNEL_INSTAGRAM_APP_ID is the id of CHANNEL_META_APP_ID but its secret is not CHANNEL_META_APP_SECRET; one Meta app has one secret');
   }
   if (config.CHANNEL_META_APP_SECRET_PREVIOUS !== undefined) {
-    if (config.CHANNEL_META_APP_SECRET === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
+    // It goes with the primary webhook secret: the Pages app's, or the Instagram app's when that is the only Meta app set (#2212).
+    const primary = config.CHANNEL_META_APP_SECRET ?? config.CHANNEL_INSTAGRAM_APP_SECRET;
+    if (primary === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_META_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
-    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === config.CHANNEL_META_APP_SECRET) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
+    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === primary) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
   }
   if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
     if (!config.CHANNEL_META_APP_ID && !config.CHANNEL_INSTAGRAM_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET');
