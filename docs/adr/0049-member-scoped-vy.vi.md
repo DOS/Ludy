@@ -1,6 +1,6 @@
 # Vy làm việc riêng cho từng người: tóm tắt cho JOY
 
-> Bản tóm tắt tiếng Việt của [ADR-0049](0049-member-scoped-vy.md), ngày 2026-11-04 (#1677), cập nhật cùng ngày sau khi Platform PO duyệt bảo mật ("đồng ý, kèm 10 chỗ phải sửa", đã đưa hết vào ADR) và sau góp ý của JOY về cách gọi tên. Bản tiếng Anh là bản chính. Trạng thái: **đề xuất**, chờ Platform PO chấp nhận. Chưa có dòng mã nào được viết.
+> Bản tóm tắt tiếng Việt của [ADR-0049](0049-member-scoped-vy.md), ngày 2026-11-04 (#1677), cập nhật cùng ngày sau khi Platform PO duyệt bảo mật ("đồng ý, kèm 10 chỗ phải sửa", đã đưa hết vào ADR) và sau góp ý của JOY về cách gọi tên. Bản tiếng Anh là bản chính. Trạng thái: **đã chấp nhận** ngày 2026-11-08: Platform PO chấp nhận cơ chế và quyết định Platform tự làm cả giai đoạn A và B (#2754, #2755, #2756). Quy tắc là của JOY (2026-11-03).
 
 ## Chỉ có một Vy
 
