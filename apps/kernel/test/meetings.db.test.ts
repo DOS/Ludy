@@ -955,7 +955,8 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await send('?kind=audio', Buffer.from('not media, just text '.repeat(10)), 'audio/ogg')).status).toBe(400);
     expect((await send('?kind=audio', null, 'audio/ogg')).status).toBe(400);
     expect((await send('?kind=audio&lengthSeconds=0', ogg, 'audio/ogg')).status).toBe(400);
-    expect((await send('?kind=audio', ogg, 'audio/ogg', 'attendee')).status).toBe(403);
+    // A member who is not a reader of this attendees-only meeting does not even see it: the gate answers as for a meeting that does not exist.
+    expect((await send('?kind=audio', ogg, 'audio/ogg', 'attendee')).status).toBe(404);
     expect(store.storage.size).toBe(objectsBefore);
 
     // A raw body must declare its length: a chunked one is refused before one byte of it is read (the cap is then enforced on a
