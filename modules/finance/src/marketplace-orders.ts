@@ -521,7 +521,7 @@ const TOO_BIG = 'Báo cáo có quá nhiều dữ liệu để chờ nhập (tố
 // handled is true when the file's read is recorded here (staged, or a failed read with the reason), false when it is no order report and the caller goes on as before. A report
 // that could not be read in full (a row with an amount, a quantity, a date or an id that does not read) is recorded as failed with the rows, and nothing is staged: a layout the
 // profile does not know shows what it could not read, and stores nothing.
-export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: string, fileId: string, attempt = 0, version?: number): Promise<{ handled: boolean }> {
+export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: string, fileId: string, attempt = 0, version?: number): Promise<{ handled: boolean; notIncome?: true }> {
   const actor = MARKETPLACE_ACTOR;
   const file = await deps.runtime.query<ReportFileSource | null>('finance.extraction.file', { fileId, ...(version === undefined ? {} : { version }) }, { actor: { type: 'system', component: 'finance.extract' }, orgId });
   if (!file || ![ZIP, XLSX, CSV].includes(file.content_type)) return { handled: false };
@@ -553,7 +553,8 @@ export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: stri
     return { handled: false };
   }
   const orders = read.orders;
-  if (!orders.recognized || orders.platform === null || orders.profile === null) return { handled: false };
+  // Not an order report: the same call says whether it is an income report, so the caller can skip that reader (and its sandbox parse) for any other sheet (#2753).
+  if (!orders.recognized || orders.platform === null || orders.profile === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
   if (orders.tooMany) {
     await record('failed', { error: TOO_MANY_LINES });
     return { handled: true };
