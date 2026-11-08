@@ -346,7 +346,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               <div className="flex gap-2 sm:col-span-2">
                 <Button
                   loading={saveEdit.isPending}
-                  disabled={!idNumberOk(edit.tax) || !idNumberOk(edit.insurance) || !(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.tax || edit.clear.insurance)}
+                  disabled={(!edit.clear.tax && !idNumberOk(edit.tax)) || (!edit.clear.insurance && !idNumberOk(edit.insurance)) || !(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.tax || edit.clear.insurance)}
                   onClick={() => saveEdit.mutate()}
                 >
                   {t('save')}
