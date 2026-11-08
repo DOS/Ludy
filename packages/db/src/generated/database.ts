@@ -2667,7 +2667,7 @@ export interface MeetingsActionItemTable {
   stage: Generated<string>;
   status: ColumnType<string, string | undefined, NotGranted>;
   flags: ColumnType<unknown, string | undefined, string>;
-  tainted: Generated<boolean>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   task_id: ColumnType<string | null, string | null, NotGranted>;
   accepted_by: ColumnType<string | null, string | null, NotGranted>;
   accepted_at: ColumnType<Date | null, Date | string | null, NotGranted>;
@@ -2706,7 +2706,7 @@ export interface MeetingsMeetingResultTable {
   decisions: ColumnType<unknown, string | undefined, string>;
   feature: string;
   stage: Generated<string>;
-  tainted: Generated<boolean>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;

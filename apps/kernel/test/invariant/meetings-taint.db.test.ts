@@ -148,7 +148,8 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
       await admin((c) => c.query(`INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, tainted) VALUES ($1, $2, $3, 'Của tôi', false)`, [orgId, clear, meetingId]));
       const res = await attempt(who, `UPDATE crove_meetings.action_item SET tainted = true, title = 'Đã đổi' WHERE org_id = $1 AND id = $2`, [orgId, clear]);
       expect(res.code, `${who} making an item tainted`).toBe('42501');
-      expect(res.message).toContain('MEETINGS_TAINT_FORBIDDEN');
+      // The recorder is stopped by the column grant, the superuser (who has every grant) by the trigger.
+      expect(res.message).toMatch(who === 'recorder' ? /permission denied for table action_item/ : /MEETINGS_TAINT_FORBIDDEN/);
       await admin((c) => c.query(`DELETE FROM crove_meetings.action_item WHERE org_id = $1 AND id = $2`, [orgId, clear]));
     }
     const clearResult = randomUUID();
@@ -168,20 +169,40 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
     ]) {
       const res = await attempt('recorder', text, [orgId, ids.item]);
       expect(res.code).toBe('42501');
-      expect(res.message).toContain('MEETINGS_TAINT_FORBIDDEN');
+      expect(res.message).toMatch(/permission denied for table action_item|MEETINGS_TAINT_FORBIDDEN/);
     }
     expect((await attempt('recorder', `UPDATE crove_meetings.meeting_result SET tainted = false, summary = 'Đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, ids.result])).code).toBe('42501');
     // Through the recorder's review: one item, or the whole draft (the count is the rows that lost the mark).
-    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid)`, [orgId, meetingId, ids.item])).rows).toBe(1);
-    const all = await withRecorder(async (c) => (await c.query<{ n: number }>(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid) AS n`, [orgId, meetingId])).rows[0]?.n);
-    expect(all).toBe(2);
+    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [orgId, meetingId, [ids.item]])).rows).toBe(1);
+    const all = await withRecorder(async (c) => (await c.query<{ n: number }>(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[]) AS n`, [orgId, meetingId, [ids.result, randomUUID()]])).rows[0]?.n);
+    // Only the rows named: the result here; an id that is no row of this meeting changes nothing, and the item (not named) keeps its mark.
+    expect(all).toBe(1);
+    const left = await admin((c) => c.query<{ tainted: boolean }>(`SELECT tainted FROM crove_meetings.action_item WHERE org_id = $1 AND id = $2`, [orgId, ids.item]));
+    expect(left.rows[0]?.tainted).toBe(true);
     // Nobody else reviews: not another member, and not a session with no context.
     for (const who of ['owner', 'none'] as const) {
-      const res = await attemptAs(who, `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid)`, [orgId, meetingId]);
+      const res = await attemptAs(who, `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [orgId, meetingId, [ids.item]]);
       expect(res.code, `${who} reviewing`).toBe('42501');
     }
-    // Another org's id never matches.
-    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid)`, [randomUUID(), meetingId])).code).toBe('42501');
+    // Another org's id never matches, and neither does a real second org's meeting: the recorder of one org's meeting reviews nothing of another's.
+    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [randomUUID(), meetingId, [ids.item]])).code).toBe('42501');
+    const otherOrg = (await createOrg(runtime, { type: 'user', userId: users.owner, aal: 'aal1' }, 'Org hai')).orgId;
+    const otherMeeting = randomUUID();
+    const otherItem = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [otherOrg, users.recorder]);
+      await c.query(
+        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+         VALUES ($1, $2, 'Họp org hai', 'vi', now(), now(), 60, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+        [otherOrg, otherMeeting, users.recorder],
+      );
+      await c.query(`INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, tainted) VALUES ($1, $2, $3, 'Việc org hai', true)`, [otherOrg, otherItem, otherMeeting]);
+    });
+    // The recorder is in both orgs; in this org's context the other org's meeting is not theirs to review, named by either org id.
+    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [orgId, otherMeeting, [otherItem]])).code).toBe('42501');
+    expect((await attempt('recorder', `SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [otherOrg, otherMeeting, [otherItem]])).code).toBe('42501');
+    const kept = await admin((c) => c.query<{ tainted: boolean }>(`SELECT tainted FROM crove_meetings.action_item WHERE org_id = $1 AND id = $2`, [otherOrg, otherItem]));
+    expect(kept.rows[0]?.tainted).toBe(true);
   });
 
   it('never publishes a draft that is still tainted, and publishes it once the recorder has reviewed it', async () => {
@@ -199,7 +220,7 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
         expect(res.message).toContain('MEETINGS_DRAFT_NOT_REVIEWED');
       }
     }
-    await withRecorder((c) => c.query(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, NULL::uuid)`, [orgId, meetingId]));
+    await withRecorder((c) => c.query(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [orgId, meetingId, [draftItem, draftResult]]));
     expect((await attempt('recorder', `UPDATE crove_meetings.action_item SET stage = 'published' WHERE org_id = $1 AND id = $2`, [orgId, draftItem])).rows).toBe(1);
   });
 
