@@ -263,12 +263,18 @@ export type AgentTemplateTable = Refine<
 
 export const AGENT_STATUSES = ['active', 'paused', 'retired'] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
+export const AGENT_KINDS = ['org_chart', 'member_vy'] as const;
+export type AgentKind = (typeof AGENT_KINDS)[number];
+export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
+export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
+export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
 
 export type AgentTable = Refine<
   G.KernelAgentTable,
   {
     runtime: Generated<(typeof AGENT_RUNTIMES)[number]>;
+    kind: Generated<AgentKind>;
     status: Generated<AgentStatus>;
     max_risk: Generated<AgentRisk>;
   }
@@ -778,15 +784,23 @@ export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
 export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
-// A quote of a deal (#2693): a draft until a person sends it (Q2); the status and how it was sent are written by those steps, not by the editor's commands.
+// A quote of a deal (#2693): a draft until a person sends it (crm.quote.send, #2694); the status, the number and the sent columns change only through the guard trigger's transitions.
 export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
 export const QUOTE_SENT_VIA = ['link', 'email'] as const;
 export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
 export type CrmQuoteTable = Refine<
   G.CrmQuoteTable,
-  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: ColumnType<(typeof QUOTE_SENT_VIA)[number] | null, (typeof QUOTE_SENT_VIA)[number] | null, G.NotGranted> }
+  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null }
 >;
 export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
+// The sales order of an accepted quote (#2696, ADR-0050): confirmed until a person cancels it; a person records how the customer's yes arrived.
+export const SALES_ORDER_STATUSES = ['confirmed', 'cancelled'] as const;
+export const QUOTE_ACCEPTED_VIA = ['chat', 'email', 'phone', 'in_person', 'other'] as const;
+export type CrmSalesOrderTable = Refine<
+  G.CrmSalesOrderTable,
+  { status: Generated<(typeof SALES_ORDER_STATUSES)[number]>; accepted_via: (typeof QUOTE_ACCEPTED_VIA)[number] | null }
+>;
+export type CrmSalesOrderLineTable = Refine<G.CrmSalesOrderLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
 export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
@@ -852,6 +866,9 @@ export type ConversationDraftTable = Refine<
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
+export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
+export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
+export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
 export type ConversationAttachmentTable = Refine<
   G.KernelConversationAttachmentTable,
@@ -1049,6 +1066,8 @@ type Refined = Tables<{
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
   'crove_crm.quote': CrmQuoteTable;
   'crove_crm.quote_line': CrmQuoteLineTable;
+  'crove_crm.sales_order': CrmSalesOrderTable;
+  'crove_crm.sales_order_line': CrmSalesOrderLineTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
@@ -1097,6 +1116,9 @@ type Refined = Tables<{
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;
+  'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
+  'crove_kernel.member_vy_result': MemberVyResultTable;
+  'crove_kernel.permission_default': PermissionDefaultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;
   'crove_kernel.mail_event': MailEventTable;

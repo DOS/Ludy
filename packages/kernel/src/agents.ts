@@ -30,6 +30,7 @@ import { refuseWhileReextracting } from './extraction.ts';
 import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
 import { releaseWaitingFiles } from './ai-budget.ts';
+import { cancelMemberVyRuns } from './member-vy.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
 
@@ -122,6 +123,8 @@ async function lockAgent(trx: Trx, orgId: string, id: string) {
 // Releases every lease held by the agent's runs and ends its running runs (pause, retire, kill switch).
 async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason: string, now: Date): Promise<number> {
   if (agentIds.length === 0) return 0;
+  // The runs of a member's own Vy are hidden from this context by the run policy: a definer ends them, whoever the agent is.
+  const memberRuns = await cancelMemberVyRuns({ trx }, { agentIds }, reason.toUpperCase().replace(/[^A-Z0-9]+/g, '_'));
   const runs = await trx
     .selectFrom('crove_kernel.ai_run')
     .select('id')
@@ -130,7 +133,7 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
     .where('status', '=', 'running')
     .execute();
   const runIds = runs.map((r) => r.id);
-  if (runIds.length === 0) return 0;
+  if (runIds.length === 0) return memberRuns;
   await trx
     .updateTable('crove_kernel.task')
     .set({ checkout_run_id: null, lock_expires_at: null })
@@ -150,7 +153,7 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
     .where('run_id', 'in', runIds)
     .where('status', '=', 'claimed')
     .execute();
-  return runIds.length;
+  return runIds.length + memberRuns;
 }
 
 // Wakes the active agent holding the position, if any (ADR-0029 section 5). Requests are coalesced per agent: at most
@@ -386,6 +389,8 @@ export const installAgentTemplate = defineCommand({
     const userId = requireUser(ctx);
     const template = await ctx.trx.selectFrom('crove_kernel.agent_template').selectAll().where('key', '=', input.templateKey).executeTakeFirst();
     if (!template) throw new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không có mẫu tác tử AI này');
+    // The template of a member's own Vy (ADR-0049) is made by that member's first run, never installed into the chart.
+    if (template.key === 'kernel.member_vy') throw new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không có mẫu tác tử AI này');
     if (!ctx.installed(template.module)) {
       throw new DomainError('MODULE_DISABLED', 409, 'Phân hệ của mẫu tác tử AI này chưa được bật', { module: template.module });
     }
@@ -593,7 +598,9 @@ export const engageKillSwitch = defineCommand({
       );
     }
     const agents = (await covered.execute()).map((a) => a.id);
-    const stopped = await stopAgentRuns(ctx.trx, ctx.orgId, agents, 'kill switch', ctx.now);
+    let stopped = await stopAgentRuns(ctx.trx, ctx.orgId, agents, 'kill switch', ctx.now);
+    // A module's switch also covers the runs of members' own Vy that are metered under the module (they hold no seat, so no position names it).
+    if (input.scope === 'module') stopped += await cancelMemberVyRuns(ctx, { module: target }, 'KILL_SWITCH');
     ctx.audit({ kill_switch: active.id, scope: input.scope, target, stopped_runs: stopped });
     await ctx.activity('kernel.agent', active.id, 'agent.kill_switch_engaged', `Dừng AI (${input.scope} ${target})`);
     return { killSwitchId: active.id, stoppedRuns: stopped };
@@ -1420,6 +1427,8 @@ export const chartGet = defineQuery({
       .selectFrom('crove_kernel.agent')
       .select(['id', 'template_key', 'display_name', 'status', 'max_risk', 'daily_run_cap'])
       .where('org_id', '=', ctx.orgId)
+      // A member's own Vy (ADR-0049) is no part of the org's chart or its counts.
+      .where('kind', '=', 'org_chart')
       .orderBy('created_at')
       .execute();
     const owners = await ctx.trx
@@ -1594,6 +1603,8 @@ export const templateList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_kernel.agent_template')
       .select(['key', 'module', 'title', 'role_key', 'max_risk', 'daily_run_cap', 'job_description'])
+      // The template of a member's own Vy (ADR-0049) is no part of the chart's catalog.
+      .where('key', '<>', 'kernel.member_vy')
       .orderBy('key')
       .execute();
     return {

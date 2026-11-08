@@ -64,11 +64,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_crm.quote_link',
-  // Q4 of the CRM quotes (#2696, ADR-0050): the sales order of an accepted quote, its frozen lines and the org's per-year number counter.
-  'crove_crm.sales_order',
-  'crove_crm.sales_order_counter',
-  'crove_crm.sales_order_line',
+  // Q4b (#2697, ADR-0050 point 4): the delivery of a sales order line and its reversal.
+  'crove_crm.sales_order_delivery',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_connection',
@@ -97,6 +94,14 @@ const PENDING_TABLES = new Set<string>([
 // none of its org's rows either, and its no-WHERE update and delete sweeps change nothing. Every cross-org case stays as it is for every actor. The rest of the
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
+// Tables the system context reads in part only, and writes as any other table (so not AUTHOR_ONLY): the SQL, over alias t, that
+// picks the rows it reads. Sorted, one table per line.
+// The only tables a factory may seed with triggers set aside (the member Vy agent and its run, whose guards need a member's own context).
+const UNGUARDED_TABLES = new Set(['crove_kernel.agent', 'crove_kernel.ai_run']);
+const SYSTEM_READS = new Map<string, string>([
+  // A run of a member's own Vy (ADR-0049 decision 3) is read by that member alone; every other run is read as before.
+  ['crove_kernel.ai_run', `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy')`],
+]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
@@ -168,6 +173,8 @@ const leScopeOrOrgPredicate = (c: string) =>
 // listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
 // listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
 const APPEND_ONLY = new Set<string>([
+  // The delivery of a sales order line and its reversal (Q4b, #2697, ADR-0050 point 4): a wrong mark is reversed by a reversing row, never changed or deleted.
+  'crove_crm.sales_order_delivery',
   // The lines of a sales order (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): a frozen copy made with the order; a correction is a cancelled order and a new quote.
   'crove_crm.sales_order_line',
   'crove_finance.channel_settlement',
@@ -179,6 +186,8 @@ type Values = Record<string, string | number>;
 interface Row {
   table: string;
   values: Values;
+  // Insert with the table's triggers set aside, for a row whose guards need a member's own context (the matrix seeds as the owner).
+  unguarded?: boolean;
 }
 interface OrgFixture {
   id: string;
@@ -254,6 +263,7 @@ const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit'
   table: 'crove_finance.journal_line',
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
 });
+const vyAgentOf = new Map<string, { id: string } & Record<string, string>>();
 const agentRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -368,8 +378,6 @@ let calendarHour = 0;
 let bankAccountNumber = 0;
 // A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
 let stagePosition = 1;
-// A sales order number counter (Q4, #2696) is unique per org and year: each seeded one takes the next year from 2000.
-let salesOrderYear = 2000;
 // A staged import row's number is unique per batch (#2229): each factory row takes the next one.
 let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
@@ -797,10 +805,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   // The sales order of an accepted quote (Q4 of docs/plan/crm-quotes.md, ADR-0050, #2696): one per quote, in the quote's issuing entity (named by issuer_entity_id, so it
-  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names only has to exist (the accept
-  // command takes it to `accepted` and makes the order in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
+  // stays out of the legal-entity scope machinery, as the quote's own column does), with a frozen copy of the buyer. The quote it names is sent and carries the same deal, customer and issuing entity
+  // (the order's insert policy holds it; the accept command makes the order and takes the quote to `accepted` in one transaction). Tenant roles update the cancellation columns only (a column grant), so the update probes
   // assign the cancel reason to itself.
   'crove_crm.sales_order': {
+    noInsertControl: 'an order is made for a sent quote of the same deal, customer and issuing entity, and the quote is sent only by the send command (a guard trigger), so the own-org insert control cannot build its setup as a login role; crm-sales-orders.db.test.ts tests the order insert as the runtime login',
     make: (o) => {
       const stage = randomUUID();
       const deal = randomUUID();
@@ -810,8 +819,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         setup: [
           { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
           { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
-          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
           { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link', issuer_entity_id: entity },
+          },
         ],
         row: {
           org_id: o.id,
@@ -829,15 +841,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
     update: { set: 'cancel_reason = cancel_reason' },
   },
-  // The org's number counter for sales orders (Q4): one row per org and year, taken by the accept command in its own transaction. Tenant roles update the last number
-  // only (a column grant), so the update probes assign it to itself.
-  'crove_crm.sales_order_counter': {
-    update: { set: 'last_no = last_no' },
-    noInsertControl: 'one row per org and year (UNIQUE (org_id, year)); the accept command makes it, crm-sales-orders.db.test.ts tests it',
-    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), year: salesOrderYear++ } }),
-  },
-  // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
-  'crove_crm.sales_order_line': {
+  // The delivery of a sales order line, or its reversal (Q4b, #2697, ADR-0050 point 4): append-only, it names its line (a composite key on order and line number). The
+  // factory row is a delivery (a date, no reversed row); a reversal names the delivery it reverses and has no date. Nothing updates or deletes it (APPEND_ONLY).
+  'crove_crm.sales_order_delivery': {
+    noInsertControl: 'a delivery needs a confirmed order, which needs a sent quote, which only the send command makes, so the own-org insert control cannot build its setup as a login role; crm-sales-order-delivery.db.test.ts tests the delivery as the runtime login',
     make: (o) => {
       const stage = randomUUID();
       const deal = randomUUID();
@@ -848,8 +855,42 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         setup: [
           { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
           { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
-          { table: 'crove_crm.quote', values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner } },
           { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link', issuer_entity_id: entity },
+          },
+          {
+            table: 'crove_crm.sales_order',
+            values: { org_id: o.id, id: order, quote_id: quote, deal_id: deal, party_id: o.party, issuer_entity_id: entity, number: `DH-RLS-${tag()}`, order_date: '2031-02-01', buyer_name: 'RLS matrix buyer', created_by: o.owner },
+          },
+          {
+            table: 'crove_crm.sales_order_line',
+            values: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'item', description: 'RLS matrix line', quantity: '1', unit_price: '100', vat_rate: '10%', amount: '100', vat_amount: '10' },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_no: 1, kind: 'delivery', delivered_on: '2031-02-02', created_by: o.owner },
+      };
+    },
+  },
+  // A line of a sales order (Q4): it names its order (a composite key) and is the frozen copy of a quote line; nothing updates or deletes it (APPEND_ONLY).
+  'crove_crm.sales_order_line': {
+    noInsertControl: 'a line joins an order made in the same transaction, and that order needs a sent quote, which only the send command makes, so the own-org insert control cannot build its setup as a login role; crm-sales-orders.db.test.ts tests the accept as the runtime login',
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      const entity = randomUUID();
+      const order = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: 'RLS matrix order entity', kind: 'branch', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link', issuer_entity_id: entity },
+          },
           {
             table: 'crove_crm.sales_order',
             values: {
@@ -1822,13 +1863,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // One Vy run's result for one member (ADR-0049 decision 3), with the run it came from. The run is an ordinary agent run as the matrix seeds it (as the superuser, the binding policies of a member's own agent do not apply); the result is the owner's, the user every member-context actor enters as.
   'crove_kernel.member_vy_result': {
     make: (o) => {
-      const agent = agentRow(o);
+      // The run is the owner's own Vy run: a result is bound to a member_vy agent of the same member (trigger member_vy_result_bind).
+      // One agent per member, so the control insert that builds the row again reuses the first agent of the org.
+      const first = !vyAgentOf.has(o.id);
+      const agent = vyAgentOf.get(o.id) ?? { ...agentRow(o), template_key: 'kernel.member_vy', display_name: 'Vy', kind: 'member_vy', member_user_id: o.owner };
+      vyAgentOf.set(o.id, agent);
       const run = randomUUID();
       return {
         setup: [
-          { table: 'crove_kernel.agent', values: agent },
+          ...(first ? [{ table: 'crove_kernel.agent', values: agent, unguarded: true }] : []),
           {
             table: 'crove_kernel.ai_run',
+            unguarded: true,
             values: { org_id: o.id, id: run, agent_id: agent.id, module: 'notes', status: 'succeeded', started_at: '2026-10-01T00:00:00Z', expires_at: '2026-10-01T00:15:00Z', finished_at: '2026-10-01T00:10:00Z' },
           },
         ],
@@ -1844,7 +1890,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           body: 'RLS matrix result',
           tainted: 'true',
           private_read: 'true',
-          expires_at: '2036-10-01T00:00:00Z',
+          // Relative to now, with created_at left to its default: the 31-day cap counts from the earlier of the two.
+          expires_at: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
         },
       };
     },
@@ -2659,7 +2706,10 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     try {
       for (const row of rows) {
         const q = insertSql(row);
+        if (row.unguarded && !UNGUARDED_TABLES.has(row.table)) throw new Error(`${row.table} may not be seeded with its triggers set aside`);
+        if (row.unguarded) await admin.query('SET LOCAL session_replication_role = replica');
         await admin.query(q.text, q.values);
+        if (row.unguarded) await admin.query('SET LOCAL session_replication_role = DEFAULT');
       }
       await admin.query('COMMIT');
     } catch (error) {
@@ -2928,6 +2978,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(authorOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'AUTHOR_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(authorOnly.filter((t) => !ROW_FACTORIES[t]), 'AUTHOR_ONLY lists tables with no row factory').toEqual([]);
     expect(authorOnly, 'AUTHOR_ONLY is kept sorted, one table per line').toEqual([...authorOnly].sort());
+    // SYSTEM_READS hides rows from the system context, so a new entry is a decision to review: pinned to the one ADR-0049 asks for.
+    expect([...SYSTEM_READS.keys()], 'SYSTEM_READS tables').toEqual(['crove_kernel.ai_run']);
     const appendOnly = [...APPEND_ONLY];
     expect(appendOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'APPEND_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
@@ -3031,7 +3083,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         expect(count(orgs.B), `${table} has no org B rows to probe`).toBeGreaterThan(0);
         expect(count(orgs.A), `${table} has no org A rows to probe`).toBeGreaterThan(0);
         // On an AUTHOR_ONLY table, the ids of the org A rows the system context reads.
-        const systemReads = AUTHOR_ONLY.get(table);
+        const systemReads = AUTHOR_ONLY.get(table) ?? SYSTEM_READS.get(table);
         const systemIds = systemReads === undefined
           ? undefined
           : (await admin.query<{ id: string }>(`SELECT t.id::text AS id FROM ${table} t WHERE t.org_id OPERATOR(pg_catalog.=) $1::uuid AND (${systemReads})`, [orgs.A.id])).rows

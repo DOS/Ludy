@@ -10,13 +10,15 @@
 // token, list devices or revoke one.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionTokenView } from '@crove/kernel-contract';
+import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // A viewer holds no feature's permission, so none may connect a device.
 const CONNECTORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+// Who may see and cut off the devices of the other members.
+const DEVICE_ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 
 const zCodeHash = z.string().regex(/^[0-9a-f]{64}$/);
 
@@ -107,6 +109,58 @@ export const extensionTokenRevoke = defineCommand({
   },
 });
 
+// An owner or an admin cuts off the device of any member of the org (an admin not an owner's). One answer for an unknown
+// id, another org's device, one already revoked and an owner's device an admin may not touch. The audit row names the
+// token and its member, ids only.
+export const extensionTokenRevokeMember = defineCommand({
+  name: 'kernel.extension.token.revoke_member',
+  input: zExtensionTokenRevoke,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: DEVICE_ADMINS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const { rows } = await sql<{ user_id: string | null }>`SELECT crove_kernel.revoke_extension_token_as_admin(${input.tokenId}::uuid) AS user_id`
+      .execute(ctx.trx)
+      .catch(extensionError);
+    const userId = rows[0]?.user_id;
+    if (!userId) throw new DomainError('EXTENSION_TOKEN_NOT_FOUND', 404, 'Không tìm thấy thiết bị này, hoặc đã được ngắt kết nối');
+    ctx.audit({ tokenId: input.tokenId, userId });
+    return { tokenId: input.tokenId, userId, revoked: true as const };
+  },
+});
+
+export const extensionTokenListOrg = defineQuery({
+  name: 'kernel.extension.token.list_org',
+  input: z.strictObject({}),
+  access: DEVICE_ADMINS,
+  handler: async (ctx): Promise<ExtensionOrgTokenView[]> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được thiết bị kết nối');
+    const { rows } = await sql<{
+      id: string;
+      user_id: string;
+      device_name: string;
+      scopes: string[];
+      created_at: Date;
+      expires_at: Date;
+      last_used_at: Date | null;
+      revoked_at: Date | null;
+    }>`SELECT id, user_id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM crove_kernel.list_extension_tokens_for_org()`
+      .execute(ctx.trx)
+      .catch(extensionError);
+    return rows.map((r) => ({
+      id: r.id,
+      userId: r.user_id,
+      deviceName: r.device_name,
+      scopes: r.scopes.filter((s): s is (typeof EXTENSION_SCOPE_IDS)[number] => (EXTENSION_SCOPE_IDS as readonly string[]).includes(s)),
+      createdAt: r.created_at.toISOString(),
+      expiresAt: r.expires_at.toISOString(),
+      lastUsedAt: r.last_used_at ? r.last_used_at.toISOString() : null,
+      revokedAt: r.revoked_at ? r.revoked_at.toISOString() : null,
+    }));
+  },
+});
+
 export const extensionTokenList = defineQuery({
   name: 'kernel.extension.token.list',
   input: z.strictObject({}),
@@ -134,5 +188,5 @@ export const extensionTokenList = defineQuery({
   },
 });
 
-export const extensionCommands = [extensionCodeIssue, extensionTokenExchanged, extensionTokenRevoke];
-export const extensionQueries = [extensionTokenList];
+export const extensionCommands = [extensionCodeIssue, extensionTokenExchanged, extensionTokenRevoke, extensionTokenRevokeMember];
+export const extensionQueries = [extensionTokenList, extensionTokenListOrg];
