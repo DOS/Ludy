@@ -174,7 +174,7 @@ LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
         WHEN 'status' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['running', 'ready', 'failed'])
         WHEN 'code' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
         WHEN 'errorCode' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
-        WHEN 'rule' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^P[0-9]{1,2}$'
+        WHEN 'rule' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^(P[0-9]{1,2}|[a-z][a-z_]{0,40})$'
         WHEN 'bodyLength' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
         WHEN 'count' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
         ELSE false
@@ -224,7 +224,7 @@ BEGIN
            AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run')
            AND NEW.command ~ '^kernel\.member_vy\.[a-z_.]{1,60}$'
            AND (NEW.target_type IS NULL OR NEW.target_type ~ '^[a-z][a-z0-9_.]{0,62}$')
-           AND NEW.input_sha256 ~ '^[0-9a-f]{64}$'
+           AND NEW.input_sha256 ~ '^(k1:)?[0-9a-f]{64}$'
            AND crove_kernel.member_vy_audit_detail_ok(NEW.detail) THEN
           NEW.occurred_at := pg_catalog.now();
           RETURN NEW;
@@ -234,7 +234,7 @@ BEGIN
            AND (TG_OP = 'INSERT' OR OLD.actor_key = NEW.actor_key)
            AND NEW.key ~ '^[A-Za-z0-9_.:-]{1,64}$'
            AND NEW.command ~ '^kernel\.member_vy\.[a-z_.]{1,60}$'
-           AND NEW.request_sha256 ~ '^[0-9a-f]{64}$'
+           AND NEW.request_sha256 ~ '^(k1:)?[0-9a-f]{64}$'
            AND (NEW.response IS NULL OR crove_kernel.member_vy_audit_detail_ok(NEW.response)) THEN
           RETURN NEW;
         END IF;
