@@ -31,6 +31,9 @@ const CONTROL_PLANE: ModuleManifest = {
       conversation_blob_doomed: columns(['storage_key', 'queued_at', 'not_before', 'claimed_until', 'attempts']),
       conversation_deletion_request: columns(['code', 'requested_at', 'completed_at', 'connections', 'sibling_codes', 'next_attempt_at'], { user_hash: 'sensitive' }),
       conversation_inbound_pending: columns(['seq', 'provider', 'received_at', 'claimed_until', 'attempts'], { body: 'pii' }),
+      // The Ludy extension's one-time codes and tokens (#2582): only SHA-256 hashes of secrets, a PKCE challenge, scopes and a device label.
+      extension_auth_code: columns(['org_id', 'id', 'user_id', 'code_challenge_method', 'scopes', 'device_name', 'created_at', 'expires_at', 'consumed_at', 'failed_attempts'], { code_hash: 'sensitive', code_challenge: 'sensitive' }),
+      extension_token: columns(['org_id', 'id', 'user_id', 'device_name', 'scopes', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by'], { token_hash: 'sensitive' }),
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
       inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at', 'kind'], { token: 'sensitive' }),
       inbound_pending: columns(['seq', 'blob_id', 'raw_sha256', 'size_bytes', 'received_at'], { recipient: 'sensitive' }),

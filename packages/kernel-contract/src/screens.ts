@@ -26,7 +26,7 @@ const KERNEL_SCREENS = {
   ],
   // Signing in and the screens before an org: the landing redirect, the home of several orgs, sign-in, the second
   // factor, a password reset, an invite to accept and a new org.
-  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
+  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
   nav: [
     { app: 'home', group: 'work', path: 'overview', label: 'overview' },
     { app: 'home', group: 'work', path: 'inbox', label: 'inbox' },
@@ -192,9 +192,9 @@ const HR_SCREENS = {
 } as const satisfies ModuleScreens;
 
 // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): accessed through Cuoc hop tab inside Ludy Notes;
-// individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
+// the in-app recorder at /o/$slug/meetings/record (M7, #2581); individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
 export const MEETINGS_SCREENS = {
-  routes: [{ path: 'meetings' }, { path: 'meetings/$id' }],
+  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }],
   nav: [],
 } as const satisfies ModuleScreens;
 
