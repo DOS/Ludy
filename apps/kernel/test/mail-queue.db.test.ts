@@ -248,6 +248,42 @@ suite('queued mail (#548)', () => {
     expect(await runMailJob(deps(resend.mailer), { orgId, messageId: news })).toEqual({ action: 'none', reason: 'MARKETING_NOT_REPEATED' });
   });
 
+  // A quote's PDF (#2695) is rendered by the template at each send and is bytes: a transient refusal inside one attempt and a second attempt after an
+  // unknown outcome both carry the same bytes, and the mail is sent once.
+  it('carries a bytes attachment, the same bytes, through a retry inside an attempt and through a second attempt', async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x00, 0xff, 0x80]);
+    const templates: MailTemplates = {
+      ...TEMPLATES,
+      'kernel.mail_test_pdf': { render: async ({ subject }) => ({ subject: subject ?? 'Báo giá', text: 'Báo giá đính kèm', html: '<p>Báo giá đính kèm</p>', attachments: [{ filename: 'bao-gia.pdf', contentType: 'application/pdf', content: new Uint8Array(pdf) }] }) },
+    };
+    const withTemplates = (mailer: MailProvider) => ({ ...deps(mailer), templates });
+    const id = await queue('khach@example.vn', 'transactional', 'kernel.mail_test_pdf');
+    // Attempt 1: a transient refusal, then the provider takes it; both sends carry the file.
+    const first = scripted([{ status: 'rejected', error: 'transient', code: 'http_503' }, { status: 'accepted', providerMessageId: 'em_pdf' }], 'idempotent');
+    expect(await runMailJob(withTemplates(first.mailer), { orgId, messageId: id })).toMatchObject({ outcome: 'sent' });
+    expect(first.sent).toHaveLength(2);
+    for (const mail of first.sent) {
+      expect(mail.attachments).toHaveLength(1);
+      expect(mail.attachments?.[0]).toMatchObject({ filename: 'bao-gia.pdf', contentType: 'application/pdf' });
+      expect(Buffer.from(mail.attachments?.[0]?.content as Uint8Array)).toEqual(Buffer.from(pdf));
+    }
+    expect(await row(id)).toMatchObject({ status: 'sent', attempts: 1, provider_message_id: 'em_pdf' });
+    expect(await calls(id)).toEqual([{ key: `mail:${id}:1`, state: 'succeeded', error_kind: null }]);
+    // A second job for a mail already sent sends nothing more.
+    const again = scripted([], 'idempotent');
+    expect(await runMailJob(withTemplates(again.mailer), { orgId, messageId: id })).toEqual({ action: 'none', reason: 'SENT' });
+    expect(again.sent).toHaveLength(0);
+    // Attempt 2 after an unknown outcome: rendered again, the same bytes.
+    const lost = await queue('khach2@example.vn', 'transactional', 'kernel.mail_test_pdf');
+    const unknown = scripted([{ status: 'unknown', code: 'http_502' }], 'idempotent');
+    expect(await runMailJob(withTemplates(unknown.mailer), { orgId, messageId: lost })).toMatchObject({ outcome: 'ambiguous' });
+    await backdate("UPDATE crove_kernel.mail_message SET updated_at = now() - interval '10 minutes' WHERE id = $1", [lost]);
+    const retry = scripted([{ status: 'accepted', providerMessageId: 'em_pdf2' }], 'idempotent');
+    expect(await runMailJob(withTemplates(retry.mailer), { orgId, messageId: lost })).toMatchObject({ outcome: 'sent' });
+    expect(Buffer.from(retry.sent[0]?.attachments?.[0]?.content as Uint8Array)).toEqual(Buffer.from(unknown.sent[0]?.attachments?.[0]?.content as Uint8Array));
+    expect(await row(lost)).toMatchObject({ status: 'sent', attempts: 2, provider_message_id: 'em_pdf2' });
+  });
+
   it('records a send lost with its worker as ambiguous', async () => {
     const id = await queue('mat@example.vn');
     const begun = await workerRuntime.execute<{ action: string; attempt: number }>('kernel.mail.queue.begin', { messageId: id, provider: 'resend', safety: 'never' }, { actor: { type: 'system', component: 'kernel.mail' }, orgId });

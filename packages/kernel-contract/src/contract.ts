@@ -272,7 +272,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -689,6 +689,12 @@ export const contract = {
         setInputs: oc.input(zHrLineInputsSet).output(zHrRunWritten),
         adjust: oc.input(zHrLineAdjust).output(zHrRunWritten),
         payslip: oc.input(zHrPayslipRef).output(zHrPayslip),
+      },
+      // The finance coworker's part (#2534): prepare the month, flag anomalies, explain a payslip, on a pseudonymized sheet. Read-only, owners and admins, AI off or spent: `ai` says so.
+      coworker: {
+        prepare: oc.input(zHrCoworkerAsk).output(zHrCoworkerPrepared),
+        flag: oc.input(zHrCoworkerAsk).output(zHrCoworkerFlagged),
+        explain: oc.input(zHrCoworkerPayslipAsk).output(zHrCoworkerExplained),
       },
     },
   },

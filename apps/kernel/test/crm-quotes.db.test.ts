@@ -14,7 +14,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove
 import { vietnamToday, type Deal, type PipelineStage, type Quote, type QuoteDefaults, type QuotePage, type QuoteSummary } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument } from '@crove/mod-crm';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -311,6 +311,31 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await expect(b.exec(b.owner, 'crm.quote.revise', { quoteId: quoteA.id })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND' });
     expect((await b.query<QuotePage>(b.owner, 'crm.quote.list', {})).items).toEqual([]);
     expect((await b.query<QuoteDefaults>(b.owner, 'crm.quote.defaults', { partyId: await b.party('X') })).hints).toEqual([]);
+  });
+
+  // The document the PDF is made from (#2695): the quote, the org as the seller, the customer as the buyer; read only, for anyone who reads quotes.
+  it('gives the quote document to a viewer: the quote, the org as seller, the customer as buyer, and another org\'s quote as missing', async () => {
+    const o = await org();
+    await admin((c) => c.query('UPDATE crove_kernel.tenant SET address = $2, contact_email = $3 WHERE org_id = $1', [o.orgId, '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', 'ketoan@bao-gia.test']));
+    const party = await o.party('Công ty TNHH Đặng Thị Hằng');
+    await admin((c) => c.query('UPDATE crove_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, party, '5 Lê Lợi, Đà Nẵng', 'mua@bao-gia.test']));
+    const deal = await o.newDeal(party);
+    const quote = await o.exec<Quote>(o.member, 'crm.quote.save', {
+      dealId: deal.id,
+      lines: [item({ description: 'Dịch vụ kế toán trọn gói tháng 11' })],
+    });
+    const document = await o.query<QuoteDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(document.quote).toEqual(quote);
+    expect(document.buyer).toEqual({ name: 'Công ty TNHH Đặng Thị Hằng', taxCode: null, address: '5 Lê Lợi, Đà Nẵng', phone: null, email: 'mua@bao-gia.test' });
+    expect(document.seller).toMatchObject({ address: '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', email: 'ketoan@bao-gia.test', bankNote: null });
+    expect(document.seller.name).toMatch(/^Công ty /);
+    expect(document.issuedOn).toBe(vietnamToday(new Date(quote.createdAt)));
+    // The same document gives the same bytes, and they are a PDF.
+    const bytes = renderQuotePdf(document);
+    expect(Buffer.from(bytes).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(Buffer.from(renderQuotePdf(document)).equals(Buffer.from(bytes))).toBe(true);
+    const other = await org();
+    await expect(other.query(other.viewer, 'crm.quote.document', { quoteId: quote.id })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND', status: 404 });
   });
 
   it('holds the draft rule in SQL as the runtime\'s own login: only a fresh draft is inserted, the status and number are never set, a sent quote is read-only', async () => {
