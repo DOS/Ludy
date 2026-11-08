@@ -8064,6 +8064,12 @@ export const en = {
       HR_LEGAL_ENTITY_REQUIRED: 'Choose the legal entity of the employee',
       HR_RUN_NOT_FOUND: 'This pay run was not found',
       HR_LINE_NOT_FOUND: 'This pay line was not found',
+      HR_RUN_NOT_APPROVED: 'Only an approved pay run can be posted',
+      HR_POSTING_OPEN: 'This pay run already has a posting proposal waiting for approval',
+      HR_POSTING_DONE: 'This pay run is already posted',
+      HR_POSTING_ADJUSTMENTS: 'This pay run has adjustment lines; a run like that cannot be posted yet',
+      HR_POSTING_MISMATCH: 'The pay run does not match its totals or the accounting regime changed; the entry cannot be built',
+      HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
       HR_RUN_NOT_DRAFT: 'This pay run is approved and cannot be edited; correct it with an adjustment line in a later month',
       HR_RUN_EXISTS: 'This month already has a pay run',
       HR_RUN_EMPTY: 'The pay run has no line to approve',
@@ -9057,6 +9063,11 @@ export const en = {
         preview: 'Preview opening balances',
       },
       overview: 'View the accounting overview: cash, profit, receivables, payables',
+      payroll_posting: {
+        check: 'Check the payroll entry before it is proposed',
+        record: 'Post the month\'s payroll entry',
+        regime: 'Read the entity\'s accounting regime to pick the payroll accounts',
+      },
       period: {
         closing_remind: 'Remind to lock a period',
         lock: 'Lock a period',
@@ -9139,6 +9150,9 @@ export const en = {
             set: 'Enter one employee\'s inputs for the month and recalculate the line',
           },
           payslip: 'View an employee\'s payslip for the month',
+        },
+        posting: {
+          prepare: 'Prepare the posting proposal of an approved pay month',
         },
         run: {
           approve: 'Approve the month\'s pay run (second factor, freezes the figures)',
