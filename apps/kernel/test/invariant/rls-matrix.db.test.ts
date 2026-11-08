@@ -922,18 +922,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
-  // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
-  'crove_finance.marketplace_connection': {
-    update: { set: 'last_test_state = last_test_state' },
-    make: (o) => {
-      const connection = { ...channelConnectionRow(o), provider: 'marketplace_sandbox' };
-      return {
-        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
-        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'marketplace_sandbox', platform: 'shopee' },
-      };
-    },
-  },
   // #2500: a sales e-invoice draft. Its series belongs to the same entity (a composite key), so each draft seeds a series of its own.
   'crove_finance.einvoice_draft': {
     make: (o) => {
@@ -1011,6 +999,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // default entity), so each row gets its own year.
   'crove_finance.legal_entity_books': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), regime: 'tt133', chart_version: '2026.1', effective_from: `${legalEntityBooksYear++}-01-01`, created_by: o.owner } }),
+  },
+  // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
+  // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
+  'crove_finance.marketplace_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'marketplace_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'marketplace_sandbox', platform: 'shopee' },
+      };
+    },
   },
   // #1398: an org's MISA SME item and warehouse codes (Mã hàng, Mã kho) for purchase lines on a stock account (152, 153,
   // 156 or a sub-account of one), one row per (org, account). Owners and admins set and clear them.
