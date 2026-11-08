@@ -127,7 +127,8 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const party = await o.party('Công ty ABC');
     const deal = await o.newDeal(party);
     const draft = await o.readyDraft(deal.id, [item(), { kind: 'text', description: 'Giao trong 3 ngày' }]);
-    const year = new Date().getUTCFullYear();
+    // The number's year is the Vietnam year, not the UTC one (they differ from 17:00 UTC on 31 December).
+    const year = Number(vietnamToday().slice(0, 4));
     const { quote, mail } = await o.send(o.member, draft, 'link');
     expect(mail).toBeNull();
     expect(quote).toMatchObject({ status: 'sent', sentVia: 'link', revision: 1, version: draft.version + 1, total: draft.total, buyer: { name: 'Công ty ABC', taxCode: '0312345678', address: '12 Lê Lợi, Quận 1', email: null }, links: [] });
