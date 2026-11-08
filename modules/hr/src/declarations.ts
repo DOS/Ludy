@@ -571,10 +571,9 @@ export function buildAnnual(input: AnnualInput): DeclarationDocument {
     columns: [
       { key: 'seq', header: 'STT', kind: 'count' },
       { key: 'name', header: 'Họ và tên', kind: 'text' },
-      { key: 'taxCode', header: 'Mã số thuế', kind: 'text' },
       { key: 'reason', header: 'Lý do', kind: 'text' },
     ],
-    rows: [...excluded].sort((a, b) => byName({ name: a.person.name, employeeId: a.person.employeeId }, { name: b.person.name, employeeId: b.person.employeeId })).map((e, i) => ({ seq: String(i + 1), name: e.person.name, taxCode: text(e.person.taxCode), reason: EXCLUSION_LABEL[e.reason] })),
+    rows: [...excluded].sort((a, b) => byName({ name: a.person.name, employeeId: a.person.employeeId }, { name: b.person.name, employeeId: b.person.employeeId })).map((e, i) => ({ seq: String(i + 1), name: e.person.name, reason: EXCLUSION_LABEL[e.reason] })),
   };
   const monthsDone = input.approvedMonths.filter((m) => m.startsWith(prefix)).sort();
   const missing = Array.from({ length: 12 }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`).filter((m) => !monthsDone.includes(m));

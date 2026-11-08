@@ -712,7 +712,11 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       await read('d02lt', '2026-07');
       expect(opened).toEqual([]);
       // The tax forms: identity numbers and tax codes of the people in it, no insurance number.
-      for (const [kind, period] of [['kk', '2026-Q3'], ['qtt', '2026'], ['certificate', '2026']] as const) {
+      // 05/QTT prints only the authorizers who qualify (Chi, who has a tax code and no identity number, and a person with neither): so exactly one value, Chi's tax code.
+      opened.length = 0;
+      await read('qtt', '2026');
+      expect(opened).toEqual([TAX]);
+      for (const [kind, period] of [['kk', '2026-Q3'], ['certificate', '2026']] as const) {
         opened.length = 0;
         await read(kind, period);
         expect(new Set(opened), kind).toEqual(new Set([IDENTITY, TAX]));
