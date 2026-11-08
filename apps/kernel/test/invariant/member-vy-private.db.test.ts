@@ -25,6 +25,9 @@ const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 // The text a member's private note and Vy's answer to it must never reach anyone else with.
 const SECRET = 'Tóm tắt riêng: khách đề nghị giảm giá 12%';
+// The only member-Vy definers a tenant login may call, by exact signature: counts for an owner or admin, and the cancellation of a member's live runs by an owner, an admin or the system.
+// Both return numbers, never text, and refuse every other caller (cases below).
+const TENANT_CALLABLE = ['crove_kernel.member_vy_private_counts()', 'crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)'];
 // The department roles that grant vy.use (ADR-0049 decision 10) and the one that does not.
 const VY_ROLES = ['finance.chief_accountant', 'finance.accountant', 'external_accountant', 'crm.sales', 'desk.agent', 'hr.manager'];
 
@@ -210,7 +213,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
       // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the one counts function below (an owner or admin's removal warning: ids and numbers, never text).
-      if (f.definer && f.fn !== 'crove_kernel.member_vy_private_counts()') expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      if (f.definer && !TENANT_CALLABLE.includes(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
@@ -371,6 +374,21 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     for (const actor of [member('another member', () => users.member), member('a viewer', () => users.viewer), agentActor]) {
       const refused = await outcome(run(actor, (c) => c.query('SELECT * FROM crove_kernel.member_vy_private_counts()')));
       expect(refused, `${actor.name} asking for the counts`).toMatchObject({ ok: false, code: '42501' });
+    }
+  });
+
+  // Ending a member's live runs: an owner, an admin or the system may ask; nobody else, whoever the target is.
+  it('lets only an owner, an admin or the system end a member\'s live runs, and returns a number', async () => {
+    const found = await admin((c) => c.query<{ fn: string; result: string }>(`SELECT p.oid::regprocedure::text AS fn, pg_get_function_result(p.oid) AS result FROM pg_proc p WHERE p.pronamespace = 'crove_kernel'::regnamespace AND p.proname = 'member_vy_runs_cancel'`));
+    expect(found.rows.map((r) => r.fn), 'one cancel function with this signature').toEqual(has.kind && found.rows.length ? ['crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)'] : []);
+    if (!found.rows[0]) return;
+    expect(found.rows[0].result, 'it answers a count and nothing else').toBe('bigint');
+    const call = (actor: Actor) => outcome(run(actor, (c) => c.query('SELECT crove_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, $2::text)', [users.author, 'TEST'])));
+    for (const actor of [member('an owner', () => users.owner), member('an admin', () => users.admin), system]) {
+      expect((await call(actor)).ok, `${actor.name} ending a member's runs (positive control)`).toBe(true);
+    }
+    for (const actor of [member('another member', () => users.member), member('the member', () => users.author), member('a viewer', () => users.viewer), agentActor]) {
+      expect(await call(actor), `${actor.name} ending a member's runs`).toMatchObject({ ok: false, code: '42501' });
     }
   });
 
