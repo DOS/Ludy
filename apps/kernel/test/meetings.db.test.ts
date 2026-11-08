@@ -944,7 +944,8 @@ suite('meetings module database integration tests (#2576)', () => {
     const send = async (query: string, body: Buffer | null, type: string, who = 'recorder') =>
       app.request(`/api/meetings/${meetingId}/media${query}`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token(who)}`, 'x-crove-org': slug, 'content-type': type },
+        // A client sends the length of the file it uploads; a bare Request does not add the header, so the test says it.
+        headers: { authorization: `Bearer ${await token(who)}`, 'x-crove-org': slug, 'content-type': type, 'content-length': String(body?.length ?? 0) },
         ...(body ? { body: new Uint8Array(body) } : {}),
       });
     const objectsBefore = store.storage.size;
