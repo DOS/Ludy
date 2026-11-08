@@ -716,10 +716,15 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       opened.length = 0;
       await read('qtt', '2026');
       expect(opened).toEqual([TAX]);
-      for (const [kind, period] of [['kk', '2026-Q3'], ['certificate', '2026']] as const) {
+      // 05/KK prints the people on its schedules (An, Bình and Chi; the 12M person is in the headcount only): the tax codes of An and Chi (Bình has none, so is printed under the identity number) and
+      // the identity numbers of An and Bình (Chi has none). 03/TNCN certifies An alone and lists Chi, who authorized the payer, by name and tax code: An's two numbers and Chi's tax code.
+      for (const [kind, period, expected] of [
+        ['kk', '2026-Q3', [IDENTITY, IDENTITY, TAX, TAX]],
+        ['certificate', '2026', [IDENTITY, TAX, TAX]],
+      ] as const) {
         opened.length = 0;
         await read(kind, period);
-        expect(new Set(opened), kind).toEqual(new Set([IDENTITY, TAX]));
+        expect([...opened].sort(), kind).toEqual([...expected].sort());
       }
     } finally {
       spy.mockRestore();
