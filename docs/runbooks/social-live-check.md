@@ -74,6 +74,8 @@ Gaps found while reading, and what became of them:
 - **[CHECK]** The dashboard says Development mode, and the redirect address is listed exactly. If Meta refuses the `http://localhost` address (it may demand https), stop and tell the PO: the fallback is a public https address, which moves the stack to the pilot layout (see "Where the check runs").
 - **Rollback:** delete the app in its settings.
 
+**One Meta app or two (#2212).** Facebook Page and Instagram share this app by default. Meta's create-an-app flow now asks for a use case, and not every use case can sit on one app, so the app made for Pages may not offer the Instagram API. This is not confirmed against Meta's current docs here; the live check settles it. If the Instagram use case cannot be added to this app, make a second Meta app for Instagram the same way (steps 1 to 4, redirect `http://localhost:8080/channels/oauth/instagram/callback`) and set `CHANNEL_INSTAGRAM_APP_ID` and `CHANNEL_INSTAGRAM_APP_SECRET` in Part B. With both unset, Instagram uses the app above. A Meta app has one secret, so an Instagram app with the same id as `CHANNEL_META_APP_ID` must have the same secret (the server refuses otherwise). Tokens belong to the app that issued them: after changing which app Instagram uses, reconnect its channels. The webhook and the data deletion callback accept what either app signs (the Instagram app needs the same verify token as the Pages webhook).
+
 ### A2. Take the two values
 
 **[PERSON]** In the app's Settings, Basic: the **App ID** (digits only) becomes `CHANNEL_META_APP_ID`; the **App secret** (press Show, it asks for the Facebook password) becomes `CHANNEL_META_APP_SECRET`. The server refuses to start with one of the two, and refuses an app id that is not digits.
@@ -94,7 +96,7 @@ Edit `.env` (it is git-ignored): set `CHANNEL_META_APP_ID` and `CHANNEL_META_APP
 docker compose -p social-check up --build -d
 ```
 
-- **[CHECK]** `http://localhost:8080` loads. `curl -s http://localhost:8080/api/config` lists `facebook_page` under `channels.oauth` (Instagram appears next to it because it shares the Meta app; ignore it, it is out of scope here). If `facebook_page` is missing, both variables are not both set.
+- **[CHECK]** `http://localhost:8080` loads. `curl -s http://localhost:8080/api/config` lists `facebook_page` under `channels.oauth` (Instagram appears next to it because it shares the Meta app, or has its own when `CHANNEL_INSTAGRAM_APP_ID` is set; ignore it, it is out of scope here). If `facebook_page` is missing, both variables are not both set.
 - **Rollback:** `docker compose -p social-check down -v` removes the stack and its database. Nothing else is touched.
 
 ### A4. Connect the Page

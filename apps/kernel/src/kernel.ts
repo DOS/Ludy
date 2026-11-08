@@ -299,7 +299,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
 type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
-  Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
+  Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET' | 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
 // product), the member app otherwise.
@@ -326,9 +326,26 @@ export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID
 // Whether the deployment's write Meta app is the read ads app or the Pages app (the same id): with one app a person's reading tokens can
 // change campaigns once they grant the permission, so switching running ads off closes every Meta reading connection; with an app of its own
 // (a public deployment requires one) they cannot, and only the recorded scopes close. No write app means no write connection to make.
-export function metaWriteAppShared(config: Pick<Config, 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_APP_ID'>): boolean {
+export function metaWriteAppShared(config: Pick<Config, 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_APP_ID'> & Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID'>>): boolean {
   const write = config.CHANNEL_META_ADS_WRITE_APP_ID;
-  return Boolean(write) && (write === config.CHANNEL_META_ADS_APP_ID || write === config.CHANNEL_META_APP_ID);
+  return Boolean(write) && (write === config.CHANNEL_META_ADS_APP_ID || write === config.CHANNEL_META_APP_ID || write === config.CHANNEL_INSTAGRAM_APP_ID);
+}
+
+// The Meta app Instagram connects and publishes through (#2212): its own pair when set, else the Pages app's, so a deployment with one app
+// is unchanged. Facebook Pages keep the Pages app either way.
+export function instagramMetaApp(config: Pick<Config, 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET'> & Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET'>>): { appId: string; appSecret: string } | undefined {
+  if (config.CHANNEL_INSTAGRAM_APP_ID && config.CHANNEL_INSTAGRAM_APP_SECRET) return { appId: config.CHANNEL_INSTAGRAM_APP_ID, appSecret: config.CHANNEL_INSTAGRAM_APP_SECRET };
+  if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) return { appId: config.CHANNEL_META_APP_ID, appSecret: config.CHANNEL_META_APP_SECRET };
+  return undefined;
+}
+
+// The secrets Meta may sign a Page or Instagram webhook notice or a data deletion request with: the Pages app's and, when it is another
+// app, the Instagram app's. The first is the primary one; none means neither app is configured.
+export function metaConversationSecrets(config: Pick<Config, 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET'> & Partial<Pick<Config, 'CHANNEL_INSTAGRAM_APP_ID' | 'CHANNEL_INSTAGRAM_APP_SECRET'>>): { primary: string; instagram?: string } | undefined {
+  const pages = config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? config.CHANNEL_META_APP_SECRET : undefined;
+  const instagram = config.CHANNEL_INSTAGRAM_APP_ID && config.CHANNEL_INSTAGRAM_APP_SECRET ? config.CHANNEL_INSTAGRAM_APP_SECRET : undefined;
+  if (pages) return instagram && instagram !== pages ? { primary: pages, instagram } : { primary: pages };
+  return instagram ? { primary: instagram } : undefined;
 }
 
 // The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
@@ -402,9 +419,10 @@ export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>
   if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) {
     const app = { appId: config.CHANNEL_META_APP_ID, appSecret: config.CHANNEL_META_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION };
     connectors.facebook_page = new FacebookPageConnector(app);
-    // Instagram professional accounts linked to the user's Pages, through the same Meta app (S6.3).
-    connectors.instagram = new InstagramConnector(app);
   }
+  // Instagram professional accounts linked to the user's Pages (S6.3): through the Pages app, or the Instagram app of its own when set (#2212).
+  const instagram = instagramMetaApp(config);
+  if (instagram) connectors.instagram = new InstagramConnector({ ...instagram, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
   // Meta ad accounts, read only (ADR-0040, #2218): its own app credentials, which may be the same app as the Pages one.
   if (config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET) {
     connectors.meta_ads = new MetaAdsConnector({ appId: config.CHANNEL_META_ADS_APP_ID, appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
@@ -453,8 +471,10 @@ export function channelPublishers(config: ChannelConfig): Record<string, Publish
   }
   if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) {
     publishers.facebook_page = new FacebookPagePublisher({ appSecret: config.CHANNEL_META_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
-    publishers.instagram = new InstagramPublisher({ appSecret: config.CHANNEL_META_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
   }
+  // Calls on an Instagram token are signed with the secret of the app that issued it (appsecret_proof).
+  const instagramApp = instagramMetaApp(config);
+  if (instagramApp) publishers.instagram = new InstagramPublisher({ appSecret: instagramApp.appSecret, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
   const zalo = zaloApp(config);
   if (zalo) publishers.zalo_oa = new ZaloOaPublisher({ ...zalo, ...(config.BRAND_NAME ? { defaultAuthor: config.BRAND_NAME } : {}) });
   if (config.CHANNEL_THREADS_APP_ID && config.CHANNEL_THREADS_APP_SECRET) publishers.threads = new ThreadsPublisher();
@@ -605,6 +625,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           throw new Error('TAX_PORTAL_URL points the tax portal sync away from https://hoadondientu.gdt.gov.vn: allowed only for a test deployment on localhost or a .test name');
         }
         if (config.TAX_PORTAL_SYNC === 'true' && config.TAX_PORTAL_URL) console.warn(`[api] TAX_PORTAL_URL points the tax portal sync at ${new URL(config.TAX_PORTAL_URL).origin}, not the real portal`);
+        const conversationSecrets = metaConversationSecrets(config);
         const app = createHttpApp({
           config,
           runtime,
@@ -622,11 +643,11 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // Meta's data deletion callback for the Ads connection (plan section 9): with the Meta ads app configured.
           ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
           ...(config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { adsWriteDeletion: { appSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } } : {}),
-          ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? { conversationsDeletion: { appSecret: config.CHANNEL_META_APP_SECRET } } : {}),
+          ...(conversationSecrets ? { conversationsDeletion: { appSecret: conversationSecrets.primary, ...(conversationSecrets.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}) } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
-          ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: config.CHANNEL_META_APP_SECRET, appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
+          ...(conversationSecrets && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets.primary, ...(conversationSecrets.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
