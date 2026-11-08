@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zHrDeclarationDocument, zHrDeclarationQuery } from './hr-declarations.ts';
 import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
@@ -641,6 +642,8 @@ export const contract = {
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
       },
+      // The declaration documents (#2533): a sensitive read that opens the sealed identifiers of the people in the period; the xlsx files come from GET /api/payroll-export/<kind>.xlsx.
+      declarations: { get: oc.input(zHrDeclarationQuery).output(zHrDeclarationDocument) },
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
       // The monthly pay run (#2531): open a month, type its inputs, read the sheet, approve it (R3, a fresh second factor), and correct an approved month by an adjustment line in a later run.

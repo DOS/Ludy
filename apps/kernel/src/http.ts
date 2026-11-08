@@ -13,6 +13,7 @@ import {
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
   DIRECT_UPLOAD_MAX_BYTES,
+  HR_DECLARATION_KINDS,
   MAX_IMPORT_BYTES,
   MAX_MEETING_AUDIO_BYTES,
   MAX_MEETING_VIDEO_BYTES,
@@ -24,6 +25,7 @@ import {
   XLSX_CONTENT_TYPE,
   accountParents,
   type FixedAsset,
+  type HrDeclarationDocument,
   type MisaGoodsCode,
   type StockCard,
   type StockReportRow,
@@ -90,6 +92,7 @@ import {
   type VatDeclaration,
   type VatReport,
 } from '@crove/mod-finance';
+import { buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
@@ -2652,6 +2655,50 @@ export function createHttpApp(deps: HttpDeps) {
             'cache-control': 'private, no-store',
           },
         });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // The payroll declaration exports (#2533, payroll plan 6.5): GET /api/payroll-export/<kind>.xlsx?period=...&legalEntityId=..., kind d02lt (period 2026-09), kk (2026-Q3), qtt or certificate (2026).
+  // Built only in the requesting owner's or admin's own context: the sensitive query hr.payroll.declaration.get (its audit row is committed before the sealed identity numbers, tax codes and
+  // insurance numbers are opened; nothing decrypted reaches an audit fact or a log), never a worker, a stored job or a stored blob, and no email. Figures come only from approved runs. It takes a
+  // slot of the export limiter, like the books' exports; a document is bounded (more people than the cap is refused, never cut short) and is built whole after the audit row of the download is
+  // written: no row, no download. `private, no-store`: the file holds identity numbers and tax codes. Nothing is sent to any agency.
+  if (runtime.installed('hr')) {
+    app.get('/api/payroll-export/:file', async (c) => {
+      try {
+        const file = c.req.param('file');
+        const kind = file.endsWith('.xlsx') ? file.slice(0, -'.xlsx'.length) : '';
+        if (!(HR_DECLARATION_KINDS as readonly string[]).includes(kind)) throw new DomainError('NOT_FOUND', 404, 'Không có bảng kê này');
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất; hãy thử lại sau vài giây');
+        }
+        try {
+          const period = c.req.query('period') ?? '';
+          const legalEntityId = c.req.query('legalEntityId') || undefined;
+          const query = { kind, period, ...(legalEntityId ? { legalEntityId } : {}) };
+          const document = await runtime.query<HrDeclarationDocument>('hr.payroll.declaration.get', query, { actor: actorOf(user), orgId });
+          const bytes = await buildDeclarationWorkbook(document, config.BRAND_NAME);
+          const rows = document.sheets.reduce((n, sheet) => n + sheet.rows.length, 0);
+          await runtime.execute('hr.payroll.declaration.export', { ...query, rows }, { actor: actorOf(user), orgId });
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), `bang-ke-${kind}`, period, ORG_SLUG], 'xlsx'),
+              'x-content-type-options': 'nosniff',
+              'cache-control': 'private, no-store',
+            },
+          });
+        } finally {
+          release();
+        }
       } catch (error) {
         return problem(c, error);
       }
