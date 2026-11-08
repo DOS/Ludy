@@ -44,6 +44,12 @@ export const meetingsManifest = defineModule({
         ],
         { title: 'pii' },
       ),
+      // What the recorder keeps of a meeting beyond the transcript (#2580): the summary with its decisions, and the action items. Free text, personal data.
+      meeting_result: columns(['org_id', 'id', 'meeting_id', 'feature', 'stage', 'tainted', 'created_at', 'updated_at'], { summary: 'pii', decisions: 'pii' }),
+      action_item: columns(
+        ['org_id', 'id', 'meeting_id', 'who_parsed', 'when_parsed', 'transcript_seconds', 'stage', 'status', 'flags', 'tainted', 'task_id', 'accepted_by', 'accepted_at', 'created_at', 'updated_at'],
+        { title: 'pii', who_drafted: 'pii', when_drafted: 'pii' },
+      ),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
       meeting_video: columns([
         'org_id',
