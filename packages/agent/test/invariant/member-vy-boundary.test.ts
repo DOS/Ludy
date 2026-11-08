@@ -7,13 +7,15 @@
 //   - features reach the model, memory and knowledge through the provider ports, never a vendor client (decision 9);
 //   - the org-level features outside that directory take plain strings: none imports a member-Vy module or the branded
 //     PrivateText type (decision 4 layer 3).
-// The directory may not exist yet: the scan then has nothing to read, and the scanner's own cases below keep it honest.
+// The directory may not exist yet: the scan then has nothing to read, the scanner's own cases below keep it honest, and
+// one case fails once the store command exists in the kernel while the directory is still empty. The file sits under
+// test/invariant/, so the base branch's copy runs against a feature PR (a feature PR cannot edit the rules it must meet).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SRC = join(ROOT, 'packages/agent/src');
 const MEMBER_VY = join(SRC, 'member-vy');
 
@@ -87,5 +89,22 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       .filter((file) => !file.startsWith(`${MEMBER_VY}/`) && !file.endsWith('/private-text.ts'))
       .flatMap((file) => orgFeatureViolations(readFileSync(file, 'utf8')).map((v) => `${relative(ROOT, file)}: ${v}`));
     expect(bad).toEqual([]);
+  });
+
+  // Tripwires: the boundary cannot be dodged by putting the feature where the scan does not look.
+  it('keeps the member-Vy names inside packages/agent/src/member-vy (and the two files that join it to the rest)', () => {
+    const JOINTS = new Set(['meter.ts', 'index.ts', 'private-text.ts']);
+    const bad = sources(SRC)
+      .filter((file) => !file.startsWith(`${MEMBER_VY}/`) && !JOINTS.has(file.slice(SRC.length + 1)))
+      .filter((file) => /\bmemberVy\b|\bPrivateText\b/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(ROOT, file));
+    expect(bad, 'a member-Vy feature or its private type outside member-vy/').toEqual([]);
+  });
+
+  it('has member-vy source files once the store command exists in the kernel', () => {
+    const kernel = join(ROOT, 'packages/kernel/src');
+    const stores = sources(kernel).some((file) => readFileSync(file, 'utf8').includes('kernel.member_vy.result.store'));
+    if (stores) expect(sources(MEMBER_VY).length, 'the store command exists but no feature module is under packages/agent/src/member-vy').toBeGreaterThan(0);
+    else expect(sources(MEMBER_VY).length, 'member-vy modules before the store command exists').toBe(0);
   });
 });
