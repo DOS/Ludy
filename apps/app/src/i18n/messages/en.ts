@@ -9231,6 +9231,7 @@ export const en = {
         list: 'List deals',
         move: 'Move a deal to another stage',
         quotes: 'See the quotes of a deal',
+        sales_orders: 'See the sales orders of a deal',
         update: 'Edit a deal',
       },
       deal_setting: {
@@ -9264,7 +9265,15 @@ export const en = {
       pipeline: {
         setup: 'Create the default stages of the sales pipeline',
       },
+      sales_order: {
+        cancel: 'Cancel a sales order',
+        get: 'View a sales order',
+        handoff: 'Read a sales order for Accounting to invoice',
+        list: 'List sales orders',
+      },
       quote: {
+        accept: 'Record that the customer accepted a quote and make the sales order',
+        decline: 'Record that the customer declined a quote',
         send: 'Send a quote by a link or by email',
         create_link: 'Make a link to view a sent quote',
         revoke_link: 'Revoke a quote link',
