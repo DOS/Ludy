@@ -64,6 +64,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_crm.quote_link',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
@@ -749,6 +750,26 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
     update: { set: 'description = description' },
+  },
+  // A public link to a sent quote (Q2 of docs/plan/crm-quotes.md, #2694): the hash of its token, its expiry and who made it. The quote it names has left
+  // `draft` (a link is made for a sent quote only), so the factory seeds it as the database owner would after a send.
+  'crove_crm.quote_link': {
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      const quote = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+          {
+            table: 'crove_crm.quote',
+            values: { org_id: o.id, id: quote, deal_id: deal, party_id: o.party, valid_until: '2031-01-31', created_by: o.owner, status: 'sent', number: `BG-RLS-${tag()}`, sent_at: new Date().toISOString(), sent_via: 'link' },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), quote_id: quote, token_sha256: hex64(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), created_by: o.owner },
+      };
+    },
   },
   // The org's one row of quote settings (Q1): the days a quote stays valid, the VAT rate of a new line and the default terms. Tenant roles update those and who
   // set them (a column grant), so the update probes assign the days to themselves.
