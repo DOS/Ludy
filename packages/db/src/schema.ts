@@ -1019,6 +1019,17 @@ export type MeetingsMeetingTable = Refine<
   }
 >;
 
+// The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
+export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
+export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
+
+export type MeetingsTranscriptSegmentTable = Refine<
+  G.MeetingsTranscriptSegmentTable,
+  {
+    stage: ColumnType<TranscriptStageValue, TranscriptStageValue | undefined, never>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1044,6 +1055,7 @@ type Refined = Tables<{
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;

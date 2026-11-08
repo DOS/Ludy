@@ -1725,12 +1725,13 @@ export function createHttpApp(deps: HttpDeps) {
           { uploadId: c.req.param('id') },
           { actor: actorOf(user), orgId },
         );
-        // Staged meeting media is sealed only by POST /api/meetings/:id/media: completing it here would store plaintext.
-        // (Other purposes keep their old, lenient pairing of begin and complete.)
-        if (claim.purpose === 'meeting_audio' || claim.purpose === 'meeting_video') {
-          throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
-        }
         try {
+          // Staged meeting media is sealed only by POST /api/meetings/:id/media: completing it here would store plaintext.
+          // (Other purposes keep their old, lenient pairing of begin and complete.) The grant is used up by the claim, so
+          // the refusal drops the staged object with the other refusals below (#2780).
+          if (claim.purpose === 'meeting_audio' || claim.purpose === 'meeting_video') {
+            throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+          }
           // A document is read up to 25 MB whatever its grant allowed.
           const staged = await direct.readStaged(claim.stagingKey, Math.min(claim.maxBytes, purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : MAX_UPLOAD_BYTES)).catch((error: unknown) => {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');

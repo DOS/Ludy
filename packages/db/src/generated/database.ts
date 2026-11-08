@@ -171,6 +171,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
+  'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
 }
 
 export interface CroveNotesSchema {
@@ -2526,6 +2527,21 @@ export interface MeetingsMeetingVideoTable {
   length_seconds: ColumnType<number, number, NotGranted>;
   video_retention_date: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.transcript_segment */
+export interface MeetingsTranscriptSegmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  start_seconds: ColumnType<string, string, NotGranted>;
+  end_seconds: ColumnType<string, string, NotGranted>;
+  speaker_label: Generated<string>;
+  text: string;
+  stage: ColumnType<string, string | undefined, NotGranted>;
+  corrected: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_notes.link */
