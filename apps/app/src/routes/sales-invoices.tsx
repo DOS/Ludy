@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoiceSuggested } from '@crove/kernel-contract';
+import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -89,10 +89,83 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
   };
 }
 
+// The previous invoice to the same customer copied into the form by code, with no model (#2721): its lines take the place of the blank ones, the buyer is filled while the form has none of its
+// own, and a VAT rate the form's date no longer allows is set to the default so a person chooses it again. Returns how many lines took the default rate.
+function applyPrevious(s: FormState, invoice: NonNullable<EInvoicePrevious['invoice']>): { state: FormState; rateChanged: number } {
+  const proposed: LineState[] = invoice.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatAllowed ? l.vatRate : '10%', ai: null }));
+  const kept = s.lines.filter((l) => !isBlankLine(l));
+  const lines = [...kept, ...proposed].slice(0, EINVOICE_DRAFT_MAX_LINES);
+  const b = s.buyer;
+  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
+  const from = invoice.buyer;
+  const buyer = buyerEmpty && b.kind !== 'consumer' ? { kind: from.kind as BuyerKind, partyId: from.partyId, taxCode: from.taxCode ?? '', name: from.name ?? '', address: from.address ?? '', email: from.email ?? '' } : b;
+  return { state: { ...s, lines: lines.length > 0 ? lines : s.lines, buyer }, rateChanged: invoice.lines.filter((l) => !l.vatAllowed).length };
+}
+
+/** The "previous invoice" source of the draft form (#2721): a person picks a customer, sees the last invoice issued to them, and either copies its lines (by code, works with AI off) or lets the coworker
+ * read those lines together with the text. Reading goes through the person's own finance permission; nothing is saved or issued here. */
+function PreviousInvoice({ date, onCopy, onPicked }: { date: string; onCopy: (invoice: NonNullable<EInvoicePrevious['invoice']>) => number; onPicked: (draftId: string | null) => void }) {
+  const t = useTranslations('salesInvoices.ai.previous');
+  const f = useFormat();
+  const [customerId, setCustomerId] = useState('');
+  const [copied, setCopied] = useState<{ count: number; rateChanged: number } | null>(null);
+  const customers = useQuery(orpc.parties.customers.queryOptions({ input: {} }));
+  const previous = useQuery({ ...orpc.einvoice.drafts.previousInvoice.queryOptions({ input: { buyerPartyId: customerId, date } }), enabled: customerId !== '' });
+  const invoice = previous.data?.invoice ?? null;
+  // The coworker reads the invoice only while it is the one on screen.
+  const draftId = customerId !== '' && invoice ? invoice.draftId : null;
+  useLayoutEffect(() => {
+    onPicked(draftId);
+  }, [draftId, onPicked]);
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-border p-3" data-testid="invoice-previous">
+      <Label htmlFor="sales-invoice-previous">{t('label')}</Label>
+      <NativeSelect
+        id="sales-invoice-previous"
+        value={customerId}
+        onChange={(e) => {
+          setCustomerId(e.target.value);
+          setCopied(null);
+        }}
+        data-testid="invoice-previous-customer"
+      >
+        <NativeSelectOption value="">{t('choose')}</NativeSelectOption>
+        {(customers.data?.items ?? []).map((c) => (
+          <NativeSelectOption key={c.id} value={c.id}>
+            {c.name}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+      {previous.isError && <p className="text-xs text-foreground">{t('failed')}</p>}
+      {customerId !== '' && previous.data && !invoice && (
+        <p className="text-xs text-subtle-foreground" data-testid="invoice-previous-none">
+          {t('none')}
+        </p>
+      )}
+      {invoice && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-foreground" data-testid="invoice-previous-found">
+            {invoice.number ? t('found', { number: invoice.number, date: f.date(invoice.date), count: String(invoice.lines.length) }) : t('foundNoNumber', { date: f.date(invoice.date), count: String(invoice.lines.length) })}
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={() => setCopied({ count: invoice.lines.length, rateChanged: onCopy(invoice) })} data-testid="invoice-previous-copy">
+            {t('copy')}
+          </Button>
+        </div>
+      )}
+      {copied && (
+        <p className="text-xs text-foreground" role="status" data-testid="invoice-previous-copied">
+          {t('copied', { count: String(copied.count) })} {copied.rateChanged > 0 && t('rateChanged', { count: String(copied.rateChanged) })}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
  * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
-function CoworkerBox({ date, room, onProposal }: { date: string; room: number; onProposal: (proposal: EInvoiceSuggested) => void }) {
+function CoworkerBox({ date, room, invoiceDraftId, onProposal }: { date: string; room: number; invoiceDraftId: string | null; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
+  const tp = useTranslations('salesInvoices.ai.previous');
   const [text, setText] = useState('');
   const current = useRef(date);
   // Written after the commit, not during render: a render React discards must not leave its date behind.
@@ -102,7 +175,7 @@ function CoworkerBox({ date, room, onProposal }: { date: string; room: number; o
   const [state, setState] = useState<'filled' | 'partial' | 'stale' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
   const ask = useMutation({
     // The date the request was made for travels in the mutation's variables: the options of a request still pending are replaced on every render, so a date taken from the closure could already be the new one.
-    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked }),
+    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked, ...(invoiceDraftId ? { invoiceDraftId } : {}) }),
     onSuccess: (proposal, asked) => {
       // The VAT rates were checked for the date asked with: if the invoice date was changed meanwhile, nothing is filled.
       if (proposal.ai === 'used' && current.current !== asked) {
@@ -122,6 +195,7 @@ function CoworkerBox({ date, room, onProposal }: { date: string; room: number; o
           {t('button')}
         </Button>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+        {invoiceDraftId && <p className="text-xs text-subtle-foreground" data-testid="invoice-ai-source">{tp('askNote')}</p>}
       </div>
       {state !== null && (
         <p className="text-xs text-foreground" role="status" data-testid="invoice-ai-state" data-state={state}>
@@ -137,6 +211,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const [form, setForm] = useState(initial);
+  const [sourceInvoice, setSourceInvoice] = useState<string | null>(null);
   const deferred = useDeferredValue(form);
   const input = useMemo(() => toInput(deferred), [deferred]);
   const check = useQuery({ ...orpc.einvoice.drafts.check.queryOptions({ input }), placeholderData: (previous) => previous });
@@ -186,7 +261,16 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           </NativeSelect>
         </div>
       </div>
-      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
+      <PreviousInvoice
+        date={form.date}
+        onPicked={setSourceInvoice}
+        onCopy={(invoice) => {
+          const done = applyPrevious(form, invoice);
+          setForm(done.state);
+          return done.rateChanged;
+        }}
+      />
+      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} invoiceDraftId={sourceInvoice} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
       {form.buyerAi && (
         <p className="mt-3 text-xs text-subtle-foreground" data-testid="invoice-buyer-ai">
           <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t('ai.buyerNote')}</span>

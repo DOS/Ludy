@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The finance coworker on a sales e-invoice draft, on the API side (#2505): the lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
+// The finance coworker on a sales e-invoice draft, on the API side (#2505, #2721): the lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted and, when they
+// picked one, the lines of the previous issued invoice to the buyer (read by finance.einvoice_draft.suggest_source in the member's own transaction; the model sees them as text).
 // finance.einvoice_draft.suggest_source runs in the member's own transaction and says what the model may see (the text, the names of the customers that fit it, and earlier VAT rates:
 // no address, tax code, credential, bank account or provider data); the model call then runs here, outside any transaction, through the AI budget meter (the request's AI scope names the
 // org and the member).
@@ -52,7 +53,10 @@ export async function suggestEInvoiceDraft(ai: EInvoiceAi, orgId: string, userId
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
-    const request: EInvoiceDraftRequest = { text: input.text, date: input.date, parties: source.parties.map((p) => ({ name: p.name })) };
+    // What the model reads and what its figures are checked against are one text (packages/agent cuts both at the same length): what the person typed, then the lines of the invoice they picked as
+    // a source (#2721). A figure the invoice holds is a figure the source holds; one that neither holds refuses the proposal, as before.
+    const text = source.invoice && source.invoice.text !== '' ? `${input.text}\n\n${source.invoice.text}` : input.text;
+    const request: EInvoiceDraftRequest = { text, date: input.date, parties: source.parties.map((p) => ({ name: p.name })) };
     const result = await ask(request);
     if (result.kind === 'none') {
       console.error(`[einvoice-ai] draft refused: ${result.code}`);

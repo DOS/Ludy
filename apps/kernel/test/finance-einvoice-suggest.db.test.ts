@@ -127,6 +127,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
   interface Source {
     parties: Array<{ id: string; name: string; kind: string; taxCode: string | null; address: string | null; email: string | null; rates: Array<{ vatRate: string; n: number }> }>;
     orgRates: Array<{ vatRate: string; n: number }>;
+    invoice: { text: string } | null;
   }
   const source = (o: Org, text: string, user = o.owner) => query<Source>(o, 'finance.einvoice_draft.suggest_source', { text, date: today() }, user);
 
@@ -189,5 +190,81 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     for (const input of [{ text: '   ', date: today() }, { text: 'x'.repeat(2001), date: today() }, { text: 'bán hàng', date: 'hôm nay' }]) {
       await expect(query(o, 'finance.einvoice_draft.suggest_source', input)).rejects.toBeDefined();
     }
+  });
+
+  // The previous invoice as a source (#2721). An invoice is issued as the issue job does it, as a worker login in the org's system context: `submitting` first (with the triggers off, as the
+  // draft tests do), then `issued`.
+  async function issue(o: Org, draftId: string, minutesAgo = 0) {
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
+      await c.query('COMMIT');
+    });
+    const c = await workerPool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await c.query(
+        "UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() - make_interval(mins => $4::int) WHERE org_id = $1 AND id = $2",
+        [o.orgId, draftId, `000${minutesAgo}`, minutesAgo],
+      );
+      await c.query('COMMIT');
+    } finally {
+      c.release();
+    }
+  }
+  interface Previous {
+    invoice: { draftId: string; date: string; number: string | null; buyer: { kind: string; partyId: string | null; name: string | null }; lines: Array<{ description: string; quantity: string; unitPrice: string; vatRate: string; vatAllowed: boolean }> } | null;
+  }
+  const previous = (o: Org, buyerPartyId: string, date = today(), user = o.owner) => query<Previous>(o, 'finance.einvoice_draft.previous_invoice', { buyerPartyId, date }, user);
+
+  it('gives the newest issued invoice to a customer, with the buyer and the lines it held, and not a draft or another customer\'s', async () => {
+    const o = await org();
+    const hoa = await party(o, 'Công ty Hoa Mai');
+    const other = await party(o, 'Cửa hàng Lan Anh');
+    expect((await previous(o, hoa)).invoice).toBeNull();
+    const older = await saveDraft(o, null, hoa, '10%');
+    const newer = await saveDraft(o, null, hoa, '10%');
+    const stillDraft = await saveDraft(o, null, hoa, '10%');
+    await saveDraft(o, null, other, '10%').then((d) => issue(o, d.id, 1));
+    await issue(o, older.id, 60);
+    await issue(o, newer.id, 5);
+    const got = (await previous(o, hoa)).invoice;
+    expect(got).toMatchObject({ draftId: newer.id, buyer: { kind: 'business', partyId: hoa, name: 'Công ty Mua Thử' } });
+    expect(got?.lines).toEqual([expect.objectContaining({ description: 'Hàng A', quantity: '2', unitPrice: '100000', vatRate: '10%', vatAllowed: true })]);
+    expect(got?.draftId).not.toBe(stillDraft.id);
+    expect((await previous(o, other)).invoice?.draftId).not.toBe(newer.id);
+  });
+
+  it('marks a line whose VAT rate the new invoice\'s date no longer allows, and does not let a viewer or another org read it', async () => {
+    const o = await org();
+    const hoa = await party(o, 'Công ty Hoa Mai');
+    await issue(o, (await saveDraft(o, null, hoa, '8%')).id);
+    expect((await previous(o, hoa, '2026-11-05')).invoice?.lines[0]?.vatAllowed).toBe(true);
+    expect((await previous(o, hoa, '2027-02-01')).invoice?.lines[0]).toMatchObject({ vatRate: '8%', vatAllowed: false });
+    await expect(previous(o, hoa, today(), o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const stranger = await org();
+    expect((await previous(stranger, hoa)).invoice).toBeNull();
+  });
+
+  it('adds the lines of an issued invoice to the source as text, without a rate the date no longer allows, and refuses a draft, an unknown invoice and another org\'s', async () => {
+    const o = await org();
+    const hoa = await party(o, 'Công ty Hoa Mai');
+    const issued = await saveDraft(o, null, hoa, '8%');
+    await issue(o, issued.id);
+    const withInvoice = (id: string, date: string, user = o.owner) => query<Source>(o, 'finance.einvoice_draft.suggest_source', { text: 'giống lần trước', date, invoiceDraftId: id }, user);
+    const now = await withInvoice(issued.id, '2026-11-05');
+    expect(now.invoice?.text).toContain('Hàng A, đơn vị cái, số lượng 2, đơn giá 100000, VAT 8%');
+    // The reduced rate is gone by 2027: the text does not state it, so the model cannot carry it over.
+    const later = await withInvoice(issued.id, '2027-02-01');
+    expect(later.invoice?.text).toContain('số lượng 2, đơn giá 100000');
+    expect(later.invoice?.text).not.toContain('VAT');
+    await expect(withInvoice((await saveDraft(o, null, hoa, '10%')).id, '2026-11-05')).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
+    await expect(withInvoice(randomUUID(), '2026-11-05')).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
+    const stranger = await org();
+    await expect(query(stranger, 'finance.einvoice_draft.suggest_source', { text: 'giống lần trước', date: '2026-11-05', invoiceDraftId: issued.id })).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
+    // Without a picked invoice nothing is added.
+    expect((await source(o, 'bán cho anh Nam')).invoice).toBeNull();
   });
 });
