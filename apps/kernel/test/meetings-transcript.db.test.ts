@@ -133,7 +133,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     return { status: response.status, body: (body.json ?? body) as Record<string, unknown> };
   }
 
-  async function join(name: string, role: 'member' | 'viewer') {
+  async function join(name: string, role: 'admin' | 'member' | 'viewer') {
     await token(name);
     const email = accounts.get(name)?.email;
     const invited = await rpc('org/invite', 'owner', { email, role }, slug, true);
@@ -277,6 +277,40 @@ suite('the meeting transcript (#2578, M4a)', () => {
       expect(r.status, name).toBeGreaterThanOrEqual(400);
       expect(JSON.stringify(r.body), name).not.toContain('chốt giá');
     }
+  });
+
+  it('shows no draft line to the owner, an admin or another member of an org-wide meeting either', async () => {
+    await join('boss', 'admin');
+    const meetingId = await newMeeting('Họp toàn công ty', 'org');
+    await storeDraft('recorder', meetingId, [segment(0, 10, 'chỉ người ghi thấy bản nháp này')]);
+    // The meeting itself is open to every member of the org; its draft is not.
+    for (const name of ['owner', 'boss', 'otherMember', 'attendee']) {
+      const meeting = await rpc('meetings/get', name, { meetingId });
+      expect(meeting.status, `${name} opens the org-wide meeting`).toBe(200);
+      const transcript = await get(name, meetingId);
+      expect(transcript.status, name).toBe(200);
+      expect(transcript.body, name).toMatchObject({ isRecorder: false, stage: 'none', segments: [] });
+      expect(JSON.stringify(transcript.body), name).not.toContain('chỉ người ghi');
+    }
+    for (const name of ['owner', 'boss', 'otherMember', 'attendee']) {
+      expect((await storeDraft(name, meetingId, [segment(0, 5, 'giả mạo')])).status, name).toBeGreaterThanOrEqual(400);
+    }
+    expect((await rows(meetingId)).map((r) => r.text)).toEqual(['chỉ người ghi thấy bản nháp này']);
+  });
+
+  it('refuses an agent or the system context at both commands', async () => {
+    const meetingId = await newMeeting('Họp không cho máy ghi');
+    await storeDraft('recorder', meetingId, [segment(0, 5, 'của người ghi')]);
+    const [only] = await rows(meetingId);
+    const actors = [
+      { type: 'system' as const, component: 'kernel.agent' },
+      { type: 'agent' as const, agentId: randomUUID(), runId: randomUUID() },
+    ];
+    for (const actor of actors) {
+      await expect(runtime.execute('meetings.transcript.draft_store', { meetingId, segments: [segment(0, 5, 'máy viết')] }, { actor: actor as never, orgId }), actor.type).rejects.toThrow();
+      await expect(runtime.execute('meetings.transcript.correct', { segmentId: only!.id, text: 'máy sửa' }, { actor: actor as never, orgId }), actor.type).rejects.toThrow();
+    }
+    expect((await rows(meetingId)).map((r) => [r.text, r.corrected])).toEqual([['của người ghi', false]]);
   });
 
   it('refuses to store or correct a transcript for anyone but the recorder', async () => {

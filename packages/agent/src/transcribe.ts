@@ -26,7 +26,7 @@ export interface TranscribeConfig {
 // One audio chunk of a meeting (the media sandbox cuts a recording into 10 minute chunks).
 export interface TranscribeInput {
   audio: Uint8Array;
-  filename: string;
+  // The audio's type; the provider is sent this and a fixed neutral file name, never the caller's name for the file.
   mimeType: string;
   language: 'vi' | 'en';
   // The chunk's own length, and where it starts in the meeting: segment times are the meeting's, not the chunk's.
@@ -68,7 +68,18 @@ const finite = (value: unknown): number | null => (typeof value === 'number' && 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 // A lone surrogate (half of an emoji a provider cut) is not valid text for the database: it becomes U+FFFD.
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-const tidy = (text: string) => text.replace(LONE_SURROGATE, '\uFFFD').replace(/\s+/g, ' ').trim();
+// What PostgreSQL refuses in text (NUL) and what has no place in a spoken line: the C0 controls (tab and newline are
+// whitespace, kept as a space) and DEL, and the bidirectional overrides and isolates that can reorder what a reader sees.
+function isDropped(code: number): boolean {
+  return (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) || code === 0x7f || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
+}
+// Tab, newline and carriage return are whitespace (collapsed to a space below), so they are kept here.
+function withoutControls(text: string): string {
+  let out = '';
+  for (const char of text) if (!isDropped(char.codePointAt(0)!)) out += char;
+  return out;
+}
+const tidy = (text: string) => withoutControls(text).replace(LONE_SURROGATE, '\uFFFD').replace(/\s+/g, ' ').trim();
 // The latest second a transcript may name (the contract's bound for a segment).
 const TIMELINE_MAX = 86_400;
 
@@ -195,6 +206,14 @@ export function withoutTrailingSlashes(address: string): string {
   return address.slice(0, end);
 }
 
+const EXTENSIONS: Record<string, string> = { 'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac' };
+
+// The file name the provider is sent (ADR-0047 point 5): `audio.<extension of the type>`, never a name from the meeting, the
+// recorder or the file. The provider gets the audio and the language hint, nothing else.
+export function neutralFileName(mimeType: string): string {
+  return `audio.${EXTENSIONS[mimeType.split(';')[0]!.trim().toLowerCase()] ?? 'bin'}`;
+}
+
 function kindOf(status: number): TranscriptionErrorKind {
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
@@ -205,9 +224,9 @@ function kindOf(status: number): TranscriptionErrorKind {
 // The provider adapter: one chunk to `${baseURL}/audio/transcriptions`, the answer parsed. Call it through
 // transcribeChunks only: that is what puts it behind the meter (packages/agent/test/meter-coverage.test.ts checks every
 // call of it sits inside metered()). The usage it reports is empty: the meter counts the call; audio seconds come with M4b.
-export async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput): Promise<{ segments: TranscriptSegment[]; usage: { inputTokens: number; outputTokens: number } }> {
+async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput): Promise<{ segments: TranscriptSegment[]; usage: { inputTokens: number; outputTokens: number } }> {
   const form = new FormData();
-  form.set('file', new Blob([input.audio.slice()], { type: input.mimeType }), input.filename);
+  form.set('file', new Blob([input.audio.slice()], { type: input.mimeType }), neutralFileName(input.mimeType));
   form.set('model', config.model);
   form.set('language', input.language);
   form.set('response_format', 'verbose_json');
@@ -236,9 +255,11 @@ export async function transcribeAudio(config: TranscribeConfig, input: Transcrib
   return { segments: parseTranscription(raw, { lengthSeconds: input.lengthSeconds, offsetSeconds: input.offsetSeconds }), usage: { inputTokens: 0, outputTokens: 0 } };
 }
 
-// The chunks of one meeting, one after the other, each admitted by the AI budget meter before its call (a spent budget or
-// an engaged kill switch refuses it with AiBudgetExhaustedError, and no later chunk is sent), merged into one transcript.
-// Needs an AI scope (withAiScope): outside one the call is refused, never sent unmetered.
+// The chunks of one meeting, one after the other, each admitted by the AI budget meter before its call (a spent budget refuses
+// it with AiBudgetExhaustedError, and no later chunk is sent), merged into one transcript. The kernel's meter checks budgets
+// only: the kill switches (the org's, the module's, the agent's and the operator's global `ai`) are checked by the run that M4b
+// adds, at its start and at each admit (ADR-0049 decision 6). Needs an AI scope (withAiScope): outside one the call is
+// refused, never sent unmetered.
 export async function transcribeChunks(config: TranscribeConfig, chunks: readonly TranscribeInput[], onUsage?: AiUsageSink): Promise<TranscriptSegment[]> {
   const done: TranscriptSegment[][] = [];
   for (const chunk of chunks) {

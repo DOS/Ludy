@@ -11,7 +11,8 @@ import {
   mergeChunkTranscripts,
   parseTranscription,
   speakerLabelOf,
-  transcribeAudio,
+  UNMETERED,
+  neutralFileName,
   transcribeChunks,
   withoutTrailingSlashes,
   withAiScope,
@@ -22,6 +23,9 @@ import {
 } from '../src/index.ts';
 
 const WHOLE = { lengthSeconds: 600, offsetSeconds: 0 };
+
+// One chunk through the adapter, the only way in: the meter's door. UNMETERED stands in for a meter that admits everything.
+const run = (config: TranscribeConfig, input: TranscribeInput) => withAiScope({ orgId: 'org-run', meter: UNMETERED }, () => transcribeChunks(config, [input]));
 
 describe('parseTranscription (pure)', () => {
   it('turns segments into validated segments on the meeting timeline, in time order', () => {
@@ -69,6 +73,16 @@ describe('parseTranscription (pure)', () => {
     expect(parseTranscription({ text: 'a\uD83Db' }, WHOLE)[0]!.text).toBe('a\uFFFDb');
     expect(speakerLabelOf('😀'.repeat(100)).length).toBe(160);
     expect(speakerLabelOf('😀'.repeat(100))).toBe(speakerLabelOf('😀'.repeat(100)).toWellFormed());
+  });
+
+  it('strips what the database refuses and what reorders a reader\'s view: NUL and the other C0 controls, DEL, bidi overrides', () => {
+    const [segment] = parseTranscription({ text: 'a\u0000b\u0001c\u007fd\u202Ee\u2066f\u2069g\th\nxong' }, WHOLE);
+    expect(segment!.text).toBe('abcdefg h xong');
+    expect(speakerLabelOf('Lan\u0000\u202E')).toBe('Lan');
+    expect(parseTranscription({ text: '\u0000\u202A' }, WHOLE)).toEqual([]);
+    for (const code of [0, 1, 8, 11, 12, 14, 31, 127, 0x202a, 0x202e, 0x2066, 0x2069]) {
+      expect(parseTranscription({ text: `x${String.fromCharCode(code)}y` }, WHOLE)[0]!.text).toBe('xy');
+    }
   });
 
   it('keeps every time on the timeline the contract allows', () => {
@@ -128,7 +142,7 @@ function fakeProvider(answers: Array<{ status?: number; body?: unknown; raw?: st
   return { seen, config: { baseURL: 'http://stt.test/v1/', apiKey: 'sk-test', model: 'whisper-test', fetch: fetchFake } satisfies TranscribeConfig };
 }
 
-const chunk = (offsetSeconds: number): TranscribeInput => ({ audio: new Uint8Array([1, 2, 3, 4]), filename: 'chunk.ogg', mimeType: 'audio/ogg', language: 'vi', lengthSeconds: 600, offsetSeconds });
+const chunk = (offsetSeconds: number): TranscribeInput => ({ audio: new Uint8Array([1, 2, 3, 4]), mimeType: 'audio/ogg', language: 'vi', lengthSeconds: 600, offsetSeconds });
 
 function recordingMeter(refuseAfter = Number.POSITIVE_INFINITY) {
   const events: string[] = [];
@@ -143,6 +157,23 @@ function recordingMeter(refuseAfter = Number.POSITIVE_INFINITY) {
   };
   return { meter, events, calls };
 }
+
+describe('what the provider is sent', () => {
+  it('names the file by its type alone, never by anything the caller knows', () => {
+    expect(neutralFileName('audio/ogg')).toBe('audio.ogg');
+    expect(neutralFileName('audio/webm;codecs=opus')).toBe('audio.webm');
+    expect(neutralFileName('AUDIO/MPEG')).toBe('audio.mp3');
+    expect(neutralFileName('application/x-evil')).toBe('audio.bin');
+    expect(neutralFileName('')).toBe('audio.bin');
+  });
+
+  it('sends the audio, the model, the language and the format, and nothing about the meeting', async () => {
+    const provider = fakeProvider([{ body: { text: '' } }]);
+    await run(provider.config, { ...chunk(0), mimeType: 'audio/webm' });
+    expect(provider.seen[0]!.fileName).toBe('audio.webm');
+    expect(Object.keys(provider.seen[0]!.fields).sort()).toEqual(['language', 'model', 'response_format', 'temperature']);
+  });
+});
 
 describe('withoutTrailingSlashes', () => {
   it('strips every trailing slash and nothing else, in linear time', () => {
@@ -161,28 +192,28 @@ describe('withoutTrailingSlashes', () => {
 describe('the provider adapter (fake provider)', () => {
   it('posts the chunk to the OpenAI-compatible endpoint with the key, the model and the language, and parses the answer', async () => {
     const provider = fakeProvider([{ body: { text: 'Chào', segments: [{ start: 0, end: 4, text: 'Chào' }] } }]);
-    const result = await transcribeAudio(provider.config, chunk(600));
-    expect(result.segments).toEqual([{ startSeconds: 600, endSeconds: 604, speakerLabel: DEFAULT_SPEAKER, text: 'Chào' }]);
+    const segments = await run(provider.config, chunk(600));
+    expect(segments).toEqual([{ startSeconds: 600, endSeconds: 604, speakerLabel: DEFAULT_SPEAKER, text: 'Chào' }]);
     expect(provider.seen).toHaveLength(1);
     expect(provider.seen[0]).toMatchObject({
       url: 'http://stt.test/v1/audio/transcriptions',
       headers: { authorization: 'Bearer sk-test' },
       fields: { model: 'whisper-test', language: 'vi', response_format: 'verbose_json' },
-      fileName: 'chunk.ogg',
+      fileName: 'audio.ogg',
       fileSize: 4,
     });
   });
 
   it('refuses a body past the cap, declared or streamed, without reading it all', async () => {
     const big = fakeProvider([{ raw: 'x'.repeat(9 * 1024 * 1024) }]);
-    expect(((await transcribeAudio(big.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
+    expect(((await run(big.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
     const declared = { ...fakeProvider([{ body: { text: 'x' } }]).config, fetch: (async () => new Response('{"text":"x"}', { headers: { 'content-length': String(9 * 1024 * 1024) } })) as typeof fetch };
-    expect(((await transcribeAudio(declared, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
+    expect(((await run(declared, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
   });
 
   it('sends no key header when the deployment has none', async () => {
     const provider = fakeProvider([{ body: { text: '' } }]);
-    await transcribeAudio({ ...provider.config, apiKey: null }, chunk(0));
+    await run({ ...provider.config, apiKey: null }, chunk(0));
     expect(provider.seen[0]!.headers).toEqual({});
   });
 
@@ -190,20 +221,20 @@ describe('the provider adapter (fake provider)', () => {
     const cases: Array<[number, string]> = [[401, 'auth'], [403, 'auth'], [429, 'rate_limit'], [503, 'unavailable'], [400, 'invalid_request']];
     for (const [status, kind] of cases) {
       const provider = fakeProvider([{ status, raw: 'SECRET AUDIO TEXT and the prompt' }]);
-      const error = await transcribeAudio(provider.config, chunk(0)).then(() => null, (e: unknown) => e);
+      const error = await run(provider.config, chunk(0)).then(() => null, (e: unknown) => e);
       expect(error).toBeInstanceOf(TranscriptionError);
       expect((error as TranscriptionError).kind).toBe(kind);
       expect((error as TranscriptionError).status).toBe(status);
       expect(String((error as Error).message)).not.toMatch(/SECRET|prompt/);
     }
     const bad = fakeProvider([{ raw: 'not json' }]);
-    expect(((await transcribeAudio(bad.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
+    expect(((await run(bad.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
     const down = fakeProvider([{ throws: new TypeError('connect ECONNREFUSED 10.0.0.1 with secret') }]);
-    const network = (await transcribeAudio(down.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError;
+    const network = (await run(down.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError;
     expect(network.kind).toBe('network');
     expect(network.message).not.toMatch(/secret|10\.0/);
     const slow = fakeProvider([{ throws: Object.assign(new Error('x'), { name: 'TimeoutError' }) }]);
-    expect(((await transcribeAudio(slow.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('timeout');
+    expect(((await run(slow.config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('timeout');
   });
 });
 
