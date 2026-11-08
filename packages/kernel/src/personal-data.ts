@@ -265,6 +265,19 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A meeting's title, which may name a person: deleted with the meeting (its recorder, or an owner for a personal-data request, or the retention job at the text date)",
   },
+  // The transcript (ADR-0047 point 7, issue #2578): what was said and who it is attributed to. A draft is the recorder's alone and
+  // a published line is read by the meeting's readers; neither has a value a finder could match, so neither is searched (kind other).
+  // A person's request is answered by deleting the meeting; the segments go with it (cascade), and the retention job at the text date.
+  'crove_meetings.transcript_segment.text': {
+    kind: 'other',
+    handling: 'erase',
+    reason: 'What was said in a meeting, which may name or describe a person: deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job at the text date)',
+  },
+  'crove_meetings.transcript_segment.speaker_label': {
+    kind: 'other',
+    handling: 'erase',
+    reason: 'The name a transcript line is attributed to (a speaker label, which the recorder may set to a real name): deleted with the meeting',
+  },
   'crove_meetings.media_key.wrapped_key': {
     kind: 'other',
     handling: 'erase',
