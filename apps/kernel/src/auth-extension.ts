@@ -104,7 +104,8 @@ export interface ExtensionExchange {
 // Trades a one-time code and its PKCE verifier for a new token, once. Null for every refusal alike (an unknown, used,
 // expired or wrong code; a member who left). The raw code and token never reach SQL: only their hashes do, and the
 // verifier, which is worthless without the code. The code is bound to the extension it was issued for (#2850): `extensionId`, read by the
-// caller from the Origin header, must be that one, or the answer is null and the code is not spent. The caller audits the exchange (kernel.extension.token.exchanged), which
+// caller from the Origin header, must be that one, or the answer is null and the code is not spent. That is defence in depth against
+// an exchange by another extension in the browser: a client outside the browser that holds the code and the verifier can set any Origin. The caller audits the exchange (kernel.extension.token.exchanged), which
 // needs the new token's actor: the exchange itself runs with no member context and so cannot write an audit row.
 export async function exchangeExtensionCode(db: Db, code: string, verifier: string, extensionId: string): Promise<{ exchange: ExtensionExchange; token: string } | null> {
   if (!CODE_FORMAT.test(code) || !VERIFIER_FORMAT.test(verifier) || !EXTENSION_ID_FORMAT.test(extensionId)) return null;

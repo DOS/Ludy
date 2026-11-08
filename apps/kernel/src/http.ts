@@ -1383,7 +1383,8 @@ export function createHttpApp(deps: HttpDeps) {
       const verifier = input.codeVerifier;
       // The code is bound to the extension it was issued for (#2850): the exchange must come from that extension, which the browser
       // states in the Origin header (chrome-extension://<id>). A missing, malformed, unlisted or different origin gets the same
-      // answer as a wrong code, and the code is not spent.
+      // answer as a wrong code, and the code is not spent. Defence in depth only: a client outside the browser can set any Origin, so PKCE
+      // and the allow-list stay the primary protection.
       const extensionId = extensionIdOfOrigin(c.req.header('origin'));
       if (extensionId === null || !allowedExtensionIds.includes(extensionId)) return refused();
       const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier, extensionId));
