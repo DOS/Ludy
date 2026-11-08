@@ -12,7 +12,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { HrBankFile, HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { PAYROLL_RULES, money } from '@crove/l10n-vn';
@@ -212,12 +212,18 @@ suite('the bank salary file of a pay run (#2532)', () => {
     const member = await upsertIdentity(createDb(pool), { issuer: 'bankfile', subject: `member-${randomUUID()}`, email: `m-${randomUUID()}@bankfile.test`, name: null });
     const viewer = await upsertIdentity(createDb(pool), { issuer: 'bankfile', subject: `viewer-${randomUUID()}`, email: `v-${randomUUID()}@bankfile.test`, name: null });
     await rows(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [orgId, member, viewer]);
+    // Another org's owner, with a fresh second factor, asking for this org's approved run is told it does not exist: no file, no figure.
+    const stranger = await upsertIdentity(createDb(pool), { issuer: 'bankfile', subject: `stranger-${randomUUID()}`, email: `s-${randomUUID()}@bankfile.test`, name: null });
+    const { orgId: otherOrg } = await createOrg(rt, asUser(stranger), `Công ty khác ${randomUUID().slice(0, 6)}`);
+    await expect(rt.query('hr.payroll.bank_file.get', { runId, bankName: 'VCB' }, { actor: asMfa(stranger), orgId: otherOrg })).rejects.toMatchObject({ code: 'HR_RUN_NOT_FOUND', status: 404 });
     for (const who of [member, viewer]) {
       await expect(rt.query('hr.payroll.bank_file.get', { runId, bankName: 'VCB' }, { actor: asMfa(who), orgId })).rejects.toMatchObject({ status: 403 });
     }
   });
 
   it('refuses a run with an adjustment line, one whose total differs from the net pay frozen at approval, and one that is paid or closed, and gives no file (#2532)', async () => {
+    const downloadCount = async () => (await rows(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId])).length;
+    const before = await downloadCount();
     const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [orgId]);
     // A correction of March carried in a June run: its pay lines no longer add up to what the run pays.
     const april = await approvedRun('2026-06', async (id) => {
@@ -226,9 +232,12 @@ suite('the bank salary file of a pay run (#2532)', () => {
     const adjusted = await get(url(april.runId));
     expect(adjusted.status).toBe(422);
     expect(JSON.stringify(await adjusted.json())).toContain('HR_BANK_FILE_ADJUSTMENTS');
+    expect(await downloadCount()).toBe(before);
     // A line changed after approval (a raw session that lifts the freeze, outside the commands): the total is no longer the approved net, so there is no file.
     const may = await approvedRun('2026-07');
     expect((await get(url(may.runId))).status).toBe(200);
+    // The one real download of this test adds exactly one audit row; the refusals around it add none.
+    expect(await downloadCount()).toBe(before + 1);
     await rows(`ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row`);
     await rows(`ALTER TABLE crove_hr.payroll_run DISABLE TRIGGER frozen_row`);
     try {
@@ -244,6 +253,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
       await rows(`ALTER TABLE crove_hr.payroll_run ENABLE ALWAYS TRIGGER frozen_row`);
     }
     // The audit rows of the refused requests are reads only: no download row was written for them.
+    expect(await downloadCount()).toBe(before + 1);
     const downloads = await rows<{ rows: string }>(`SELECT detail->>'rows' AS rows FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId]);
     expect(downloads.every((d) => d.rows === '4')).toBe(true);
   });
