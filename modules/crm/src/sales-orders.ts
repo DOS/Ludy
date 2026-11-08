@@ -66,6 +66,7 @@ interface QuoteForDecision {
   vat_amount: string;
   total: string;
   issuer_entity_id: string | null;
+  sent_at: Date | null;
   buyer_name: string | null;
   buyer_tax_code: string | null;
   buyer_address: string | null;
@@ -75,7 +76,7 @@ interface QuoteForDecision {
 async function loadQuoteForDecision(ctx: Pick<CommandContext, 'trx' | 'orgId'>, quoteId: string): Promise<QuoteForDecision> {
   const quote = await ctx.trx
     .selectFrom('crove_crm.quote')
-    .select(['id', 'deal_id', 'party_id', 'status', 'version', 'valid_until', 'subtotal', 'vat_amount', 'total', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email'])
+    .select(['id', 'deal_id', 'party_id', 'status', 'version', 'valid_until', 'subtotal', 'vat_amount', 'total', 'issuer_entity_id', 'sent_at', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', quoteId)
     .forUpdate()
@@ -111,6 +112,17 @@ export const quoteAccept = defineCommand({
     if (!validDate(acceptedOn) || acceptedOn > today) throw new DomainError('ORDER_DATE_INVALID', 422, 'Ngày khách đồng ý không hợp lệ');
     const quote = await loadQuoteForDecision(ctx, input.quoteId);
     await checkDecidable(ctx, quote, input.version);
+    // The customer cannot say yes before the quote was sent (Vietnam calendar).
+    if (quote.sent_at && acceptedOn < vietnamToday(quote.sent_at)) throw new DomainError('ORDER_DATE_INVALID', 422, 'Ngày khách đồng ý không được trước ngày gửi báo giá');
+    // A newer revision (a draft being written or one already sent) replaces this quote: accepting the old one would freeze a price the seller has withdrawn.
+    const newer = await ctx.trx
+      .selectFrom('crove_crm.quote')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('revises_id', '=', quote.id)
+      .where('status', 'in', ['draft', 'sent'])
+      .executeTakeFirst();
+    if (newer) throw new DomainError('QUOTE_HAS_NEWER_REVISION', 409, 'Báo giá này đã có bản sửa đổi mới; hãy ghi nhận trên bản mới nhất');
     if (!quote.issuer_entity_id || !quote.buyer_name) throw new DomainError('QUOTE_INCOMPLETE', 422, 'Báo giá chưa đủ thông tin người bán và người mua');
     const lines = await ctx.trx
       .selectFrom('crove_crm.quote_line')
@@ -148,15 +160,14 @@ export const quoteAccept = defineCommand({
         vat_amount: quote.vat_amount,
         total: quote.total,
         accepted_via: input.acceptedVia ?? null,
-        confirmed_at: ctx.now,
         created_by: userId,
-        created_at: ctx.now,
-        updated_at: ctx.now,
       })
       .execute()
-      // A second accept of the same quote that raced this one: the unique key lets one in.
+      // A second accept of the same quote that raced this one: the quote's unique key lets one in. A number already taken in the entity's series is another thing.
       .catch((error: unknown) => {
-        if ((error as { code?: string }).code === '23505') throw new DomainError('QUOTE_ALREADY_ACCEPTED', 409, 'Báo giá này đã được ghi nhận chấp nhận');
+        const { code, constraint } = error as { code?: string; constraint?: string };
+        if (code === '23505' && constraint === 'sales_order_quote_uq') throw new DomainError('QUOTE_ALREADY_ACCEPTED', 409, 'Báo giá này đã được ghi nhận chấp nhận');
+        if (code === '23505' && constraint === 'sales_order_number_uq') throw new DomainError('ORDER_NUMBER_TAKEN', 409, 'Số đơn hàng này đã có; hãy thử lại');
         throw error;
       });
     if (lines.length > 0) {

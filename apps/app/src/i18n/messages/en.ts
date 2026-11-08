@@ -8440,6 +8440,8 @@ export const en = {
       QUOTE_LINK_EXPIRED: 'The quote expired long ago; make a revision and send it again.',
       QUOTE_NOT_SENT: 'A link can only be made for a sent quote that has no newer revision.',
       QUOTE_NOT_DECIDABLE: 'Only a sent quote can have the customer’s decision recorded.',
+      QUOTE_HAS_NEWER_REVISION: 'This quote has a newer revision; record the decision on the latest one.',
+      ORDER_NUMBER_TAKEN: 'That order number already exists; try again.',
       QUOTE_ALREADY_ACCEPTED: 'This quote was already recorded as accepted.',
       QUOTE_ALREADY_DECLINED: 'This quote was already recorded as declined.',
       QUOTE_EXPIRED: 'The quote has expired; make a revision and send it again.',

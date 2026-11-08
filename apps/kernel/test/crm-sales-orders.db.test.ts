@@ -295,6 +295,42 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     ).rejects.toMatchObject({ code: '42501' });
   });
 
+  it('refuses a quote with a newer revision and a date before it was sent, and the database refuses an order that does not match its quote or a line added later', async () => {
+    const o = await org();
+    const { quote, deal } = await o.sentQuote(await o.party('Công ty ABC'));
+    // The customer cannot have said yes before the quote went out (Vietnam calendar).
+    await expect(o.accept(o.member, quote, { acceptedOn: '2020-01-01' })).rejects.toMatchObject({ code: 'ORDER_DATE_INVALID' });
+    // A newer revision (here a draft) replaces the quote: it is accepted on the latest one only.
+    await o.exec(o.member, 'crm.quote.revise', { quoteId: quote.id });
+    await expect(o.accept(o.member, quote)).rejects.toMatchObject({ code: 'QUOTE_HAS_NEWER_REVISION', status: 409 });
+    expect(await o.orderCount()).toBe(0);
+
+    // Another sent quote: an order insert must carry the quote's own deal, customer and issuing entity, and the signer's own id.
+    const other = await o.sentQuote(await o.party('Công ty XYZ'));
+    const row = await admin((c) => c.query<{ issuer_entity_id: string; party_id: string; deal_id: string }>('SELECT issuer_entity_id, party_id, deal_id FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, other.quote.id])).then((r) => r.rows[0]!);
+    const insertOrder = (over: Record<string, string>, user = o.member) => {
+      const v = { deal_id: row.deal_id, party_id: row.party_id, issuer_entity_id: row.issuer_entity_id, created_by: user, ...over };
+      return as(o.orgId, user, (c) =>
+        c.query(
+          "INSERT INTO crove_crm.sales_order (org_id, quote_id, deal_id, party_id, issuer_entity_id, number, order_date, buyer_name, created_by) VALUES ($1, $2, $3, $4, $5, $6, '2026-11-01', 'x', $7)",
+          [o.orgId, other.quote.id, v.deal_id, v.party_id, v.issuer_entity_id, `DH-X-${randomUUID().slice(0, 6)}`, v.created_by],
+        ),
+      );
+    };
+    await expect(insertOrder({ deal_id: deal.id })).rejects.toMatchObject({ code: '42501' });
+    await expect(insertOrder({ created_by: o.owner })).rejects.toMatchObject({ code: '42501' });
+    await expect(insertOrder({})).resolves.toBeDefined();
+
+    // A line cannot be added to an order made earlier: only in the transaction that made it.
+    const done = await o.sentQuote(await o.party('Công ty DEF'));
+    const decided = await o.accept(o.member, done.quote);
+    await expect(
+      as(o.orgId, o.member, (c) =>
+        c.query("INSERT INTO crove_crm.sales_order_line (org_id, order_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 99, 'item', 'late', '1', '1', '10%', '1', '0.1')", [o.orgId, decided.orderId]),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
   it('keeps orders to their org', async () => {
     const a = await org();
     const b = await org();

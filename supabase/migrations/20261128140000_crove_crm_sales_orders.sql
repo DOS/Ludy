@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS crove_crm.sales_order (
   CONSTRAINT sales_order_total_check CHECK (total = subtotal + vat_amount),
   CONSTRAINT sales_order_cancel_check CHECK ((status = 'cancelled') = (cancelled_at IS NOT NULL) AND (cancel_reason IS NULL OR status = 'cancelled')),
   CONSTRAINT sales_order_quote_uq UNIQUE (org_id, quote_id),
-  CONSTRAINT sales_order_number_uq UNIQUE (org_id, number),
+  CONSTRAINT sales_order_number_uq UNIQUE (org_id, issuer_entity_id, number),
   CONSTRAINT sales_order_quote_fk FOREIGN KEY (org_id, quote_id) REFERENCES crove_crm.quote (org_id, id) ON DELETE RESTRICT,
   CONSTRAINT sales_order_deal_fk FOREIGN KEY (org_id, deal_id) REFERENCES crove_crm.deal (org_id, id) ON DELETE RESTRICT,
   CONSTRAINT sales_order_party_fk FOREIGN KEY (org_id, party_id) REFERENCES crove_kernel.party (org_id, id) ON DELETE RESTRICT,
@@ -61,13 +61,16 @@ SELECT crove_kernel.apply_tenant_rls('crove_crm.sales_order');
 -- A person never changes what the order froze: only the cancellation (and the bookkeeping that goes with a change) is theirs.
 REVOKE UPDATE, DELETE ON crove_crm.sales_order FROM crove_tenant;
 GRANT UPDATE (status, cancelled_at, cancel_reason, version, updated_by, updated_at) ON crove_crm.sales_order TO crove_tenant;
--- Owners, admins and members write orders; a viewer only reads. An order is inserted as confirmed and not cancelled. That it is made for a sent quote of the same deal and customer is
--- the accept command's check, and the quote's guard holds the other side: a quote becomes accepted only when its order exists.
+-- Owners, admins and members write orders; a viewer only reads. An order is inserted as confirmed and not cancelled. The policy holds that it is made by the person who
+-- signs it, for a sent quote, with the quote's own deal, customer and issuing entity; the quote's guard holds the other side: a quote becomes accepted only when its order exists.
 DROP POLICY IF EXISTS sales_order_insert ON crove_crm.sales_order;
 CREATE POLICY sales_order_insert ON crove_crm.sales_order AS RESTRICTIVE FOR INSERT TO crove_tenant
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR (EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = sales_order.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))
-      AND sales_order.status = 'confirmed' AND sales_order.cancelled_at IS NULL AND sales_order.cancel_reason IS NULL));
+      AND sales_order.created_by = (SELECT crove_kernel.ctx_user_id())
+      AND sales_order.status = 'confirmed' AND sales_order.cancelled_at IS NULL AND sales_order.cancel_reason IS NULL
+      AND EXISTS (SELECT 1 FROM crove_crm.quote q WHERE q.org_id = sales_order.org_id AND q.id = sales_order.quote_id AND q.status = 'sent'
+        AND q.deal_id = sales_order.deal_id AND q.party_id = sales_order.party_id AND q.issuer_entity_id = sales_order.issuer_entity_id)));
 DROP POLICY IF EXISTS sales_order_update ON crove_crm.sales_order;
 CREATE POLICY sales_order_update ON crove_crm.sales_order AS RESTRICTIVE FOR UPDATE TO crove_tenant
   USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
@@ -140,13 +143,15 @@ CREATE TABLE IF NOT EXISTS crove_crm.sales_order_line (
 );
 -- The order's own foreign key is backed by the unique index (org_id, order_id, line_no).
 SELECT crove_kernel.apply_tenant_rls('crove_crm.sales_order_line');
--- A line is the frozen copy made with its order: inserted, never changed or removed by a tenant role (APPEND_ONLY in the RLS matrix).
+-- A line is the frozen copy made with its order: inserted only for an order made in the same transaction (its created_at is the transaction's now()), never changed or
+-- removed by a tenant role (APPEND_ONLY in the RLS matrix), so no line can be added to an order later.
 REVOKE UPDATE, DELETE ON crove_crm.sales_order_line FROM crove_tenant;
 DROP POLICY IF EXISTS sales_order_line_insert ON crove_crm.sales_order_line;
 CREATE POLICY sales_order_line_insert ON crove_crm.sales_order_line AS RESTRICTIVE FOR INSERT TO crove_tenant
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR (EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = sales_order_line.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))
-      AND EXISTS (SELECT 1 FROM crove_crm.sales_order o WHERE o.org_id = sales_order_line.org_id AND o.id = sales_order_line.order_id AND o.status = 'confirmed')));
+      AND EXISTS (SELECT 1 FROM crove_crm.sales_order o WHERE o.org_id = sales_order_line.org_id AND o.id = sales_order_line.order_id AND o.status = 'confirmed'
+        AND o.created_at = pg_catalog.now())));
 
 -- ---------------------------------------------------------------------------
 -- 3. The decision step of the quote
