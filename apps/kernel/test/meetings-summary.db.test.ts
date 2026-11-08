@@ -58,7 +58,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     await exec(who, 'kernel.member_vy.result.store', { runId: started.runId, outcome: { status: 'ready', body: typeof body === 'string' ? body : JSON.stringify(body) } });
     return started.runId;
   }
-  type Results = { draft: { summary: string; decisions: string[]; feature: string; tainted: boolean } | null; published: unknown; items: Array<{ title: string; who: string; whoUserId: string | null; when: string; whenDate: string | null; transcriptSeconds: number | null; flags: string[]; tainted: boolean; stage: string }> };
+  type Results = { draft: { id: string; summary: string; decisions: string[]; feature: string; tainted: boolean } | null; published: unknown; items: Array<{ id: string; title: string; who: string; whoUserId: string | null; when: string; whenDate: string | null; transcriptSeconds: number | null; flags: string[]; tainted: boolean; stage: string }> };
   const results = (who: string, meetingId: string) => query<Results>(who, 'meetings.result.get', { meetingId });
   const BODY = {
     summary: 'Cuộc họp bàn báo giá cho khách A.',
@@ -153,6 +153,42 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId: fourth, runId: await finishedRun('recorder', fourth, { summary: 'x', decisions: [], items: [{ title: 'y', who: '', when: '', seconds: -1 }], dropped: 0 }) }))).toBe('SUMMARY_RESULT_INVALID');
   });
 
+  it('refuses a run that another member started for the same meeting, and a run of a second real org where the same user is also a member', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    // The attendee's own Vy run for this very meeting, finished: sealed to the attendee, so the recorder cannot read it, let alone copy it.
+    const theirs = await finishedRun('attendee', meetingId, BODY);
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: theirs }))).toBe('SUMMARY_RESULT_NOT_FOUND');
+    expect((await results('recorder', meetingId)).draft).toBeNull();
+    // A second real org, where the recorder is a member too, with a meeting of its own and a finished summary run of the recorder's there.
+    const other = (await createOrg(runtime, asUser('stranger'), 'Org thứ hai')).orgId;
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [other, users.recorder]);
+    const foreignMeeting = randomUUID();
+    await sqlAdmin(
+      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+       VALUES ($1, $2, 'Họp org khác', 'vi', now(), now(), 60, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+      [other, foreignMeeting, users.recorder],
+    );
+    const started = await runtime.execute<{ runId: string }>('kernel.member_vy.run.start', { feature: 'meetings.summary', subjectType: 'meeting', subjectId: foreignMeeting }, { actor: asUser('recorder'), orgId: other });
+    await runtime.execute('kernel.member_vy.result.store', { runId: started.runId, outcome: { status: 'ready', body: JSON.stringify(BODY) } }, { actor: asUser('recorder'), orgId: other });
+    // In this org the run does not exist (the read is scoped to the org of the request), for this meeting and for the other org's meeting alike.
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: started.runId }))).toBe('SUMMARY_RESULT_NOT_FOUND');
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId: foreignMeeting, runId: started.runId }))).toBe('MEETING_NOT_FOUND');
+    expect((await results('recorder', meetingId)).draft).toBeNull();
+    // And in its own org the same run copies.
+    expect(await runtime.execute('meetings.summary.copy_result', { meetingId: foreignMeeting, runId: started.runId }, { actor: asUser('recorder'), orgId: other })).toMatchObject({ items: 3 });
+  });
+
+  it('copies a run once: a second copy, before or after the review, is refused and duplicates nothing', async () => {
+    const meetingId = await seedMeeting('recorder', []);
+    const runId = await finishedRun('recorder', meetingId, BODY);
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId });
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId }))).toBe('SUMMARY_ALREADY_COPIED');
+    const view = await results('recorder', meetingId);
+    await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [view.draft?.id as string, ...view.items.map((i) => i.id)] });
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId }))).toBe('SUMMARY_ALREADY_COPIED');
+    expect((await results('recorder', meetingId)).items).toHaveLength(3);
+  });
+
   it('is off until the deployment turns it on', async () => {
     const meetingId = await seedMeeting('recorder', []);
     const runId = await finishedRun('recorder', meetingId, BODY);
@@ -189,9 +225,15 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
     expect(await refuses(sqlAdmin(`UPDATE crove_meetings.action_item SET stage = 'published' WHERE meeting_id = $1`, [meetingId]))).toBe('42501');
     // Only the recorder reviews, and only with their own explicit confirmation.
-    expect(await refuses(exec('attendee', 'meetings.draft.review', { meetingId, confirmed: true }))).toBe('FORBIDDEN');
-    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId }))).not.toBeNull();
-    expect(await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true })).toEqual({ meetingId, cleared: 4 });
+    const shown = await results('recorder', meetingId);
+    const ids = [shown.draft?.id as string, ...shown.items.map((i) => i.id)];
+    expect(await refuses(exec('attendee', 'meetings.draft.review', { meetingId, confirmed: true, ids }))).toBe('FORBIDDEN');
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, ids }))).not.toBeNull();
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [] }))).not.toBeNull();
+    // Only the rows named lose the mark: the summary and one item here, the other items still wait, and so does the share.
+    expect(await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [ids[0] as string, ids[1] as string] })).toEqual({ meetingId, cleared: 2 });
+    expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
+    expect(await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids })).toEqual({ meetingId, cleared: 2 });
     const view = await results('recorder', meetingId);
     expect(view.draft?.tainted).toBe(false);
     expect(view.items.every((i) => !i.tainted)).toBe(true);

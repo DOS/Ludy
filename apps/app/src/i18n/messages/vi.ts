@@ -8661,6 +8661,7 @@ export const vi = {
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
+      SUMMARY_ALREADY_COPIED: 'Bản tóm tắt này đã được chép vào bản nháp của bạn.',
       SUMMARY_OFF: 'Hệ thống này chưa bật tính năng Vy tóm tắt. Hãy tự viết bản tóm tắt.',
       SUMMARY_RESULT_INVALID: 'Không đọc được kết quả tóm tắt. Hãy nhờ Vy tóm tắt lại.',
       SUMMARY_RESULT_NOT_FOUND: 'Cuộc họp này chưa có kết quả tóm tắt.',

@@ -142,6 +142,16 @@ export const summaryCopyResult = defineCommand({
     const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
     const people = profiles.map((p) => ({ userId: p.user_id, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
 
+    // One copy of a run: a run already copied (its rows carry its id, read or not) is not copied again, which would duplicate its items.
+    const already = await ctx.trx
+      .selectFrom('crove_meetings.action_item')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .where('source_run_id', '=', input.runId)
+      .unionAll(ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId))
+      .executeTakeFirst();
+    if (already) throw new DomainError('SUMMARY_ALREADY_COPIED', 409, 'This summary was already copied into the draft');
     // The earlier model-written drafts go (the recorder asked for a new run); what the recorder typed, or read and kept, stays, and a summary of theirs that is
     // still there is not replaced: they share it or save over it first.
     await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
@@ -220,7 +230,7 @@ export const draftReview = defineCommand({
     userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userOf(ctx.actor)) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can review its draft');
-    const { rows } = await sql<{ n: number }>`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, NULL::uuid) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: number }>`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(input.ids)}::uuid[]) AS n`.execute(ctx.trx);
     const cleared = rows[0]?.n ?? 0;
     ctx.audit({ meetingId: input.meetingId, count: cleared });
     return zDraftReviewed.parse({ meetingId: input.meetingId, cleared });

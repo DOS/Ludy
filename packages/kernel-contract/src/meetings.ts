@@ -392,5 +392,6 @@ export const zSummaryResult = z.strictObject({
 export type SummaryResult = z.infer<typeof zSummaryResult>;
 
 // The recorder's explicit review of the draft Vy wrote: `confirmed: true` is their own click, never defaulted. Only then can the draft be shared.
-export const zDraftReview = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
+// `ids` are the rows the screen showed (the summary and the items): only those lose the mark, so a row copied in another tab after the recorder looked keeps it.
+export const zDraftReview = z.strictObject({ meetingId: zId, confirmed: z.literal(true), ids: z.array(zId).min(1).max(ITEMS_PER_MEETING_MAX + 1) });
 export const zDraftReviewed = z.strictObject({ meetingId: zId, cleared: z.number().int().min(0) });
