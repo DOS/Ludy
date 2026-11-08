@@ -96,6 +96,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/calendar-feed.ts': { modules: ['social'], why: 'the post calendar feed, served only when social is installed (http.ts)' },
   'apps/kernel/src/crm-worker.ts': { modules: ['crm'], why: 'the contact import staging sweep, worked and scheduled only when crm is installed (worker.ts)' },
   'apps/kernel/src/credential-reseal.ts': { modules: ['meetings', 'social'], why: 'the chat alert targets are resealed only when social is installed; media keys are resealed only when meetings is installed; the channel credentials are kernel work' },
+  'apps/kernel/src/marketplace-retention.ts': { modules: ['finance'], why: "the nightly deletion of the original file and the per-order amounts of a decided marketplace report (#2516, ADR-0045 point 8): the worker-only crove_finance definers, run only when finance is installed (worker.ts)" },
   'apps/kernel/src/meetings-retention.ts': { modules: ['meetings'], why: "the nightly shred of meeting audio, video and text and the sweep of their objects, the shred references and their replay (#2579): the worker-only crove_meetings definers, worked, timed and replayed only when meetings is installed (worker.ts, kernel.ts)" },
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
