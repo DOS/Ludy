@@ -152,16 +152,23 @@ export function agentRuntime(runtime: Runtime, orgId: string, actor: AgentActor)
     orgId,
     agentId: bound.agentId,
     runId: bound.runId,
-    // No idempotency key: the stored response of a command is a value object, which the audit and key rows of member mode never hold (ADR-0049
-    // decision 4). A retried store is safe without one: it rewrites its own result with the same status.
-    execute: <O = unknown>(name: string, input: unknown) => runtime.execute<O>(name, input, { actor: bound, orgId }),
+    execute: <O = unknown>(name: string, input: unknown, options?: { idempotencyKey?: string }) =>
+      runtime.execute<O>(name, input, { actor: bound, orgId, ...(options?.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}) }),
     query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
   });
 }
 
 // What the background run of one member's Vy gets (ADR-0049): commands and queries bound to its member-scoped agent actor, org and run, as
 // AgentRuntime is for an org-chart agent. It holds no Runtime, so the run cannot act as another actor, in another org or as another run.
-export type MemberVyRuntime = AgentRuntime;
+// The facade of a member's background run: AgentRuntime without an idempotency key (the stored response of a command is a value object, which the
+// audit and key rows of member mode never hold; ADR-0049 decision 4).
+export interface MemberVyRuntime {
+  readonly orgId: string;
+  readonly agentId: string;
+  readonly runId: string;
+  execute<O = unknown>(name: string, input: unknown): Promise<O>;
+  query<O = unknown>(name: string, input: unknown): Promise<O>;
+}
 
 // The MemberVyRuntime of one run: a frozen object whose methods close over the runtime and a copy of the actor, always flagged memberVy.
 export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<AgentActor, 'agentId' | 'runId'>): MemberVyRuntime {
