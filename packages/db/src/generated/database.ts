@@ -138,6 +138,7 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
+  'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
   'crove_kernel.member_vy_memory': KernelMemberVyMemoryTable;
   'crove_kernel.member_vy_result': KernelMemberVyResultTable;
   'crove_kernel.notification': KernelNotificationTable;
@@ -149,6 +150,8 @@ export interface CroveKernelSchema {
   'crove_kernel.org_usage': KernelOrgUsageTable;
   'crove_kernel.outbox_event': KernelOutboxEventTable;
   'crove_kernel.party': KernelPartyTable;
+  'crove_kernel.permission_catalog': KernelPermissionCatalogTable;
+  'crove_kernel.permission_default': KernelPermissionDefaultTable;
   'crove_kernel.position': KernelPositionTable;
   'crove_kernel.proposal': KernelProposalTable;
   'crove_kernel.proposal_policy': KernelProposalPolicyTable;
@@ -2112,6 +2115,18 @@ export interface KernelMemberInviteTable {
   role_scope: ColumnType<string | null, never, NotGranted>;
 }
 
+/** crove_kernel.member_permission_override */
+export interface KernelMemberPermissionOverrideTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  permission: ColumnType<string, NotGranted, NotGranted>;
+  allowed: ColumnType<boolean, NotGranted, NotGranted>;
+  set_by: ColumnType<string, NotGranted, NotGranted>;
+  set_by_owner: ColumnType<boolean, NotGranted, NotGranted>;
+  set_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
 /** crove_kernel.member_vy_memory */
 export interface KernelMemberVyMemoryTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2260,6 +2275,19 @@ export interface KernelPartyTable {
   search: ColumnType<string | null, never, never>;
   duplicate_of: string | null;
   company_id: string | null;
+}
+
+/** crove_kernel.permission_catalog */
+export interface KernelPermissionCatalogTable {
+  permission: ColumnType<string, NotGranted, NotGranted>;
+  grantable_to_viewer: ColumnType<boolean, NotGranted, NotGranted>;
+  entity_roles_count: ColumnType<boolean, NotGranted, NotGranted>;
+}
+
+/** crove_kernel.permission_default */
+export interface KernelPermissionDefaultTable {
+  base_role: ColumnType<string, NotGranted, NotGranted>;
+  permission: ColumnType<string, NotGranted, NotGranted>;
 }
 
 /** crove_kernel.position */
