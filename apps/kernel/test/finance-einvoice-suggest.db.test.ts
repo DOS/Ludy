@@ -234,6 +234,10 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     // The buyer's name comes from the record, and the invoice's own tax code and address stay while the record has none; once it has, the record's win (#2883): an address changed since is not lost.
     expect((await previous(o, hoa)).invoice?.buyer).toMatchObject({ name: 'Công ty Hoa Mai', taxCode: VALID_TAX_CODE, address: '1 Phố Thử, Hà Nội' });
     await admin((c) => c.query("UPDATE crove_kernel.party SET tax_code = $3, address = '7 Phố Mới, Hà Nội' WHERE org_id = $1 AND id = $2", [o.orgId, hoa, VALID_TAX_CODE]));
+    // A record value longer than the form's field is not used (the response would not pass its own contract): the invoice's own value stands.
+    await admin((c) => c.query('UPDATE crove_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, hoa, 'x'.repeat(600), 'y'.repeat(300)]));
+    expect((await previous(o, hoa)).invoice?.buyer).toMatchObject({ address: '1 Phố Thử, Hà Nội', email: null });
+    await admin((c) => c.query("UPDATE crove_kernel.party SET address = '7 Phố Mới, Hà Nội', email = NULL WHERE org_id = $1 AND id = $2", [o.orgId, hoa]));
     const got = (await previous(o, hoa)).invoice;
     expect(got).toMatchObject({ draftId: newer.id, buyer: { kind: 'business', partyId: hoa, name: 'Công ty Hoa Mai', taxCode: VALID_TAX_CODE, address: '7 Phố Mới, Hà Nội' } });
     expect(got?.lines).toEqual([expect.objectContaining({ description: 'Hàng A', quantity: '2', unitPrice: '100000', vatRate: '10%', vatAllowed: true })]);

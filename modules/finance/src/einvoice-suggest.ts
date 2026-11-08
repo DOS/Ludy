@@ -160,7 +160,11 @@ export const einvoicePreviousInvoice = defineQuery({
       await sql<{ name: string | null; tax_code: string | null; address: string | null; email: string | null }>`
         SELECT p.name, p.tax_code, p.address, p.email FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${input.buyerPartyId}`.execute(ctx.trx)
     ).rows[0];
-    const pick = (fresh: string | null | undefined, held: string | null): string | null => (fresh && fresh.trim() !== '' ? fresh : held);
+    // A record value that is empty or longer than the field of the form takes (the party tables allow far longer ones than a draft) is not used: the invoice's own value stands.
+    const pick = (fresh: string | null | undefined, held: string | null, max: number): string | null => {
+      const value = fresh?.trim() ?? '';
+      return value !== '' && value.length <= max ? value : held;
+    };
     const allowed = salesVatRatesOn(input.date);
     const date = typeof draft.invoice_date === 'string' ? draft.invoice_date : new Date(draft.invoice_date).toISOString().slice(0, 10);
     return {
@@ -171,10 +175,10 @@ export const einvoicePreviousInvoice = defineQuery({
         buyer: {
           kind: draft.buyer_kind,
           partyId: draft.buyer_party_id,
-          taxCode: pick(party?.tax_code, draft.buyer_tax_code),
-          name: pick(party?.name, draft.buyer_name),
-          address: pick(party?.address, draft.buyer_address),
-          email: pick(party?.email, draft.buyer_email),
+          taxCode: pick(party?.tax_code, draft.buyer_tax_code, 20),
+          name: pick(party?.name, draft.buyer_name, 400),
+          address: pick(party?.address, draft.buyer_address, 500),
+          email: pick(party?.email, draft.buyer_email, 254),
         },
         lines: rows.map((r) => ({ description: r.description, unit: r.unit, quantity: plain(r.quantity), unitPrice: plain(r.unit_price), vatRate: r.vat_rate, vatAllowed: allowed.includes(r.vat_rate) })),
       },
