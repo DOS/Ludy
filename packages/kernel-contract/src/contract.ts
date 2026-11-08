@@ -191,7 +191,7 @@ import {
 } from './schemas.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -331,6 +331,21 @@ import {
   zTranscribeStarted,
   zTranscribeStatus,
   zTranscriptCopy,
+  zActionItemAccept,
+  zActionItemAccepted,
+  zActionItemAcceptClean,
+  zActionItemCreate,
+  zActionItemCreated,
+  zActionItemDeleted,
+  zActionItemEdit,
+  zActionItemRef,
+  zActionItemSource,
+  zActionItemsAccepted,
+  zMeetingResultSave,
+  zMeetingResultSaved,
+  zMeetingResults,
+  zResultPublish,
+  zResultPublished,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -791,6 +806,20 @@ export const contract = {
       start: oc.input(zTranscribeStart).output(zTranscribeStarted),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
+    },
+    // The summary, the decisions and the action items (#2580): the recorder's drafts, published by one click to the meeting's readers, and the tasks made from items.
+    results: {
+      get: oc.input(zMeetingRef).output(zMeetingResults),
+      saveSummary: oc.input(zMeetingResultSave).output(zMeetingResultSaved),
+      publish: oc.input(zResultPublish).output(zResultPublished),
+    },
+    actionItems: {
+      create: oc.input(zActionItemCreate).output(zActionItemCreated),
+      edit: oc.input(zActionItemEdit).output(zActionItemCreated),
+      delete: oc.input(zActionItemRef).output(zActionItemDeleted),
+      accept: oc.input(zActionItemAccept).output(zActionItemAccepted),
+      acceptClean: oc.input(zActionItemAcceptClean).output(zActionItemsAccepted),
+      source: oc.input(zActionItemRef).output(zActionItemSource),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
@@ -1829,6 +1858,9 @@ export const contract = {
       // The coworker's proposal for the form from a text a person typed (#2505): lines, the VAT rate the text states, and the buyer from the org's customers. Owners, admins and members. Read only;
       // the model is asked outside any transaction, and an answer with a figure or a rate the text or the date does not allow is refused (ai: refused).
       suggest: oc.input(zEInvoiceSuggestInput).output(zEInvoiceSuggested),
+      // The previous issued invoice to a customer, to copy with no model (#2721): the buyer and the lines it held, each line marked with whether its VAT rate is still allowed on the date given.
+      // `invoice: null` when the customer has none in the books the caller may see. Owners, admins and members.
+      previousInvoice: oc.input(zEInvoicePreviousInput).output(zEInvoicePrevious),
     },
   },
   // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.

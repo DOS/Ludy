@@ -880,6 +880,19 @@ export function createRpcHandler(
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
       },
+      results: {
+        get: os.meetings.results.get.handler(meetingsQuery('meetings.result.get')),
+        saveSummary: os.meetings.results.saveSummary.handler(meetingsCommand('meetings.summary.save')),
+        publish: os.meetings.results.publish.handler(meetingsCommand('meetings.result.publish')),
+      },
+      actionItems: {
+        create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),
+        edit: os.meetings.actionItems.edit.handler(meetingsCommand('meetings.action_item.edit')),
+        delete: os.meetings.actionItems.delete.handler(meetingsCommand('meetings.action_item.delete')),
+        accept: os.meetings.actionItems.accept.handler(meetingsCommand('meetings.action_item.accept')),
+        acceptClean: os.meetings.actionItems.acceptClean.handler(meetingsCommand('meetings.action_item.accept_clean')),
+        source: os.meetings.actionItems.source.handler(meetingsQuery('meetings.action_item.source')),
+      },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
         remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),
@@ -2477,6 +2490,7 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
+        previousInvoice: os.einvoice.drafts.previousInvoice.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.previous_invoice', input, { actor, orgId }))),
         suggest: os.einvoice.drafts.suggest.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             const source = await runtime.query<EInvoiceSuggestSource>('finance.einvoice_draft.suggest_source', input, { actor, orgId });

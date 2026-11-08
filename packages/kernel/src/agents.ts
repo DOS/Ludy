@@ -716,6 +716,39 @@ export const createTaskFromTodo = defineCommand({
   },
 });
 
+// A task made from an action item of a meeting (meetings plan docs/plan/meetings.md section 5.3, issue #2580): the meetings module runs this inside its
+// meetings.action_item.accept command (ctx.run), so the task and the item's change commit together. The task takes the title the person confirmed,
+// the due date and the seat they picked, the rules of kernel.task.create (an archived seat is refused with POSITION_ARCHIVED) and a `meetings.action_item`
+// source_ref this command sets itself from the item's id; `tainted` stays set while the model's text is unedited. The description is always empty: a
+// task is read by every member, and the transcript is never copied into it. No RPC route reaches it (the meetings command reads the item, and checks
+// that the person may accept it, first).
+export const createTaskFromMeeting = defineCommand({
+  name: 'kernel.task.create_from_meeting',
+  input: z.strictObject({
+    itemId: zId,
+    title: zTaskTitle,
+    positionId: zId,
+    due: z.iso.datetime({ offset: true }).nullable(),
+    tainted: z.boolean(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'meetings.action_item', id: input.itemId },
+      tainted: input.tainted,
+    });
+    ctx.audit({ taskId: created.taskId, itemId: input.itemId, positionId: input.positionId });
+    return created;
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -2086,6 +2119,7 @@ export const agentCommands = [
   releaseKillSwitch,
   createTask,
   createTaskFromTodo,
+  createTaskFromMeeting,
   updateTask,
   checkoutTask,
   commentTask,
