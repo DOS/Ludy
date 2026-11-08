@@ -379,6 +379,8 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
     const write = await store.beginStagedWrite!(`org/${orgId}`);
     for (let at = 0; at < bytes.length; at += 1_500_000) await write.write(bytes.subarray(at, at + 1_500_000));
     const stored = await write.commit(({ sha256 }) => fileKey(orgId, sha256), 'video/webm');
+    // What the commit sent, before the checks below read the object back through the same store.
+    const committed = [...sent];
     expect(stored.sha256).toBe(sha256Hex(bytes));
     expect(stored.size).toBe(bytes.length);
     expect(stored.key).toBe(fileKey(orgId, sha256Hex(bytes)));
@@ -388,8 +390,8 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
     expect(stored.generation).toBe(`s3:${head.VersionId}`);
     expect(Buffer.from(await readVerified(store, { key: stored.key, generation: stored.generation, sha256: stored.sha256 })).equals(bytes)).toBe(true);
     // The staging object is deleted after the copy (the last command), and nothing is left to abort.
-    expect(sent).toContain('CopyObjectCommand');
-    expect(sent.at(-1)).toBe('DeleteObjectCommand');
+    expect(committed).toContain('CopyObjectCommand');
+    expect(committed.at(-1)).toBe('DeleteObjectCommand');
     // The same bytes again (a retry): accepted, and it records the version that already holds them.
     const again = await store.beginStagedWrite!(`org/${orgId}`);
     await again.write(bytes);
