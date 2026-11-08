@@ -27,6 +27,8 @@ export const crmManifest = defineModule({
       quote_setting: columns(['org_id', 'id', 'valid_days', 'default_vat', 'set_by', 'created_at', 'updated_at', 'logo_file_id'], { default_terms: 'pii', phone: 'contact', email: 'contact', bank_note: 'payment' }),
       // The sales order of an accepted quote (#2696, ADR-0050): the buyer snapshot is frozen from the quote and classed as the quote's is; the cancel reason is free text.
       sales_order: columns(['org_id', 'id', 'quote_id', 'deal_id', 'party_id', 'issuer_entity_id', 'number', 'order_date', 'status', 'subtotal', 'vat_amount', 'total', 'accepted_via', 'confirmed_at', 'cancelled_at', 'version', 'created_by', 'created_at', 'updated_by', 'updated_at'], { buyer_name: 'pii', buyer_tax_code: 'national_id_if_individual', buyer_address: 'contact', buyer_email: 'contact', cancel_reason: 'pii' }),
+      // The delivery of a sales order line or its reversal (#2697, ADR-0050 point 4): ids, a line number, a kind and a day; no text.
+      sales_order_delivery: columns(['org_id', 'id', 'order_id', 'line_no', 'kind', 'delivered_on', 'reverses_id', 'reverses_kind', 'created_by', 'created_at']),
       sales_order_line: columns(['org_id', 'id', 'order_id', 'line_no', 'kind', 'unit', 'quantity', 'unit_price', 'discount_percent', 'vat_rate', 'amount', 'vat_amount', 'stock_item_id'], { description: 'pii' }),
     },
   },

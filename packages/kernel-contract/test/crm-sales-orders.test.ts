@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The sales order inputs and the hand-off schema (#2696, ADR-0050): an accept names a quote and the version the caller read, a date is a day, how the yes arrived is one of
-// five, a cancellation needs a reason, and the hand-off carries decimal strings only.
+// five, a cancellation needs a reason, a delivery names a line (and a day, if given) and nothing else, and the hand-off carries decimal strings only.
 import { describe, expect, it } from 'vitest';
-import { QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, zQuoteAccept, zQuoteDecline, zSalesOrderCancel, zSalesOrderHandoff, zSalesOrderListQuery } from '../src/crm-sales-orders.ts';
+import { QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, zQuoteAccept, zQuoteDecline, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderUndeliver } from '../src/crm-sales-orders.ts';
 
 const id = () => crypto.randomUUID();
 
@@ -60,5 +60,24 @@ describe('the hand-off to Kế toán', () => {
   it('holds money as strings: a number is refused', () => {
     expect(zSalesOrderHandoff.safeParse({ ...handoff, total: 3300000 }).success).toBe(false);
     expect(zSalesOrderHandoff.safeParse({ ...handoff, lines: [{ ...line, amount: 3000000 }] }).success).toBe(false);
+  });
+});
+
+describe('delivery inputs (#2697)', () => {
+  it('names an order and a line, with a day if the goods left on another one', () => {
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 1 }).success).toBe(true);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 3, deliveredOn: '2026-11-08' }).success).toBe(true);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id() }).success).toBe(false);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 0 }).success).toBe(false);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 101 }).success).toBe(false);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 1.5 }).success).toBe(false);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 1, deliveredOn: '08/11/2026' }).success).toBe(false);
+  });
+
+  it('takes nothing a delivery does not carry: no quantity (whole lines only), no stock item', () => {
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 1, quantity: '1' }).success).toBe(false);
+    expect(zSalesOrderDeliver.safeParse({ orderId: id(), lineNo: 1, stockItemId: id() }).success).toBe(false);
+    expect(zSalesOrderUndeliver.safeParse({ orderId: id(), lineNo: 1 }).success).toBe(true);
+    expect(zSalesOrderUndeliver.safeParse({ orderId: id(), lineNo: 1, deliveredOn: '2026-11-08' }).success).toBe(false);
   });
 });
