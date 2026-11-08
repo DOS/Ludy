@@ -14,6 +14,7 @@ import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, EXPORT_TABLES, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
+import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 
@@ -138,8 +139,8 @@ suite('meeting media file rows are visible to readers only (#2874, ADR-0047)', (
       return {
         db,
         runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-          commands: [...kernelCommands],
-          queries: [...kernelQueries({ inboundDomain: 'in.test' })],
+          commands: [...kernelCommands, ...financeCommands],
+          queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
         }),
       };
     };
