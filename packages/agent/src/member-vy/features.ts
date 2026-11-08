@@ -6,4 +6,6 @@
 export const MEMBER_VY_FEATURE_TABLE = {
   'notes.summary': { module: 'notes', expiryMinutes: 30 },
   'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+  // The recorder's Vy transcribing one meeting in the background (#2578, M4b): the longest run, the kernel's 4 hour cap.
+  'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
 } as const;

@@ -29,6 +29,8 @@ const STORE_WRITES = [
 export const MEMBER_VY_FEATURES = {
   'notes.summary': { module: 'notes', expiryMinutes: 30 },
   'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+  // The recorder's Vy transcribing one meeting in the background (#2578, M4b): the longest run, so the 4 hour cap of the kernel.
+  'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
@@ -399,5 +401,93 @@ export const memberVyMeterRecord = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord];
-export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck];
+// The worker closes the run of a member's background Vy after the member-mode store wrote the result (the context of a member never writes ai_run):
+// the system command of the worker login, through crove_kernel.member_vy_run_finish, which refuses every other caller and answers whether it closed a
+// run that was still running. The status and the code are fixed words, never text (the definer checks the code's shape).
+export const memberVyRunFinish = defineCommand({
+  name: 'kernel.member_vy.run.finish',
+  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
+  handler: async (ctx, input): Promise<{ closed: boolean }> => {
+    const { rows } = await sql<{ closed: boolean }>`
+      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
+    const closed = rows[0]?.closed === true;
+    ctx.audit({ run_id: input.runId, status: input.status, closed });
+    return { closed };
+  },
+});
+
+// The admit of a background run (ADR-0049 decision 6): entering the member-scoped context re-checks the member, vy.use, the org, module and agent kill
+// switches, the global ai switch, the hard-stop budget and that the run is live, so a feature calls this before each model call and the entry is the check.
+// It reads nothing and answers nothing.
+export const memberVyRunCheck = defineQuery({
+  name: 'kernel.member_vy.run.check',
+  input: z.object({}),
+  access: MEMBER_ROLES,
+  memberVy: { reads: [] },
+  handler: async (): Promise<{ ok: true }> => ({ ok: true }),
+});
+
+// The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the
+// wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function crove_meetings.audio_for_member_vy is the gate:
+// it answers only in this run's own context, for the meeting the run's result row names, when the run's member is that meeting's recorder and is active. The
+// file rows (visible to every member of the org) are then read by exactly the ids it returned. It is a command, not a query, so that the read is audited (ids and
+// a count; the runtime audits no read of a member-scoped context, and a sensitive query is refused to an agent): the one memberVy command beside the store.
+export const memberVyMeetingAudioOpen = defineCommand({
+  name: 'kernel.member_vy.meeting_audio.open',
+  input: z.object({ meetingId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin', 'member'],
+  writes: [],
+  memberVy: { taint: 'propagate' },
+  handler: async (ctx, input) => {
+    if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới đọc được bản ghi này', { rule: 'member_vy_context' });
+    type Row = { segment_order: number; start_offset_seconds: number; length_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
+    let rows: Row[];
+    try {
+      rows = (await sql<Row>`SELECT * FROM crove_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
+    } catch (error: unknown) {
+      const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
+      if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
+      if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
+      throw error;
+    }
+    const first = rows[0];
+    if (!first) throw new DomainError('AUDIO_NOT_FOUND', 404, 'Cuộc họp này chưa có âm thanh');
+    const files = await ctx.trx
+      .selectFrom('crove_kernel.file')
+      .select(['id', 'storage_key', 'generation', 'size_bytes', 'sha256', 'content_type'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', rows.map((r) => r.file_id))
+      .execute();
+    const byId = new Map(files.map((f) => [f.id, f]));
+    ctx.audit({ runId: ctx.memberVy.runId, subjectId: input.meetingId, count: rows.length });
+    return {
+      language: first.is_english ? 'en' : 'vi',
+      keyId: first.key_id,
+      wrappedKey: first.wrapped_key,
+      segments: rows.map((r) => {
+        const file = byId.get(r.file_id);
+        if (!file) throw new DomainError('AUDIO_NOT_FOUND', 404, 'Không thấy tệp âm thanh của cuộc họp này');
+        return {
+          order: r.segment_order,
+          startOffsetSeconds: r.start_offset_seconds,
+          lengthSeconds: r.length_seconds,
+          fileId: r.file_id,
+          storageKey: file.storage_key,
+          generation: file.generation,
+          sizeBytes: Number(file.size_bytes),
+          sha256: file.sha256,
+          contentType: file.content_type,
+        };
+      }),
+    };
+  },
+});
+
+export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen];
+export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck];

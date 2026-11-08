@@ -2,3 +2,4 @@
 export * from './manifest.ts';
 export * from './meetings.ts';
 export * from './retention.ts';
+export * from './transcribe.ts';
