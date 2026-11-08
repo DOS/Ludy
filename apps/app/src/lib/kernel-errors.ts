@@ -898,6 +898,7 @@ export const KERNEL_ERROR_RULES = {
   extension_scope: 'FORBIDDEN',
   extension_org: 'FORBIDDEN',
   extension_only: 'FORBIDDEN',
+  extension_id: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;
