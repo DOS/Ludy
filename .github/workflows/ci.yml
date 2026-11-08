@@ -44,7 +44,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/media..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/extension" --filter "@crove/media..." --filter "crove-monorepo"
 
       - name: Lint
         run: pnpm lint
@@ -283,13 +283,48 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # The required check: it passes only when the static job, knip, the marketing site and every database part passed, so
+  # The Ludy browser extension (#2583; ADR-0047 point 10): built as the store package would be (no bundler, no runtime
+  # dependency), its manifest checked against the fixed permission list of plan section 5.7, then loaded unpacked in
+  # Chromium against a fake Ludy server with fake media devices. A release is the same build with `--version` from a
+  # tag (`node scripts/build.mjs --version 1.2.3`); nothing is published from here.
+  extension:
+    name: Browser extension (build, manifest permissions, Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@crove/extension..."
+
+      - name: Build the package
+        run: pnpm --filter @crove/extension build
+
+      - name: Manifest permissions match the fixed list
+        run: pnpm --filter @crove/extension check:manifest
+
+      - name: Install Chromium
+        run: pnpm --filter @crove/extension exec playwright install --with-deps chromium
+
+      - name: Load the unpacked extension in Chromium
+        run: pnpm --filter @crove/extension test:e2e -- --trace off
+
+  # The required check: it passes only when the static job, knip, the marketing site, the extension and every database part passed, so
   # a failed, cancelled or skipped part fails it.
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db, media-image]
+    needs: [static, knip, web, db, media-image, extension]
     if: always()
     steps:
       - name: Every part passed
@@ -299,9 +334,10 @@ jobs:
           WEB: ${{ needs.web.result }}
           DB: ${{ needs.db.result }}
           MEDIA: ${{ needs.media-image.result }}
+          EXTENSION: ${{ needs.extension.result }}
         run: |
-          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA"
-          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success
+          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
+          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success && test "$EXTENSION" = success
 
   # The migrations and the definer hardening guard (External-tenant gate T17) on the Supabase Postgres image that
   # hosted Supabase runs (issue #179): its extensions, its roles and the supautils hooks, with migrations run as

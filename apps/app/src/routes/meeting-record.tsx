@@ -32,7 +32,7 @@ import {
   type RecordingKind,
   type RecordingMeta,
   type RecordingWriter,
-} from '../lib/meeting-recorder.ts';
+} from '@crove/meeting-recorder';
 import { toast } from '../lib/toast.ts';
 
 // A recording whose meta was touched this recently is still being written, by another tab.
