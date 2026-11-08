@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@crove/kernel';
 import { hrManifest } from '@crove/mod-hr';
+import { meetingsManifest } from '@crove/mod-meetings';
 import { notesManifest } from '@crove/mod-notes';
 
 const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
@@ -67,6 +68,26 @@ describe('personal-data registry: notes (#1874)', () => {
     const pending = Object.keys(PERSONAL_DATA_PENDING);
     expect(pending.filter((key) => !classified.includes(key))).toEqual([]);
     expect(pending.filter((key) => key in PERSONAL_DATA_COLUMNS)).toEqual([]);
+  });
+});
+
+// Meetings (ADR-0047 point 7, #2578): crove_meetings is scanned, and every column its manifest classifies as personal data
+// (a title, the transcript's text and speaker label) is registered with its handling, so a new one needs a decision too.
+describe('personal-data registry: meetings (#2578)', () => {
+  const personal = Object.entries(meetingsManifest.tables.crove_meetings).flatMap(([table, cols]) =>
+    Object.entries(cols as Record<string, string>)
+      .filter(([, cls]) => cls === 'pii' || cls === 'contact' || cls === 'national_id' || cls === 'payment')
+      .map(([column]) => `crove_meetings.${table}.${column}`),
+  );
+
+  it('scans crove_meetings and registers every personal-data column of it, the transcript included', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_meetings');
+    expect(personal).toEqual(expect.arrayContaining(['crove_meetings.meeting.title', 'crove_meetings.transcript_segment.text', 'crove_meetings.transcript_segment.speaker_label']));
+    expect(personal.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING)), 'register these in PERSONAL_DATA_COLUMNS').toEqual([]);
+    for (const key of ['crove_meetings.transcript_segment.text', 'crove_meetings.transcript_segment.speaker_label']) {
+      expect(entries[key], key).toMatchObject({ kind: 'other', handling: 'erase' });
+      expect(entries[key]!.reason.length, key).toBeGreaterThan(20);
+    }
   });
 });
 

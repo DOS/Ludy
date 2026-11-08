@@ -848,6 +848,11 @@ export function createRpcHandler(
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      transcript: {
+        get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
+        draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
+        correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
+      },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
         remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),
@@ -883,6 +888,17 @@ export function createRpcHandler(
       dealSetting: {
         get: os.crm.dealSetting.get.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal_setting.get', {}, { actor, orgId }))),
         set: os.crm.dealSetting.set.handler(crmCommand('crm.deal_setting.set')),
+      },
+      // Quotes of a deal (#2693): reads for every role, writes for the roles that write deals; no command sends anything.
+      quotes: {
+        list: os.crm.quotes.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.list', input, { actor, orgId }))),
+        get: os.crm.quotes.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.get', input, { actor, orgId }))),
+        byDeal: os.crm.quotes.byDeal.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.quotes', input, { actor, orgId }))),
+        defaults: os.crm.quotes.defaults.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.defaults', input, { actor, orgId }))),
+        save: os.crm.quotes.save.handler(crmCommand('crm.quote.save')),
+        deleteDraft: os.crm.quotes.deleteDraft.handler(crmCommand('crm.quote.delete_draft')),
+        revise: os.crm.quotes.revise.handler(crmCommand('crm.quote.revise')),
+        setSetting: os.crm.quotes.setSetting.handler(crmCommand('crm.quote_setting.set')),
       },
       eventTypes: {
         list: os.crm.eventTypes.list.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.event_type.list', {}, { actor, orgId }))),

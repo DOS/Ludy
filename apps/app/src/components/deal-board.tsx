@@ -13,6 +13,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { DealForm, refreshDeals, type Member } from './deal-form.tsx';
+import { DealQuotes } from './deal-quotes.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -36,6 +37,7 @@ function Card({
   onDragOver,
   onMove,
   onEdit,
+  onQuotes,
   dragging,
   dropBefore,
 }: {
@@ -47,6 +49,7 @@ function Card({
   onDragOver: (e: DragEvent<HTMLElement>) => void;
   onMove: (stageId: string) => void;
   onEdit: () => void;
+  onQuotes: () => void;
   dragging: boolean;
   dropBefore: boolean;
 }) {
@@ -89,6 +92,9 @@ function Card({
           <Button type="button" size="sm" variant="ghost" onClick={onEdit}>
             {t('edit')}
           </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onQuotes}>
+            {t('quotes')}
+          </Button>
         </div>
       )}
     </li>
@@ -109,6 +115,7 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
   const [dragging, setDragging] = useState<Deal | null>(null);
   const [over, setOver] = useState<Drop | null>(null);
   const [editing, setEditing] = useState<Deal | null>(null);
+  const [quoting, setQuoting] = useState<Deal | null>(null);
   // A move into a lost stage waits for its reason.
   const [losing, setLosing] = useState<{ deal: Deal; drop: Drop } | null>(null);
   const [reason, setReason] = useState('');
@@ -176,6 +183,7 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
 
   return (
     <div className="space-y-3">
+      {quoting && <DealQuotes key={quoting.id} deal={quoting} canEdit={canEdit} onClose={() => setQuoting(null)} />}
       {editing && <DealForm key={editing.version} deal={editing} members={members} onDone={() => setEditing(null)} />}
       {losing && (
         <form
@@ -252,6 +260,7 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
                   onDragOver={(e) => (dragging ? onDragOverCard(e, column.stage.id, column.cards, deal) : undefined)}
                   onMove={(stageId) => place(deal, { stageId, beforeDealId: null })}
                   onEdit={() => setEditing(deal)}
+                  onQuotes={() => setQuoting(deal)}
                 />
               ))}
             </ul>
