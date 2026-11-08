@@ -378,12 +378,12 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     }
     // The editable columns of a draft change; the status, the number, the sent and decided facts, the deal and the customer never do.
     expect(await as(o.member, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x', terms = 'y', valid_until = '2031-02-01' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(1);
-    // The status, the number and the sent columns are granted to the send command's transition, which the guard trigger holds: a draft is not edited into a sent quote.
-    for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", `issuer_entity_id = '${randomUUID()}'`, "buyer_name = 'x'"]) {
+    // The status, the number, the sent columns and the decision columns (Q4) are granted to the commands' transitions, which the guard trigger holds: a draft is not edited into a sent or decided quote.
+    for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", `issuer_entity_id = '${randomUUID()}'`, "buyer_name = 'x'", 'decided_at = now()', "decline_reason = 'x'"]) {
       await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // The rest is never granted to a tenant role.
-    for (const set of ['first_viewed_at = now()', 'decided_at = now()', "decline_reason = 'x'", `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
+    for (const set of ['first_viewed_at = now()', `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
       await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     }
     // A viewer changes and deletes nothing; a sent quote is read-only to every tenant role, and its lines too.
