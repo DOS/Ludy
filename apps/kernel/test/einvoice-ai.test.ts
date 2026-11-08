@@ -7,7 +7,7 @@ import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type EInvoiceDraftRe
 import { enterpriseCheckDigit } from '@crove/l10n-vn';
 import type { EInvoiceSuggestSource } from '@crove/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { buyerOf, einvoiceAi, suggestEInvoiceDraft, usualRate, type EInvoiceAi } from '../src/einvoice-ai.ts';
+import { buyerOf, einvoiceAi, suggestEInvoiceDraft, usualRate, withInvoice, type EInvoiceAi } from '../src/einvoice-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -21,6 +21,7 @@ const SOURCE: EInvoiceSuggestSource = {
     { id: 'party-2', kind: 'person', name: 'Nguyễn Văn Nam', taxCode: null, address: null, email: null, rates: [] },
   ],
   orgRates: [{ vatRate: '10%', n: 9 }],
+  invoice: null,
 };
 const LINES = [{ description: 'Bánh A', unit: 'hộp', quantity: '10', unitPrice: '120000', vatRate: null }];
 
@@ -46,6 +47,31 @@ function setup(options: { ask?: Ask | null; budget?: DraftBudget } = {}) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('suggestEInvoiceDraft', () => {
+  it('reads the lines of the picked invoice together with the typed text, as one source, and still fills the buyer from the record (#2721)', async () => {
+    const { ai, asked } = setup();
+    const invoice = { text: 'Hóa đơn trước gửi cùng khách:\n- Bánh A, đơn vị hộp, số lượng 10, đơn giá 120000, VAT 8%' };
+    await suggestEInvoiceDraft(ai, ORG, USER, { ...SOURCE, invoice }, { ...INPUT, text: 'giống lần trước' });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.text).toBe(`giống lần trước\n\n${invoice.text}`);
+    // The customers offered are still only names.
+    expect(asked[0]?.parties).toEqual([{ name: 'Công ty Hoa Mai' }, { name: 'Nguyễn Văn Nam' }]);
+  });
+
+  it('adds nothing to the text for an invoice whose text is empty, or when none was picked', async () => {
+    const empty = setup();
+    await suggestEInvoiceDraft(empty.ai, ORG, USER, { ...SOURCE, invoice: { text: '' } }, INPUT);
+    expect(empty.asked[0]?.text).toBe(INPUT.text);
+    const none = setup();
+    await suggestEInvoiceDraft(none.ai, ORG, USER, SOURCE, INPUT);
+    expect(none.asked[0]?.text).toBe(INPUT.text);
+  });
+
+  it('with the model off, an invoice source gives nothing to fill in and never reads the model (the form\'s copy by code does not need it)', async () => {
+    const off = setup({ ask: null });
+    const answer = await suggestEInvoiceDraft(off.ai, ORG, USER, { ...SOURCE, invoice: { text: 'Hóa đơn trước gửi cùng khách:\n- Bánh A, số lượng 1' } }, INPUT);
+    expect(answer).toEqual({ ai: 'off', lines: [], buyer: null });
+    expect(off.asked).toEqual([]);
+  });
   it('asks the model once with the text, the date and the customers\' names only, and fills the buyer from the record', async () => {
     const { ai, asked } = setup();
     const answer = await suggestEInvoiceDraft(ai, ORG, USER, SOURCE, INPUT);
@@ -132,5 +158,22 @@ describe('usualRate', () => {
     expect(usualRate([{ vatRate: '10%', n: 3 }, { vatRate: '5%', n: 3 }], ['5%', '10%'])).toBe('10%');
     expect(usualRate([], ['10%'])).toBeNull();
     expect(usualRate([{ vatRate: 'KHAC:3%', n: 4 }], ['10%'])).toBeNull();
+  });
+});
+
+describe('withInvoice', () => {
+  const invoice = 'Hóa đơn trước gửi cùng khách:\n- Bánh A, số lượng 10, đơn giá 120000\n- Trà B, số lượng 2, đơn giá 1200000';
+  it('adds the invoice after the typed text', () => {
+    expect(withInvoice('giống lần trước', invoice)).toBe(`giống lần trước\n\n${invoice}`);
+    expect(withInvoice('x', '')).toBe('x');
+  });
+  it('adds only whole lines that fit under the cut, never a figure cut in the middle, and nothing when not even one fits', () => {
+    const header = 'Hóa đơn trước gửi cùng khách:';
+    const one = '- Bánh A, số lượng 10, đơn giá 120000';
+    const typed = 'a'.repeat(2000 - 2 - header.length - 1 - one.length - 1);
+    const text = withInvoice(typed, invoice);
+    expect(text.length).toBeLessThanOrEqual(2000);
+    expect(text.endsWith(one)).toBe(true);
+    expect(withInvoice('a'.repeat(1990), invoice)).toBe('a'.repeat(1990));
   });
 });
