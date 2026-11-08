@@ -71,6 +71,7 @@ describe('MeetingResults', () => {
     expect(html).toContain('2:05');
     expect(html).toContain(en.meetings.results.delete);
     expect(html.match(/data-testid="action-item"/g)).toHaveLength(1);
+    expect(html).toContain(en.meetings.results.draftExpiry);
   });
 
   it('names people and never shows an id: the attendee picker lists names, and a member who left reads as a plain fallback', () => {
@@ -91,6 +92,7 @@ describe('MeetingResults', () => {
     expect(html).not.toContain(en.meetings.results.publish);
     expect(html).not.toContain(en.meetings.results.addItem);
     expect(html).not.toContain(en.meetings.results.draftTitle);
+    expect(html).not.toContain(en.meetings.results.draftExpiry);
     expect(html).not.toContain(en.meetings.results.delete);
   });
 
