@@ -845,7 +845,7 @@ export const en = {
     save: 'Save',
     cancel: 'Cancel',
     edit: 'Edit details',
-    editHint: 'Fill in only what needs to change.',
+    editHint: 'Fill in only what needs to change. The tax code and the insurance number are 10 or 12 digits. For a former employee only the birth date, the tax code and the insurance number can still be added.',
     clearStored: 'Remove the stored value',
     birthDate: 'Date of birth',
     taxCode: 'Personal tax code',

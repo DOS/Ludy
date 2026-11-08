@@ -79,6 +79,7 @@ function TermsFields({ id, value, onChange }: { id: string; value: TermsState; o
   );
 }
 
+const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.test(v.trim());
 const wageOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
 
 function AddForm({ onClose }: { onClose: () => void }) {
@@ -131,22 +132,22 @@ function AddForm({ onClose }: { onClose: () => void }) {
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
-          <Input id={`${id}-birth`} type="date" value={birth} onChange={(e) => setBirth(e.target.value)} />
+          <Input id={`${id}-birth`} type="date" min="1900-01-01" max={vietnamToday()} value={birth} onChange={(e) => setBirth(e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-tax`}>{t('taxCode')}</Label>
-          <Input id={`${id}-tax`} value={tax} maxLength={20} autoComplete="off" onChange={(e) => setTax(e.target.value)} />
+          <Input id={`${id}-tax`} value={tax} inputMode="numeric" maxLength={12} autoComplete="off" onChange={(e) => setTax(e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-insurance`}>{t('insuranceNumber')}</Label>
-          <Input id={`${id}-insurance`} value={insurance} maxLength={20} autoComplete="off" onChange={(e) => setInsurance(e.target.value)} />
+          <Input id={`${id}-insurance`} value={insurance} inputMode="numeric" maxLength={12} autoComplete="off" onChange={(e) => setInsurance(e.target.value)} />
         </div>
         <TermsFields id={id} value={terms} onChange={(patch) => setTerms((s) => ({ ...s, ...patch }))} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">{t('sealedHint')}</p>
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button loading={save.isPending} disabled={name.trim() === '' || !wageOk(terms.baseWage)} onClick={() => save.mutate()} data-testid="hr-employee-save">
+        <Button loading={save.isPending} disabled={name.trim() === '' || !wageOk(terms.baseWage) || !idNumberOk(tax) || !idNumberOk(insurance)} onClick={() => save.mutate()} data-testid="hr-employee-save">
           {t('save')}
         </Button>
         <Button variant="ghost" onClick={onClose}>
@@ -208,6 +209,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const e = q.data;
   const active = e.status === 'active' && !e.erased;
+  // A former employee's record is kept as it is, except what the declarations need of a leaver: the birth date, the tax code and the insurance number may still be set.
+  const limited = e.status !== 'active';
   const none = <span className="text-subtle-foreground">{t('none')}</span>;
   return (
     <Card className="mb-6 block p-4" data-testid="hr-employee-detail">
@@ -269,7 +272,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       )}
       {authorize.error && <ErrorText>{errorMessage(authorize.error)}</ErrorText>}
 
-      {active && (
+      {!e.erased && (
         <div className="mt-3">
           {edit === null ? (
             <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, tax: false, insurance: false } })}>
@@ -277,6 +280,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
             </Button>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
+              {!limited && (
+                <>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-name">{t('name')}</Label>
                 <Input id="hr-edit-name" value={edit.name} maxLength={200} placeholder={e.displayName} onChange={(ev) => setEdit({ ...edit, name: ev.target.value })} />
@@ -311,13 +316,15 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                   </label>
                 )}
               </div>
+                </>
+              )}
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-birth">{t('birthDate')}</Label>
-                <Input id="hr-edit-birth" type="date" value={edit.birth} onChange={(ev) => setEdit({ ...edit, birth: ev.target.value })} />
+                <Input id="hr-edit-birth" type="date" min="1900-01-01" max={vietnamToday()} value={edit.birth} onChange={(ev) => setEdit({ ...edit, birth: ev.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-tax">{t('taxCode')}</Label>
-                <Input id="hr-edit-tax" value={edit.tax} maxLength={20} autoComplete="off" disabled={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, tax: ev.target.value })} />
+                <Input id="hr-edit-tax" value={edit.tax} inputMode="numeric" maxLength={12} autoComplete="off" disabled={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, tax: ev.target.value })} />
                 {e.taxCode !== null && (
                   <label className="flex items-center gap-1 text-xs text-subtle-foreground">
                     <input type="checkbox" checked={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, tax: ev.target.checked } })} />
@@ -327,7 +334,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-insurance">{t('insuranceNumber')}</Label>
-                <Input id="hr-edit-insurance" value={edit.insurance} maxLength={20} autoComplete="off" disabled={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, insurance: ev.target.value })} />
+                <Input id="hr-edit-insurance" value={edit.insurance} inputMode="numeric" maxLength={12} autoComplete="off" disabled={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, insurance: ev.target.value })} />
                 {e.insuranceNumber !== null && (
                   <label className="flex items-center gap-1 text-xs text-subtle-foreground">
                     <input type="checkbox" checked={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, insurance: ev.target.checked } })} />
@@ -339,7 +346,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               <div className="flex gap-2 sm:col-span-2">
                 <Button
                   loading={saveEdit.isPending}
-                  disabled={!(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.tax || edit.clear.insurance)}
+                  disabled={!idNumberOk(edit.tax) || !idNumberOk(edit.insurance) || !(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.tax || edit.clear.insurance)}
                   onClick={() => saveEdit.mutate()}
                 >
                   {t('save')}

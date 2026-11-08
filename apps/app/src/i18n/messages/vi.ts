@@ -843,7 +843,7 @@ export const vi = {
     save: 'Lưu',
     cancel: 'Hủy',
     edit: 'Sửa thông tin',
-    editHint: 'Chỉ điền ô nào cần đổi.',
+    editHint: 'Chỉ điền ô nào cần đổi. Mã số thuế và số sổ BHXH gồm 10 hoặc 12 chữ số. Người đã nghỉ việc chỉ bổ sung được ngày sinh, mã số thuế và số sổ BHXH.',
     clearStored: 'Xóa giá trị đã lưu',
     birthDate: 'Ngày sinh',
     taxCode: 'Mã số thuế cá nhân',

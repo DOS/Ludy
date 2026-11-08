@@ -18,7 +18,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
     await form.getByLabel('Họ và tên').fill('Nguyễn Thị Kê Khai');
     await form.getByLabel('Ngày sinh').fill('1990-05-17');
     await form.getByLabel('Mã số thuế cá nhân').fill('8123456789');
-    await form.getByLabel('Số sổ BHXH').fill('SI-4455667788');
+    await form.getByLabel('Số sổ BHXH').fill('7305186294');
     await form.getByLabel('Lương cơ bản (đ/tháng)').fill('15000000');
     await page.getByTestId('hr-employee-save').click();
     await page.getByTestId('hr-employee-row').filter({ hasText: 'Nguyễn Thị Kê Khai' }).getByTestId('hr-employee-open').click();
@@ -28,7 +28,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
     await expect(detail.getByTestId('hr-employee-tax')).toHaveText('••••••••');
     await detail.getByTestId('hr-employee-reveal').click();
     await expect(detail.getByTestId('hr-employee-tax')).toHaveText('8123456789');
-    await expect(detail.getByTestId('hr-employee-insurance')).toHaveText('SI-4455667788');
+    await expect(detail.getByTestId('hr-employee-insurance')).toHaveText('7305186294');
     const authorized = detail.getByTestId('hr-employee-authorized').getByRole('checkbox');
     await authorized.check();
     await expect(authorized).toBeChecked();
