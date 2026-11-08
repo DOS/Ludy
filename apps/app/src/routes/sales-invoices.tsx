@@ -21,7 +21,7 @@ import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../compo
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
-import { appendSource, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
+import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
 import { getConfig } from '../lib/auth.ts';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
@@ -203,14 +203,14 @@ function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
             value=""
             onChange={(e) => {
               const booking = bookingItems.find((b) => b.id === e.target.value);
-              if (booking) onAdd(bookingSourceText(booking, f.date(booking.startsAt.slice(0, 10))));
+              if (booking) onAdd(bookingSourceText(booking, f.date(bookingDay(booking.startsAt))));
             }}
             data-testid="invoice-crm-booking"
           >
             <NativeSelectOption value="">{t('choose')}</NativeSelectOption>
             {bookingItems.map((b) => (
               <NativeSelectOption key={b.id} value={b.id}>
-                {b.eventType.title} - {f.date(b.startsAt.slice(0, 10))}
+                {b.eventType.title} - {f.date(bookingDay(b.startsAt))}
                 {b.visitor.name ? ` - ${b.visitor.name}` : ''}
               </NativeSelectOption>
             ))}

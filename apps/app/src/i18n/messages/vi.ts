@@ -1196,7 +1196,7 @@ export const vi = {
         deal: 'Cơ hội đang mở (từ CRM)',
         booking: 'Lịch hẹn đã diễn ra (từ CRM)',
         choose: 'Chọn để thêm vào đoạn chữ bên dưới',
-        hint: 'Chọn xong, một câu về cơ hội hoặc lịch hẹn được thêm vào đoạn chữ bên dưới để bạn đọc và sửa trước khi nhờ {finance} soạn. Danh sách chỉ hiện những gì bạn được xem trong CRM.',
+        hint: 'Chọn xong, một câu về cơ hội hoặc lịch hẹn được thêm vào đoạn chữ bên dưới để bạn đọc và sửa trước khi nhờ {finance} soạn. Ghi chú của lịch hẹn là lời của chính khách đặt hẹn, bạn đọc kỹ trước khi dùng. Danh sách chỉ hiện những gì bạn được xem trong CRM.',
       },
       previous: {
         label: 'Lấy từ hóa đơn trước gửi cùng khách',

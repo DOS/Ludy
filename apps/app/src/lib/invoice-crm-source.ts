@@ -17,8 +17,13 @@ export function bookingSourceText(booking: Pick<BookingItem, 'startsAt' | 'event
   return `Lịch hẹn ${oneLine(booking.eventType.title, 200)} ngày ${date}${note === '' ? '.' : `, ghi chú của khách: ${note}.`}`;
 }
 
-/** The sentence added after what the person already typed, on a new line, never over it. */
+/** The sentence added after what the person already typed, on a new line, never over it. A sentence that does not fit whole is not added, so a figure is never cut in the middle. */
 export function appendSource(typed: string, sentence: string, max: number): string {
   const text = typed.trim() === '' ? sentence : `${typed.replace(/\s+$/, '')}\n${sentence}`;
-  return text.slice(0, max);
+  return text.length > max ? typed : text;
+}
+
+/** The date a booking starts on in Vietnam (the invoice's calendar), YYYY-MM-DD: the UTC date would be a day early for a booking between 00:00 and 07:00 Vietnam time. */
+export function bookingDay(startsAt: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(startsAt));
 }

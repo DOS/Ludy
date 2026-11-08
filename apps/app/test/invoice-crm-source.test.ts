@@ -2,7 +2,7 @@
 // A CRM deal or booking as a sentence for the finance coworker's text box (#2721): the figures stay as the CRM holds them, the visitor's note is flattened and cut, and a sentence is added after the
 // typed text, never over it.
 import { describe, expect, it } from 'vitest';
-import { appendSource, bookingSourceText, dealSourceText } from '../src/lib/invoice-crm-source.ts';
+import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../src/lib/invoice-crm-source.ts';
 
 const booking = (note: string | null) => ({ startsAt: '2026-11-05T03:00:00.000Z', eventType: { id: 'e', slug: 's', title: 'Tư vấn   thiết kế', active: true }, visitor: { name: null, email: null, phone: null, note } });
 
@@ -20,6 +20,13 @@ describe('invoice CRM source', () => {
   it('adds the sentence after the typed text on a new line, and never grows past the limit', () => {
     expect(appendSource('', 'A', 100)).toBe('A');
     expect(appendSource('bán 10 hộp  \n', 'A', 100)).toBe('bán 10 hộp\nA');
-    expect(appendSource('x'.repeat(95), 'ABCDEFGHIJ', 100)).toHaveLength(100);
+    // A sentence that does not fit whole is left out, never cut in the middle of a figure.
+    expect(appendSource('x'.repeat(95), 'giá trị 12500000 VND.', 100)).toBe('x'.repeat(95));
+    expect(appendSource('', 'x'.repeat(101), 100)).toBe('');
+  });
+
+  it('gives the Vietnam day of a booking, not the UTC day', () => {
+    expect(bookingDay('2026-11-04T18:30:00.000Z')).toBe('2026-11-05');
+    expect(bookingDay('2026-11-05T03:00:00.000Z')).toBe('2026-11-05');
   });
 });

@@ -1198,7 +1198,7 @@ export const en = {
         deal: 'Open deal (from the CRM)',
         booking: 'Past booking (from the CRM)',
         choose: 'Choose to add to the text below',
-        hint: 'Choosing adds one sentence about the deal or booking to the text below, so you can read and edit it before asking {finance} to draft. The lists show only what you may see in the CRM.',
+        hint: 'Choosing adds one sentence about the deal or booking to the text below, so you can read and edit it before asking {finance} to draft. The note of a booking is the words of the visitor, so read it before relying on it. The lists show only what you may see in the CRM.',
       },
       previous: {
         label: 'Start from the previous invoice to the same customer',
