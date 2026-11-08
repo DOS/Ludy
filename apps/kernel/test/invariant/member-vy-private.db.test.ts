@@ -532,7 +532,10 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       const viewerRoles = async (roles: string[]) => {
         const out: Record<string, boolean | undefined> = {};
         for (const role of roles) {
-          await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, $3, $4)`, [orgId, users.viewer, role, users.owner]));
+          // external_accountant is an entity role: its assignment names the branch.
+          await admin((c) =>
+            c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, $4, $5)`, [orgId, users.viewer, role, role === 'external_accountant' ? branch : null, users.owner]),
+          );
           try {
             out[role] = await permitted(users.viewer, 'vy.use');
           } finally {
