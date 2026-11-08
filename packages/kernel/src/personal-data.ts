@@ -442,11 +442,21 @@ function requireProbe(value: string): Probe {
   return probe;
 }
 
+// The tables of crove_meetings.personal_row_ids's kind codes.
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
+
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
 async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: Probe, privateCounts: boolean): Promise<PersonalDataResult> {
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
+  // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
+  // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
+  const meetingRows = new Map<string, string[]>();
+  for (const { kind, id } of (await sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows) {
+    const table = MEETING_ROW_TABLES[kind];
+    if (table) meetingRows.set(table, [...(meetingRows.get(table) ?? []), id]);
+  }
   for (const [key, entry] of Object.entries(PERSONAL_DATA_COLUMNS) as Array<[string, PersonalDataColumn]>) {
     if (!searchable(entry.handling)) continue;
     if (entry.privateRows === 'always') continue;
@@ -457,10 +467,16 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
     const shared = entry.privateRows === 'unless_shared' ? sql`AND t.visibility = 'org'` : sql``;
+    let byId = sql``;
+    if (schema === 'crove_meetings') {
+      const ids = meetingRows.get(table) ?? [];
+      if (ids.length === 0) continue;
+      byId = sql`AND t.id = ANY(${ids}::uuid[])`;
+    }
     const { rows } = await sql<{ row: Record<string, unknown> }>`
       SELECT pg_catalog.to_jsonb(t) - 'search' AS row
         FROM ${sql.table(`${schema}.${table}`)} AS t
-       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared}
+       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
     for (const { row } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
