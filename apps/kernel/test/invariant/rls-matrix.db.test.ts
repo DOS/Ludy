@@ -445,6 +445,13 @@ let stagePosition = 1;
 let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
+// #2878: a media file row of a meeting the way the upload command writes it: the matching meeting source, created by the member who links it. The segment and video
+// factories point at one, so the matrix controls hold if the insert policies later ask that the linked file is the caller's own.
+const meetingMediaFileRow = (o: { id: string; owner: string }, source: 'meeting_audio' | 'meeting_video') => {
+  const sha256 = hex64();
+  return { org_id: o.id, id: randomUUID(), sha256, storage_key: `org/${o.id}/${sha256}`, filename: 'rls-matrix-media.bin', content_type: 'application/octet-stream', size_bytes: 1, source, created_by: o.owner };
+};
+
 const portalListRow = (o: { id: string; file: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -2112,13 +2119,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.audio_segment': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
+      const media = meetingMediaFileRow(o, 'meeting_audio');
       return {
-        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_kernel.file', values: media },
+        ],
         row: {
           org_id: o.id,
           id: randomUUID(),
           meeting_id: meeting.id,
-          file_id: o.file,
+          file_id: media.id,
           segment_order: 0,
           start_offset_seconds: 0,
           length_seconds: 600,
@@ -2188,13 +2199,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.meeting_video': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
+      const media = meetingMediaFileRow(o, 'meeting_video');
       return {
-        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_kernel.file', values: media },
+        ],
         row: {
           org_id: o.id,
           id: randomUUID(),
           meeting_id: meeting.id,
-          file_id: o.file,
+          file_id: media.id,
           length_seconds: 1800,
           video_retention_date: '2026-11-11',
         },
