@@ -154,15 +154,28 @@ GRANT EXECUTE ON FUNCTION crove_kernel.enter_member_vy_context(uuid, uuid, uuid)
 
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_audit_detail_ok(p_detail jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
-  -- Listed keys only, and their values ids, enums, numbers and flags: never free text (ADR-0049 decision 4; the audit stream is
-  -- WORM and anchored, so a text that reaches it cannot be erased).
+  -- Listed keys only, each with the one shape its values have: an id is a uuid, a feature or status one of the known words, a code a
+  -- fixed upper-case code without digits, numbers and flags as such. Never free text, never a slug a person could have typed (the
+  -- audit stream is WORM and anchored, so a text that reaches it cannot be erased; ADR-0049 decision 4).
   SELECT pg_catalog.jsonb_typeof(p_detail) = 'object'
     AND (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(p_detail)) <= 12
     AND NOT EXISTS (
       SELECT 1 FROM pg_catalog.jsonb_each(p_detail) e
-      WHERE e.key <> ALL (ARRAY['agentRun', 'code', 'rule', 'runId', 'resultId', 'feature', 'subjectType', 'subjectId', 'bodyLength', 'status', 'errorCode', 'count'])
-        OR NOT (pg_catalog.jsonb_typeof(e.value) IN ('number', 'boolean', 'null')
-                OR (pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Za-z0-9_.:-]{1,64}$')))
+      WHERE NOT CASE e.key
+        WHEN 'agentRun' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        WHEN 'runId' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        WHEN 'resultId' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        WHEN 'subjectId' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        WHEN 'feature' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['notes.summary', 'notes.todo_suggest'])
+        WHEN 'subjectType' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['note', 'meeting'])
+        WHEN 'status' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') = ANY (ARRAY['running', 'ready', 'failed'])
+        WHEN 'code' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
+        WHEN 'errorCode' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^[A-Z][A-Z_]{0,63}$'
+        WHEN 'rule' THEN pg_catalog.jsonb_typeof(e.value) = 'string' AND (e.value #>> '{}') ~ '^P[0-9]{1,2}$'
+        WHEN 'bodyLength' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
+        WHEN 'count' THEN pg_catalog.jsonb_typeof(e.value) = 'number'
+        ELSE false
+      END)
 $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_audit_detail_ok(jsonb) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
@@ -183,21 +196,46 @@ BEGIN
     RETURN NEW;
   END IF;
   v_agent := (v_ctx ->> 'agent')::uuid;
-  -- Vy in member mode (ADR-0049 decision 2) writes the tables its own catalog lists with mode 'write' (each row also passes
-  -- its own restrictive policy: the row belongs to the member) and the narrow runtime rows below; never an agent wakeup.
-  IF v_ctx ->> 'kind' = 'member_vy' AND EXISTS (
-       SELECT 1 FROM crove_kernel.member_vy_table c
-       WHERE c.table_name = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME AND c.mode = 'write') THEN
-    IF TG_OP = 'DELETE' THEN
-      RETURN OLD;
+  -- Vy in member mode (ADR-0049 decision 2) writes the tables its own catalog lists with mode 'write' (each row also passes its own
+  -- restrictive policy: the row belongs to the member) and two narrow rows, an audit row and an idempotency key of its own run whose
+  -- every value is an id, an enum, a number or a flag; nothing else. It emits no event (outbox_pending refuses it, so crove_kernel.emit
+  -- fails whole), wakes no agent and writes no other guarded table. The org-chart rules below are what they were.
+  IF v_ctx ->> 'kind' = 'member_vy' THEN
+    IF EXISTS (SELECT 1 FROM crove_kernel.member_vy_table c
+               WHERE c.table_name = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME AND c.mode = 'write') THEN
+      IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+      END IF;
+      RETURN NEW;
     END IF;
-    RETURN NEW;
+    IF TG_TABLE_SCHEMA = 'crove_kernel' AND TG_OP <> 'DELETE' THEN
+      IF TG_TABLE_NAME = 'audit_event' THEN
+        IF TG_OP = 'INSERT' AND NEW.actor_type = 'agent' AND NEW.actor_id = v_agent
+           AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run')
+           AND NEW.command ~ '^kernel\.member_vy\.[a-z_.]{1,60}$'
+           AND (NEW.target_type IS NULL OR NEW.target_type ~ '^[a-z][a-z0-9_.]{0,62}$')
+           AND NEW.input_sha256 ~ '^[0-9a-f]{64}$'
+           AND crove_kernel.member_vy_audit_detail_ok(NEW.detail) THEN
+          NEW.occurred_at := pg_catalog.now();
+          RETURN NEW;
+        END IF;
+      ELSIF TG_TABLE_NAME = 'idempotency_key' THEN
+        IF NEW.actor_key = 'agent:' || v_agent::text || ':' || (v_ctx ->> 'run')
+           AND (TG_OP = 'INSERT' OR OLD.actor_key = NEW.actor_key)
+           AND NEW.key ~ '^[A-Za-z0-9_.:-]{1,64}$'
+           AND NEW.command ~ '^kernel\.member_vy\.[a-z_.]{1,60}$'
+           AND NEW.request_sha256 ~ '^[0-9a-f]{64}$'
+           AND (NEW.response IS NULL OR crove_kernel.member_vy_audit_detail_ok(NEW.response)) THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+    END IF;
+    RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME;
   END IF;
   IF TG_TABLE_SCHEMA = 'crove_kernel' AND TG_OP <> 'DELETE' THEN
     IF TG_TABLE_NAME = 'audit_event' THEN
       IF TG_OP = 'INSERT' AND NEW.actor_type = 'agent' AND NEW.actor_id = v_agent
-         AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run')
-         AND (v_ctx ->> 'kind' IS DISTINCT FROM 'member_vy' OR crove_kernel.member_vy_audit_detail_ok(NEW.detail)) THEN
+         AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run') THEN
         NEW.occurred_at := pg_catalog.now();
         RETURN NEW;
       END IF;
@@ -215,7 +253,7 @@ BEGIN
           RETURN NEW;
         END IF;
       END IF;
-    ELSIF TG_TABLE_NAME = 'agent_wakeup' AND v_ctx ->> 'kind' IS DISTINCT FROM 'member_vy' THEN
+    ELSIF TG_TABLE_NAME = 'agent_wakeup' THEN
       IF NEW.status = 'pending' AND NEW.run_id IS NULL AND EXISTS (
            SELECT 1 FROM crove_kernel.position p
            WHERE p.org_id = NEW.org_id AND p.holder_agent_id = NEW.agent_id
