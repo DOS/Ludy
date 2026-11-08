@@ -503,6 +503,14 @@ const schema = z.object({
   // the provider calls one document costs to 1 + AI_MAX_RETRIES (2 by default, the SDK's own default being 3), and so
   // the cost and the rate-limit load of a document that keeps failing. 0 sends each call once.
   AI_MAX_RETRIES: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(0).max(5).default(1)),
+  // Speech to text for the meetings module (#2578, M4b). Off unless MEETINGS_TRANSCRIBE=on and an OpenAI-compatible transcription endpoint is set
+  // (TRANSCRIBE_BASE_URL and TRANSCRIBE_MODEL; the key is optional for a local model). The module works with it off: no run starts and the screen shows
+  // no button. AI_PRICE_AUDIO_PER_MIN is the price of one minute of audio in the unit of the other AI_PRICE_* settings (default 0: counted, not priced).
+  MEETINGS_TRANSCRIBE: z.enum(['on', 'off']).default('off'),
+  TRANSCRIBE_BASE_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  TRANSCRIBE_API_KEY: optional,
+  TRANSCRIBE_MODEL: optional,
+  AI_PRICE_AUDIO_PER_MIN: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   // Outbound mail (invites, issue #129), the same SMTP settings the bundled Supabase Auth uses. Unset SMTP_HOST: mail
   // is off, and the inviter passes the link on. Port 465 is implicit TLS; with SMTP_USER and SMTP_PASS on any other
   // port the server must offer STARTTLS.

@@ -879,6 +879,9 @@ export function createRpcHandler(
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
         draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
         correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
+        start: os.meetings.transcript.start.handler(meetingsCommand('meetings.transcript.start')),
+        status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
+        copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
       },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
@@ -935,6 +938,8 @@ export function createRpcHandler(
         accept: os.crm.quotes.accept.handler(crmCommand('crm.quote.accept')),
         decline: os.crm.quotes.decline.handler(crmCommand('crm.quote.decline')),
         setSetting: os.crm.quotes.setSetting.handler(crmCommand('crm.quote_setting.set')),
+        setLogo: os.crm.quotes.setLogo.handler(crmCommand('crm.quote_setting.logo_set')),
+        removeLogo: os.crm.quotes.removeLogo.handler(crmCommand('crm.quote_setting.logo_remove')),
         send: os.crm.quotes.send.handler(crmCommand('crm.quote.send')),
         createLink: os.crm.quotes.createLink.handler(crmCommand('crm.quote.create_link')),
         revokeLink: os.crm.quotes.revokeLink.handler(crmCommand('crm.quote.revoke_link')),

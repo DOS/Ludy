@@ -69,6 +69,8 @@ export const QUEUES = {
   notesTrash: 'notes-trash',
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
+  // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
+  meetingsTranscribe: 'meetings-transcribe',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
   bankFeedSync: 'finance-bank-feed-sync',
   // Created by the e-invoice job migration (crove_finance_einvoice_job): one draft's issue, status question or evidence step (#2502).
@@ -171,6 +173,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
+  [QUEUES.meetingsTranscribe]: ['provider:ai'],
   // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
   // provider here, and to DEPS_REACH first.
   [QUEUES.bankFeedSync]: 'none',

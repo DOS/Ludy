@@ -95,6 +95,8 @@ export const INVOICE_CHECK_CODES = [
   'anomaly_bank.changed',
   'anomaly_amount.unusual',
   'anomaly_price.jump',
+  // The payment of a pay run in cash while a net pay is 5 million or more (#2532): a warning, approved one by one like the other anomaly flags.
+  'anomaly_cash.payroll_limit',
 ] as const;
 export type InvoiceCheckCode = (typeof INVOICE_CHECK_CODES)[number];
 // The ids of the anomaly flags start with this (#2380): a proposal that carries one is approved one by one.

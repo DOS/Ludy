@@ -4,9 +4,9 @@
 // that a quote the runtime does not find is a plain 404 with no file, that a deployment without the CRM module has no such route, and the per-member rate.
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ORG_HEADER } from '@crove/kernel-contract';
-import { DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import type { QuoteDocument } from '@crove/mod-crm';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -56,7 +56,23 @@ function document(number: string | null): QuoteDocument {
   };
 }
 
-function appWith(options: { crm?: boolean; number?: string | null; missing?: boolean } = {}) {
+// The letterhead's logo (#2814): where the document says it is stored, and a store that holds those bytes, or fails, or holds something else.
+// A 12 by 6 RGB PNG (rows filtered with none and Paeth) and the frame header of a 12 by 6 JPEG, as bytes: small enough to keep here.
+const LOGO_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAwAAAAGCAIAAAB4jOjWAAAAv0lEQVR4nGNgiN6m2nDbaylD/inVKe+9dork37Ocwhy3U6P5nu8K5qKzGtM/+bKYmpqqgYC5GgRYgQhTeXlkQYasowoT37jvEM67bzX1f9RWtcY7viuYc08oT3nvtVus8JHtDKbYHSCTNDQ0NMw1FBUVNTQ0jEGkCYQNEbTU0GC4ot/1N2KzfNVVj8X/so4qTH7nuVUg+7pRL0P0NqXaG97LGHNPKINM0tLSMlcGAS0tSxBlAiLMtLTAYoZaWloAMmFFDCJ4MNIAAAAASUVORK5CYII=', 'base64');
+const LOGO_JPEG = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/wAARCAAGAAwDAREAAhEAAxEA/9oAAv/Z', 'base64');
+const logoRef = (bytes: Uint8Array, contentType: string) => ({ storageKey: 'org/logo', generation: null, sha256: sha256Hex(bytes), contentType, sizeBytes: bytes.byteLength });
+function storeOf(bytes: Uint8Array | 'down'): BlobStore {
+  return {
+    put: async () => '',
+    get: async () => {
+      if (bytes === 'down') throw new Error('store is down');
+      return bytes;
+    },
+    delete: async () => undefined,
+  } as unknown as BlobStore;
+}
+
+function appWith(options: { crm?: boolean; number?: string | null; missing?: boolean; logoFile?: ReturnType<typeof logoRef>; store?: BlobStore } = {}) {
   const asked: Array<{ name: string; input: unknown; orgId: string }> = [];
   const runtime = {
     installed: (module: string) => (module === 'crm' ? (options.crm ?? true) : true),
@@ -65,10 +81,10 @@ function appWith(options: { crm?: boolean; number?: string | null; missing?: boo
     query: async (name: string, input: unknown, context: { orgId: string }) => {
       asked.push({ name, input, orgId: context.orgId });
       if (options.missing) throw new DomainError('QUOTE_NOT_FOUND', 404, 'Không tìm thấy báo giá này');
-      return document(options.number === undefined ? 'BG-2026-0001' : options.number);
+      return { ...document(options.number === undefined ? 'BG-2026-0001' : options.number), logoFile: options.logoFile ?? null };
     },
   } as unknown as Runtime;
-  const app = createHttpApp({ config, runtime, store: {} as BlobStore, authenticate: async () => user, pool: {} as pg.Pool, aiEnabled: false });
+  const app = createHttpApp({ config, runtime, store: options.store ?? ({} as BlobStore), authenticate: async () => user, pool: {} as pg.Pool, aiEnabled: false });
   return { app, asked };
 }
 
@@ -90,6 +106,33 @@ describe('GET /api/crm/quotes/:id/pdf (#2695)', () => {
     // The same quote, the same bytes.
     const again = Buffer.from(await (await app.request(`/api/crm/quotes/${QUOTE}/pdf`, { headers })).arrayBuffer());
     expect(again.equals(bytes)).toBe(true);
+  });
+
+  it('draws the letterhead logo it reads from the store, and leaves it out, still answering the PDF, when it cannot be read (#2814)', async () => {
+    const withLogo = Buffer.from(await (await appWith({ logoFile: logoRef(LOGO_PNG, 'image/png'), store: storeOf(LOGO_PNG) }).app.request(`/api/crm/quotes/${QUOTE}/pdf`, { headers })).arrayBuffer());
+    expect(withLogo.toString('latin1')).toContain('/Subtype /Image');
+    const plain = Buffer.from(await (await appWith().app.request(`/api/crm/quotes/${QUOTE}/pdf`, { headers })).arrayBuffer());
+    expect(plain.toString('latin1')).not.toContain('/Subtype /Image');
+    // The store is down: a warning, no logo, the document all the same.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const down = await appWith({ logoFile: logoRef(LOGO_PNG, 'image/png'), store: storeOf('down') }).app.request(`/api/crm/quotes/${QUOTE}/pdf`, { headers });
+    expect(down.status).toBe(200);
+    expect(Buffer.from(await down.arrayBuffer()).equals(plain)).toBe(true);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    // The bytes are not what the row says (a JPEG called a PNG), not what the hash says, or too large: no logo.
+    for (const odd of [
+      { logoFile: logoRef(LOGO_JPEG, 'image/png'), store: storeOf(LOGO_JPEG) },
+      { logoFile: { ...logoRef(LOGO_PNG, 'image/png'), sha256: '0'.repeat(64) }, store: storeOf(LOGO_PNG) },
+      { logoFile: { ...logoRef(LOGO_PNG, 'image/png'), sizeBytes: 512 * 1024 + 1 }, store: storeOf(LOGO_PNG) },
+      { logoFile: logoRef(LOGO_PNG, 'image/webp'), store: storeOf(LOGO_PNG) },
+    ]) {
+      const quiet = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const response = await appWith(odd).app.request(`/api/crm/quotes/${QUOTE}/pdf`, { headers });
+      quiet.mockRestore();
+      expect(response.status).toBe(200);
+      expect(Buffer.from(await response.arrayBuffer()).equals(plain)).toBe(true);
+    }
   });
 
   it('names a draft "nhap", and makes the number safe for a file name', async () => {

@@ -75,7 +75,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsManifest, meetingsQueries, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
@@ -208,6 +208,11 @@ export function overviewContributions(config: Pick<Config, 'CROVE_MODULES'>): Ov
   return config.CROVE_MODULES.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
 }
 
+// Transcription of meetings is on only with MEETINGS_TRANSCRIBE=on and a provider (#2578, M4b); the module works with it off.
+export function transcribeEnabled(config: Pick<Config, 'MEETINGS_TRANSCRIBE' | 'TRANSCRIBE_BASE_URL' | 'TRANSCRIBE_MODEL'>): boolean {
+  return config.MEETINGS_TRANSCRIBE === 'on' && Boolean(config.TRANSCRIBE_BASE_URL) && Boolean(config.TRANSCRIBE_MODEL);
+}
+
 // The commands and queries of the modules CROVE_MODULES enables (plan Decision 12, ADR-0031). A module left out has
 // none registered, so its commands answer COMMAND_NOT_FOUND, a ctx.query into it answers not_installed (with the
 // absentModules buildRuntime passes), and the
@@ -216,6 +221,8 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
+  // Whether the recorder may start a transcription here (#2578, M4b): MEETINGS_TRANSCRIBE=on with a provider.
+  setTranscribeEnabled(transcribeEnabled(config));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -726,7 +733,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             archive: { store: archiveStore, lagSeconds: config.ARCHIVE_LAG_SECONDS, restoreAlertDays: config.ARCHIVE_RESTORE_ALERT_DAYS },
             usageLimits: usageLimits(config),
             securityAlerts: alerts,
-            aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
+            aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, audioPerMinute: config.AI_PRICE_AUDIO_PER_MIN, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
+            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string } } } : {}),
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
           }),

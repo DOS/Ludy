@@ -171,6 +171,12 @@ function modulesProblem(env: Env): string | null {
   return unknown.length > 0 ? `CROVE_MODULES names ${unknown.length} module(s) this build does not ship (available: ${AVAILABLE_MODULES.join(', ')}); the kernel refuses to start on it` : null;
 }
 
+// Speech to text for meetings is priced by the minute of audio: on with a zero price, the hard-stop budget never refuses a transcription (#2578).
+function transcribePriceProblem(env: Env): string | null {
+  if (value(env, 'MEETINGS_TRANSCRIBE') !== 'on') return null;
+  return Number(value(env, 'AI_PRICE_AUDIO_PER_MIN') ?? '0') > 0 ? null : 'MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0: a transcription then costs nothing to the AI budget and its hard stop never refuses one; set the price of a minute of audio';
+}
+
 // The per-org AI cost limit counts tokens at AI_PRICE_*; with both at 0 every call costs nothing to the cap.
 function aiCostProblem(env: Env): string | null {
   if (value(env, 'AI_API_KEY') === undefined) return null;
@@ -237,6 +243,7 @@ export function checkEnv(env: Env): CheckResult[] {
   if (publicDeployment) {
     add('Roles', [rolesProblem(env)], 'the API and the worker run as separate processes (api and worker), not as the all-in-one role');
     add('Modules', [modulesProblem(env)], `CROVE_MODULES=${list(value(env, 'CROVE_MODULES')?.toLowerCase(), /,/).join(',')}: only those modules run (kernel is always on)`);
+    add('Transcription price', [transcribePriceProblem(env)], value(env, 'MEETINGS_TRANSCRIBE') === 'on' ? 'AI_PRICE_AUDIO_PER_MIN is set, so the AI budget counts transcription' : 'transcription is off');
     add('AI cost cap', [aiCostProblem(env)], value(env, 'AI_API_KEY') === undefined ? 'no AI key is set: no AI call is made' : 'AI_PRICE_* is set, so ORG_LIMIT_AI_COST_PER_DAY counts the AI cost');
   }
 
@@ -263,7 +270,7 @@ export function checkEnv(env: Env): CheckResult[] {
     else if (inboundPrevious === value(env, 'INBOUND_SECRET')) secrets.push('INBOUND_SECRET_PREVIOUS is the same as INBOUND_SECRET');
   }
   // Optional secrets: only a shipped sample value is wrong.
-  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
+  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
     if (name === 'INBOUND_SECRET' && value(env, 'INBOUND_DOMAIN')) continue;
     const secret = value(env, name);
     if (secret && (KNOWN_DEFAULTS.has(secret) || /change-?me/i.test(secret))) secrets.push(`${name} still has a sample value`);

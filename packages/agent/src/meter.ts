@@ -65,6 +65,8 @@ export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];
 export interface AiUsage {
   inputTokens: number;
   outputTokens: number;
+  // Speech to text (#2578): the seconds of audio the call transcribed, as the caller measured them. Absent for a call priced by tokens.
+  audioSeconds?: number | undefined;
 }
 export type AiUsageSink = (usage: AiUsage) => void;
 
@@ -130,14 +132,16 @@ export const UNMETERED: AiMeter = {
   record: async () => {},
 };
 
-function tokens(usage: { inputTokens: number | undefined; outputTokens: number | undefined } | undefined): AiUsage {
-  return { inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 };
+function tokens(usage: { inputTokens: number | undefined; outputTokens: number | undefined; audioSeconds?: number | undefined } | undefined): AiUsage {
+  const used: AiUsage = { inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 };
+  if (usage?.audioSeconds !== undefined) used.audioSeconds = usage.audioSeconds;
+  return used;
 }
 
 // The one door to the model: `call` is the generateText call, made only once the meter admitted it. The caller's own
 // sink (onUsage) sees the same tokens. Counts what the call used even when the answer was unusable (the model was paid
 // for it); a call that failed before an answer counts nothing.
-export async function metered<R extends { usage: { inputTokens: number | undefined; outputTokens: number | undefined } }>(
+export async function metered<R extends { usage: { inputTokens: number | undefined; outputTokens: number | undefined; audioSeconds?: number | undefined } }>(
   feature: AiFeature,
   call: () => Promise<R>,
   onUsage?: AiUsageSink,
@@ -166,13 +170,16 @@ export async function metered<R extends { usage: { inputTokens: number | undefin
   return result;
 }
 
-// The estimated cost of calls in the deployment's price unit (AI_PRICE_*, per million tokens), as a decimal string with
-// 6 decimals. Without a price AI costs nothing to count: the budget then counts calls' tokens only through its report.
-export function aiCost(usage: readonly AiUsage[], price: { inputPerMTok: string; outputPerMTok: string } | undefined): string {
+// The estimated cost of calls in the deployment's price unit (AI_PRICE_*, per million tokens, and per minute of audio for speech to
+// text), as a decimal string with 6 decimals. Without a price AI costs nothing to count: the budget then counts calls' tokens only
+// through its report.
+export function aiCost(usage: readonly AiUsage[], price: { inputPerMTok: string; outputPerMTok: string; audioPerMinute?: string | undefined } | undefined): string {
   if (!price) return '0';
-  let cost = new Decimal(0);
+  let tokenCost = new Decimal(0);
+  let audioCost = new Decimal(0);
   for (const call of usage) {
-    cost = cost.plus(new Decimal(call.inputTokens).times(price.inputPerMTok)).plus(new Decimal(call.outputTokens).times(price.outputPerMTok));
+    tokenCost = tokenCost.plus(new Decimal(call.inputTokens).times(price.inputPerMTok)).plus(new Decimal(call.outputTokens).times(price.outputPerMTok));
+    if (call.audioSeconds !== undefined && price.audioPerMinute) audioCost = audioCost.plus(new Decimal(call.audioSeconds).dividedBy(60).times(price.audioPerMinute));
   }
-  return cost.dividedBy(1_000_000).toFixed(6);
+  return tokenCost.dividedBy(1_000_000).plus(audioCost).toFixed(6);
 }

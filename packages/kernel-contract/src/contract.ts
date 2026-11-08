@@ -256,7 +256,7 @@ import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts'
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
-import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -274,7 +274,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
 import {
   zNote,
   zNoteCreate,
@@ -326,6 +326,11 @@ import {
   zTranscriptCorrected,
   zTranscriptDraftStore,
   zTranscriptDraftStored,
+  zTranscribeRunRef,
+  zTranscribeStart,
+  zTranscribeStarted,
+  zTranscribeStatus,
+  zTranscriptCopy,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -662,6 +667,8 @@ export const contract = {
       accept: oc.input(zQuoteAccept).output(zQuoteDecided),
       decline: oc.input(zQuoteDecline).output(zQuoteDecided),
       setSetting: oc.input(zQuoteSettingSet).output(zQuoteSetting),
+      setLogo: oc.input(zQuoteLogoSet).output(zQuoteSetting),
+      removeLogo: oc.input(z.strictObject({})).output(zQuoteSetting),
     },
     // Sales orders of accepted quotes (#2696, ADR-0050): everyone reads; owners, admins and members cancel one that nothing was invoiced or delivered for. `handoff` is
     // the facts Kế toán takes to make an e-invoice draft (it refuses a cancelled order).
@@ -780,6 +787,10 @@ export const contract = {
       get: oc.input(zMeetingRef).output(zTranscript),
       draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
+      // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
+      start: oc.input(zTranscribeStart).output(zTranscribeStarted),
+      status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
+      copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
@@ -1544,6 +1555,9 @@ export const contract = {
           // The posting of an approved pay run (#2532, ADR-0046): the server builds one line per account from the frozen run, with the account map of the entity's chart; an owner or an admin
           // approves it. HR_RUN_NOT_FOUND (404), HR_RUN_NOT_APPROVED, HR_POSTING_OPEN, HR_POSTING_DONE, PERIOD_LOCKED (409), HR_POSTING_ADJUSTMENTS, HR_POSTING_MISMATCH (422).
           z.object({ command: z.literal('finance.payroll_posting.record'), input: zHrPostingRequest, idempotencyKey: zId }),
+          // The payment of a pay run's net pay or one remittance (#2532): the server builds the voucher from the frozen run; an owner or an admin approves. HR_RUN_NOT_FOUND (404),
+          // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
+          z.object({ command: z.literal('finance.payroll_payment.record'), input: zHrPaymentRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
