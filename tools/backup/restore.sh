@@ -24,7 +24,11 @@
 #   6. run migrate, which must succeed (it applies migrations newer than the backup, sets the role passwords and runs
 #      the hardening guard); after a restore into a new bucket, re-record each org's export with the restored object
 #      versions before the worker starts (main.ts exports-rebind; an org that fails is reported, the restore goes
-#      on); then start the whole stack, and /readyz must answer ready.
+#      on); check the restored database against the WORM archive and raise the number series above it (main.ts
+#      restore-report --reseed --acknowledge, issues #2007 and #2020: what the archive holds beyond the backup point is
+#      listed in archive-report.json and acknowledged in the archive store, so the nightly verification excuses exactly
+#      those rows; a series it cannot raise, or an archive that does not match, fails the restore with the
+#      stack not started); then start the whole stack, and /readyz must answer ready.
 # Exit 0 when everything passed; otherwise `[restore] FAILED: <reason>` and exit 1. The log goes to stdout and to
 # <BACKUP_DIR>/logs/restore-<time>.log.
 #
@@ -33,7 +37,8 @@
 # sealed run), RESTORE_PRESTART, RESTORE_SAMPLE, RESTORE_FILES_SERVICE (default crove), BACKUP_NODE_SERVICE (default
 # crove), RESTORE_API_SERVICE (default crove when the stack defines it, else api), RESTORE_WORKER_SERVICE (default
 # crove when the stack defines it, else worker), RESTORE_GENERATIONS (versions, or content; default content on
-# storage.googleapis.com), RESTORE_READY_TIMEOUT (seconds, default 600). RESTORE_ALLOW_UNSEALED=yes, set on the
+# storage.googleapis.com), RESTORE_READY_TIMEOUT (seconds, default 600), RESTORE_ARCHIVE (check, or skip for a stack
+# that cannot reach the deployment's WORM archive, such as the scratch stack of the monthly test; default check). RESTORE_ALLOW_UNSEALED=yes, set on the
 # command (never read from .env) with an explicit s3:<run id>, restores an unsealed run from the bucket although
 # BACKUP_ENCRYPTION_KEY is set, for a run older than the key.
 set -Eeuo pipefail
@@ -71,6 +76,8 @@ SOURCE="$1"
 # Taken from the command's own environment only, never from .env, where a forgotten line would switch the downgrade
 # check off for good.
 ALLOW_UNSEALED="${RESTORE_ALLOW_UNSEALED:-}"
+# Also from the command only: the backup point of a run made before SNAPSHOT_AT was recorded (#2020).
+BACKUP_POINT_OVERRIDE="${RESTORE_BACKUP_POINT:-}"
 STEP="reading $CROVE_DIR/.env"
 load_env_file "$CROVE_DIR/.env"
 
@@ -82,6 +89,7 @@ RESTORE_SAMPLE="${RESTORE_SAMPLE:-50}"
 RESTORE_FILES_SERVICE="${RESTORE_FILES_SERVICE:-crove}"
 RESTORE_READY_TIMEOUT="${RESTORE_READY_TIMEOUT:-600}"
 RESTORE_FILES="${RESTORE_FILES:-copy}"
+RESTORE_ARCHIVE="${RESTORE_ARCHIVE:-check}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-30}"
 s3_host="${S3_ENDPOINT:-https://s3.amazonaws.com}"
 s3_host="${s3_host#*://}"
@@ -107,6 +115,7 @@ STEP="settings"
 case "$STORAGE" in local | s3) ;; *) STEP="settings: STORAGE must be local or s3, not $STORAGE"; false ;; esac
 [[ "$RESTORE_SAMPLE" =~ ^[0-9]+$ ]] || { STEP="settings: RESTORE_SAMPLE must be a whole number"; false; }
 case "$RESTORE_FILES" in copy | skip) ;; *) STEP="settings: RESTORE_FILES must be copy or skip"; false ;; esac
+case "$RESTORE_ARCHIVE" in check | skip) ;; *) STEP="settings: RESTORE_ARCHIVE must be check or skip"; false ;; esac
 case "$RESTORE_GENERATIONS" in versions | content) ;; *) STEP="settings: RESTORE_GENERATIONS must be versions or content"; false ;; esac
 [[ "$BACKUP_KEEP_DAYS" =~ ^[1-9][0-9]{0,3}$ ]] || { STEP="settings: BACKUP_KEEP_DAYS must be a whole number of days"; false; }
 if [ "$STORAGE" = s3 ] && [ -z "${S3_BUCKET:-}" ]; then STEP="settings: S3_BUCKET is required with STORAGE=s3"; false; fi
@@ -426,6 +435,46 @@ while :; do
 done
 migrated="$(dc logs --no-color migrate | grep -o '\[migrate\] done, [0-9]* new migration(s)' | tail -1 || true)"
 log "migrate: ${migrated:-done}"
+# The WORM archive outlives the database (#2007): the rows it holds beyond the backup point were lost with the
+# restore. The check lists them per org in archive-report.json, and raises every number series above the highest
+# number the archive holds for it (one audited command each), so no number is given out twice. It runs before the
+# worker starts, so nothing is numbered in between. Once every series is safe it acknowledges the lost rows in the
+# archive store and records the batches after the backup point (#2020): the nightly verification then excuses exactly
+# those rows. Exit 2 means rows were lost and every series is safe: the restore goes on and the operator reconciles
+# (docs/runbooks/ledger-after-restore.md). Exit 3 (a series it cannot raise: an org whose lost numbers no version 7
+# batch covers) and 1 (the archive does not match, or is not reachable) stop the restore with the stack not started.
+# Nothing is acknowledged then: the operator's run with the floors does it, before the stack starts. It runs before the
+# export rebind, which writes audit events stamped now: the check refuses any row stamped after the backup point but
+# its own (#2020).
+archive_lost=0
+if [ "$RESTORE_ARCHIVE" = check ]; then
+  STEP="checking against the WORM archive (main.ts restore-report --reseed --acknowledge)"
+  archive_status=0
+  # The backup's snapshot time, which the acknowledgement reads the restore by (#2020). A run made before SNAPSHOT_AT was
+  # recorded gives its finish time, a later point that is still sound but may be refused after a long dump: then set
+  # RESTORE_BACKUP_POINT on the command (never in .env) to the dump's start (the "database dump" line of the backup log).
+  backup_point="$BACKUP_POINT_OVERRIDE"
+  [ -n "$backup_point" ] || backup_point="$(meta_value SNAPSHOT_AT "$RUN/meta.env" 2>/dev/null || true)"
+  [ -n "$backup_point" ] || backup_point="$finished_at"
+  dc run --rm --no-deps -T "$worker" restore-report --reseed --acknowledge --backup-point "$backup_point" --json </dev/null >"$WORK/archive-report.json" || archive_status=$?
+  case "$archive_status" in
+    0) log "archive: the restored database holds everything the WORM archive holds" ;;
+    2)
+      archive_lost=1
+      log "WARNING: the WORM archive holds rows made after the backup point (above, and $WORK/archive-report.json); every number series is above them, and the lost rows are acknowledged"
+      ;;
+    3)
+      STEP="number series behind the WORM archive (above): name a floor for each with main.ts restore-report --reseed --acknowledge --floor ..., then start the stack (docs/runbooks/ledger-after-restore.md)"
+      false
+      ;;
+    *)
+      STEP="the WORM archive does not match the restored database or cannot be read (above; docs/runbooks/worm-archive.md)"
+      false
+      ;;
+  esac
+else
+  log "archive: RESTORE_ARCHIVE=skip, the restored database was not checked against the WORM archive"
+fi
 # Org exports are recorded in audit rows, which keep the old object versions: after a restore into a new bucket they
 # are re-recorded with the restored ones (kernel.org.export.record, as the worker), so they download again. The data
 # is in place by now, so an org whose export cannot be re-recorded is reported and the restore goes on: its owner
@@ -443,6 +492,13 @@ if [ "$STORAGE" = s3 ] && [ "$RESTORE_FILES" = copy ]; then
   else
     log "exports: no org has an export to re-record"
   fi
+fi
+# Meetings a person deleted since the backup point came back with their keys: the shred references of the archive store delete them again, and the
+# retention shreds again what its dates passed, before the API opens (ADR-0047 point 7, docs/runbooks/worm-archive.md). A role that exits non-zero (a
+# reference that could not be replayed, or the archive not reachable) stops the restore with the stack not started; run it again once it is fixed.
+if [ "$RESTORE_ARCHIVE" = check ]; then
+  STEP="deleting again the meetings the shred references name (main.ts shred-replay; docs/runbooks/worm-archive.md)"
+  dc run --rm --no-deps -T "$worker" shred-replay </dev/null
 fi
 STEP="starting the stack"
 dc up -d
@@ -474,4 +530,5 @@ done
 
 log "restore of $RUN_ID passed in $(($(date +%s) - STARTED_AT)) s: ${PHASES[*]/%/;}"
 [ "$rebind_failed" -eq 0 ] || log "WARNING: some org exports were not re-recorded (see exports-rebind above): their owners ask for a new export"
-log "before reopening writes: reconcile with the e-invoice providers (docs/runbooks/ledger-after-restore.md, step 4)"
+[ "$archive_lost" -eq 0 ] || log "WARNING: rows made after the backup point are lost (see the WORM archive check above and $WORK/archive-report.json)"
+log "before reopening writes: reconcile with the e-invoice providers and the WORM archive report (docs/runbooks/ledger-after-restore.md, step 4)"

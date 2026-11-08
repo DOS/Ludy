@@ -39,13 +39,24 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // table owner read or write them. They need RLS enabled (so a later grant stays deny-all until a policy is
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
+  // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
+  'crove_ads.ad_token_seal',
   'crove_kernel.auth_session_org',
+  'crove_kernel.calendar_credential',
   'crove_kernel.credential',
+  // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, no login role grant.
+  'crove_kernel.extension_auth_code',
+  // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, no login role grant.
+  'crove_kernel.extension_token',
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
+  // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
+  'crove_kernel.subject_key',
+  // The wrapped data key of a meeting's media (ADR-0047 point 4): definer-only, no login role grant.
+  'crove_meetings.media_key',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -53,6 +64,18 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.channel_order',
+  'crove_finance.channel_order_line',
+  'crove_finance.stock_alias',
+  'crove_finance.stock_count',
+  'crove_finance.stock_count_line',
+  'crove_finance.stock_item',
+  'crove_finance.stock_move',
+  'crove_finance.stock_period',
+  'crove_finance.stock_period_item',
+  'crove_meetings.action_item',
+  'crove_meetings.meeting_result',
+  'crove_meetings.transcript_segment',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -67,6 +90,29 @@ const PENDING_TABLES = new Set<string>([
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
 const AUTHOR_ONLY = new Map<string, string>([
+  // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
+  // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
+  ['crove_hr.payroll_bank_template', 'false'],
+  ['crove_hr.payroll_dependent', 'false'],
+  ['crove_hr.payroll_employee', 'false'],
+  ['crove_hr.payroll_employment', 'false'],
+  // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
+  ['crove_hr.payroll_line', 'false'],
+  ['crove_hr.payroll_run', 'false'],
+  // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
+  ['crove_meetings.action_item', 'false'],
+  // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.audio_segment', 'false'],
+  // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting', 'false'],
+  // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_reader', 'false'],
+  // Meeting results (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_result', 'false'],
+  // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_video', 'false'],
+  // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.transcript_segment', 'false'],
   // A link reads through its parent: the system context sees the links of shared notes (the factory's parent).
   [
     'crove_notes.link',
@@ -106,6 +152,13 @@ const leScopePredicate = (c: string) =>
 // The same policy for a nullable column whose NULL rows are org-level (20261101060000 role_assignment_scope, #1716).
 const leScopeOrOrgPredicate = (c: string) =>
   `((${c} IS NULL) OR ('*'::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])) OR ((${c})::text = ANY (( SELECT crove_kernel.ctx_le_scope() AS ctx_le_scope)::text[])))`;
+// Tables no tenant role may update or delete: the rows are the record of what a member confirmed (an import, a posting), and a correction is a new row. The matrix checks, for every table
+// listed here that exists, that no runtime role holds UPDATE or DELETE on it (a table or a column grant), that an update or delete of its own rows is refused by privilege, and that
+// listing it is not stale. Add a table here when its migration makes it append-only; sorted, one table per line.
+const APPEND_ONLY = new Set<string>([
+  'crove_finance.channel_settlement',
+  'crove_finance.channel_settlement_line',
+]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
 type Values = Record<string, string | number>;
@@ -138,6 +191,12 @@ interface RowFactory {
   noInsertControl?: string;
   // The 42501 denial a privileged actor gets for another org's row, when a trigger refuses before RLS does.
   insertDenied?: RegExp;
+  // The table is written by the system context alone (a RESTRICTIVE policy with a WITH CHECK on the actor): a member context's own-org
+  // insert and update are refused (42501) instead of being the controls, and the system actor runs the controls. The reason is why.
+  systemWritesOnly?: string;
+  // The table's UPDATE policy admits the system context alone (a RESTRICTIVE policy on the actor, the day of the last mail), while members insert
+  // and delete their own rows: a member context's own-org update finds no row to change, instead of being the control. The reason is why.
+  updatesBySystemOnly?: string;
   // For a role that may update some columns but not org_id: the assignment (and extra row filter) the update
   // probes use, when a no-op assignment would be refused by a trigger. Defaults to "<first column> = <itself>".
   update?: { set: string; where?: string };
@@ -145,6 +204,35 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
+let einvoiceSeq = 0;
+const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
+// A provider connection is unique per entity, provider and seller tax code, and the matrix seeds several in one org: each takes the next 10-digit code.
+let einvoiceTaxSeq = 0;
+const einvoiceTaxCode = () => String(1_000_000_000 + einvoiceTaxSeq++);
+// Stock items (#2512) are unique per entity by code, and an alias by its key: each seeded one takes the next.
+let stockSeq = 0;
+const stockCode = () => `SP${(stockSeq++).toString().padStart(5, '0')}`;
+// A closed month of stock (#2513) is unique per entity and month: each seeded one takes the next month from January 2000.
+let stockMonthSeq = 0;
+const stockMonth = () => {
+  const n = stockMonthSeq++;
+  return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-01`;
+};
+// A bank template (#2532) is unique per entity and name: each seeded one takes the next number.
+let bankTemplateSeq = 0;
+// A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
+let payrollMonthSeq = 0;
+const payrollMonth = () => {
+  const n = payrollMonthSeq++;
+  return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
+};
+// Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
+let channelOrderSeq = 0;
+const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
+// A settlement of a marketplace (#2516) is unique per entity, platform and period: each seeded one takes the next day from 2000-01-01 as a one-day period.
+let channelSettlementSeq = 0;
+const channelSettlementDay = () => new Date(Date.UTC(2000, 0, 1 + channelSettlementSeq++)).toISOString().slice(0, 10);
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -156,6 +244,16 @@ const agentRow = (o: { id: string; owner: string }) => ({
   template_key: 'finance.chief_accountant',
   display_name: 'RLS matrix agent',
   created_by: o.owner,
+});
+// A member's connected outside calendar (#2123, part of #1374). One per (org, member, provider, account), so every row
+// gets its own account; the rows belong to the owner, the user every member-context actor enters as.
+const calendarConnectionRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  user_id: o.owner,
+  provider: 'google',
+  external_account: `rls-${tag()}@calendar.test`,
+  display_name: 'RLS matrix calendar',
 });
 // A connected channel account (ADR-0025). One live connection per (org, provider, account), so every row gets its
 // own account id.
@@ -250,6 +348,12 @@ let taxObligationYear = 2000;
 let legalEntityBooksYear = 2000;
 // Active bookings of one member never overlap (#1313): each calendar event row its own hour.
 let calendarHour = 0;
+// A bank account number is unique per org (#2183): every factory row takes the next one.
+let bankAccountNumber = 0;
+// A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
+let stagePosition = 1;
+// A staged import row's number is unique per batch (#2229): each factory row takes the next one.
+let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
 const portalListRow = (o: { id: string; file: string }) => ({
@@ -273,6 +377,25 @@ const fixedAssetRow = (o: { id: string; owner: string }) => ({
   months: 36,
   created_by: o.owner,
 });
+// AI meeting notes (ADR-0047, meetings plan section 15 step M1): reader-gated meetings tables and media keys.
+const meetingsMeetingRow = (o: { id: string; owner: string }, visibility: 'attendees' | 'org' = 'attendees') => ({
+  org_id: o.id,
+  id: randomUUID(),
+  recorder_user_id: o.owner,
+  visibility,
+  title: 'RLS matrix meeting',
+  language: 'vi',
+  status: 'ready',
+  started_at: '2026-11-04T10:00:00Z',
+  ended_at: '2026-11-04T10:30:00Z',
+  length_seconds: 1800,
+  consent_method: 'told_at_start',
+  consent_confirmed_by: o.owner,
+  consent_confirmed_at: '2026-11-04T10:00:00Z',
+  consent_notice_version: '1.0',
+  audio_retention_date: '2026-12-04',
+  text_retention_date: '2027-11-04',
+});
 // A note of the org's owner (ADR-0037), shared ('org') or private, and a link from a note to the org's party.
 const notesNoteRow = (o: { id: string; owner: string }, visibility: 'org' | 'private') => ({ org_id: o.id, id: randomUUID(), author_user_id: o.owner, visibility, title: 'RLS matrix note' });
 const notesLinkRow = (o: { id: string; owner: string; party: string }, noteId: string) => ({
@@ -294,6 +417,214 @@ const journalEntry = (org: string, id: string): Row => ({
 // refused), so a denial cannot come from a malformed row. Kept in table-name order (plain string sort; the catalog
 // test checks it), so a new factory goes at its own place instead of at the end, where parallel PRs would conflict.
 const ROW_FACTORIES: Record<string, RowFactory> = {
+  // Ads (ADR-0040, #2217): an ad account of a connected ad platform, in an entity (the org's default, by its trigger b_legal_entity).
+  // One per connection, so every row has a connection of its own. Tenant roles update some columns only (a column grant), so
+  // the update probes assign the name to itself.
+  'crove_ads.ad_account': {
+    update: { set: 'name = name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' },
+      };
+    },
+  },
+  // A campaign draft of an ad account (W1, #2295): one campaign with its ad set and its ad, the plan an owner or admin submits for approval. The
+  // entity is the account's (b_legal_entity, the composite foreign key). Tenant roles update the plan's columns and its status (the guard trigger
+  // holds the status to its transitions and freezes a submitted plan), so the update probes assign the name to itself.
+  'crove_ads.ad_campaign_draft': {
+    update: { set: 'name = name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, name: 'RLS matrix draft', objective: 'traffic', created_by: o.owner },
+      };
+    },
+  },
+  // A request to the AI coworker for a campaign draft (W1b, #2295): the member's brief and objective for one ad account, in the account's
+  // entity (b_legal_entity, the composite foreign key). A member inserts it in their own name (the guard stamps who and when and holds the
+  // state to requested); only the system context settles it, and no tenant role updates or deletes a row, so there is no update probe.
+  'crove_ads.ad_campaign_request': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, objective: 'traffic', brief: 'RLS matrix request', requested_by: o.owner },
+      };
+    },
+  },
+  // The org's one row of spend-flag thresholds (#2378): how many days of a month must be over before the pace is judged, and by what factor a
+  // day or a campaign's cost per result may exceed its share or its median. A NULL threshold means the default. Org-wide, so no entity. Tenant
+  // roles update the thresholds and who set them only (a column grant), so the update probes assign a threshold to itself.
+  'crove_ads.ad_flag_setting': {
+    update: { set: 'pace_min_days = pace_min_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (ads.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // The launch ledger (W2-2, #2296): the row an approved plan of an ad account leaves behind, with the commitment it holds against the spend caps. The
+  // entity is the account's (b_legal_entity, the composite foreign key). Tenant roles update its state columns only (a column grant; the guard holds the
+  // moves), so the update probes assign the step to itself. A launch is inserted by the execution of the approved proposal of its plan alone.
+  'crove_ads.ad_launch': {
+    update: { set: 'step = step' },
+    noInsertControl: 'only the execution of an approved ads.campaign.launch proposal inserts a launch, in a context of its org; every other context of the org is refused by its guard (ads-launch-ledger.db.test.ts tests it)',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix launch', objective: 'traffic', created_by: o.owner } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          ad_account_id: account,
+          draft_id: draft,
+          proposal_id: randomUUID(),
+          plan_hash: `sha256:${hex64()}`,
+          currency: 'VND',
+          daily_budget: '100000',
+          start_on: '2031-01-01',
+          end_on: '2031-01-10',
+          amount: '1000000',
+          commit_until: '2031-01-10',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // What a launch created at the platform (W2-3, #2296): one row per object of a launch (campaign, ad set, creative, ad) with the platform's id and the name
+  // that carries the launch's tag, written by the launch job's record step alone. The entity is the account's (b_legal_entity, the composite foreign key);
+  // tenant roles update the status columns only (a column grant), so the update probes assign the configured status to itself.
+  'crove_ads.ad_object': {
+    update: { set: 'configured_status = configured_status' },
+    noInsertControl: "only the system inserts an object, in the launch job's record step, for a launch that is running; every other context of the org is refused by its guard (the W2-3 tests cover it)",
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      const launch = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix object', objective: 'traffic', created_by: o.owner } },
+          {
+            table: 'crove_ads.ad_launch',
+            values: {
+              org_id: o.id,
+              id: launch,
+              ad_account_id: account,
+              draft_id: draft,
+              proposal_id: randomUUID(),
+              plan_hash: `sha256:${hex64()}`,
+              currency: 'VND',
+              daily_budget: '100000',
+              start_on: '2031-01-01',
+              end_on: '2031-01-10',
+              amount: '1000000',
+              commit_until: '2031-01-10',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, launch_id: launch, slot: 'campaign', level: 'campaign', external_id: `rls-${randomUUID()}`, name: 'RLS matrix object ludy:0000000000' },
+      };
+    },
+  },
+  // Running ads (ADR-0043, #2294, W0): the org's one row of switches, the write switch and the block on launches. Org-wide, so no
+  // entity. Tenant roles update the two switches and who set them only (a column grant), so the update probes assign the write
+  // switch to itself.
+  'crove_ads.ad_org_setting': {
+    update: { set: 'write_enabled = write_enabled' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); the seed already holds it',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // A spend cap of the org or of one ad account, a row per change (the history, the latest is the cap): written once and never
+  // changed or deleted by a tenant role.
+  'crove_ads.ad_spend_cap': {
+    noInsertControl: 'only a signed-in owner of the org inserts a cap, and the database stamps its id, who and when; every other context of the org is refused by its guard (ads.db.test.ts tests it)',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), scope: 'account', ad_account_id: account, period: 'daily', amount: '1000000', currency: 'VND', set_by: o.owner },
+      };
+    },
+  },
+  // A day of one object of an ad account, as its platform reported it: the entity is the account's (b_legal_entity, and the
+  // composite foreign key). Tenant roles update the figures and the object's name only, never the keys (a column grant), so the
+  // update probes assign the spend to itself: a column the role is granted, so a refusal can only come from the row policy.
+  'crove_ads.ad_spend_day': {
+    update: { set: 'spend = spend' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, level: 'account', external_object_id: connection.external_account_id, day: '2026-10-01', currency: 'VND', spend: '1000', impressions: 10, clicks: 1 },
+      };
+    },
+  },
+  // One sync of an ad account: written once, never changed or deleted by a tenant role (the worker's prune deletes it).
+  'crove_ads.ad_sync_run': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, status: 'ok' },
+      };
+    },
+  },
+  // The revoke at the platform of a closed ads connection's token (W2-1, #2296): its state, count and next try, never the token (that is in
+  // crove_ads.ad_token_seal, definer-only). Written by definers alone (the system's command calls one): no tenant role inserts, updates or deletes a row.
+  'crove_ads.ad_token_revoke': {
+    systemWritesOnly: 'only the system context and the revoke definers write the state of a revoke (#2296); a member context is refused',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), connection_id: connection.id, provider: 'sandboxwrite_ads', external_account_id: connection.external_account_id, kind: 'write', reason: 'switch_off' },
+      };
+    },
+  },
+  // The sealed copy of that token (W2-1, #2296): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
+  'crove_ads.ad_token_seal': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
+      const revoke = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_token_revoke', values: { org_id: o.id, id: revoke, connection_id: connection.id, provider: 'sandboxwrite_ads', external_account_id: connection.external_account_id, kind: 'write', reason: 'switch_off' } },
+        ],
+        row: { org_id: o.id, revoke_id: revoke, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
   // #1318: a visitor's booking of an event type, holding an event on the host's calendar.
   'crove_crm.booking': {
     make: (o) => {
@@ -325,16 +656,120 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #1382: a member's booking feed address (the SHA-256 of its token); the member makes and revokes it.
   'crove_crm.booking_feed': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, token_sha256: hex64() } }) },
+  // A deal of the CRM pipeline (#2225): on a party of the org and in an open stage made for the row. Tenant roles write
+  // it whole but who created it and its ids, so the update probe assigns a column they may change.
+  'crove_crm.deal': {
+    make: (o) => {
+      const stage = randomUUID();
+      return {
+        setup: [{ table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }],
+        row: { org_id: o.id, id: randomUUID(), party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner },
+      };
+    },
+    update: { set: 'title = title' },
+  },
+  // The next step the daily stale-deal rule raises for a deal (#2381): a reason code and dates on an open deal of the org, no text. Only the system
+  // context inserts one (the row policy, so a member context's insert is refused and has no control here); a member with a write role marks it done
+  // or snoozes it (the guard trigger holds each actor to its transitions), so the update probes assign a column to itself. One open step per deal (a
+  // partial unique index): every row gets an open deal of its own, in a stage made for it.
+  'crove_crm.deal_next_step': {
+    update: { set: 'snoozed_until = snoozed_until' },
+    noInsertControl: 'only the system context raises a next step (the daily rule); a member context is refused (crm-stale-deals.db.test.ts tests it)',
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), deal_id: deal, reason: 'no_activity', assignee_user_id: o.owner, since_on: '2026-10-01' },
+      };
+    },
+  },
+  // The org's one row of deal settings (#2381): after how many days without a change an open deal raises a next step. Tenant roles update the days and
+  // who set them only (a column grant), so the update probes assign the days to themselves.
+  'crove_crm.deal_setting': {
+    update: { set: 'stale_days = stale_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (crm-stale-deals.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
   // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
   'crove_crm.event_type': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
   },
+  // A contact import in progress (#2229): a staged batch made by a member (the file is read in the browser and never stored). Tenant roles read and
+  // write it whole; the import commands are the only writers.
+  'crove_crm.import_batch': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), filename: 'rls-matrix.csv', created_by: o.owner } }),
+  },
+  // One staged row of that import: the fields as read, how it was classified and why. A row number is unique per batch, so
+  // every factory row gets a batch of its own.
+  'crove_crm.import_row': {
+    make: (o) => {
+      const batch = randomUUID();
+      return {
+        setup: [{ table: 'crove_crm.import_batch', values: { org_id: o.id, id: batch, filename: 'rls-matrix.csv', created_by: o.owner } }],
+        row: { org_id: o.id, id: randomUUID(), batch_id: batch, row_no: importRowNo++, name: 'RLS matrix import row', outcome: 'new' },
+      };
+    },
+  },
+  // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
+  'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
+  // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
+  // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
+  // row gets its own. Written and removed whole by owners' and admins' commands: tenant roles read, insert and delete.
+  'crove_finance.bank_account_number': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), bank_account: '1121', account_number: String(100_000_000_000 + bankAccountNumber++) } }),
+  },
   // Bank statement lines (#326): append-only, one row per line of an import, on a bank account (112 or an org
   // sub-account under it). Tenant roles read and insert; nothing updates or deletes a line.
+  // Bank feed accounts (ADR-0039, #2044): an account a bank feed connection reaches, mapped to a bank account of an
+  // entity (the org's default, by its trigger). Tenant roles update only the bank account and the sync cursor (a
+  // column grant), so the update probes assign the cursor to itself.
+  'crove_finance.bank_feed_account': {
+    update: { set: 'cursor = cursor' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'bank_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, external_account_id: 'SBX-001', bank_account: '1121' },
+      };
+    },
+  },
+  // The accounts a bank feed connection reaches, as the worker last listed them (ADR-0039, #2044 part 2b). Tenant roles
+  // update only the name and when it was listed (a column grant), so the update probes assign the name to itself.
+  'crove_finance.bank_feed_listed_account': {
+    update: { set: 'display_name = display_name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'bank_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, external_account_id: 'SBX-001', display_name: 'Sandbox Bank 001' },
+      };
+    },
+  },
   'crove_finance.bank_line': {
     make: (o) => ({
       row: { org_id: o.id, bank_account: '1121', import_id: randomUUID(), position: 1, value_date: '2026-10-01', description: 'RLS matrix', amount: '100' },
     }),
+  },
+  // #2402: a learned bank-line rule: the keyed hash of a statement line's words, the party it points at and the voucher whose approval
+  // taught it (one voucher with its entry, as the cash_voucher case seeds it). The entity is the org's default, by its trigger.
+  'crove_finance.bank_party_rule': {
+    make: (o) => {
+      const voucher = randomUUID();
+      const entry = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.cash_voucher', values: { org_id: o.id, id: voucher, voucher_type: 'cash_payment', voucher_date: '2026-10-01', cash_account: '1111', party_id: o.party, description: 'RLS matrix', amount: '100' } }],
+        row: { org_id: o.id, id: randomUUID(), kind: 'text', key_hash: `k1:${randomUUID().replaceAll('-', '')}${randomUUID().replaceAll('-', '')}`, party_id: o.party, source_voucher_id: voucher },
+        complete: [
+          { table: 'crove_finance.journal_entry', values: { ...journalEntry(o.id, entry).values, source_type: 'finance.cash_voucher', source_id: voucher } },
+          { table: 'crove_finance.journal_line', values: { org_id: o.id, entry_id: entry, line_no: 1, account_code: '331', debit: '100', credit: '0' } },
+          { table: 'crove_finance.journal_line', values: { org_id: o.id, entry_id: entry, line_no: 2, account_code: '1111', debit: '0', credit: '100' } },
+        ],
+      };
+    },
   },
   // Cash and bank vouchers (#327): append-only, numbered per org and type by the insert trigger (the row gives no
   // number). By commit a voucher must have its journal entry, on its date, moving the cash account by its amount, so
@@ -357,6 +792,67 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_finance.categorization_rule': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), match_kind: 'keyword', match_text: `rls matrix ${tag()}`, debit_account: '6422' } }),
   },
+  // #2515: an order of a marketplace (ADR-0045 point 5), read from a report a member confirmed: the platform, the platform's order number and the day; it takes the org's default
+  // entity by its trigger, and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_order': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), platform: 'shopee', order_no: channelOrderNo() } }),
+  },
+  // #2515: one line of an order (the SKU, the quantity, the amounts, how far it has got). It takes its order's entity, and the order is seeded with it. Tenant roles read, insert and
+  // move a line's stage forward, so the update probes assign the stage to itself.
+  'crove_finance.channel_order_line': {
+    update: { set: 'stage = stage' },
+    make: (o) => {
+      const order = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } }],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_key: 'RLS-matrix', quantity: '1', stage: 'placed' },
+      };
+    },
+  },
+  // #2516: the income report of a platform for a period (ADR-0045 point 5), read from a file a member confirmed: the period, the platform's payout reference and the net the report states; it
+  // takes the org's default entity by its trigger and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement': {
+    make: (o) => {
+      const day = channelSettlementDay();
+      return { row: { org_id: o.id, id: randomUUID(), platform: 'shopee', period_start: day, period_end: day, report_net: '0' } };
+    },
+  },
+  // #2516: what the platform paid for one order of a settlement. It takes its settlement's entity, and the settlement and the order it names are seeded with it. The net is what the columns say
+  // (sales less the deductions), so the seeded row is a sale of 100000 with a commission of 5000. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_settlement_line': {
+    make: (o) => {
+      const order = randomUUID();
+      const settlement = randomUUID();
+      const day = channelSettlementDay();
+      return {
+        setup: [
+          { table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } },
+          { table: 'crove_finance.channel_settlement', values: { org_id: o.id, id: settlement, platform: 'shopee', period_start: day, period_end: day, report_net: '95000' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), settlement_id: settlement, order_id: order, line_key: 'RLS-matrix', sales: '100000', commission: '5000', net: '95000' },
+      };
+    },
+  },
+  // #2488: the org's one row of payment reminder settings: the days after an invoice date a sale falls due, and the switch of the weekly "Hôm nay cần bạn"
+  // item. Org-wide, so no entity. Tenant roles update the two values and who set them (a column grant), so the update probes assign a value to itself.
+  'crove_finance.collection_setting': {
+    update: { set: 'terms_days = terms_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // #2488: what the org set for one customer: its own payment terms, and a date until which no reminder is drafted for it. One row per customer (UNIQUE
+  // (org_id, party_id)), so each row seeds a customer of its own. Tenant roles update the two values and who set them (a column grant).
+  'crove_finance.customer_collection': {
+    update: { set: 'paused_until = paused_until' },
+    noInsertControl: 'one row per customer (UNIQUE (org_id, party_id)); the members who may send reminders write it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix customer ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), party_id: party, terms_days: 45 },
+      };
+    },
+  },
   // Monthly depreciation and allocation of the register (#919): append-only, one row per asset and month, naming the
   // journal entry that posted it. Tenant roles read and insert; nothing updates or deletes a line.
   'crove_finance.depreciation_line': {
@@ -367,6 +863,45 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), asset_id: asset.id, month: '2026-10-01', amount: '1000000', entry_id: randomUUID() },
       };
     },
+  },
+  // #2501: an org's connection to an e-invoice provider (ADR-0044 point 2): the channel connection that holds the sealed credential, the seller's tax code and the
+  // entity it issues for (the org's default, by its trigger). Tenant roles update only the last connection test (a column grant), so the update probes assign
+  // the state to itself.
+  'crove_finance.einvoice_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'einvoice_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'einvoice_sandbox', seller_tax_code: einvoiceTaxCode() },
+      };
+    },
+  },
+  // #2500: a sales e-invoice draft. Its series belongs to the same entity (a composite key), so each draft seeds a series of its own.
+  'crove_finance.einvoice_draft': {
+    make: (o) => {
+      const series = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_series', values: { org_id: o.id, id: series, provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }],
+        row: { org_id: o.id, id: randomUUID(), series_id: series, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '0', vat_amount: '0', total: '0' },
+      };
+    },
+  },
+  // #2500: a line of a draft; it takes its draft's entity, and the draft is seeded with it.
+  'crove_finance.einvoice_draft_line': {
+    make: (o) => {
+      const draft = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_draft', values: { org_id: o.id, id: draft, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '100', vat_amount: '10', total: '110' } }],
+        row: { org_id: o.id, id: randomUUID(), draft_id: draft, line_no: 1, description: 'RLS matrix', quantity: '1', unit_price: '100', amount: '100', vat_rate: '10%', vat_amount: '10' },
+      };
+    },
+  },
+  // #2500: a series a provider holds (template number and symbol), linked to one entity of the org (the org's default, by its trigger). Tenant roles
+  // update the description and the default flag (a column grant), so the update probes assign the flag to itself. Symbols are unique per entity.
+  'crove_finance.einvoice_series': {
+    update: { set: 'is_default = is_default' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }),
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
@@ -536,6 +1071,75 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2512: a name a source uses for an item (a purchase line's description, a marketplace SKU); it takes its item's entity, and the item is seeded with it.
+  'crove_finance.stock_alias': {
+    make: (o) => {
+      const item = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
+        row: { org_id: o.id, id: randomUUID(), item_id: item, alias_key: `rls-matrix-${stockCode()}` },
+      };
+    },
+  },
+  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, note and who confirmed it), so the
+  // update probes assign the note to itself.
+  'crove_finance.stock_count': {
+    update: { set: 'note = note' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), count_date: '2026-11-03' } }),
+  },
+  // #2513: what was counted of one item. It takes its count's entity, and the count and the item are seeded with it. Tenant roles read, insert and change the counted quantity while the
+  // count is a draft, so the update probes assign it to itself.
+  'crove_finance.stock_count_line': {
+    update: { set: 'counted_quantity = counted_quantity' },
+    make: (o) => {
+      const item = randomUUID();
+      const count = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } },
+          { table: 'crove_finance.stock_count', values: { org_id: o.id, id: count, count_date: '2026-11-03' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), count_id: count, item_id: item, counted_quantity: '3' },
+      };
+    },
+  },
+  // #2512: an item of stock (ADR-0045 point 1), per legal entity (the org's default, by its trigger); its code is unique per entity. Tenant roles edit its name,
+  // so the update probes assign the name to itself.
+  'crove_finance.stock_item': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }),
+  },
+  // #2512: a move of stock, append-only (signed quantity, date, its source): tenant roles read and insert, and nothing updates or deletes a move. It takes its item's
+  // entity, and the item is seeded with it.
+  'crove_finance.stock_move': {
+    make: (o) => {
+      const item = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
+        row: { org_id: o.id, id: randomUUID(), item_id: item, move_date: '2026-11-03', quantity: '5', source_type: 'manual' },
+      };
+    },
+  },
+  // #2513: a closed month of stock (ADR-0045 point 2): the entity's month whose cost was set from the moves and posted; one per entity and month, with no figure of its own the
+  // moves could not give again. It takes the org's default entity by its trigger. Append-only: tenant roles read and insert, and nothing updates or deletes it.
+  'crove_finance.stock_period': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), period_month: stockMonth() } }),
+  },
+  // #2513: what a closed month held of one item (opening, in, out and closing quantity and value, and the unit cost the month's average gave). It takes its period's entity, and the
+  // period and the item are seeded with it. Append-only like the period.
+  'crove_finance.stock_period_item': {
+    make: (o) => {
+      const item = randomUUID();
+      const period = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } },
+          { table: 'crove_finance.stock_period', values: { org_id: o.id, id: period, period_month: stockMonth() } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), period_id: period, item_id: item },
+      };
+    },
+  },
   // #1400: the VAT return 01/GTGT marked filed for a period, with [22], [25] and [43] as filed. Append-only: the latest
   // row of a period is its state (a withdrawn mark adds a row without figures). Tenant roles read and insert.
   'crove_finance.vat_return_filed': {
@@ -562,7 +1166,89 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
+  'crove_hr.payroll_bank_template': {
+    update: { set: 'name = name' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        name: `RLS matrix ${bankTemplateSeq++}`,
+        layout: JSON.stringify({
+          columns: [
+            { key: 'sequence', header: 'STT' },
+            { key: 'name', header: 'Ten' },
+            { key: 'account', header: 'So tai khoan' },
+            { key: 'bank', header: 'Ngan hang' },
+            { key: 'amount', header: 'So tien' },
+            { key: 'content', header: 'Noi dung' },
+          ],
+          content: 'Luong thang {month}',
+        }),
+      },
+    }),
+  },
   // position is an SQL keyword, so the catalog prints the name quoted.
+  // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll: AUTHOR_ONLY keeps the system context out, and the "is for owners and
+  // admins only" case below (every crove_hr table) keeps a plain member and a viewer out. Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
+  'crove_hr.payroll_dependent': {
+    update: { set: 'ended_on = ended_on' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, display_name: 'RLS matrix', relation: 'child', registered_on: '2026-11-01' },
+      };
+    },
+  },
+  'crove_hr.payroll_employee': {
+    update: { set: 'display_name = display_name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix' } }),
+  },
+  // The pay terms of a person from a date, append-only like a contract: a raise is a new row.
+  'crove_hr.payroll_employment': {
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, effective_from: '2026-11-01', contract_type: 'indefinite', region: 'I', base_wage: '10000000' },
+      };
+    },
+  },
+  // #2531: one person's month of a pay run (ADR-0046), in the run's entity (b_legal_entity). Owners and admins alone (AUTHOR_ONLY); a draft run is the only one whose lines change, so the
+  // factory's run is a draft. Tenant roles update the terms, the status, the inputs, the figures, the breakdown and the stamp only (never the run, the person, the kind or the creation), so the update probes assign the stamp to itself.
+  'crove_hr.payroll_line': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      const run = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } },
+          { table: 'crove_hr.payroll_run', values: { org_id: o.id, id: run, month: payrollMonth(), working_days: '26' } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          run_id: run,
+          employee_id: employee,
+          gross: '10000000',
+          employee_insurance: '1050000',
+          employer_insurance: '2150000',
+          union_fee: '200000',
+          taxable_income: '10000000',
+          pit: '0',
+          net: '8950000',
+          employer_cost: '12350000',
+        },
+      };
+    },
+  },
+  // One month of one entity (the org's default, by its trigger): a draft until a person approves it, then frozen. Tenant roles update the working days, the status, the approval columns and the stamp only (never the month, the entity or the creation); the probes assign the working days to themselves.
+  'crove_hr.payroll_run': {
+    update: { set: 'working_days = working_days' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), month: payrollMonth(), working_days: '26' } }),
+  },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
   },
@@ -608,6 +1294,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_kernel.budget_policy': {
     make: (o) => ({ row: { org_id: o.id, scope: 'agent', target: randomUUID(), monthly_limit: '100', updated_by: o.owner } }),
   },
+  // An outside calendar a member connected (#2123): a restrictive policy shows each member only their own, as for a
+  // notification, and the factory's rows belong to the owner. Tenant roles update only the state columns (a column
+  // grant), so the update probes assign the name to itself.
+  'crove_kernel.calendar_connection': { update: { set: 'display_name = display_name' }, make: (o) => ({ row: calendarConnectionRow(o) }) },
+  // Definer-only machinery: the sealed tokens of a calendar connection, keyed by the connection's id. The envelope is
+  // opaque bytes here; only the vault in the worker opens a real one.
+  'crove_kernel.calendar_credential': {
+    make: (o) => {
+      const connection = calendarConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.calendar_connection', values: connection }],
+        row: { org_id: o.id, id: connection.id, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
   // #1313: an event on a member's calendar; busy events of one member never overlap, so each row takes its own hour.
   'crove_kernel.calendar_event': {
     make: (o) => {
@@ -617,9 +1318,177 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // What was written of a booking's calendar event to a member's connected calendar (#2124, C6b): one row per
+  // (connection, event), under the same restrictive own-row policy as the connection, so the factory's rows belong to the
+  // owner. Tenant roles update only its state columns (a column grant), so the update probes assign attempts to itself.
+  'crove_kernel.calendar_event_link': {
+    update: { set: 'attempts = attempts' },
+    make: (o) => {
+      const connection = calendarConnectionRow(o);
+      const start = new Date(Date.UTC(2030, 0, 1) + 3_600_000 * calendarHour++);
+      const event = { org_id: o.id, id: randomUUID(), user_id: o.owner, starts_at: start.toISOString(), ends_at: new Date(start.getTime() + 1_800_000).toISOString(), time_zone: 'Asia/Ho_Chi_Minh', title: 'RLS matrix event', created_by: o.owner };
+      return {
+        setup: [
+          { table: 'crove_kernel.calendar_connection', values: connection },
+          { table: 'crove_kernel.calendar_event', values: event },
+        ],
+        row: { org_id: o.id, id: randomUUID(), connection_id: connection.id, event_id: event.id, user_id: o.owner, external_id: `rlsmatrix${tag()}`, state: 'written', synced_hash: 'rls-matrix' },
+      };
+    },
+  },
+  // A channel a limited member may work on (#1081, moved from Social to the kernel by #2303): a member with rows is limited to
+  // those channels, a member with none is not limited. The member is the org's owner, the one member the fixture has
+  // (tenant roles cannot add members). One row per member and connection, so each row gets its own fresh connection.
+  'crove_kernel.channel_access': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), user_id: o.owner, channel_connection_id: connection.id, created_by: o.owner },
+      };
+    },
+  },
   'crove_kernel.channel_connection': { make: (o) => ({ row: channelConnectionRow(o) }) },
   // Definer-only machinery: the sealed token of a connection, one row per connection. The envelope is opaque bytes
   // here; only the vault in the worker opens a real one.
+  // The conversation core (#2303, plan docs/plan/conversations.md section 5): a thread of comments or messages on a channel.
+  // The factory's rows are comment threads, which the org's owner (the member context every probe enters as) reads and writes
+  // whatever the channel limits; a private message is read only with kernel.conversation.direct.read, and the thread's own channel
+  // and kind are copied onto its messages (composite foreign key), so every row below gets a fresh connection and thread.
+  'crove_kernel.conversation': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}`, external_post_id: `post-${tag()}` },
+      };
+    },
+  },
+  // A customer's image of a message (CV5c, #2357): read by those who read its message (the thread's own rule), written, updated and deleted
+  // by the system context alone (systemWritesOnly), so the owner's member context the probes enter as reads its row but its insert and
+  // update are refused and its delete finds no row (the row policies). Its channel and kind are the message's (composite foreign key), so
+  // every row gets a fresh connection, thread and message. The update probes assign a column of a pending row to itself.
+  'crove_kernel.conversation_attachment': {
+    update: { set: 'fetch_attempts = fetch_attempts' },
+    systemWritesOnly: 'only the system context writes an image (the intake and the worker), so a member context is refused',
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      const message = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'direct', external_thread_id: `rls-${tag()}` } },
+          {
+            table: 'crove_kernel.conversation_message',
+            values: { org_id: o.id, id: message, conversation_id: thread, channel_connection_id: connection.id, kind: 'direct', seq: 1, direction: 'in', external_message_id: `rls-${tag()}`, sent_at: '2026-11-02T03:00:00Z', author_kind: 'contact', body: 'RLS matrix image' },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), message_id: message, channel_connection_id: connection.id, kind: 'direct', source_url: `https://cdn.zdn.vn/rls-${tag()}.png`, storage_key: `conversation/${o.id}/${hex64()}` },
+      };
+    },
+  },
+  // The "you are replying" marker of a thread (CV3, #2306): who is typing a reply, for 60 seconds, read by those who read the thread (its own rule) and
+  // written by a member who may write it, in their own name (the owner the member-context probes enter as). One per thread and member (a unique key), so
+  // every row gets a fresh connection and thread. Its channel and kind are the thread's (composite foreign key). The update probes assign a column to itself.
+  'crove_kernel.conversation_composing': {
+    update: { set: 'expires_at = expires_at' },
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'direct', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, channel_connection_id: connection.id, kind: 'direct', user_id: o.owner, expires_at: '2031-01-01T00:00:00Z' },
+      };
+    },
+  },
+  // Vy's reply draft of a thread (CV8, #2310): read by those who read the thread (its own rule), asked for by a member (a row requested, no text,
+  // in their own name: the owner the member-context probes enter as) and written by the system (the text, the move to live), which the guard
+  // trigger holds each to. The factory's row is such a request, so the member's own-org insert and update controls pass, and the update probes
+  // assign a column to itself. Its channel and kind are the thread's (composite foreign key), so every row gets a fresh connection and thread.
+  'crove_kernel.conversation_draft': {
+    update: { set: 'state = state' },
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'direct', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, channel_connection_id: connection.id, kind: 'direct', basis_seq: 1, source: 'asked', requested_by: o.owner },
+      };
+    },
+  },
+  // Who wrote: the platform's id for the person, once per provider; a party is linked by a person, never by the intake.
+  'crove_kernel.conversation_identity': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', external_user_id: `rls-${tag()}`, display_name: 'RLS matrix commenter' } }),
+  },
+  // A message of a thread: its channel and kind are the thread's, and its place (seq) and platform id are unique per
+  // thread and connection, so each row has a thread of its own.
+  'crove_kernel.conversation_message': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          conversation_id: thread,
+          channel_connection_id: connection.id,
+          kind: 'comment_thread',
+          seq: 1,
+          direction: 'in',
+          external_message_id: `rls-${tag()}`,
+          sent_at: '2026-11-01T03:00:00Z',
+          author_kind: 'contact',
+          body: 'RLS matrix comment',
+        },
+      };
+    },
+  },
+  // An internal note on a thread, never sent.
+  'crove_kernel.conversation_note': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, author_user_id: o.owner, body: 'RLS matrix note' },
+      };
+    },
+  },
+  // A member's read mark on a thread: one per member and thread, the member being the org's owner.
+  'crove_kernel.conversation_read': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, user_id: o.owner },
+      };
+    },
+  },
+  // The org's one row of conversation settings (CV6, #2305): how long a thread is kept after its last message. Org-wide, so no entity.
+  // Tenant roles update the retention and who set it only (a column grant), so the update probes assign the retention to itself.
+  'crove_kernel.conversation_setting': {
+    update: { set: 'retention_months = retention_months' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (conversations-retention.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
   'crove_kernel.credential': {
     make: (o) => {
       const connection = channelConnectionRow(o);
@@ -628,6 +1497,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, connection_id: connection.id, key_id: 'rls-matrix', envelope: '\\x00' },
       };
     },
+  },
+  // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, in MACHINERY.
+  'crove_kernel.extension_auth_code': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        code_hash: `\\x${hex64()}`,
+        code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        code_challenge_method: 'S256',
+        user_id: o.owner,
+        scopes: '{meetings}',
+        device_name: 'Chrome on macOS',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-10-01T00:05:00Z',
+      },
+    }),
+  },
+  // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, in MACHINERY.
+  'crove_kernel.extension_token': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        token_hash: `\\x${hex64()}`,
+        device_name: 'Chrome on macOS',
+        scopes: '{meetings}',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-10-31T00:00:00Z',
+        created_by: o.owner,
+      },
+    }),
   },
   // The ledger of visible calls to outside services (Social plan §3.4, S4): one row per call key. Tenant roles read,
   // insert and update its outcome columns, never delete; the guard trigger refuses any change once a call has its
@@ -727,6 +1629,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'lift_reason = lift_reason' },
     make: (o) => ({ row: { org_id: o.id, to_hash: hex64(), scope: 'all', reason: 'manual' } }),
   },
+  // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to. One row per member (a unique
+  // key), the owner the member-context probes enter as, so the seed holds it already; every member reads it, a member writes their own through its command.
+  'crove_kernel.member_availability': {
+    update: { set: 'status = status' },
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own, through its command (conversations-inbox.db.test.ts tests it)',
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, status: 'available' } }),
+  },
   // Pending member invites (issue #35). An open invite per (org, email), so every row gets its own address. Token
   // hash and expiry take their defaults (an unusable random hash, seven days). Tenant roles may update only status,
   // revoked_at and revoked_by (a column grant), so the update probes write status, which the guard trigger allows
@@ -808,6 +1717,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_kernel.role_assignment': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, role_key: 'finance.chief_accountant', granted_by: o.owner } }),
   },
+  // An org's saved reply (CV8, #2310): the org's own text, written by owners, admins and members (the owner the probes enter as) and the system.
+  'crove_kernel.saved_reply': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: `rls-${tag()}`, body: 'RLS matrix saved reply' } }),
+  },
+  // A member's saved view of a list (#2227): a name, the filter conditions and sort it applies, private or shared with the
+  // org, under restrictive policies that show a private view to its owner alone, as crove_social.saved_view does; the
+  // factory's rows belong to the owner, the user every member-context actor enters as. One name per member and scope, so
+  // every row gets its own.
+  'crove_kernel.saved_view': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, scope: 'crm.deal', name: `rls-${tag()}`, filters: '{"v":1,"all":[]}' } }),
+  },
+  // #2640: the wrapped data key of a subject (ADR-0017 section 2), the first of which is a payroll employee's. Written and read by definers alone, so no role may touch it.
+  'crove_kernel.subject_key': {
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), ref: `employee:${randomUUID()}`, key_id: 'rls-matrix', wrapped_key: `\\x${'00'.repeat(60)}` } }),
+  },
   'crove_kernel.task': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' } }),
   },
@@ -835,8 +1759,150 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   'crove_kernel.tenant_member': { make: (o) => ({ row: { org_id: o.id, user_id: o.freshUser(), role: 'member' } }) },
   // An item kept for an org's next daily budget (#675): append-only, tenants read and insert.
+  // A member's opt-in to the daily brief by email (#2406): one row per member, shown to its owner alone, like notification mail-off.
+  'crove_kernel.today_mail': {
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member inserts their own, through its command (today-mail.db.test.ts tests it)',
+    updatesBySystemOnly: 'only the system context writes the day of the last mail; a member context updates no row',
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner } }),
+  },
   'crove_kernel.usage_deferral': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), metric: 'extraction_pages', subject_type: 'file', subject_id: randomUUID(), retry_at: '2099-01-01T00:00:00Z' } }),
+  },
+  // #2575: an action item suggested from a meeting (ADR-0047 point 1, 8), a draft until published.
+  'crove_meetings.action_item': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          title: 'RLS matrix action item',
+          who_drafted: 'Nguyễn Văn A',
+          who_parsed: o.owner,
+          when_drafted: 'Thứ sáu',
+          when_parsed: '2026-11-13',
+          transcript_seconds: 120,
+          stage: 'draft',
+          status: 'suggested',
+          flags: '[]',
+          tainted: 'true',
+        },
+      };
+    },
+  },
+  // #2575: normalized 10-minute audio segment of a meeting (ADR-0047 point 1, 5).
+  'crove_meetings.audio_segment': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          file_id: o.file,
+          segment_order: 0,
+          start_offset_seconds: 0,
+          length_seconds: 600,
+        },
+      };
+    },
+  },
+  // #2575: wrapped data key for audio or video of a meeting (ADR-0047 point 1, 4). Definer-only, in MACHINERY.
+  'crove_meetings.media_key': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          key_id: 'rls-matrix',
+          kind: 'audio',
+          wrapped_key: `\\x${'00'.repeat(60)}`,
+        },
+      };
+    },
+  },
+  // #2575: a meeting with its recorder, attendees-only by default (ADR-0047 point 1, 2).
+  'crove_meetings.meeting': {
+    make: (o) => ({
+      setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
+      row: meetingsMeetingRow(o, 'attendees'),
+    }),
+  },
+  // #2575: member attendee reader of a meeting (ADR-0047 point 1, 2).
+  'crove_meetings.meeting_reader': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          user_id: o.owner,
+        },
+      };
+    },
+  },
+  // #2575: AI summary and decisions on a meeting (ADR-0047 point 1, 3).
+  'crove_meetings.meeting_result': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          summary: 'RLS matrix meeting summary',
+          decisions: '["Quyết định 1"]',
+          feature: 'meetings.summary',
+          stage: 'draft',
+          tainted: 'true',
+        },
+      };
+    },
+  },
+  // #2575: optional kept video of a meeting (ADR-0047 point 1, 4, 7).
+  'crove_meetings.meeting_video': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          file_id: o.file,
+          length_seconds: 1800,
+          video_retention_date: '2026-11-11',
+        },
+      };
+    },
+  },
+  // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).
+  'crove_meetings.transcript_segment': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          start_seconds: 0,
+          end_seconds: 10,
+          speaker_label: 'Người nói 1',
+          text: 'Xin chào',
+          stage: 'draft',
+        },
+      };
+    },
   },
   // Notes and personal to-dos (ADR-0037, notes plan §3.4), in AUTHOR_ONLY. The matrix seeds as the superuser with no
   // context, so each factory names its author or owner: the org's owner, the user every member-context actor enters
@@ -896,19 +1962,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_social.calendar_feed': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), token_sha256: hex64(), created_by: o.owner } }) },
   // A team's note on calendar dates (#794): a title over one day or a range, with a colour from the app's palette.
   'crove_social.calendar_note': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), starts_on: '2026-10-20', ends_on: '2026-10-22', title: 'RLS matrix note', created_by: o.owner, updated_by: o.owner } }) },
-  // A channel a limited member may work on (#1081): a member with rows is limited to those channels, a member with none
-  // is not limited. The member is the org's owner, the one member the fixture has (tenant roles cannot add members;
-  // only the commands skip owners and admins). One row per member and connection, so each row gets its own fresh
-  // connection however many rows an org gets.
-  'crove_social.channel_access': {
-    make: (o) => {
-      const connection = channelConnectionRow(o);
-      return {
-        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
-        row: { org_id: o.id, id: randomUUID(), user_id: o.owner, channel_connection_id: connection.id, created_by: o.owner },
-      };
-    },
-  },
   // A channel's options for the composer (#1120, a Pinterest board's sections), cached per connection and kind: asked
   // for by a member, filled in by the worker. One row per connection and kind, so each row gets its own fresh
   // connection however many rows an org gets.
@@ -1380,6 +2433,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   // must see, write and change none of the rows the factories seed (all in org A's default entity).
   let scoped: Actor;
   let branch = '';
+  // Plain people of org A with no branch scope and no assigned role: an admin, a member and a viewer. The crove_hr tables are owner and admin only, so only the admin
+  // reaches them (the check below, #2715).
+  let adminPerson: Actor;
+  let plainMember: Actor;
+  let viewerPerson: Actor;
   // privileges[table][role] = the table privileges the role holds.
   const privileges = new Map<string, Map<string, Set<Op>>>();
 
@@ -1618,6 +2676,23 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgs.A.id, contextToken(accountant, orgs.A.id)]);
       },
     };
+
+    const person = async (role: 'admin' | 'member' | 'viewer', label: string): Promise<Actor> => {
+      const user = freshUser();
+      await adminTx([{ table: 'crove_kernel.tenant_member', values: { org_id: orgs.A.id, user_id: user, role } }]);
+      return {
+        name: `crove_app as ${label} of org A`,
+        role: 'crove_app',
+        client: app,
+        org: 'A',
+        enter: async (c) => {
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgs.A.id, contextToken(user, orgs.A.id)]);
+        },
+      };
+    };
+    adminPerson = await person('admin', 'an admin');
+    plainMember = await person('member', 'a plain member (no assigned role, no branch scope)');
+    viewerPerson = await person('viewer', 'a viewer');
   });
 
   afterAll(async () => {
@@ -1647,6 +2722,9 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     expect(authorOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'AUTHOR_ONLY lists tables that no longer have org_id').toEqual([]);
     expect(authorOnly.filter((t) => !ROW_FACTORIES[t]), 'AUTHOR_ONLY lists tables with no row factory').toEqual([]);
     expect(authorOnly, 'AUTHOR_ONLY is kept sorted, one table per line').toEqual([...authorOnly].sort());
+    const appendOnly = [...APPEND_ONLY];
+    expect(appendOnly.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'APPEND_ONLY lists tables that no longer have org_id').toEqual([]);
+    expect(appendOnly, 'APPEND_ONLY is kept sorted, one table per line').toEqual([...appendOnly].sort());
   });
 
   it('limits the scoped member to its branch', async () => {
@@ -1804,6 +2882,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             const q = insertSql({ table, values: built.row });
             return c.query(q.text, q.values);
           };
+          if (factory.systemWritesOnly && !actor.system) {
+            // Written by the system context alone: the member's own-org insert is refused by the row policy.
+            expect(await probe(actor, insertOwn), `${actor.name} inserting into ${table} for its own org: ${factory.systemWritesOnly}`).toMatchObject({ ok: false, code: '42501' });
+            continue;
+          }
           let controlActor = actor;
           if (actor.system && AUTHOR_ONLY.has(table)) {
             // AUTHOR_ONLY: the system context writes no row of its own org either. Its parents are committed first as
@@ -1890,6 +2973,16 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             expect(expectRows(control, `${member.name} updating ${table} (own rows, control for ${actor.name})`).rowCount, `${where}: own rows updated by the member`).toBeGreaterThan(0);
             continue;
           }
+          if (factory.systemWritesOnly && !actor.system) {
+            // Written by the system context alone: a member context's update of its own org's rows is refused by the row policy.
+            expect(await probe(actor, updateOwn), `${where} (own rows): ${factory.systemWritesOnly}`).toMatchObject({ ok: false, code: '42501' });
+            continue;
+          }
+          if (factory.updatesBySystemOnly && !actor.system) {
+            // The update policy admits the system context alone: a member context's update of its own org's rows changes none.
+            expect(expectRows(await probe(actor, updateOwn), `${where} (own rows): ${factory.updatesBySystemOnly}`).rowCount, `${where}: own rows updated`).toBe(0);
+            continue;
+          }
           // Control: the same update on its own rows runs, so the zero above is the org filter.
           const own = await probe(actor, updateOwn);
           expect(expectRows(own, `${where} (own rows, control)`).rowCount, `${where}: own rows updated`).toBeGreaterThan(0);
@@ -1924,6 +3017,20 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
         const { rows } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [orgs.B.id]);
         expect(rows[0]?.n, `${table} still has its org B rows`).toBeGreaterThan(0);
       });
+
+      if (APPEND_ONLY.has(table)) {
+        it('is append-only: no tenant role holds UPDATE or DELETE on it, and an update or delete of its own rows is refused', async () => {
+          factoryFor(table);
+          for (const actor of actors.filter((a) => a.role !== 'crove_definer_tenant')) {
+            const who = `${actor.name} on ${table}`;
+            expect(can(table, actor.role, 'UPDATE'), `${who}: holds UPDATE`).toBe(false);
+            expect(can(table, actor.role, 'DELETE'), `${who}: holds DELETE`).toBe(false);
+            expect(updatable.get(table)?.get(actor.role) ?? [], `${who}: holds UPDATE on columns`).toEqual([]);
+            expectDenied(await probe(actor, (c) => c.query(`UPDATE ${table} SET org_id = org_id WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: updating its own rows`);
+            expectDenied(await probe(actor, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id])), PRIVILEGE_DENIED, `${who}: deleting its own rows`);
+          }
+        });
+      }
 
       if (relation.entityColumn) {
         const column = relation.entityColumn;
@@ -1986,6 +3093,55 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           if (can(table, 'crove_app', 'DELETE') && can(table, 'crove_app', 'SELECT')) {
             const deleted = await probe(scoped, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1 AND ${others}`, [orgs.A.id]));
             expect(expectRows(deleted, `${where} (delete)`).rowCount, `${where}: rows of another entity deleted`).toBe(0);
+          }
+        });
+      }
+
+      // HR data (wages, insurance, tax, the sealed identity and account numbers) is for owners and admins alone (#2538, ADR-0046), and that has to hold in the database, not only in the
+      // commands: a plain member and a viewer, with no assigned role and no branch scope, reach no row, write none and delete none, while the owner and an admin do the same things
+      // with the same outcomes. AUTHOR_ONLY proves the system context is out; this proves the people are. A policy that tests the actor is a user and drops the role test fails here (#2715).
+      if (table.startsWith('crove_hr.')) {
+        it('is for owners and admins only: a plain member and a viewer reach no row, and an admin does what the owner does', async () => {
+          const factory = factoryFor(table);
+          const readOwn = async (actor: Actor) => expectRows(await probe(actor, (c) => c.query(`SELECT org_id::text AS org FROM ${table} WHERE org_id = $1`, [orgs.A.id])), `${actor.name} (read)`);
+          const ownerRead = await readOwn(member);
+          expect(ownerRead.rows.length, `${table}: the owner reads the seeded rows of org A`).toBeGreaterThan(0);
+          expect((await readOwn(adminPerson)).rows.length, `${adminPerson.name} reads what the owner reads on ${table}`).toBe(ownerRead.rows.length);
+          for (const who of [plainMember, viewerPerson]) expect((await readOwn(who)).rows, `${who.name} reads a row of ${table}`).toEqual([]);
+
+          // Inserts: each actor's own row (its parents committed first as the database owner). The owner and an admin get the same answer; the others are refused by row-level security.
+          const outcomes = new Map<string, Awaited<ReturnType<typeof probe>>>();
+          if (can(table, 'crove_app', 'INSERT')) {
+            for (const who of [member, adminPerson, plainMember, viewerPerson]) {
+              const built = factory.make(orgs.A);
+              if (built.setup?.length) await adminTx([...built.setup, ...(built.complete ?? [])]).catch(() => adminTx(built.setup ?? []));
+              const q = insertSql({ table, values: built.row });
+              outcomes.set(who.name, await probe(who, (c) => c.query(q.text, q.values)));
+            }
+            const owner = outcomes.get(member.name);
+            const adminOutcome = outcomes.get(adminPerson.name);
+            expect({ ok: adminOutcome?.ok, code: adminOutcome && !adminOutcome.ok ? adminOutcome.code : undefined }, `${adminPerson.name} inserting into ${table}, as the owner does`).toEqual({
+              ok: owner?.ok,
+              code: owner && !owner.ok ? owner.code : undefined,
+            });
+            for (const who of [plainMember, viewerPerson]) {
+              expect(outcomes.get(who.name), `${who.name} inserting into ${table}: refused by row-level security`).toMatchObject({ ok: false, code: '42501' });
+            }
+          }
+
+          // Updates and deletes: the owner and an admin reach the rows alike (the table's own guards may refuse a change, the same for both); the others change none.
+          const cols = columnsToUpdate(table, 'crove_app');
+          const shape = (o: Awaited<ReturnType<typeof probe>>) => (o.ok ? { ok: true, rowCount: o.rowCount } : { ok: false, code: o.code });
+          if (cols.length > 0 && can(table, 'crove_app', 'SELECT')) {
+            const set = factory.update?.set ?? `"${cols[0]}" = "${cols[0]}"`;
+            const run = (who: Actor) => probe(who, (c) => c.query(`UPDATE ${table} SET ${set} WHERE org_id = $1`, [orgs.A.id]));
+            expect(shape(await run(adminPerson)), `${adminPerson.name} updating ${table}, as the owner does`).toEqual(shape(await run(member)));
+            for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (update)`).rowCount, `${who.name}: rows of ${table} updated`).toBe(0);
+          }
+          if (can(table, 'crove_app', 'DELETE') && can(table, 'crove_app', 'SELECT')) {
+            const run = (who: Actor) => probe(who, (c) => c.query(`DELETE FROM ${table} WHERE org_id = $1`, [orgs.A.id]));
+            expect(shape(await run(adminPerson)), `${adminPerson.name} deleting from ${table}, as the owner does`).toEqual(shape(await run(member)));
+            for (const who of [plainMember, viewerPerson]) expect(expectRows(await run(who), `${who.name} (delete)`).rowCount, `${who.name}: rows of ${table} deleted`).toBe(0);
           }
         });
       }

@@ -37,7 +37,7 @@ test('lists the customer of an approved sale with its receivable, edits it, and 
 
   await test.step('the sale proposal links its customer to the customers screen', async () => {
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });

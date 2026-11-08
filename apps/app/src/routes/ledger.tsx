@@ -2,6 +2,7 @@
 // the receivables and payables per party, from posted entries, with one Excel workbook of all of them. The period
 // lock (#329) sits above the reports. The financial statements tab (issue #154) shows the DRAFT B01-DNN and B02-DNN
 // of the same period, with a workbook of its own.
+import { Fragment, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
@@ -14,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/t
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { PeriodLockPanel } from '../components/period-lock.tsx';
 import { YearArchivePanel } from '../components/year-archive.tsx';
-import { DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, Notice, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, getCurrentOrg, orpc } from '../lib/api.ts';
 import { exportQuery } from '../lib/legal-entity-choice.ts';
@@ -22,7 +23,9 @@ import { withSearch } from '../lib/search.ts';
 import { partySearch } from '../lib/parties.ts';
 import {
   LEDGER_TABS,
+  b02Comparison,
   balanceSide,
+  columnAmount,
   defaultLedgerPeriod,
   ledgerChoiceOf,
   ledgerPeriodKey,
@@ -31,6 +34,7 @@ import {
   type LedgerPeriodKind,
   type LedgerSearch,
   type LedgerTab,
+  type StatementCompare,
 } from '../lib/ledger.ts';
 import { yearOptions } from '../lib/vat.ts';
 
@@ -83,7 +87,19 @@ function PartyTable({ ledger, partyLabel, customers = false }: { ledger: PartyLe
   const { slug } = useParams({ strict: false }) as { slug: string };
   if (ledger.rows.length === 0) return <Empty title={t('partiesEmpty')} hint={t('partiesEmptyHint')} />;
   return (
-    <DataTable numeric={[2, 3, 4, 5]} head={[t('columns.taxCode'), partyLabel, t('columns.opening'), t('columns.increase'), t('columns.decrease'), t('columns.closing')]}>
+    <DataTable
+      numeric={[2, 3, 4, 5]}
+      head={[t('columns.taxCode'), partyLabel, t('columns.opening'), t('columns.increase'), t('columns.decrease'), t('columns.closing')]}
+      foot={
+        <TableRow>
+          <TableCell className="px-4 py-3" />
+          <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
+          <TableCell className={NUM}>{f.money(ledger.totals.opening)}</TableCell>
+          <TableCell className={NUM}>{f.money(ledger.totals.increase)}</TableCell>
+          <TableCell className={NUM}>{f.money(ledger.totals.decrease)}</TableCell>
+          <TableCell className={NUM}>{f.money(ledger.totals.closing)}</TableCell>
+        </TableRow>
+      }>
       {ledger.rows.map((row) => (
         <TableRow key={row.partyId ?? 'none'}>
           <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.partyTaxCode ?? ''}</TableCell>
@@ -104,14 +120,6 @@ function PartyTable({ ledger, partyLabel, customers = false }: { ledger: PartyLe
           <TableCell className={`${NUM} font-medium text-foreground`}>{f.money(row.closing)}</TableCell>
         </TableRow>
       ))}
-      <TableRow className="font-medium">
-        <TableCell className="px-4 py-3" />
-        <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
-        <TableCell className={NUM}>{f.money(ledger.totals.opening)}</TableCell>
-        <TableCell className={NUM}>{f.money(ledger.totals.increase)}</TableCell>
-        <TableCell className={NUM}>{f.money(ledger.totals.decrease)}</TableCell>
-        <TableCell className={NUM}>{f.money(ledger.totals.closing)}</TableCell>
-      </TableRow>
     </DataTable>
   );
 }
@@ -138,7 +146,27 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
         t('columns.debit'),
         t('columns.credit'),
         t('columns.balance'),
-      ]}>
+      ]}
+      foot={
+        <>
+          <TableRow>
+            <TableCell className="px-4 py-3 text-foreground" colSpan={6}>
+              {t('turnoverRow')}
+            </TableCell>
+            <TableCell className={NUM}>{f.money(ledger.debit)}</TableCell>
+            <TableCell className={NUM}>{f.money(ledger.credit)}</TableCell>
+            <TableCell className="px-4 py-3" />
+          </TableRow>
+          <TableRow>
+            <TableCell className="px-4 py-3 text-foreground" colSpan={8}>
+              {t('closingRow')}
+            </TableCell>
+            <TableCell className={NUM}>
+              <Balance value={ledger.closing} />
+            </TableCell>
+          </TableRow>
+        </>
+      }>
       <TableRow>
         <TableCell className="px-4 py-3" colSpan={8}>
           <span className="text-muted-foreground">{t('openingRow')}</span>
@@ -176,22 +204,6 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
           </TableCell>
         </TableRow>
       )}
-      <TableRow className="font-medium">
-        <TableCell className="px-4 py-3 text-foreground" colSpan={6}>
-          {t('turnoverRow')}
-        </TableCell>
-        <TableCell className={NUM}>{f.money(ledger.debit)}</TableCell>
-        <TableCell className={NUM}>{f.money(ledger.credit)}</TableCell>
-        <TableCell className="px-4 py-3" />
-      </TableRow>
-      <TableRow className="font-medium">
-        <TableCell className="px-4 py-3 text-foreground" colSpan={8}>
-          {t('closingRow')}
-        </TableCell>
-        <TableCell className={NUM}>
-          <Balance value={ledger.closing} />
-        </TableCell>
-      </TableRow>
     </DataTable>
   );
 }
@@ -211,13 +223,54 @@ interface UnmappedRow {
   amount: string;
 }
 
-// One statement: its lines with the codes of the form, totals in bold, then the balances no line reads.
-function StatementTable({ title, lines, unmapped }: { title: string; lines: StatementLine[]; unmapped: UnmappedRow[] }) {
+// A column beside the statement's own (#2090): its heading and the amount of each line by code, and what its period's
+// own statement would warn about: B01 not balancing, and balances no line reads.
+interface ExtraColumn {
+  head: string;
+  amounts: Record<string, string>;
+  balanced?: boolean;
+  unmapped: number;
+}
+
+// One statement: its lines with the codes of the form, totals in bold, then the balances no line reads. `amountHead`
+// heads the statement's own column and `extra` the comparison columns after it; `control` sits beside the title.
+function StatementTable({
+  title,
+  control,
+  amountHead,
+  extra,
+  lines,
+  unmapped,
+}: {
+  title: string;
+  control?: ReactNode;
+  amountHead: string;
+  extra: ExtraColumn[];
+  lines: StatementLine[];
+  unmapped: UnmappedRow[];
+}) {
   const t = useTranslations('ledger');
   const f = useFormat();
   return (
     <section className="space-y-3">
-      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+        {control}
+      </div>
+      {extra.map((column) => (
+        <Fragment key={column.head}>
+          {column.balanced === false && (
+            <Alert className="border-warning/30 bg-warning/10 text-warning" role="status">
+              {t('compareUnbalanced', { column: column.head })}
+            </Alert>
+          )}
+          {column.unmapped > 0 && (
+            <Alert className="border-warning/30 bg-warning/10 text-warning" role="status">
+              {t('compareUnmapped', { column: column.head })}
+            </Alert>
+          )}
+        </Fragment>
+      ))}
       {unmapped.length > 0 && (
         <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
           <p className="font-medium">{t('unmappedTitle')}</p>
@@ -231,12 +284,18 @@ function StatementTable({ title, lines, unmapped }: { title: string; lines: Stat
           </ul>
         </Alert>
       )}
-      <DataTable head={[t('columns.item'), t('columns.lineCode'), t('columns.amount')]}>
+      <DataTable numeric={[2, ...extra.map((_, i) => 3 + i)]} head={[t('columns.item'), t('columns.lineCode'), amountHead, ...extra.map((c) => c.head)]}>
         {lines.map((line) => (
-          <TableRow key={line.code} className={line.total ? 'font-medium' : ''}>
+          // A total adds up the lines above it and stays in place, with the totals' rule over it (#2002).
+          <TableRow key={line.code} className={line.total ? `font-medium ${TOTAL_RULE}` : ''}>
             <TableCell className="px-4 py-3 text-foreground">{line.label}</TableCell>
             <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{line.code}</TableCell>
             <TableCell className={NUM}>{f.money(line.amount)}</TableCell>
+            {extra.map((column) => (
+              <TableCell key={column.head} className={NUM}>
+                {f.money(columnAmount(column.amounts, line.code))}
+              </TableCell>
+            ))}
           </TableRow>
         ))}
       </DataTable>
@@ -269,8 +328,7 @@ function HtkkStatements({ year }: { year: number }) {
           <h2 className="text-sm font-semibold">{t('htkkTitle', { year: String(year) })}</h2>
           <p className="mt-1 max-w-3xl text-xs text-subtle-foreground">{t('htkkIntro')}</p>
         </div>
-        <Button variant="outline" onClick={() => exportXml.mutate()} disabled={exportXml.isPending || check.isPending}>
-          {exportXml.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={exportXml.isPending} variant="outline" onClick={() => exportXml.mutate()} disabled={exportXml.isPending || check.isPending}>
           {t('htkkExport')}
         </Button>
       </div>
@@ -305,18 +363,31 @@ function Statements({ period }: { period: string }) {
       URL.revokeObjectURL(url);
     },
   });
+  // B02 reads against the same period a year earlier unless the user picks the period before (a month or a quarter).
+  const [compare, setCompare] = useState<StatementCompare>('last_year');
   if (query.isPending) return <TableSkeleton columns={4} />;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const data = query.data;
   if (!data) return null;
+  const { startOfYear } = data.comparison;
+  const against = b02Comparison(data.comparison, compare);
+  const isYear = data.period.kind === 'year';
+  const b02Extra: ExtraColumn[] = against
+    ? [
+        {
+          head: t(against.kind === 'previous' ? 'columns.previousPeriod' : isYear ? 'columns.lastYear' : 'columns.sameLastYear', { period: against.period }),
+          amounts: against.amounts,
+          unmapped: against.unmapped,
+        },
+      ]
+    : [];
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <Alert className="max-w-3xl flex-1 border-warning/30 bg-warning/10 text-warning" role="note">
           {t('statementsDraft')}
         </Alert>
-        <Button variant="outline" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending}>
-          {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={exportXlsx.isPending} variant="outline" onClick={() => exportXlsx.mutate()}>
           {t('statementsExport')}
         </Button>
       </div>
@@ -327,9 +398,32 @@ function Statements({ period }: { period: string }) {
           {t('statementsUnbalanced')}
         </Alert>
       )}
-      <StatementTable title={t('b01Title', { date: f.date(data.b01.asOf) })} lines={data.b01.lines} unmapped={data.b01.unmapped} />
+      <StatementTable
+        title={t('b01Title', { date: f.date(data.b01.asOf) })}
+        amountHead={t('columns.endOfPeriod')}
+        extra={
+          startOfYear
+            ? [{ head: t('columns.startOfYear', { date: f.date(startOfYear.asOf) }), amounts: startOfYear.amounts, balanced: startOfYear.balanced, unmapped: startOfYear.unmapped }]
+            : []
+        }
+        lines={data.b01.lines}
+        unmapped={data.b01.unmapped}
+      />
       <StatementTable
         title={t('b02Title', { from: f.date(data.b02.from), to: f.date(data.b02.to) })}
+        control={
+          data.comparison.previous && (
+            <label className="block text-xs">
+              <span className="text-subtle-foreground">{t('compareWith')}</span>
+              <NativeSelect aria-label={t('compareWith')} className="mt-1 w-56 max-w-full" value={compare} onChange={(e) => setCompare(e.target.value as StatementCompare)}>
+                <NativeSelectOption value="last_year">{t('compareLastYear')}</NativeSelectOption>
+                <NativeSelectOption value="previous">{t('comparePrevious')}</NativeSelectOption>
+              </NativeSelect>
+            </label>
+          )
+        }
+        amountHead={t(isYear ? 'columns.thisYear' : 'columns.thisPeriod')}
+        extra={b02Extra}
         lines={data.b02.lines}
         unmapped={data.b02.unmapped}
       />
@@ -388,8 +482,7 @@ export function LedgerPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
-            {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
             {t('export')}
           </Button>
         }
@@ -474,7 +567,19 @@ export function LedgerPage() {
                     t('columns.credit'),
                     t('columns.closingDebit'),
                     t('columns.closingCredit'),
-                  ]}>
+                  ]}
+                  foot={
+                    <TableRow className="font-semibold">
+                      <TableCell className="px-4 py-3" />
+                      <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
+                      <TableCell className={NUM}>{f.money(data.trialBalance.totals.openingDebit)}</TableCell>
+                      <TableCell className={NUM}>{f.money(data.trialBalance.totals.openingCredit)}</TableCell>
+                      <TableCell className={NUM}>{f.money(data.trialBalance.totals.debit)}</TableCell>
+                      <TableCell className={NUM}>{f.money(data.trialBalance.totals.credit)}</TableCell>
+                      <TableCell className={NUM}>{f.money(data.trialBalance.totals.closingDebit)}</TableCell>
+                      <TableCell className={NUM}>{f.money(data.trialBalance.totals.closingCredit)}</TableCell>
+                    </TableRow>
+                  }>
                   {rows.map((row) => (
                     <TableRow key={row.accountCode} className={row.level === 0 ? 'font-medium' : ''}>
                       <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{row.accountCode}</TableCell>
@@ -489,16 +594,6 @@ export function LedgerPage() {
                       <TableCell className={NUM}>{f.money(row.closingCredit)}</TableCell>
                     </TableRow>
                   ))}
-                  <TableRow className="font-semibold">
-                    <TableCell className="px-4 py-3" />
-                    <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
-                    <TableCell className={NUM}>{f.money(data.trialBalance.totals.openingDebit)}</TableCell>
-                    <TableCell className={NUM}>{f.money(data.trialBalance.totals.openingCredit)}</TableCell>
-                    <TableCell className={NUM}>{f.money(data.trialBalance.totals.debit)}</TableCell>
-                    <TableCell className={NUM}>{f.money(data.trialBalance.totals.credit)}</TableCell>
-                    <TableCell className={NUM}>{f.money(data.trialBalance.totals.closingDebit)}</TableCell>
-                    <TableCell className={NUM}>{f.money(data.trialBalance.totals.closingCredit)}</TableCell>
-                  </TableRow>
                 </DataTable>
               )}
             </>

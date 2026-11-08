@@ -6,13 +6,17 @@ import { readFileSync } from 'node:fs';
 import * as kernel from '@crove/kernel';
 import { LEDGER_APPROVE_PERMISSION, kernelManifest } from '@crove/kernel';
 import type { ModuleManifest, PermissionDeclaration } from '@crove/kernel-contract';
+import { adsManifest } from '@crove/mod-ads';
 import { crmManifest } from '@crove/mod-crm';
 import { financeManifest } from '@crove/mod-finance';
+import { hrManifest } from '@crove/mod-hr';
 import { notesManifest } from '@crove/mod-notes';
 import { socialManifest } from '@crove/mod-social';
+import { meetingsManifest } from '@crove/mod-meetings';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';
+import { numberReseedCommand } from '../src/restore-report.ts';
 import { stripSqlComments } from './manifest-entities.ts';
 
 type Risk = PermissionDeclaration['risk'];
@@ -26,8 +30,11 @@ export const MODULE_MANIFESTS: Manifests = {
   kernel: { manifest: kernelManifest, file: 'packages/kernel/src/manifest.ts' },
   finance: { manifest: financeManifest, file: 'modules/finance/src/manifest.ts' },
   social: { manifest: socialManifest, file: 'modules/social/src/manifest.ts' },
+  ads: { manifest: adsManifest, file: 'modules/ads/src/manifest.ts' },
   crm: { manifest: crmManifest, file: 'modules/crm/src/manifest.ts' },
   notes: { manifest: notesManifest, file: 'modules/notes/src/manifest.ts' },
+  meetings: { manifest: meetingsManifest, file: 'modules/meetings/src/manifest.ts' },
+  hr: { manifest: hrManifest, file: 'modules/hr/src/manifest.ts' },
 };
 
 // Something that checks a permission: a command (with its risk), the approval policy, a database function or policy.
@@ -116,7 +123,7 @@ export function stripComments(source: string): string {
 export function staticPermissionUses(): { uses: PermissionUse[]; problems: string[] } {
   const uses: PermissionUse[] = [];
   const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' });
-  const commands = [...moduleDefinitions(config).commands, orgPurgeCommand({ store: {} as never })];
+  const commands = [...moduleDefinitions(config).commands, orgPurgeCommand({ store: {} as never }), numberReseedCommand()];
   for (const c of commands) if (c.permission !== undefined) uses.push({ permission: c.permission, by: `command ${c.name}`, risk: c.risk });
   const policy = approvalPolicyUses(readFileSync(APPROVAL_SOURCE, 'utf8'));
   return { uses: [...uses, ...policy.uses], problems: policy.problems };
@@ -157,7 +164,7 @@ export function routePermissionUses(manifests: Manifests): PermissionUse[] {
 }
 
 // The functions whose job is to check a permission their caller passes (#1641): their own comparison names no key.
-const PERMISSION_CHECKERS: ReadonlySet<string> = new Set(['function crove_kernel.ctx_has_permission']);
+const PERMISSION_CHECKERS: ReadonlySet<string> = new Set(['function crove_kernel.ctx_has_permission', 'function crove_kernel.ctx_permission_entities']);
 // The quoted literals of a SQL fragment ('...'::text included), with doubled quotes undone.
 const sqlLiterals = (fragment: string): string[] => [...fragment.matchAll(/'((?:[^']|'')*)'/g)].map((m) => (m[1] as string).replaceAll("''", "'"));
 const SQL_IDENT = /^[a-z_][a-z0-9_$]*$/i;

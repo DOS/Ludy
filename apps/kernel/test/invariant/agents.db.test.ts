@@ -1449,6 +1449,94 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     expect(await withAdmin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [orgA, 't1697.inner'])).rows[0]?.n)).toBe(0);
   });
 
+  it('refuses an event from a proposal command declared free of contact and payment writes, itself or through a command it runs (#1710)', async () => {
+    // Its handlers run later under their own declarations, so the declaration says nothing about what they write: the
+    // events such a command may emit are listed (P04_CLEAN_EVENTS, none yet), and the runtime fails any other.
+    const commands = [
+      proposal1697('t1710e.emits', [INTERNAL_1697], {
+        agentApprovers: { roles: [TEMPLATE] },
+        handler: async (ctx) => {
+          await ctx.emit('t1710e.happened', { n: 1 });
+          return { executed: 't1710e.emits' };
+        },
+      }),
+      proposal1697('t1710e.nests', [INTERNAL_1697], {
+        agentApprovers: { roles: [TEMPLATE] },
+        handler: async (ctx) => ctx.run('t1710e.inner', {}),
+      }),
+      defineCommand({
+        sideEffect: 'none',
+        name: 't1710e.inner',
+        input: z.object({}),
+        risk: 'R1',
+        access: 'system',
+        writes: [INTERNAL_1697],
+        handler: async (ctx) => {
+          await ctx.emit('t1710e.inner_happened', { n: 1 });
+          return { ok: true };
+        },
+      }) as CommandDef<unknown, unknown>,
+    ];
+    worker.register({ commands });
+    app.register({ commands });
+    for (const [command, event] of [
+      ['t1710e.emits', 't1710e.happened'],
+      ['t1710e.nests', 't1710e.inner_happened'],
+    ] as const) {
+      const asked = await agentProposes(await liveAgent(orgA, owner), command);
+      expect(asked.reason, command).toBeNull();
+      expect((await proposalRow(asked.proposalId as string)).policy_flags, command).toEqual([]);
+      const approval = await agentApproves(await liveAgent(orgA, owner), asked.proposalId as string);
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        // A bug in the command, so the caller gets INTERNAL (the log names the cause) and nothing commits.
+        await expect(approval.execute()).rejects.toMatchObject({ code: 'INTERNAL' });
+        expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`${command}: declares no contact or payment write (P04), so it cannot emit ${event}`);
+      } finally {
+        logged.mockRestore();
+      }
+      expect((await proposalRow(asked.proposalId as string)).status, command).toBe('pending');
+    }
+    expect(await withAdmin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 't1710e.%'`, [orgA])).rows[0]?.n)).toBe(0);
+  });
+
+  it('refuses a command that declares a job table when a proposal command declared free of contact and payment writes runs it, and still runs one that declares only queue statistics (#2107)', async () => {
+    // A row in a job table starts work later under the job's own declaration, which the proposal's says nothing about.
+    const JOB_2107 = tableWrite(kernelManifest.tables, 'crove_jobs', 'job', ['name']);
+    const STATS_2107 = tableWrite(kernelManifest.tables, 'crove_jobs', 'queue_stats', ['name']);
+    const inner = (name: string, write: CommandWrite) =>
+      defineCommand({ sideEffect: 'none', name, input: z.object({}), risk: 'R1', access: 'system', writes: [write], handler: async () => ({ ok: true }) }) as CommandDef<unknown, unknown>;
+    const commands = [
+      proposal1697('t2107.nests_job', [INTERNAL_1697], { agentApprovers: { roles: [TEMPLATE] }, handler: async (ctx) => ctx.run('t2107.job_inner', {}) }),
+      inner('t2107.job_inner', JOB_2107),
+      proposal1697('t2107.nests_stats', [INTERNAL_1697], { agentApprovers: { roles: [TEMPLATE] }, handler: async (ctx) => ctx.run('t2107.stats_inner', {}) }),
+      inner('t2107.stats_inner', STATS_2107),
+    ];
+    worker.register({ commands });
+    app.register({ commands });
+    const flags = async (command: string) => {
+      const asked = await agentProposes(await liveAgent(orgA, owner), command);
+      expect(asked.reason, command).toBeNull();
+      expect((await proposalRow(asked.proposalId as string)).policy_flags, command).toEqual([]);
+      return asked.proposalId as string;
+    };
+    const refused = await flags('t2107.nests_job');
+    const approval = await agentApproves(await liveAgent(orgA, owner), refused);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // A bug in the command, so the caller gets INTERNAL (the log names the cause) and nothing commits.
+      await expect(approval.execute()).rejects.toMatchObject({ code: 'INTERNAL' });
+      expect(logged.mock.calls.flat().map(String).join('\n')).toContain('command t2107.nests_job: declares no contact or payment write (P04), so it cannot run t2107.job_inner, which declares crove_jobs.job');
+    } finally {
+      logged.mockRestore();
+    }
+    expect((await proposalRow(refused)).status).toBe('pending');
+    expect(await withAdmin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [orgA, 't2107.job_inner'])).rows[0]?.n)).toBe(0);
+    // The statistics start no work: the same shape with queue_stats runs.
+    const allowed = await flags('t2107.nests_stats');
+    await expect((await agentApproves(await liveAgent(orgA, owner), allowed)).execute()).resolves.toEqual({ approved: true, reason: null });
+  });
+
   it('refuses declared writes that do not match the column classes, and contact or payment writes by agents (#1697)', () => {
     const register = (def: Partial<CommandDef<unknown, unknown>>) => () =>
       new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [{ sideEffect: 'none', name: 't1697.reg', input: z.object({}), risk: 'R1', access: 'proposal', handler: async () => ({}), ...def } as CommandDef<unknown, unknown>] });
@@ -2095,7 +2183,8 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
       return worker.execute('kernel.task.propose', { id: agent.taskId, fence, preparer: 't435.prepare_echo', input }, as);
     };
     // The command's declared kind, or its name; never the kind or title the agent's run supplied.
-    await propose(await liveAgent(orgA, owner), echo('t435.prop_kind'));
+    const declaredAgent = await liveAgent(orgA, owner);
+    await propose(declaredAgent, echo('t435.prop_kind'));
     const declaredEvent = await newestEvent(orgA, 'kernel.agent.proposal_requested');
     const declared = await createFrom(declaredEvent);
     expect(declared.reason).toBeNull();
@@ -2103,8 +2192,21 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     expect(declaredLabel?.kind).toBe('t435.declared');
     expect(declaredLabel?.title).toContain('t435.declared');
     expect(declaredLabel?.title).not.toContain('Đã kiểm tra');
-    // The event carries the command and the payload only.
-    expect(Object.keys((await eventPayload(declaredEvent)).draft as Record<string, unknown>).sort()).toEqual(['command', 'payload']);
+    // The event carries ids and codes only (#1949): the command and the id of the draft, which waited on the task and is
+    // taken off it once the proposal exists.
+    const requested = await eventPayload(declaredEvent);
+    expect(Object.keys(requested).filter((k) => k !== 'legalEntityId').sort()).toEqual(['agentId', 'command', 'draftId', 'preparer', 'runId', 'taskId']);
+    expect(JSON.stringify(requested)).not.toContain('payload');
+    const pendingDraft = (taskId: string) =>
+      withAdmin(async (c) => (await c.query<{ d: unknown }>('SELECT pending_draft AS d FROM crove_kernel.task WHERE id = $1', [taskId])).rows[0]?.d);
+    expect(await pendingDraft(declaredAgent.taskId)).toBeNull();
+    // A draft that is no longer the one the request names (replaced on its task) asks for nothing, and stays.
+    const replacedAgent = await liveAgent(orgA, owner);
+    await propose(replacedAgent, echo('t260.prop_r1'));
+    const replacedEvent = await newestEvent(orgA, 'kernel.agent.proposal_requested');
+    await withAdmin((c) => c.query(`UPDATE crove_kernel.task SET pending_draft = jsonb_set(pending_draft, '{id}', to_jsonb(gen_random_uuid()::text)) WHERE id = $1`, [replacedAgent.taskId]));
+    await expect(createFrom(replacedEvent)).resolves.toEqual({ proposalId: null, reason: 'draft_replaced' });
+    expect(await pendingDraft(replacedAgent.taskId)).not.toBeNull();
     await propose(await liveAgent(orgA, owner), echo('t260.prop_r1'));
     const named = await createFrom(await newestEvent(orgA, 'kernel.agent.proposal_requested'));
     const namedLabel = await proposalLabel(named.proposalId as string);

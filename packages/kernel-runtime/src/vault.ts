@@ -4,7 +4,7 @@
 // provider, account), so an envelope copied to another org's or another account's row does not open.
 //
 // Envelope v1 (bytes): 0x01 | wrap iv (12) | wrap tag (16) | wrapped data key (32) | iv (12) | tag (16) | ciphertext.
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 
 const VERSION = 0x01;
 const IV = 12;
@@ -84,8 +84,19 @@ function decrypt(key: Buffer, iv: Buffer, tag: Buffer, ciphertext: Buffer, addit
 // worker open them. crove-local is this vault; a Crove Cloud broker can keep the same shape.
 export interface CredentialBroker {
   readonly id: string;
+  readonly keyId?: string;
+  readonly keyIds?: readonly string[];
   seal(secret: string, binding: CredentialBinding): SealedCredential;
+  // A key for another purpose from every key the broker opens, the current one first, each under the id the broker gives that key
+  // (HKDF-SHA256, `info` names the purpose): the root never leaves the broker, and what one purpose derives opens after a rotation
+  // while the old key is kept (the subject vault). Absent when the broker holds no key.
+  deriveKeys?(info: string): { id: string; key: Buffer }[];
   open(sealed: SealedCredential, binding: CredentialBinding): string;
+  // A key for another purpose, derived from the broker's current key (HKDF-SHA256, `info` names the purpose), so the
+  // root never leaves the broker and one purpose's key is no other's. Absent when the broker holds no key.
+  derive?(info: string): Buffer;
+  // A key for another purpose, derived from a specific key by id (e.g. for key rotation resealing or older envelopes).
+  deriveKey?(keyId: string, info: string): Buffer;
 }
 
 export class CredentialVault implements CredentialBroker {
@@ -109,6 +120,21 @@ export class CredentialVault implements CredentialBroker {
 
   get keyId(): string {
     return this.current.id;
+  }
+
+  // The ids of every key this vault opens, the current one first: an envelope under any other id does not open (#1888).
+  get keyIds(): readonly string[] {
+    return [...this.keys.keys()];
+  }
+
+  derive(info: string): Buffer {
+    return Buffer.from(hkdfSync('sha256', this.current.key, Buffer.alloc(0), info, KEY));
+  }
+
+  deriveKey(keyId: string, info: string): Buffer {
+    const key = this.keys.get(keyId);
+    if (!key) throw new CredentialError(`unknown key (${keyId})`);
+    return Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), info, KEY));
   }
 
   seal(secret: string, binding: CredentialBinding): SealedCredential {
@@ -152,6 +178,10 @@ export class CredentialVault implements CredentialBroker {
     } finally {
       dataKey?.fill(0);
     }
+  }
+
+  deriveKeys(info: string): { id: string; key: Buffer }[] {
+    return [...this.keys].map(([id, key]) => ({ id, key: Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), info, KEY)) }));
   }
 
   // Whether an envelope was sealed with a key other than the current one (rotation: reseal it).

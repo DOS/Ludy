@@ -17,6 +17,7 @@
 // 181/2025/ND-CP, Article 23(5) and (6)); one that raises it needs a supplementary return for its own period. Treating
 // a late-received invoice as such an omission is an inference for the partner's accountant to confirm (#61). An output
 // invoice always stays in its invoice period: a sale is never posted late (record.ts).
+import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import { INPUT_VAT_CHECK_OUTCOMES, VAT_WARNINGS, zId, zVatPeriod, zVatReturnMark, type DocumentDirection } from '@crove/kernel-contract';
@@ -37,8 +38,10 @@ import {
   type VatPeriod,
 } from './domain/vat-return.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { latestRevision } from './source-entry.ts';
 import { needsPaymentCheck, nonCashThreshold, paymentMethodKind, type PaymentMethodKind } from './domain/non-cash-payment.ts';
 import { HtkkAmountError, form01XmlValues } from './domain/vat-01gtgt-xml.ts';
+import { salesNumberGaps, type SalesNumberGaps } from './domain/number-gaps.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -121,6 +124,8 @@ export interface VatReport {
   paymentChecks: VatPaymentChecks;
   carryForward: VatCarryForward;
   filed: VatFiledReturn | null;
+  // Whether the signed-in member may mark this entity's return filed (#1508); answered by finance.vat.period only.
+  filable?: boolean;
 }
 
 function invoiceView(
@@ -168,9 +173,9 @@ function invoiceView(
 
 // The recorded documents of one direction in the period, except those voided by a reversal (#165), oldest first:
 // purchases for the input side, by posting date (#478), and sales (#313) for the output side, by invoice date. The
-// party is the supplier or the customer. Each document has exactly one entry of its own: journal_entry is unique by
-// source, and a document commits only together with its entry (purchase_document_entry, #560), so the inner join drops
-// none. A reversal is an entry of another source.
+// party is the supplier or the customer. Each document has one entry in force: of its revisions (#1283) the join keeps
+// the latest (#1338), and a document commits only together with its entry (purchase_document_entry, #560), so the
+// inner join drops none. A reversal is an entry of another source.
 interface PeriodInvoice {
   view: VatInvoiceView;
   paymentMethod: string | null;
@@ -182,7 +187,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
     .selectFrom('crove_finance.purchase_document as d')
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .innerJoin('crove_finance.journal_entry as j', (join) =>
-      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document'),
+      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'p.name', 'p.tax_code'])
     .where('d.org_id', '=', ctx.orgId)
@@ -399,8 +404,65 @@ export const vatPeriodQuery = defineQuery({
   name: 'finance.vat.period',
   input: zVatPeriodInput,
   access: ALL,
-  handler: async (ctx, input): Promise<VatReport> => loadVatReport(ctx, input.period, await resolveLegalEntity(ctx, input.legalEntityId)),
+  handler: async (ctx, input): Promise<VatReport> => {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    return { ...(await loadVatReport(ctx, input.period, legalEntityId)), filable: await mayFileVat(ctx, legalEntityId) };
+  },
 });
+
+// More recorded sales than this in the years a gap check reads is refused rather than cut short: a partial check would
+// miss a number or invent one.
+export const SALES_NUMBER_GAP_LIMIT = 50_000;
+
+// The numbers missing in the legal entity's own sales e-invoice series (#2140), for the VAT working of a period (period:
+// the runs that may fall in it) and the Overview (fromYear). Reads the recorded sales that are not voided, in every year
+// the check looks at, since a gap is found between two recorded numbers of one year. Writes nothing.
+export const salesNumberGapsQuery = defineQuery({
+  name: 'finance.vat.sales_number_gaps',
+  input: z.object({ period: zVatPeriod.optional(), fromYear: z.number().int().min(2000).max(2100).optional(), legalEntityId: zId.optional() }),
+  access: ALL,
+  handler: async (ctx, input): Promise<SalesNumberGaps> => {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    const range = input.period ? vatPeriod(input.period) : null;
+    // A month or a quarter lies inside one year, which is all its gaps are read from.
+    const fromDate = range ? `${range.from.slice(0, 4)}-01-01` : input.fromYear !== undefined ? `${input.fromYear}-01-01` : null;
+    const toDate = range ? `${range.to.slice(0, 4)}-12-31` : null;
+    let query = ctx.trx
+      .selectFrom('crove_finance.purchase_document as d')
+      .select(['d.invoice_series', 'd.invoice_number', 'd.invoice_date'])
+      .where('d.org_id', '=', ctx.orgId)
+      .where('d.legal_entity_id', '=', legalEntityId)
+      .where('d.direction', '=', 'sale')
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+          ),
+        ),
+      );
+    if (fromDate) query = query.where('d.invoice_date', '>=', fromDate);
+    if (toDate) query = query.where('d.invoice_date', '<=', toDate);
+    const docs = await query.orderBy('d.invoice_date').orderBy('d.id').limit(SALES_NUMBER_GAP_LIMIT + 1).execute();
+    if (docs.length > SALES_NUMBER_GAP_LIMIT) {
+      throw new DomainError('PERIOD_TOO_LARGE', 422, `Có hơn ${SALES_NUMBER_GAP_LIMIT} hóa đơn bán ra trong các năm cần kiểm tra; hệ thống chưa kiểm tra được số hóa đơn còn thiếu`);
+    }
+    return salesNumberGaps(
+      docs.map((d) => ({ series: d.invoice_series, number: d.invoice_number, issueDate: d.invoice_date })),
+      { ...(range ? { period: { from: range.from, to: range.to } } : {}), ...(input.fromYear !== undefined ? { fromYear: input.fromYear } : {}) },
+    );
+  },
+});
+
+// Whether the signed-in member may mark this entity's VAT return filed (#1508): an owner or an admin, or finance.vat.file
+// org-wide or for the entity. finance.vat.return_mark and vat_return_filed_guard decide again; roles.db.test.ts pins this
+// answer to what the command does, per member and entity (#1923).
+async function mayFileVat(ctx: QueryContext, legalEntityId: string): Promise<boolean> {
+  if (ctx.actor.type !== 'user') return false;
+  if (ctx.role === 'owner' || ctx.role === 'admin') return true;
+  const { rows } = await sql<{ entities: string[] }>`SELECT crove_kernel.ctx_permission_entities('finance.vat.file') AS entities`.execute(ctx.trx);
+  const entities = rows[0]?.entities ?? [];
+  return entities.includes('*') || entities.includes(legalEntityId);
+}
 
 // The taxpayer block of the HTKK return (issue #332): the org's tax code (#313), name and address (#324, #692).
 export interface VatTaxpayer {
@@ -554,13 +616,19 @@ export const vatReturnMark = defineCommand({
   input: zVatReturnMark,
   risk: 'R1',
   sideEffect: 'internal',
-  // Owners and admins only: the record feeds the next return. The database holds an insert to this command
-  // (vat_return_filed_guard and vat_return_filed_requires_audit, 20261102070000_crove_finance_vat_return_filed.sql).
+  // Owners and admins, and a chief accountant for the return's legal entity (finance.vat.file: org-wide for
+  // finance.chief_accountant, per entity for finance.entity_chief_accountant; #1508): the record feeds the next return.
+  // The database holds an insert to this command (vat_return_filed_guard, which checks the same, and
+  // vat_return_filed_requires_audit).
   access: FILERS,
+  permission: 'finance.vat.file',
+  permissionScope: 'legal_entity',
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const period = vatPeriod(input.period);
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // A chief accountant of some entities marks only their returns (#1508).
+    ctx.permissionEntity(legalEntityId);
     const current = (await filedReturns(ctx, legalEntityId, [period.period])).get(period.period) ?? null;
     const mark = { obligation: 'vat_return' as const, period: period.period, legalEntityId };
     if (!input.done) {

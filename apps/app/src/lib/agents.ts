@@ -1,6 +1,7 @@
 // What the AI agents screens decide on their own (ADR-0029, issue #258): the chart as a tree, who may use which
 // control, and how far a budget is spent. The server enforces every rule; these only hide what can never succeed.
 import { z } from 'zod';
+import { todoDueInstant } from '@crove/kernel-contract';
 import type { Role } from './members.ts';
 import { readSearch, type Defined } from './search.ts';
 
@@ -48,6 +49,39 @@ export function holderCandidates<A extends { id: string; templateKey: string; st
   return agents.filter(
     (a) => a.id === holderHere || (a.status === 'active' && templateRoles.get(a.templateKey) === position.roleKey && !placedElsewhere.has(a.id)),
   );
+}
+
+// A position's legal entities (#1763): every entity ('*' alone) or some of the org's, by id, as the chart commands take
+// them. The picker sends one only where the org has more than one entity; with a single entity the screen is as before.
+export const EVERY_ENTITY = ['*'] as const;
+export type LeScope = readonly string[];
+
+export const isEveryEntity = (scope: LeScope): boolean => scope.includes('*');
+
+// The most entities a position names one by one (the commands' limit); past it, every entity is the choice.
+export const LE_SCOPE_MAX = 50;
+
+// Some entities with `id` turned on or off, in the order of `entities` (the server keeps what it is sent). An id the
+// list does not hold (an entity the reader cannot see) is kept, so a change never drops it unseen.
+export function toggleScopeEntity(scope: LeScope, id: string, on: boolean, entities: ReadonlyArray<{ id: string }>): string[] {
+  const chosen = new Set(isEveryEntity(scope) ? [] : scope);
+  if (on) chosen.add(id);
+  else chosen.delete(id);
+  const listed = new Set(entities.map((e) => e.id));
+  return [...entities.filter((e) => chosen.has(e.id)).map((e) => e.id), ...[...chosen].filter((c) => !listed.has(c))];
+}
+
+// What a new position starts with until the owner picks: the org's default entity, as the server gives it.
+export function defaultScope(entities: ReadonlyArray<{ id: string; isDefault: boolean }>): string[] {
+  const chosen = entities.find((e) => e.isDefault) ?? entities[0];
+  return chosen ? [chosen.id] : [];
+}
+
+// The names of a scope's entities for display, in the order of `entities`; null for every entity. An id the reader
+// cannot name (an entity they may not see) is left out.
+export function scopeNames(scope: LeScope, entities: ReadonlyArray<{ id: string; name: string }>): string[] | null {
+  if (isEveryEntity(scope)) return null;
+  return entities.filter((e) => scope.includes(e.id)).map((e) => e.name);
 }
 
 export interface AgentPermissions {
@@ -122,4 +156,27 @@ export function socialPostOf(sourceRef: unknown): string | null {
   if (typeof sourceRef !== 'object' || sourceRef === null) return null;
   const { type, id } = sourceRef as { type?: unknown; id?: unknown };
   return type === 'social.post' && typeof id === 'string' && UUID.test(id) ? id : null;
+}
+
+/** The YYYY-MM-DD day of a task's ISO due timestamp in `timeZone`, or '' when there is none (#2588). */
+export function taskDueDay(due: string | null | undefined, timeZone: string): string {
+  if (!due) return '';
+  const ms = Date.parse(due);
+  if (Number.isNaN(ms)) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+}
+
+/** End of `dueOn` (23:59) in `timeZone` as an ISO timestamp, or null when `dueOn` is empty (#2588). */
+export function taskDueFromDay(dueOn: string, timeZone: string): string | null {
+  const day = dueOn.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  try {
+    return todoDueInstant(day, '23:59', timeZone).toISOString();
+  } catch {
+    return `${day}T23:59:00.000Z`;
+  }
 }

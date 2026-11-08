@@ -2,6 +2,7 @@
 // heartbeat, and a probe that delivers its alert to a real HTTP webhook. The privilege checks are in the invariant
 // suite (test/invariant/prober.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops
 // its own database.
+import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { Runtime, type BlobStore } from '@crove/kernel-runtime';
+import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
+import { createHttpApp } from '../src/http.ts';
 import { EXIT, evaluateHealth, probeOnce, readHealth, runProber, type ProberConfig } from '../src/prober.ts';
 import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { beat } from '../src/worker.ts';
@@ -20,6 +23,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const limits = { outboxAgeSeconds: 300, jobAgeSeconds: 900, heartbeatAgeSeconds: 120, deadLetters: 0, notifyQueuePercent: 50 };
+const ALL_MODULES = [...AVAILABLE_MODULES];
 
 const suite = ADMIN ? describe : describe.skip;
 
@@ -140,8 +144,87 @@ suite('prober on PostgreSQL', () => {
     }
   });
 
+  it('counts the document readings that failed at the service and those whose document could not be read (#1998)', async () => {
+    const event = (reason: string | null, age: string) =>
+      admin((c) =>
+        c.query(
+          `INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at)
+           VALUES ($1, 'kernel.file.read_failed', $2::jsonb, now() - $3::interval)`,
+          [orgId, JSON.stringify(reason === null ? { fileId: randomUUID(), version: 1 } : { fileId: randomUUID(), version: 1, reason }), age],
+        ),
+      );
+    // Two service failures and a document one in the window, an older service failure outside it, and an event written
+    // before #1998 (no reason), which counts as a document failure.
+    await event('service', '10 minutes');
+    await event('service', '20 minutes');
+    await event('document', '5 minutes');
+    await event(null, '1 minute');
+    await event('service', '2 hours');
+    const health = await readHealth(proberUrl, 3600, [], 3600);
+    expect(health).toMatchObject({ extraction_service_failures: 2, extraction_document_failures: 2 });
+    const extraction = { ...limits, extractionFailures: 1, extractionWindowSeconds: 3600 };
+    expect(evaluateHealth(health, extraction, 3600).map((f) => f.check)).toContain('extraction');
+    // A wider window takes in the older one.
+    expect((await readHealth(proberUrl, 3600, [], 3 * 3600)).extraction_service_failures).toBe(3);
+  });
+
+  it('measures the WORM archive: since its last verification (or first batch) and the oldest row not yet archived (#1997)', async () => {
+    // Audit events of the org setup, and no batch yet: nothing to verify, every row waiting.
+    const before = await readHealth(proberUrl, 3600);
+    expect(before.archive_verify_age_seconds).toBeNull();
+    expect(before.archive_lag_seconds).toBeGreaterThanOrEqual(0);
+    const hash = 'a'.repeat(64);
+    const archive = { ...limits, archiveVerifyAgeSeconds: 93_600, archiveLagSeconds: 3600 };
+    await admin(async (c) => {
+      // A first batch written two days ago, whose window ended three hours ago, and an audit event of two hours ago
+      // after it (backdated, its stamp trigger set aside for this one insert): the archive is two hours behind.
+      await c.query(
+        `INSERT INTO crove_kernel.archive_batch (seq, window_from, window_to, row_count, batch_sha256, chain_sha256, object_key, written_at)
+         VALUES (1, '-infinity', now() - interval '3 hours', 0, $1, $1, 'chain/v1/000000000001.json', now() - interval '2 days')`,
+        [hash],
+      );
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256)
+         VALUES ($1, now() - interval '2 hours', 'system', 'test.backdated', $2, 'ok', $3)`,
+        [orgId, randomUUID(), hash],
+      );
+      await c.query('COMMIT');
+    });
+    const behind = await readHealth(proberUrl, 3600);
+    expect(behind.archive_lag_seconds).toBeGreaterThan(7100);
+    expect(behind.archive_lag_seconds).toBeLessThan(7300);
+    expect(evaluateHealth(behind, archive, 3600).map((f) => f.check)).toContain('archive_lag');
+    await admin((c) =>
+      // The next batch reaches past now: every row anchored.
+      c.query(
+        `INSERT INTO crove_kernel.archive_batch (seq, window_from, window_to, row_count, batch_sha256, chain_sha256, object_key, written_at)
+         SELECT 2, b.window_to, now() + interval '1 hour', 1, $1, $1, 'chain/v1/000000000002.json', now() FROM crove_kernel.archive_batch b WHERE b.seq = 1`,
+        [hash],
+      ),
+    );
+    const anchored = await readHealth(proberUrl, 3600);
+    expect(anchored.archive_lag_seconds).toBeNull();
+    // Never verified: aged from the first batch, two days, over a 26-hour limit.
+    expect(anchored.archive_verify_age_seconds).toBeGreaterThan(2 * 86_400 - 60);
+    expect(evaluateHealth(anchored, archive, 3600).map((f) => f.check)).toContain('archive_verify');
+    // A run that failed resets nothing: a verifier that keeps failing alerts as stale too.
+    await admin((c) =>
+      c.query(`INSERT INTO crove_kernel.archive_verification (ok, batches, rows_checked, problems, verified_at) VALUES (false, 1, 0, '[]', now() - interval '10 minutes')`),
+    );
+    const failing = await readHealth(proberUrl, 3600);
+    expect(failing.archive_verify_age_seconds).toBeGreaterThan(2 * 86_400 - 60);
+    expect(evaluateHealth(failing, archive, 3600).map((f) => f.check)).toContain('archive_verify');
+    await admin((c) => c.query(`INSERT INTO crove_kernel.archive_verification (ok, batches, rows_checked, verified_at) VALUES (true, 1, 0, now() - interval '1 hour')`));
+    const verified = await readHealth(proberUrl, 3600);
+    expect(verified.archive_verify_age_seconds).toBeGreaterThan(3500);
+    expect(verified.archive_verify_age_seconds).toBeLessThan(3700);
+    expect(evaluateHealth(verified, archive, 3600).map((f) => f.check)).not.toContain('archive_verify');
+  });
+
   it('is healthy once the relay is current and the worker beats', async () => {
-    await beat(workerDb, 'worker-a');
+    await beat(workerDb, 'worker-a', ALL_MODULES);
     const health = await readHealth(proberUrl, 3600);
     expect(health).toMatchObject({ outbox_pending: 0, outbox_oldest_age_seconds: null, jobs_schema_present: true, jobs_queued: 0, dead_letter_count: 0 });
     expect(health.worker_heartbeat_age_seconds).toBeGreaterThanOrEqual(0);
@@ -198,6 +281,87 @@ suite('prober on PostgreSQL', () => {
     expect(evaluateHealth(stale, limits, 3600).map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
   });
 
+  // #1877: a module left out (CROVE_MODULES) has its queues worked by nobody; its queued jobs stay for when it is
+  // installed again, and the prober does not read them as stuck workers. #1887: a worker that died without a clean
+  // stop keeps its modules counted for 7 days, whatever the other workers work.
+  it('ages only the queues of the modules a worker of the last 7 days works, until it stops cleanly', async () => {
+    const queued = async () => {
+      const h = await readHealth(proberUrl, 3600);
+      return { jobs: h.jobs_queued, aged: h.job_oldest_queued_age_seconds !== null && h.job_oldest_queued_age_seconds >= 1200 };
+    };
+    // The finance extraction jobs of the test above wait; worker-a now works the kernel alone.
+    await beat(workerDb, 'worker-a', ['kernel']);
+    expect(await queued()).toEqual({ jobs: 0, aged: false });
+    // A second worker that works finance counts them again.
+    await beat(workerDb, 'worker-b', ['kernel', 'finance']);
+    expect(await queued()).toEqual({ jobs: 2, aged: true });
+    // It dies (no clean stop) while worker-a keeps beating: its finance queues still count, for 7 days (#1887).
+    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '6 days' WHERE instance = 'worker-b'`));
+    expect(await queued()).toEqual({ jobs: 2, aged: true });
+    expect((await readHealth(proberUrl, 3600)).worker_heartbeat_age_seconds).toBeLessThan(60);
+    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '8 days' WHERE instance = 'worker-b'`));
+    expect(await queued()).toEqual({ jobs: 0, aged: false });
+    // A clean stop (the worker's last beat records no modules) drops them out at once.
+    await beat(workerDb, 'worker-b', ['kernel', 'finance']);
+    expect(await queued()).toEqual({ jobs: 2, aged: true });
+    await beat(workerDb, 'worker-b', []);
+    expect(await queued()).toEqual({ jobs: 0, aged: false });
+    // #1894: worker-b was the only finance replica and its replacement never beats, while worker-a (kernel only) keeps
+    // the heartbeat fresh. The prober names the modules the deployment runs, so finance counts whatever the workers
+    // record; a name the setting adds that no queue has, or a deployment without finance, changes nothing.
+    const expecting = async (modules: string[]) => {
+      const h = await readHealth(proberUrl, 3600, modules);
+      return { jobs: h.jobs_queued, aged: h.job_oldest_queued_age_seconds !== null && h.job_oldest_queued_age_seconds >= 1200 };
+    };
+    expect(await expecting(['kernel', 'finance'])).toEqual({ jobs: 2, aged: true });
+    expect(await expecting(['kernel', 'social', 'bogus', ''])).toEqual({ jobs: 0, aged: false });
+    expect(await expecting([])).toEqual({ jobs: 0, aged: false });
+    // Every worker stopped cleanly: no module is recorded, so every queue counts (the heartbeat alert fires too).
+    await beat(workerDb, 'worker-a', []);
+    expect(await queued()).toEqual({ jobs: 2, aged: true });
+    await beat(workerDb, 'worker-a', ['kernel']);
+    await admin((c) => c.query(`DELETE FROM crove_kernel.worker_heartbeat WHERE instance = 'worker-b'`));
+    expect(await queued()).toEqual({ jobs: 0, aged: false });
+    // A live worker of an older release, which records no modules: every queue counts, as before.
+    await admin((c) => c.query(`INSERT INTO crove_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-legacy', now())`));
+    expect(await queued()).toEqual({ jobs: 2, aged: true });
+    // An older release on the same host (a rollback) beats through worker_beat(text): its row loses the modules this
+    // release recorded, so every queue counts (Codex review).
+    await admin((c) => c.query(`DELETE FROM crove_kernel.worker_heartbeat WHERE instance = 'worker-legacy'`));
+    expect(await queued()).toEqual({ jobs: 0, aged: false });
+    const worker = new pg.Client({ connectionString: login('crove_worker', 'test-worker-pw') });
+    await worker.connect();
+    try {
+      await worker.query(`SELECT crove_kernel.worker_beat('worker-a')`);
+    } finally {
+      await worker.end();
+    }
+    expect(await queued()).toEqual({ jobs: 2, aged: true });
+    await beat(workerDb, 'worker-a', ['kernel']);
+    await admin((c) => c.query(`INSERT INTO crove_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-legacy', now())`));
+    // Silent for over an hour, it no longer counts; nor does the day-old 'worker-old' (also without modules).
+    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '2 hours' WHERE instance = 'worker-legacy'`));
+    expect(await queued()).toEqual({ jobs: 0, aged: false });
+    // Nothing was deleted: the jobs are still there.
+    const [left] = await admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${JOB_SCHEMA}.job WHERE name = $1 AND state = 'created'`, [QUEUES.extract])).rows);
+    expect(left?.n).toBe(2);
+    // Module names are checked, and only the worker login records them.
+    await expect(beat(workerDb, 'worker-a', ['Finance'])).rejects.toMatchObject({ code: '22023' });
+    const prober = new pg.Client({ connectionString: proberUrl });
+    await prober.connect();
+    try {
+      await expect(prober.query(`SELECT crove_kernel.worker_beat('x', ARRAY['kernel'])`)).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await prober.end();
+    }
+    // As the test above left it: worker-a works every module and stopped beating ten minutes ago.
+    await beat(workerDb, 'worker-a', ALL_MODULES);
+    await admin(async (c) => {
+      await c.query(`DELETE FROM crove_kernel.worker_heartbeat WHERE instance = 'worker-legacy'`);
+      await c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '10 minutes' WHERE instance = 'worker-a'`);
+    });
+  });
+
   it('delivers the alert to the webhook and exits 1', async () => {
     received.length = 0;
     expect(await probeOnce(proberConfig(), quiet)).toBe(EXIT.unhealthy);
@@ -210,8 +374,12 @@ suite('prober on PostgreSQL', () => {
     // Aggregates only: no org id or payload leaves the database.
     expect(JSON.stringify(body)).not.toContain(orgId);
     expect(Object.keys(body.crove.health).sort()).toEqual([
+      'archive_lag_seconds',
+      'archive_verify_age_seconds',
       'checked_at',
       'dead_letter_count',
+      'extraction_document_failures',
+      'extraction_service_failures',
       'inbound_oldest_age_seconds',
       'inbound_pending',
       'job_oldest_queued_age_seconds',
@@ -240,5 +408,78 @@ suite('prober on PostgreSQL', () => {
     expect(await probeOnce(proberConfig({ databaseUrl: login('crove_prober', 'wrong-password') }), quiet)).toBe(EXIT.probeFailed);
     expect(received[0]?.body).toMatchObject({ crove: { kind: 'alert', findings: [{ check: 'probe' }] } });
     await expect(readHealth(adminUrl, 3600)).rejects.toThrow(/refusing to probe as .*connect PROBER_DATABASE_URL as crove_prober/);
+  });
+
+  // #1952 (plan §3.5): an API process of its own is ready only while every live worker runs its build or a newer one,
+  // ordered by CROVE_BUILD_TIME. No live worker, a clean stop and a worker silent for over 90 seconds are not reasons;
+  // a worker of unknown build time (a release before #1952, or one a rollback put back on the same host) is older.
+  it('keeps /readyz waiting while a live worker runs an older build, never for the single "all" process', async () => {
+    const API = '2026-11-01T00:00:00+00:00';
+    const ready = async (env: Record<string, string> = { CROVE_BUILD_TIME: API }, workerBuildCheck = true) => {
+      const app = createHttpApp({
+        config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, ...env }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: appPool,
+        aiEnabled: false,
+        workerBuildCheck,
+      });
+      const response = await app.request('/readyz');
+      return { status: response.status, body: await response.json() };
+    };
+    const notReady = { status: 503, body: { ready: false, reason: 'worker_build' } };
+    await admin((c) => c.query('DELETE FROM crove_kernel.worker_heartbeat'));
+    // No live worker: the prober's heartbeat alert, not a reason to take the API out of rotation.
+    expect(await ready()).toEqual({ status: 200, body: { ready: true } });
+    await beat(workerDb, 'worker-a', ['kernel'], { id: 'aaaa', time: API });
+    expect(await ready()).toEqual({ status: 200, body: { ready: true } });
+    // A second, older worker: not ready, unless this process is the single "all" one or knows no build time.
+    await beat(workerDb, 'worker-b', ['kernel'], { id: 'bbbb', time: '2026-10-31T23:59:59+00:00' });
+    expect(await ready()).toEqual(notReady);
+    expect(await ready({ CROVE_BUILD_TIME: API }, false)).toEqual({ status: 200, body: { ready: true } });
+    expect(await ready({})).toEqual({ status: 200, body: { ready: true } });
+    // Its clean stop (no modules) ends the wait at once; so does silence for over 90 seconds.
+    await beat(workerDb, 'worker-b', [], { id: 'bbbb', time: '2026-10-31T23:59:59+00:00' });
+    expect(await ready()).toEqual({ status: 200, body: { ready: true } });
+    await beat(workerDb, 'worker-b', ['kernel'], { id: 'bbbb', time: '2026-10-31T23:59:59+00:00' });
+    expect(await ready()).toEqual(notReady);
+    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '91 seconds' WHERE instance = 'worker-b'`));
+    expect(await ready()).toEqual({ status: 200, body: { ready: true } });
+    // A newer worker is fine.
+    await beat(workerDb, 'worker-c', ['kernel'], { id: 'cccc', time: '2026-11-02T00:00:00+00:00' });
+    expect(await ready()).toEqual({ status: 200, body: { ready: true } });
+    // A local build (no build time) beside an API that has one: unknown, so older.
+    await beat(workerDb, 'worker-c', ['kernel']);
+    expect(await ready()).toEqual(notReady);
+    // A rollback on the same host: the older release's beat (two arguments, or one) clears the build this one recorded.
+    await beat(workerDb, 'worker-c', ['kernel'], { id: 'cccc', time: '2026-11-02T00:00:00+00:00' });
+    expect(await ready()).toEqual({ status: 200, body: { ready: true } });
+    const worker = new pg.Client({ connectionString: login('crove_worker', 'test-worker-pw') });
+    await worker.connect();
+    try {
+      await worker.query(`SELECT crove_kernel.worker_beat('worker-c', ARRAY['kernel'])`);
+      expect(await ready()).toEqual(notReady);
+      await beat(workerDb, 'worker-c', ['kernel'], { id: 'cccc', time: '2026-11-02T00:00:00+00:00' });
+      await worker.query(`SELECT crove_kernel.worker_beat('worker-c')`);
+      expect(await ready()).toEqual(notReady);
+      // A build id that is not one is refused, as CROVE_BUILD is at boot.
+      await expect(worker.query(`SELECT crove_kernel.worker_beat('worker-c', ARRAY['kernel'], 'a b', now())`)).rejects.toThrow(/WORKER_BEAT_BUILD_INVALID/);
+    } finally {
+      await worker.end();
+    }
+    // The API's role reads counts only: no instance, build or module reaches it.
+    const app = new pg.Client({ connectionString: login('crove_app', 'test-app-pw') });
+    await app.connect();
+    try {
+      const { rows } = await app.query(`SELECT * FROM crove_kernel.worker_build_lag($1::timestamptz)`, [API]);
+      expect(rows).toEqual([{ live: 2, older: 1 }]);
+      await expect(app.query('SELECT * FROM crove_kernel.worker_heartbeat')).rejects.toThrow(/permission denied/);
+    } finally {
+      await app.end();
+    }
+    await admin((c) => c.query('DELETE FROM crove_kernel.worker_heartbeat'));
   });
 });

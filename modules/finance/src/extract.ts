@@ -5,16 +5,21 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import type { ExtractClient, ExtractFailure } from '@crove/extract-contract';
 import type { UsageMetric } from '@crove/db';
-import { zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
-import { defineQuery, readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { AiNotConfiguredError, AmountFormatError, type AiUsage, type InvoiceReader } from '@crove/agent';
+import { PARTY_BANK_ACCOUNT_MAX, zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
+import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
+import { AiBudgetExhaustedError, AiNotConfiguredError, AmountFormatError, aiCost, withAiScope, type AiMeter, type InvoiceReader } from '@crove/agent';
 import { journalMemo } from './memo.ts';
 import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/foreign-currency.ts';
-import { isOwnTaxCode } from './own-tax-code.ts';
+
+// A decimal string a lookup is given to compare amounts with (#2320): the money helpers parse it, so it is refused here when it is not one.
+const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
+import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
+import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import {
   bookableLines,
+  classificationCheck,
   bookableSaleLines,
   buildPurchaseJournal,
   buildSalesJournal,
@@ -23,8 +28,9 @@ import {
   lineContribution,
   looksLikeEInvoiceXml,
   money,
-  Decimal,
   parseTaxCode,
+  readLookupHints,
+  roundInvoiceToDong,
   type InvoiceCheck,
   type LearnedRule,
   type ParsedInvoice,
@@ -39,13 +45,13 @@ export const fileForExtraction = defineQuery({
   handler: async (ctx, input) => {
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256'])
+      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'upload_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
       .executeTakeFirst();
     let query = ctx.trx
       .selectFrom('crove_kernel.extraction')
-      .select('status')
+      .select(['status', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId);
     if (input.version !== undefined) query = query.where('version', '=', input.version);
@@ -63,20 +69,101 @@ export const fileForExtraction = defineQuery({
       .executeTakeFirst();
     // And the operator's switch for every org (#886).
     const { rows: global } = await sql<{ on: boolean }>`SELECT crove_kernel.global_kill_switch_on('ai') AS on`.execute(ctx.trx);
-    return file ? { ...file, hasExtraction: Boolean(extraction), due, aiStopped: Boolean(stopped) || global[0]?.on === true } : null;
+    // Waiting for the org's AI budget of the month (#2382): a deferral of the file that is not due yet, so a read that finds the
+    // budget still spent adds nothing to the file's history.
+    const waiting = await ctx.trx
+      .selectFrom('crove_kernel.usage_deferral')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('subject_type', '=', 'file')
+      .where('subject_id', '=', input.fileId)
+      .where('metric', '=', 'ai_budget')
+      .where(sql<boolean>`retry_at > pg_catalog.now()`)
+      .limit(1)
+      .executeTakeFirst();
+    // The legal entity the reading is made in (#2502): the one a re-reading was asked for, else the one the upload named; none, the org's default.
+    const { upload_entity_id: uploadEntity, ...fileRow } = file ?? { upload_entity_id: null };
+    return file ? { ...fileRow, legalEntityId: extraction?.legal_entity_id ?? uploadEntity ?? null, hasExtraction: Boolean(extraction), due, aiStopped: Boolean(stopped) || global[0]?.on === true, waitingAiBudget: Boolean(waiting) } : null;
   },
 });
 
 export interface InvoiceLookup {
-  // 'sale' when the seller's tax code is the org's own or one of its branches (crove_kernel.tenant.tax_code, #313, #686).
+  // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is crove_kernel.tenant.tax_code for the default entity,
+  // #313, #686), or another entity of the org that the buyer is not (#2502: a sale that is booked in the issuing entity's books, refused in this one).
   direction: DocumentDirection;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
   learnedRules?: LearnedRule[];
   duplicateDocumentId: string | null;
   duplicateProposalId: string | null;
+  // The duplicate proposal is pending and was read from a PDF or a photo (#2269): an original (XML) of the same invoice
+  // takes its place instead of being flagged as its duplicate.
+  duplicateProposalUpgradable?: boolean;
+  // The duplicate proposal was read from a PDF or a photo and is already executed, and is the one match (#2320): an original
+  // (XML) of the same invoice is attached to it as evidence instead of being flagged. attachDiffers: the original's subtotal,
+  // VAT or total are not the posted document's, which the Inbox shows as a warning for a person (the entry is never changed).
+  duplicateProposalAttachable?: boolean;
+  attachDiffers?: boolean;
   // The document in force of the invoice a replacement or an adjustment corrects (#916), or null.
   relatedDocumentId: string | null;
+  // What the books remember of the vendor of a purchase, for the anomaly flags (#2380); null for a sale and for a vendor not
+  // in the books yet.
+  history?: VendorHistory | null;
+}
+
+// The invoices of the vendor's history the anomaly rules read.
+const HISTORY_DOCUMENTS = HISTORY_WINDOW;
+
+// The check a duplicate invoice carries: from the lookup before the record, or from the record's own (#2137).
+const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate', status: 'fail', code: 'duplicate.found', message: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' });
+
+// What the books remember of a vendor (#2380): the totals, the line unit prices and the bank accounts of its last
+// HISTORY_DOCUMENTS invoices in force, newest first, without the invoice being read (a re-reading of it is not its own
+// history). The bank accounts are those its earlier proposals carried.
+async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
+  const documents = await ctx.trx
+    .selectFrom('crove_finance.purchase_document as d')
+    .select(['d.id', 'd.total', 'd.proposal_id'])
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.party_id', '=', partyId)
+    .where('d.direction', '=', 'purchase')
+    .where((eb) => eb.not(eb.and([eb('d.invoice_series', '=', current.series), eb('d.invoice_number', '=', current.number)])))
+    .where(({ not, exists, selectFrom }) =>
+      not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+    )
+    .orderBy('d.invoice_date', 'desc')
+    .orderBy('d.id', 'desc')
+    .limit(HISTORY_DOCUMENTS)
+    .execute();
+  if (documents.length === 0) return { totals: [], prices: [], bankAccounts: [] };
+  const order = new Map(documents.map((d, i) => [d.id, i]));
+  const lines = await ctx.trx
+    .selectFrom('crove_finance.purchase_line as l')
+    .select(['l.document_id', 'l.line_no', 'l.description', 'l.unit_price'])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.document_id', 'in', documents.map((d) => d.id))
+    .where('l.unit_price', 'is not', null)
+    .execute();
+  lines.sort((a, b) => (order.get(a.document_id) ?? 0) - (order.get(b.document_id) ?? 0) || a.line_no - b.line_no);
+  const proposalIds = documents.flatMap((d) => (d.proposal_id ? [d.proposal_id] : []));
+  const accounts =
+    proposalIds.length === 0
+      ? []
+      : await ctx.trx
+          .selectFrom('crove_kernel.proposal')
+          .select(['id', sql<string | null>`payload #>> '{seller,bankAccount}'`.as('account')])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', proposalIds)
+          .execute();
+  const byProposal = new Map(accounts.map((a) => [a.id, a.account]));
+  return {
+    totals: documents.map((d) => d.total),
+    prices: lines.flatMap((l) => (l.unit_price === null ? [] : [{ description: l.description, unitPrice: l.unit_price }])),
+    bankAccounts: documents.flatMap((d) => {
+      const account = d.proposal_id ? byProposal.get(d.proposal_id) : null;
+      return account ? [account] : [];
+    }),
+  };
 }
 
 export const purchaseLookup = defineQuery({
@@ -90,15 +177,24 @@ export const purchaseLookup = defineQuery({
     number: z.string(),
     // The invoice a replacement or an adjustment names (#916).
     related: z.object({ series: z.string(), number: z.string() }).nullable().default(null),
-    // The legal entity whose learned rules apply (#1280); omitted, the org's default entity.
+    // The legal entity the invoice is read in (#1280, #2502): its learned rules apply, and the invoice is a sale or a purchase of its books; omitted, the org's default entity.
     legalEntityId: zId.optional(),
+    // The buyer's tax code, to tell a purchase from another entity of the org (an invoice between two entities is a purchase in the buyer's books).
+    buyerTaxCode: z.string().nullable().default(null),
+    // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's: in
+    // the invoice's own currency when it is not VND (each side converts at its own rate, so the dong amounts may differ
+    // while the invoice is the same), else the amounts booked.
+    totals: z.object({ currency: z.string().max(10), subtotal: zAmount, vatTotal: zAmount, total: zAmount }).optional(),
   }),
   access: 'system',
   handler: async (ctx, input): Promise<InvoiceLookup> => {
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
     // A sale (issue #313): the org issued the invoice and numbers its own invoices, so a duplicate is the same series
-    // and number whoever the customer is, and no account is remembered per customer.
-    const sale = isOwnTaxCode(input.sellerTaxCode, org?.tax_code);
+    // and number whoever the customer is, and no account is remembered per customer. It is a sale of the legal entity it is
+    // read in when the seller is that entity (#2502); issued as another entity of the org it is never a purchase from a
+    // supplier: a sale of that entity (refused where it would be booked), or a purchase when this entity is its buyer.
+    const entityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    const reading = readSeller({ seller: input.sellerTaxCode, buyer: input.buyerTaxCode, entityId }, await loadOwnTaxCodes(ctx));
+    const sale = reading !== 'purchase';
     const party =
       !sale && input.sellerTaxCode
         ? await ctx.trx
@@ -121,11 +217,13 @@ export const purchaseLookup = defineQuery({
     const inForce = (series: string, number: string) => {
       let documents = ctx.trx
         .selectFrom('crove_finance.purchase_document as d')
-        .select('d.id')
+        .select(['d.id', 'd.proposal_id', 'd.currency', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.foreign_subtotal', 'd.foreign_vat_amount', 'd.foreign_total'])
         .where('d.org_id', '=', ctx.orgId)
         .where('d.direction', '=', sale ? 'sale' : 'purchase')
         .where('d.invoice_series', '=', series)
         .where('d.invoice_number', '=', number)
+        // A sale is unique per issuing entity (#2502): two entities of the org may use the same series and number.
+        .$if(sale, (q) => q.where('d.legal_entity_id', '=', entityId))
         .where(({ not, exists, selectFrom }) =>
           not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
         );
@@ -134,13 +232,27 @@ export const purchaseLookup = defineQuery({
     };
     const document = await inForce(input.series, input.number);
     const original = input.related ? await inForce(input.related.series, input.related.number) : undefined;
-    const duplicate = await ctx.trx
+    const duplicates = await ctx.trx
       .selectFrom('crove_kernel.proposal')
-      .select('id')
+      .select(['id', 'status', sql<string | null>`payload ->> 'extractionMethod'`.as('method')])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'finance.purchase')
       .where('status', 'in', ['pending', 'executed'])
+      // The proposals of this entity's own books (#2502), for a sale.
+      .$if(sale, (q) => q.where('legal_entity_id', '=', entityId))
       .where((eb) => eb.or([eb('source_file_id', 'is', null), eb('source_file_id', '!=', input.fileId)]))
+      // Nor is a proposal revised from this file's reading (the original of a PDF's invoice, #2269).
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('crove_kernel.extraction as xr')
+              .select('xr.id')
+              .whereRef('xr.org_id', '=', 'crove_kernel.proposal.org_id')
+              .whereRef('xr.id', '=', 'crove_kernel.proposal.extraction_id')
+              .where('xr.file_id', '=', input.fileId),
+          ),
+        ),
+      )
       // Nor is an executed proposal whose document was voided.
       .where(({ not, exists, selectFrom }) =>
         not(
@@ -160,8 +272,9 @@ export const purchaseLookup = defineQuery({
         q.where(input.sellerTaxCode ? sql`payload #>> '{seller,taxCode}'` : sql`payload #>> '{seller,name}'`, '=', input.sellerTaxCode ?? input.sellerName),
       )
       .orderBy('created_at')
-      .limit(1)
-      .executeTakeFirst();
+      .limit(2)
+      .execute();
+    const [duplicate, anotherDuplicate] = duplicates;
     // The vendor whose learned rules apply: by tax code as above, or, for an invoice without one, by name as
     // finance.purchase.record finds or creates the party it learns for (upsertParty).
     const ruleParty =
@@ -178,13 +291,42 @@ export const purchaseLookup = defineQuery({
     return {
       direction: sale ? 'sale' : 'purchase',
       vendorDefault: rule?.debit_account ?? null,
-      learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, await resolveLegalEntity(ctx, input.legalEntityId)),
+      learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId),
       duplicateDocumentId: document?.id ?? null,
       duplicateProposalId: duplicate?.id ?? null,
+      // Only when the pending PDF or photo reading is the one match: another proposal of the same invoice (a second one, in
+      // another legal entity, an executed one) keeps the original flagged as a duplicate.
+      duplicateProposalUpgradable:
+        anotherDuplicate === undefined && duplicate?.status === 'pending' && (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') && !document,
+      // An executed PDF or photo reading that is the one match and is the document in force's own proposal (#2320).
+      duplicateProposalAttachable:
+        anotherDuplicate === undefined &&
+        duplicate?.status === 'executed' &&
+        (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') &&
+        document !== undefined &&
+        document.proposal_id === duplicate.id,
+      attachDiffers: document !== undefined && input.totals !== undefined ? amountsDiffer(document, input.totals) : false,
       relatedDocumentId: original?.id ?? null,
+      history: !sale && ruleParty ? await vendorHistory(ctx, ruleParty.id, { series: input.series, number: input.number }) : null,
     };
   },
 });
+
+// Whether the amounts an original reads are not the posted document's (#2320): the currency, then the three totals, in the
+// invoice's own currency for a foreign one (its dong amounts depend on the rate each side used) and in dong otherwise.
+function amountsDiffer(
+  document: { currency: string; subtotal: string; vat_amount: string; total: string; foreign_subtotal: string | null; foreign_vat_amount: string | null; foreign_total: string | null },
+  totals: { currency: string; subtotal: string; vatTotal: string; total: string },
+): boolean {
+  const currency = document.currency.trim().toUpperCase();
+  if (currency !== totals.currency.trim().toUpperCase()) return true;
+  const posted =
+    currency === BOOK_CURRENCY
+      ? [document.subtotal, document.vat_amount, document.total]
+      : [document.foreign_subtotal, document.foreign_vat_amount, document.foreign_total];
+  const read = [totals.subtotal, totals.vatTotal, totals.total];
+  return posted.some((amount, i) => amount === null || !money(amount).equals(money(read[i] ?? '0')));
+}
 
 // The invoice a replacement or an adjustment corrects (#916), as the proposal keeps it: the date only when it is a
 // calendar date, the original's document when it is in force.
@@ -245,27 +387,20 @@ export interface ExtractDeps {
   // The per-org abuse limits (#675): extraction pages and AI cost in any 24 hours. Without them nothing is checked;
   // what a run used is recorded either way, for the usage report.
   limits?: Readonly<Record<UsageMetric, string>> | undefined;
-  // The price of one million input and output tokens of the AI model, in the unit of the ai_cost limit. Without it AI
-  // cost counts as zero.
-  aiPrice?: { inputPerMTok: string; outputPerMTok: string } | undefined;
+  // The AI budget meter of the worker's calls (#2382). Without one the extractor's model calls are refused (the agent
+  // package never sends an unmetered call); a test with a fake extractor needs none.
+  meter?: AiMeter | undefined;
 }
 
 // What reading one document used: its pages once read (a PDF's page count, 1 for an image or an e-invoice XML; a file
-// the sandbox refuses counts none) and the tokens of the AI calls made for it.
+// the sandbox refuses counts none). The AI calls made for it are counted by the meter, call by call (#2382).
 interface ReadUsage {
   pages: number;
-  ai: AiUsage[];
 }
 
-// The cost of the AI calls of one read, as a decimal string with 6 decimals.
-export function aiCost(usage: readonly AiUsage[], price: { inputPerMTok: string; outputPerMTok: string } | undefined): string {
-  if (!price) return '0';
-  let cost = new Decimal(0);
-  for (const call of usage) {
-    cost = cost.plus(new Decimal(call.inputTokens).times(price.inputPerMTok)).plus(new Decimal(call.outputTokens).times(price.outputPerMTok));
-  }
-  return cost.dividedBy(1_000_000).toFixed(6);
-}
+// The cost of the AI calls of one read lives with the meter (@crove/agent): each call records its own, so a read no
+// longer records AI cost itself. Re-exported for the callers that priced a read.
+export { aiCost };
 
 type Method = 'einvoice_xml' | 'pdf_text_ai' | 'image_ai' | 'unsupported';
 
@@ -287,6 +422,20 @@ function unreadable(result: ExtractFailure): string {
 }
 
 // The message of a PDF or photo left unread while AI is stopped (#886); "Đọc lại" reads it once AI is back on.
+// How often a document waiting for the AI budget is looked at again, in milliseconds: a raised budget reads it within this.
+export const AI_BUDGET_RECHECK_MS = 15 * 60 * 1000;
+
+// Whether reading this file takes a model call: a PDF or a photo, never an e-invoice XML (nor the ZIPs and spreadsheets
+// the worker opens before it gets here).
+function needsModel(file: { filename: string; content_type: string }): boolean {
+  const name = file.filename.toLowerCase();
+  if (file.content_type.includes('xml') || name.endsWith('.xml')) return false;
+  return file.content_type === 'application/pdf' || name.endsWith('.pdf') || IMAGE_TYPES.includes(file.content_type);
+}
+
+// The message of a re-read that found the AI budget spent (#2382); a first read waits in the Inbox instead.
+export const AI_BUDGET_MESSAGE = 'Vy đã hết ngân sách tháng này nên chưa đọc lại được tệp; hãy nâng ngân sách hoặc bấm "Đọc lại" vào tháng sau';
+
 export const AI_STOPPED_MESSAGE = 'AI đang tạm dừng trong tổ chức nên chưa đọc tệp này; bật lại AI rồi bấm "Đọc lại"';
 
 async function readInvoice(
@@ -294,10 +443,7 @@ async function readInvoice(
   file: { filename: string; content_type: string; aiStopped: boolean },
   bytes: Uint8Array,
   used: ReadUsage,
-): Promise<{ method: Method; invoice: ParsedInvoice | null; error: string | null }> {
-  const onUsage = (usage: AiUsage) => {
-    used.ai.push(usage);
-  };
+): Promise<{ method: Method; invoice: ParsedInvoice | null; error: string | null; text?: string }> {
   // This process has no parser (External-tenant gate T12): without the crove-extract client it fails closed,
   // in tests as everywhere else, and the job is retried.
   const sandbox = deps.extract as ExtractClient | undefined;
@@ -322,14 +468,14 @@ async function readInvoice(
       used.pages = Math.max(result.pages, 1);
       const text = result.text.trim();
       if (text.length < 40) return { method: 'pdf_text_ai', invoice: null, error: 'PDF dạng ảnh scan chưa được hỗ trợ; hãy gửi ảnh chụp hoặc tệp XML' };
-      const invoice = await deps.extractor.fromText(text, onUsage);
-      return { method: 'pdf_text_ai', invoice, error: invoice ? null : 'Tài liệu không phải hóa đơn mua vào' };
+      const invoice = await deps.extractor.fromText(text);
+      return { method: 'pdf_text_ai', invoice, error: invoice ? null : 'Tài liệu không phải hóa đơn mua vào', text };
     }
     if (IMAGE_TYPES.includes(file.content_type)) {
       if (file.aiStopped) return { method: 'image_ai', invoice: null, error: AI_STOPPED_MESSAGE };
       if (!deps.extractor) throw new AiNotConfiguredError('Chưa cấu hình AI nên chưa đọc được ảnh; hãy gửi tệp XML hóa đơn điện tử');
       used.pages = 1;
-      const invoice = await deps.extractor.fromImage(bytes, file.content_type, onUsage);
+      const invoice = await deps.extractor.fromImage(bytes, file.content_type);
       return { method: 'image_ai', invoice, error: invoice ? null : 'Ảnh không phải hóa đơn mua vào' };
     }
     return { method: 'unsupported', invoice: null, error: 'Định dạng tệp chưa được hỗ trợ (chỉ nhận XML, PDF, JPG, PNG, WEBP)' };
@@ -373,20 +519,31 @@ interface ExtractionFile {
   storage_key: string;
   generation: string | null;
   sha256: string;
+  // The legal entity the reading is made in (#2502): the one a re-reading was asked for, else the one the upload named; null, the org's default.
+  legalEntityId: string | null;
   hasExtraction: boolean;
   due: boolean;
   aiStopped: boolean;
+  waitingAiBudget: boolean;
 }
 
 // Marks a run as unreadable so the file leaves the "processing" state: the first extraction (no version) if the
 // file has none yet, or the pending re-extraction `version`. A no-op once that run has a result.
-export async function recordExtractionFailure(runtime: Runtime, orgId: string, fileId: string, message: string, version?: number): Promise<void> {
+export async function recordExtractionFailure(
+  runtime: Runtime,
+  orgId: string,
+  fileId: string,
+  message: string,
+  version?: number,
+  // `service` when the reading service kept failing (#1998); the prober counts those.
+  failure: 'service' | 'document' = 'document',
+): Promise<void> {
   const actor = { type: 'system' as const, component: 'finance.extract' };
   const file = await runtime.query<ExtractionFile | null>('finance.extraction.file', { fileId, version }, { actor, orgId });
   if (!file || !file.due) return;
   await runtime.execute(
     'kernel.extraction.record',
-    { fileId, version, method: 'unsupported', status: 'failed', result: null, checks: [], error: message, proposal: null },
+    { fileId, version, method: 'unsupported', status: 'failed', result: null, checks: [], error: message, proposal: null, failure },
     { actor, orgId },
   );
 }
@@ -408,11 +565,10 @@ export async function extractAndPropose(
   // someone asked for is recorded as failed with when to ask again, so the pending proposal is not held for a day.
   if (deps.limits) {
     const { extraction_pages, ai_cost } = deps.limits;
-    const over = await deps.runtime.query<{ metric: UsageMetric; retryAt: string } | null>(
-      'kernel.usage.over',
-      { metrics: ['extraction_pages', 'ai_cost'], limits: { extraction_pages, ai_cost } },
-      { actor, orgId },
-    );
+    // The day's AI cost is what extraction cost (#675), so it only holds back a read that needs the model: an e-invoice XML
+    // is read whatever the org spent.
+    const metrics: UsageMetric[] = deps.extractor && needsModel(file) ? ['extraction_pages', 'ai_cost'] : ['extraction_pages'];
+    const over = await deps.runtime.query<{ metric: UsageMetric; retryAt: string } | null>('kernel.usage.over', { metrics, limits: { extraction_pages, ai_cost } }, { actor, orgId });
     if (over && version !== undefined) {
       await recordExtractionFailure(deps.runtime, orgId, fileId, 'Tổ chức đã dùng hết hạn mức đọc chứng từ trong 24 giờ; hãy bấm Đọc lại vào ngày mai', version);
       return { proposalId: null };
@@ -423,29 +579,57 @@ export async function extractAndPropose(
     }
   }
 
+  // A document that needs the model while the org's AI budget of the month is spent (#2382) is kept, not lost: it is shown
+  // as waiting and asked again every AI_BUDGET_RECHECK_MS, and read once the budget allows it (an owner raised it, or the
+  // month turned). XML e-invoices, posting, approving and exports never wait: only a read that needs the model does.
+  const waitForBudget = async (retryAt: string | null): Promise<{ proposalId: null; deferred?: string }> => {
+    if (version !== undefined) {
+      // A re-read someone asked for fails with the reason, so the pending proposal is not held for a month.
+      await recordExtractionFailure(deps.runtime, orgId, fileId, AI_BUDGET_MESSAGE, version);
+      return { proposalId: null };
+    }
+    const monthStart = retryAt ?? new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    if (!file.waitingAiBudget) {
+      await deps.runtime.execute('kernel.usage.defer', { metric: 'ai_budget', subjectType: 'file', subjectId: fileId, retryAt: monthStart }, { actor, orgId });
+    }
+    return { proposalId: null, deferred: new Date(Math.min(Date.now() + AI_BUDGET_RECHECK_MS, Date.parse(monthStart))).toISOString() };
+  };
+  if (deps.meter && deps.extractor && needsModel(file) && !file.aiStopped) {
+    try {
+      await deps.meter.admit({ feature: 'finance.invoice_extract', module: 'finance', orgId, agentId: null });
+    } catch (error) {
+      if (error instanceof AiBudgetExhaustedError) return waitForBudget(error.retryAt);
+      throw error;
+    }
+  }
+
   // The exact version the file row recorded, checked against its sha256 (ADR-0013): a swapped object is never parsed.
   const bytes = await readVerified(deps.store, { key: file.storage_key, generation: file.generation, sha256: file.sha256 });
-  const used: ReadUsage = { pages: 0, ai: [] };
+  const used: ReadUsage = { pages: 0 };
   let read: Awaited<ReturnType<typeof readInvoice>>;
   try {
-    read = await readInvoice(deps, file, bytes, used);
+    // The model calls of this read count against this org's AI budget (the meter's scope).
+    read = deps.meter ? await withAiScope({ orgId, meter: deps.meter }, () => readInvoice(deps, file, bytes, used)) : await readInvoice(deps, file, bytes, used);
+  } catch (error) {
+    // The budget ran out between the check and the call (a read in flight finishes, a new one does not start).
+    if (error instanceof AiBudgetExhaustedError) {
+      // The read never happened: its pages do not count, or every recheck would add to the 24-hour cap (#675).
+      used.pages = 0;
+      return waitForBudget(error.retryAt);
+    }
+    throw error;
   } finally {
-    // What the read used counts against the org's limits even when the job fails after it and is retried. Best
-    // effort: a failure to record is logged and never hides the read's own error or result.
-    const cost = aiCost(used.ai, deps.aiPrice);
-    if (used.pages > 0 || /[1-9]/.test(cost)) {
+    // The pages count against the org's limits even when the job fails after the read and is retried. Best effort: a
+    // failure to record is logged and never hides the read's own error or result.
+    if (used.pages > 0) {
       try {
-        await deps.runtime.execute(
-          'kernel.usage.record',
-          { entries: [{ metric: 'extraction_pages', amount: String(used.pages) }, { metric: 'ai_cost', amount: cost }] },
-          { actor, orgId },
-        );
+        await deps.runtime.execute('kernel.usage.record', { entries: [{ metric: 'extraction_pages', amount: String(used.pages) }] }, { actor, orgId });
       } catch (recordError) {
         console.error(`[extract] file ${fileId}: could not record its usage`, recordError instanceof Error ? recordError.message : recordError);
       }
     }
   }
-  const { method, invoice, error } = read;
+  const { method, invoice, error, text: pdfText } = read;
 
   const fail = (message: string, checks: InvoiceCheck[] = []) =>
     deps.runtime.execute<{ proposalId: string | null }>(
@@ -457,36 +641,68 @@ export async function extractAndPropose(
   if (!invoice) return fail(error ?? 'Không đọc được chứng từ');
 
   const sellerTaxCode = parseTaxCode(invoice.seller.taxCode)?.normalized ?? null;
-  const lookup = await deps.runtime.query<InvoiceLookup>(
-    'finance.extraction.lookup',
-    {
-      fileId,
-      sellerTaxCode,
-      sellerName: invoice.seller.name,
-      series: invoice.series,
-      number: invoice.number,
-      related: invoice.related ? { series: invoice.related.series, number: invoice.related.number } : null,
-    },
-    { actor, orgId },
-  );
+  const lookupInput = {
+    sellerTaxCode,
+    sellerName: invoice.seller.name,
+    series: invoice.series,
+    number: invoice.number,
+    related: invoice.related ? { series: invoice.related.series, number: invoice.related.number } : null,
+    buyerTaxCode: invoice.buyer.taxCode ? (parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode) : null,
+    ...(file.legalEntityId ? { legalEntityId: file.legalEntityId } : {}),
+  };
+  const lookup = await deps.runtime.query<InvoiceLookup>('finance.extraction.lookup', { fileId, ...lookupInput }, { actor, orgId });
 
   const checks = checkInvoice(invoice, deps.today?.());
   // A foreign-currency e-invoice with its own rate is proposed in VND (#918); the checks above read it as issued.
   const converted = bookedInVnd(invoice);
-  const booked = converted?.invoice ?? invoice;
-  if (lookup.duplicateDocumentId || lookup.duplicateProposalId) {
-    checks.unshift({ id: 'duplicate', status: 'fail', code: 'duplicate.found', message: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' });
-  }
+  // A VND invoice with amounts below one dong is proposed rounded to the dong (#2235); checkInvoice has warned about it.
+  const booked = converted?.invoice ?? roundInvoiceToDong(invoice).invoice;
+  // An original (XML) of an invoice whose PDF or photo reading is still pending takes that proposal's place (#2269): it is
+  // not a duplicate of it. The kernel decides again under its lock (the guard below) and flags it after all if the
+  // proposal can no longer be revised.
+  const upgrades = method === 'einvoice_xml' && lookup.duplicateProposalUpgradable === true && !lookup.duplicateDocumentId;
+  // Nor of one that is already posted from a PDF or a photo (#2320): the original is attached to it as evidence.
+  const attaches = method === 'einvoice_xml' && lookup.duplicateProposalAttachable === true;
+  if ((lookup.duplicateDocumentId || lookup.duplicateProposalId) && !upgrades && !attaches) checks.unshift(DUPLICATE_CHECK);
   const related = relatedRef(invoice, lookup.relatedDocumentId);
   if (related) checks.push(relatedCheck(related));
   // A sale (issue #313) books every line to revenue; a purchase proposes an expense or asset account per line.
   const sale = lookup.direction === 'sale';
   const lines = sale ? bookableSaleLines(booked) : bookableLines(booked, lookup.vendorDefault, lookup.learnedRules ?? []);
   if (lines.length === 0) return fail('Hóa đơn không có dòng hàng hóa, dịch vụ để hạch toán', checks);
+  // A purchase line no rule matched has no account yet (#2091): a warning names those lines, and recording refuses them
+  // until a reviewer picks the account. A sale's lines are all revenue, so it has none. Nothing is added when every
+  // line has its account; the check is replaced by its pass when a revision classifies the last line.
+  const classification = sale ? null : classificationCheck(lines);
+  if (classification?.status === 'warn') checks.push(classification);
+  // Anomaly flags against the vendor's own history (#2380): warnings a person sees before approving, never blocking.
+  // The amount and price rules compare with history booked in dong: a foreign-currency invoice still waiting for its rate
+  // has no amount in dong to judge, so only the bank account is compared.
+  const inDong = converted !== null || booked.currency.toUpperCase() === BOOK_CURRENCY;
+  // A bank account longer than the proposal's field allows (several accounts or a bank name in one tag) is dropped, never
+  // allowed to make the whole reading invalid.
+  const { bankAccount: sellerAccount, ...sellerRest } = invoice.seller;
+  const bankAccount = sellerAccount && sellerAccount.length <= PARTY_BANK_ACCOUNT_MAX ? sellerAccount : undefined;
+  if (!sale) {
+    checks.push(
+      ...anomalyChecks({ sellerBankAccount: bankAccount, total: inDong ? booked.total : null, lines: inDong ? lines : [] }, lookup.history ?? null),
+    );
+  }
 
-  const seller = { ...invoice.seller, taxCode: sellerTaxCode ?? invoice.seller.taxCode };
+  const seller = { ...sellerRest, ...(bankAccount === undefined ? {} : { bankAccount }), taxCode: sellerTaxCode ?? invoice.seller.taxCode };
   const buyer = sale ? { ...invoice.buyer, taxCode: parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode } : invoice.buyer;
   const direction = sale ? { direction: 'sale' as const } : {};
+  // The seller's lookup link and code printed on a PDF (#2267): the reader is deterministic and follows no link. Only a
+  // purchase has an original to look up at the seller's provider.
+  // The hints are a convenience: whatever the reader meets, the extraction itself goes on.
+  let lookupHints: ReturnType<typeof readLookupHints> = [];
+  if (!sale && pdfText) {
+    try {
+      lookupHints = readLookupHints(pdfText, { sellerTaxCode });
+    } catch {
+      lookupHints = [];
+    }
+  }
   const memo = journalMemo({ ...direction, seller, buyer, invoice });
   const payload: PurchaseProposal = {
     ...direction,
@@ -512,6 +728,7 @@ export async function extractAndPropose(
     journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,
+    ...(lookupHints.length > 0 ? { lookupHints } : {}),
     extractionMethod: method === 'unsupported' ? 'einvoice_xml' : method,
     // The signature verification from the sandbox (#674). An invoice read by AI has no signature to verify; an XML
     // answer from a sandbox older than #674 has no verification, which leaves it out.
@@ -541,7 +758,28 @@ export async function extractAndPropose(
         command: 'finance.purchase.record',
         title: `${memo}`.slice(0, 300),
         payload,
-        duplicateOf: lookup.duplicateProposalId,
+        duplicateOf: upgrades || attaches ? null : lookup.duplicateProposalId,
+        // Documents are read at the same time: the record asks the lookup again under a lock on this invoice, so two
+        // copies in one batch cannot both pass (#2137). The key is the identity the lookup matches on.
+        duplicateGuard: {
+          ...(method === 'einvoice_xml' ? { upgrades: true } : {}),
+          // Hashed: a seller name can be 500 characters, and the key is only a name for the lock.
+          key: sha256Hex(new TextEncoder().encode(JSON.stringify([lookup.direction === 'sale' ? 'sale' : 'purchase', lookup.direction === 'sale' ? '' : (sellerTaxCode ?? invoice.seller.name), invoice.series, invoice.number]))),
+          // An original also gives the amounts it reads, so the guard can say whether they are the posted document's (#2320).
+          lookup:
+            method === 'einvoice_xml'
+              ? {
+                  ...lookupInput,
+                  totals: {
+                    currency: invoice.currency.toUpperCase(),
+                    ...(converted
+                      ? { subtotal: invoice.subtotal, vatTotal: invoice.vatTotal, total: invoice.total }
+                      : { subtotal: booked.subtotal, vatTotal: booked.vatTotal, total: booked.total }),
+                  },
+                }
+              : lookupInput,
+          check: DUPLICATE_CHECK,
+        },
       },
     },
     { actor, orgId },

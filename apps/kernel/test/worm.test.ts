@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GetObjectCommand, GetObjectLockConfigurationCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, GetObjectLockConfigurationCommand, ListObjectVersionsCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type QueryResult } from 'kysely';
 import { describe, expect, it } from 'vitest';
 import type { Db } from '@crove/db';
@@ -16,10 +16,27 @@ import {
   S3ArchiveStore,
   archiveKey,
   batchSha256,
+  ArchiveMismatchError,
+  acknowledgeRestore,
   chainSha256,
+  highSha256,
+  RESTORE_ACK_PREFIX,
+  restoreAckAlert,
+  restoreAckKey,
+  restoreAckStoreAlert,
+  restoreReport,
+  planVerification,
+  runNightlyVerification,
+  readVerifyMarker,
+  VERIFY_MARKER_PREFIX,
   verifyArchive,
+  verifyMarkerExpired,
+  verifyMarkerKey,
   writeArchive,
+  writeVerifyMarker,
   type ArchiveBatch,
+  type ArchiveHigh,
+  type RestoreAck,
   type ArchiveS3Sender,
   type ArchiveStore,
 } from '../src/worm.ts';
@@ -92,6 +109,56 @@ describe('S3 archive store', () => {
     expect(await store.get(archiveKey(1))).toEqual(new Uint8Array([7]));
     expect(sent.at(-1)).toMatchObject({ name: GetObjectCommand.name, input: { Key: archiveKey(1) } });
     expect(await store.get(archiveKey(9))).toBeNull();
+  });
+});
+
+describe('S3 archive store versions (#2020)', () => {
+  it("reads an object's write time from its oldest version, and counts every key's versions and delete markers", async () => {
+    const at = (s: number) => new Date(Date.UTC(2026, 9, 22, 0, 0, s));
+    const pages = [
+      {
+        Versions: [
+          { Key: 'restores/v1/000000000001.json', LastModified: at(30) },
+          { Key: 'restores/v1/000000000001.json', LastModified: at(10) },
+          { Key: 'restores/v1/000000000001.json.bak', LastModified: at(1) },
+        ],
+        IsTruncated: true,
+        NextKeyMarker: 'k',
+        NextVersionIdMarker: 'v',
+      },
+      { Versions: [{ Key: 'restores/v1/000000000001.json', LastModified: at(20) }], DeleteMarkers: [{ Key: 'restores/v1/000000000002.json' }], IsTruncated: false },
+    ];
+    const { client, sent } = fakeS3((command) => (command.name === ListObjectVersionsCommand.name ? pages[sent.filter((s) => s.name === command.name).length - 1] : {}));
+    const store = new S3ArchiveStore({ client, bucket: 'b', lockMode: 'COMPLIANCE', retentionDays: 1 });
+    // The oldest of the key's own versions, not of a key it prefixes, and across pages.
+    expect(await store.writtenAt('restores/v1/000000000001.json')).toEqual(at(10));
+    expect(sent.map((s) => s.input)).toEqual([
+      { Bucket: 'b', Prefix: 'restores/v1/000000000001.json', KeyMarker: undefined, VersionIdMarker: undefined },
+      { Bucket: 'b', Prefix: 'restores/v1/000000000001.json', KeyMarker: 'k', VersionIdMarker: 'v' },
+    ]);
+    sent.length = 0;
+    expect(await store.versionCounts('restores/v1/')).toEqual(
+      new Map([
+        ['restores/v1/000000000001.json', 3],
+        ['restores/v1/000000000001.json.bak', 1],
+        ['restores/v1/000000000002.json', 1],
+      ]),
+    );
+    // Every key's write time from one listing (#2082): its oldest version, a key with only a delete marker left out.
+    sent.length = 0;
+    expect(await store.writtenTimes('restores/v1/')).toEqual(
+      new Map([
+        ['restores/v1/000000000001.json', at(10)],
+        ['restores/v1/000000000001.json.bak', at(1)],
+      ]),
+    );
+    expect(sent.map((s) => s.input)).toEqual([
+      { Bucket: 'b', Prefix: 'restores/v1/', KeyMarker: undefined, VersionIdMarker: undefined },
+      { Bucket: 'b', Prefix: 'restores/v1/', KeyMarker: 'k', VersionIdMarker: 'v' },
+    ]);
+    // A key with no version has no write time.
+    const empty = new S3ArchiveStore({ client: fakeS3(() => ({ Versions: [], IsTruncated: false })).client, bucket: 'b', lockMode: 'COMPLIANCE', retentionDays: 1 });
+    expect(await empty.writtenAt('chain/v1/000000000009.json')).toBeNull();
   });
 });
 
@@ -257,6 +324,7 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
   const early: Record<string, Rows> = {
     archive_allocation_hashes: [['number:o:1', 'a'.repeat(64)]],
     archive_series_hashes: [['number_series:o:1', 'b'.repeat(64)]],
+    archive_revision_hashes: [['revision:journal:o:1', 'd'.repeat(64)]],
   };
   const rowsOf = ({ fn, from }: Range): Rows => (from === EPOCH ? (early[fn] ?? []) : []);
 
@@ -271,6 +339,7 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
       const ranges: Array<[number, string, string | undefined]> = [
         [4, 'archive_allocation_hashes', spec.allocationsFrom],
         [5, 'archive_series_hashes', spec.seriesFrom],
+        [6, 'archive_revision_hashes', spec.revisionsFrom],
       ];
       const rows = ranges
         .filter(([version]) => spec.version >= version)
@@ -295,7 +364,7 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
 
   // Verifies the batches as stored objects (a batch may lack a field), every one recorded in the database; `misfits` are
   // the series archive_series_misfits() names, and the rows in `changed` hash differently now than when written.
-  async function verify(batches: Array<Omit<ArchiveBatch, 'allocationsFrom' | 'seriesFrom'> & Partial<ArchiveBatch>>, misfits: string[] = [], changed: string[] = []) {
+  async function verify(batches: Array<Omit<ArchiveBatch, 'allocationsFrom' | 'seriesFrom' | 'revisionsFrom'> & Partial<ArchiveBatch>>, misfits: string[] = [], changed: string[] = []) {
     const objects = new Map(batches.map((b) => [archiveKey(b.seq), new TextEncoder().encode(JSON.stringify(b))]));
     const store: ArchiveStore = {
       put: async () => {},
@@ -380,6 +449,44 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
     expect((await verify(shifted)).result.problems).toEqual([{ code: 'series_gap', seq: 3 }]);
   });
 
+  it('verifies version 6 batches after version 5 ones, the first taking the source revisions from the epoch (#1337)', async () => {
+    const batches = chain([
+      v3,
+      { version: 5, ...later(2), allocationsFrom: EPOCH, seriesFrom: EPOCH },
+      { version: 6, ...later(3), allocationsFrom: at(2), seriesFrom: at(2), revisionsFrom: EPOCH },
+      { version: 6, ...later(4), allocationsFrom: at(3), seriesFrom: at(3), revisionsFrom: at(3) },
+    ]);
+    const { result, ranges } = await verify(batches);
+    expect(result).toMatchObject({ ok: true, batches: 4, problems: [] });
+    // An entry made before the switch is anchored once, by the first version 6 batch.
+    expect(batches.map((b) => b.rows.map(([ref]) => ref))).toEqual([[], ['number:o:1', 'number_series:o:1'], ['revision:journal:o:1'], []]);
+    expect(ranges.filter((r) => r.fn === 'archive_revision_hashes').map((r) => r.from)).toEqual([EPOCH, at(3)]);
+    // A changed revision or payload hash fails the batch that anchored it.
+    expect((await verify(batches, [], ['revision:journal:o:1'])).result.problems).toEqual([{ code: 'row_changed', seq: 3, ref: 'revision:journal:o:1' }]);
+  });
+
+  it('reports a version 6 batch without revisionsFrom as unreadable, and revisions_gap when the revisions do not start where they must', async () => {
+    const [head, v6] = chain([v3, { version: 6, ...later(2), allocationsFrom: EPOCH, seriesFrom: EPOCH, revisionsFrom: EPOCH }]) as [ArchiveBatch, ArchiveBatch];
+    const { revisionsFrom: _revisions, ...noRevisions } = v6;
+    expect((await verify([head, noRevisions])).result.problems).toEqual([{ code: 'object_unreadable', seq: 2 }]);
+
+    const skipped = chain([v3, { version: 6, ...later(2), allocationsFrom: EPOCH, seriesFrom: EPOCH, revisionsFrom: at(1) }]);
+    expect((await verify(skipped)).result.problems).toEqual([{ code: 'revisions_gap', seq: 2 }]);
+    const shifted = chain([
+      v3,
+      { version: 6, ...later(2), allocationsFrom: EPOCH, seriesFrom: EPOCH, revisionsFrom: EPOCH },
+      { version: 6, ...later(3), allocationsFrom: at(2), seriesFrom: at(2), revisionsFrom: at(1) },
+    ]);
+    expect((await verify(shifted)).result.problems).toEqual([{ code: 'revisions_gap', seq: 3 }]);
+    // A version 5 batch after a version 6 one leaves revisions unanchored.
+    const regressed = chain([
+      v3,
+      { version: 6, ...later(2), allocationsFrom: EPOCH, seriesFrom: EPOCH, revisionsFrom: EPOCH },
+      { version: 5, ...later(3), allocationsFrom: at(2), seriesFrom: at(2) },
+    ]);
+    expect((await verify(regressed)).result.problems).toEqual([{ code: 'version_regressed', seq: 3 }]);
+  });
+
   it('reports a version 4 batch after a version 5 one as a regression', async () => {
     const batches = chain([
       v3,
@@ -405,5 +512,939 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
     ]);
     // Before version 5 nothing anchors a series, so the check does not run.
     expect((await verify(batches.slice(0, 2), ['number_series:o:1'])).result.problems).toEqual([]);
+  });
+});
+
+// Version 7 batches and the restore report (#2007): each batch carries its series highs in the clear, checked against
+// their row hashes; after a restore, the report names what the archive holds beyond the database and the series to
+// raise. A fake database answers the archive definers from memory.
+describe('series highs and the restore report (#2007)', () => {
+  const EPOCH = new Date(0).toISOString();
+  const at = (minutes: number) => new Date(Date.parse('2026-10-21T00:00:00.000Z') + minutes * 60_000).toISOString();
+  const ORG = '0190f000-0000-7000-8000-00000000000a';
+  const ENTITY = '0190f000-0000-7000-8000-0000000000e1';
+  const SERIES = '0190f000-0000-7000-8000-0000000000f1';
+  const highRef = `number_high:${ORG}:${SERIES}`;
+  const high = (number: string): ArchiveHigh => [highRef, ENTITY, 'finance.journal_voucher', '2026', number];
+  const highRow = (h: ArchiveHigh): [string, string] => [h[0], highSha256(...h)];
+  const highAnswer = (h: ArchiveHigh) => {
+    const [ref, row_sha256] = highRow(h);
+    return { ref, row_sha256, legal_entity_id: h[1], doc_type: h[2], period_key: h[3], high: h[4] };
+  };
+  const hash = (c: string) => c.repeat(64);
+
+  // Batch `seq` covers [at(seq - 1), at(seq)), the first from the epoch, with the given rows and highs.
+  function chainOf(specs: Array<{ version: ArchiveBatch['version']; rows: Array<[string, string]>; highs?: ArchiveHigh[] }>): ArchiveBatch[] {
+    let prev = GENESIS_SHA256;
+    return specs.map((spec, i) => {
+      const seq = i + 1;
+      const window = { from: seq === 1 ? EPOCH : at(seq - 1), to: at(seq) };
+      const from = (version: number) => (i === 0 || (specs[i - 1]?.version ?? 1) < version ? EPOCH : window.from);
+      const rows = [...spec.rows, ...(spec.highs ?? []).map(highRow)].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+      const batchHash = batchSha256(rows);
+      const batch: ArchiveBatch = {
+        format: 'crove-archive',
+        version: spec.version,
+        seq,
+        window,
+        numbersFrom: from(2),
+        entitiesFrom: from(3),
+        allocationsFrom: from(4),
+        seriesFrom: from(5),
+        revisionsFrom: from(6),
+        ...(spec.version >= 7 ? { highsFrom: from(7), highs: spec.highs ?? [] } : {}),
+        prevChainSha256: prev,
+        rows,
+        batchSha256: batchHash,
+        chainSha256: chainSha256(prev, seq, window.from, window.to, batchHash),
+      };
+      prev = batch.chainSha256;
+      return batch;
+    });
+  }
+
+  function storeOf(batches: ArchiveBatch[]): ArchiveStore {
+    const objects = new Map(batches.map((b) => [archiveKey(b.seq), new TextEncoder().encode(JSON.stringify(b))]));
+    return {
+      put: async () => {},
+      get: async (key) => objects.get(key) ?? null,
+      list: async (prefix) => [...objects.keys()].filter((k) => k.startsWith(prefix)).sort(),
+      describe: () => 'memory',
+    };
+  }
+
+  // The database: it recorded the first `recorded` batches, holds the version 1 rows `present` gives per range start,
+  // its series highs per range start, and its series with their next numbers.
+  function dbOf(opts: {
+    batches: ArchiveBatch[];
+    recorded: number;
+    present: Record<string, Array<[string, string]>>;
+    highs?: Record<string, ArchiveHigh[]>;
+    series?: Array<{ series_id: string; next_number: string }>;
+    // The org's legal entities the restored database has (default: the one entity of the tests).
+    entities?: string[];
+  }): Db {
+    return fakeDb((query) => {
+      if (query.sql.includes('archive_batches()')) {
+        return opts.batches.slice(0, opts.recorded).map((b) => ({
+          seq: String(b.seq),
+          window_from: new Date(b.window.from),
+          window_to: new Date(b.window.to),
+          chain_sha256: b.chainSha256,
+          object_key: archiveKey(b.seq),
+        }));
+      }
+      if (query.sql.includes('archive_series_next()')) {
+        return (opts.series ?? []).map((s) => ({ org_id: ORG, legal_entity_id: ENTITY, doc_type: 'finance.journal_voucher', period_key: '2026', ...s }));
+      }
+      if (query.sql.includes('archive_legal_entities()')) return (opts.entities ?? [ENTITY]).map((legal_entity_id) => ({ org_id: ORG, legal_entity_id }));
+      const [from, to] = query.parameters as [string, string];
+      if (query.sql.includes('archive_series_highs(')) return (opts.highs?.[from] ?? []).map(highAnswer);
+      // The rows stamped in [from, to): the entries of `present` keyed by a time in that range.
+      if (query.sql.includes('archive_row_hashes(')) {
+        return Object.entries(opts.present)
+          .filter(([key]) => key >= from && key < to)
+          .flatMap(([, rows]) => rows)
+          .map(([ref, row_sha256]) => ({ ref, row_sha256 }));
+      }
+      return [];
+    });
+  }
+
+  it('writes version 7 batches with the series highs in the clear, and the verifier checks each against its row', async () => {
+    const state = { head: 0, chain: GENESIS_SHA256, window: EPOCH };
+    const h = high('5');
+    const db = fakeDb((query) => {
+      if (query.sql.includes('archive_head()')) return state.head ? [{ seq: String(state.head), window_to: new Date(state.window), chain_sha256: state.chain }] : [];
+      if (query.sql.includes('archive_next_window')) {
+        return [{ window_from: new Date(state.window), horizon: new Date(at(10)), first_row_at: state.head === 0 ? new Date(at(0)) : null }];
+      }
+      if (query.sql.includes('archive_series_highs(')) return [highAnswer(h)];
+      if (query.sql.includes('archive_record')) {
+        const [seq, , to, , , chain] = query.parameters as [number, string, string, number, string, string];
+        Object.assign(state, { head: Number(seq), window: to, chain });
+      }
+      return [];
+    });
+    const objects = new Map<string, Uint8Array>();
+    const store: ArchiveStore = {
+      put: async (key, body) => void objects.set(key, body),
+      get: async (key) => objects.get(key) ?? null,
+      list: async (prefix) => [...objects.keys()].filter((k) => k.startsWith(prefix)).sort(),
+      describe: () => 'memory',
+    };
+    expect(await writeArchive(db, store, { lagSeconds: 600 })).toBe(1);
+    const batch = JSON.parse(new TextDecoder().decode(objects.get(archiveKey(1)))) as ArchiveBatch;
+    expect(batch).toMatchObject({ version: 7, highsFrom: EPOCH, highs: [h], rows: [highRow(h)] });
+
+    // The verifier reads the store back; a clear value changed there fails as high_mismatch, though the rows and the
+    // chain still hold.
+    const recorded = fakeDb((query) => {
+      if (query.sql.includes('archive_batches()')) {
+        return [{ seq: '1', window_from: new Date(batch.window.from), window_to: new Date(batch.window.to), chain_sha256: batch.chainSha256, object_key: archiveKey(1) }];
+      }
+      if (query.sql.includes('archive_series_highs(')) return [highAnswer(h)];
+      return [];
+    });
+    expect(await verifyArchive(recorded, storeOf([batch]))).toMatchObject({ ok: true, problems: [] });
+    expect((await verifyArchive(recorded, storeOf([{ ...batch, highs: [high('50')] }]))).problems).toEqual([{ code: 'high_mismatch', seq: 1, ref: highRef }]);
+    // A high row without its clear values fails the same way; a version 7 batch without highs is unreadable.
+    expect((await verifyArchive(recorded, storeOf([{ ...batch, highs: [] }]))).problems).toEqual([{ code: 'high_mismatch', seq: 1, ref: highRef }]);
+    const { highs: _highs, ...noHighs } = batch;
+    expect((await verifyArchive(recorded, storeOf([noHighs as ArchiveBatch]))).problems).toEqual([{ code: 'object_unreadable', seq: 1 }]);
+  });
+
+  it('reports highs_gap when the first version 7 batch does not take its highs from the epoch', async () => {
+    const [first, second] = chainOf([{ version: 6, rows: [] }, { version: 7, rows: [] }]) as [ArchiveBatch, ArchiveBatch];
+    const skipped = { ...second, highsFrom: second.window.from };
+    const db = dbOf({ batches: [first, skipped], recorded: 2, present: {} });
+    expect((await verifyArchive(db, storeOf([first, skipped]))).problems).toEqual([{ code: 'highs_gap', seq: 2 }]);
+  });
+
+  it('names what the archive holds beyond the restored database, and the series to raise above it', async () => {
+    const kept: Array<[string, string]> = [[`journal:${ORG}:e1`, hash('1')]];
+    const lost: Array<[string, string]> = [
+      ['audit:x2', hash('2')],
+      [`journal:${ORG}:e2`, hash('3')],
+      [`entity:journal:${ORG}:e2`, hash('4')],
+      [`journal_voucher:${ORG}:v2`, hash('5')],
+      [`voucher_number:journal_voucher:${ORG}:v2`, hash('6')],
+      [`number:${ORG}:a2`, hash('7')],
+    ];
+    const batches = chainOf([
+      { version: 7, rows: kept, highs: [high('5')] },
+      { version: 7, rows: lost, highs: [high('6')] },
+    ]);
+    // The restored database recorded batch 1 and holds its rows; its series gives 6 next, a number the archive holds.
+    const restored = (series?: Array<{ series_id: string; next_number: string }>) =>
+      dbOf({ batches, recorded: 1, present: { [EPOCH]: kept }, highs: { [EPOCH]: [high('5')] }, ...(series ? { series } : {}) });
+    expect(await restoreReport(restored([{ series_id: SERIES, next_number: '6' }]), storeOf(batches))).toEqual({
+      ok: false,
+      batches: 2,
+      recorded: 1,
+      beyond: [{ seq: 2, from: at(1), to: at(2) }],
+      auditEvents: 1,
+      orgs: [
+        {
+          orgId: ORG,
+          journalEntries: ['e2'],
+          cashVouchers: [],
+          journalVouchers: ['v2'],
+          documentVoids: [],
+          allocations: ['a2'],
+          numberVoids: [],
+          series: [],
+        },
+      ],
+      reseed: [{ orgId: ORG, seriesId: SERIES, legalEntityId: ENTITY, docType: 'finance.journal_voucher', periodKey: '2026', archivedHigh: '6', next: '6' }],
+      uncovered: [],
+      uncoveredSeries: [],
+      orphaned: [],
+      lostRefs: batches[1]!.rows.map(([ref]): [number, string] => [2, ref]),
+      acknowledgedRefs: batches[1]!.rows.map(([ref]): [number, string] => [2, ref]),
+      acknowledgedIntervals: [],
+      latestAck: null,
+      problems: [],
+    });
+
+    // A series of an org or legal entity the restored database lacks has nothing to raise: it is lost with it.
+    const noEntity = await restoreReport(dbOf({ batches, recorded: 1, present: { [EPOCH]: kept }, highs: { [EPOCH]: [high('5')] }, entities: [] }), storeOf(batches));
+    expect(noEntity).toMatchObject({ reseed: [], orphaned: [expect.objectContaining({ seriesId: SERIES, archivedHigh: '6', next: null })] });
+
+    // A series the restore lost altogether is named with its archived id; one already above the archive is not.
+    expect((await restoreReport(restored(), storeOf(batches))).reseed).toEqual([expect.objectContaining({ seriesId: SERIES, archivedHigh: '6', next: null })]);
+    expect((await restoreReport(restored([{ series_id: SERIES, next_number: '7' }]), storeOf(batches))).reseed).toEqual([]);
+
+    // Before version 7, the archive cannot say which series a lost allocation was in: the org needs a floor.
+    const old = chainOf([
+      { version: 6, rows: kept },
+      { version: 6, rows: lost },
+    ]);
+    const legacy = await restoreReport(dbOf({ batches: old, recorded: 1, present: { [EPOCH]: kept }, series: [{ series_id: SERIES, next_number: '6' }] }), storeOf(old));
+    expect(legacy).toMatchObject({
+      reseed: [],
+      uncovered: [ORG],
+      uncoveredSeries: [{ orgId: ORG, seriesId: SERIES, legalEntityId: ENTITY, docType: 'finance.journal_voucher', periodKey: '2026', next: '6' }],
+    });
+
+    // A high the reseed could not take (more than 18 digits) is not trusted: the report fails.
+    const huge = chainOf([
+      { version: 7, rows: kept, highs: [high('5')] },
+      { version: 7, rows: lost, highs: [high('1234567890123456789')] },
+    ]);
+    const tooLong = await restoreReport(
+      dbOf({ batches: huge, recorded: 1, present: { [EPOCH]: kept }, highs: { [EPOCH]: [high('5')] }, series: [{ series_id: SERIES, next_number: '6' }] }),
+      storeOf(huge),
+    );
+    expect(tooLong.problems).toEqual([{ code: 'high_mismatch', seq: 2, ref: highRef }]);
+  });
+
+  it('fails on a lower version after a version 7 batch: the numbers of its window have no highs', async () => {
+    const kept: Array<[string, string]> = [[`journal:${ORG}:e1`, hash('1')]];
+    const lost: Array<[string, string]> = [[`number:${ORG}:a2`, hash('7')]];
+    const batches = chainOf([
+      { version: 7, rows: kept, highs: [high('5')] },
+      { version: 6, rows: lost },
+    ]);
+    const db = dbOf({ batches, recorded: 1, present: { [EPOCH]: kept }, highs: { [EPOCH]: [high('5')] }, series: [{ series_id: SERIES, next_number: '6' }] });
+    const report = await restoreReport(db, storeOf(batches));
+    expect(report.problems).toEqual([{ code: 'version_regressed', seq: 2 }]);
+    expect(report.ok).toBe(false);
+  });
+
+  it('agrees when nothing was lost, and names a recorded batch the store lacks', async () => {
+    const kept: Array<[string, string]> = [[`journal:${ORG}:e1`, hash('1')]];
+    const batches = chainOf([{ version: 7, rows: kept, highs: [high('5')] }]);
+    const db = dbOf({ batches, recorded: 1, present: { [EPOCH]: kept }, highs: { [EPOCH]: [high('5')] }, series: [{ series_id: SERIES, next_number: '6' }] });
+    expect(await restoreReport(db, storeOf(batches))).toMatchObject({ ok: true, beyond: [], orgs: [], reseed: [], problems: [] });
+    // An empty store, as on a server whose archive settings do not point at the surviving archive.
+    expect((await restoreReport(db, storeOf([]))).problems).toEqual([{ code: 'object_missing', seq: 1 }]);
+  });
+
+  // After a restore (#2020): batch 1 was recorded before the backup point, batch 2 after it and lost with the restore.
+  const keptRows: Array<[string, string]> = [[`journal:${ORG}:e1`, hash('1')]];
+  const lostRows: Array<[string, string]> = [
+    ['audit:x2', hash('2')],
+    [`journal:${ORG}:e2`, hash('3')],
+    [`number:${ORG}:a2`, hash('7')],
+  ];
+  const restoreChain = () =>
+    chainOf([
+      { version: 7, rows: keptRows, highs: [high('5')] },
+      { version: 7, rows: lostRows, highs: [high('6')] },
+    ]);
+  type AckSpec = Partial<RestoreAck> & { refs: Array<[number, string]> };
+  // Acknowledgements 1..n as the restore check writes them: each linked to the one before and bound to its newest batch
+  // (batchesAtRestore, 2 unless given); a spec may override any field, to forge one.
+  function ackChain(batches: ArchiveBatch[], specs: AckSpec[]): Record<string, RestoreAck> {
+    const out: Record<string, RestoreAck> = {};
+    let prev = GENESIS_SHA256;
+    specs.forEach((spec, i) => {
+      const batchesAtRestore = spec.batchesAtRestore ?? 2;
+      const ack: RestoreAck = {
+        format: 'crove-restore-ack',
+        version: 1,
+        sequence: i + 1,
+        prevSha256: prev,
+        lastChainSha256: batches[batchesAtRestore - 1]!.chainSha256,
+        acknowledgedAt: at(10),
+        recordedAtRestore: 1,
+        batchesAtRestore,
+        intervals: [[2, batchesAtRestore, at(1)]],
+        ...spec,
+      };
+      out[restoreAckKey(i + 1)] = ack;
+      prev = createHash('sha256').update(JSON.stringify(ack)).digest('hex');
+    });
+    return out;
+  }
+  // A store holding the batches and the given objects, which put writes create-only. The store's clock stamps each
+  // object as written in `order` (the batches, then the objects, unless given), and each put after them.
+  function writableStore(batches: ArchiveBatch[], extra: Record<string, unknown> = {}, order?: string[]): ArchiveStore & { objects: Map<string, Uint8Array> } {
+    const objects = new Map<string, Uint8Array>([
+      ...batches.map((b): [string, Uint8Array] => [archiveKey(b.seq), new TextEncoder().encode(JSON.stringify(b))]),
+      ...Object.entries(extra).map(([k, v]): [string, Uint8Array] => [k, new TextEncoder().encode(typeof v === 'string' ? v : JSON.stringify(v))]),
+    ]);
+    const times = new Map<string, Date>();
+    let tick = 0;
+    const stamp = (key: string) => times.set(key, new Date(Date.UTC(2026, 9, 22) + ++tick * 1000));
+    for (const key of order ?? [...objects.keys()]) stamp(key);
+    return {
+      objects,
+      put: async (key, body) => {
+        if (objects.has(key)) throw new ArchiveObjectExistsError(key);
+        objects.set(key, body);
+        stamp(key);
+      },
+      get: async (key) => objects.get(key) ?? null,
+      list: async (prefix) => [...objects.keys()].filter((k) => k.startsWith(prefix)).sort(),
+      writtenAt: async (key) => times.get(key) ?? null,
+      describe: () => 'memory',
+    };
+  }
+  const missing = (seq: number, rows: Array<[string, string]>) => rows.map(([ref]) => ({ code: 'row_missing', seq, ref }));
+
+  it('excuses exactly the rows the acknowledgement in force names, in their batch, and nothing else (#2020)', async () => {
+    const batches = restoreChain();
+    const lost = batches[1]!.rows.map(([ref]): [number, string] => [2, ref]);
+    // The restored database, with both batches recorded (the acknowledgement records the second), holds batch 1 only.
+    const restored = (present = { [EPOCH]: keptRows }, highs: Record<string, ArchiveHigh[]> = { [EPOCH]: [high('5')] }) =>
+      dbOf({ batches, recorded: 2, present, highs, series: [{ series_id: SERIES, next_number: '7' }] });
+    const one = ackChain(batches, [{ refs: lost }]);
+
+    // Without an acknowledgement every lost row fails the verification.
+    expect((await verifyArchive(restored(), writableStore(batches))).problems).toEqual(missing(2, batches[1]!.rows));
+    // With one, they are excused, and counted.
+    expect(await verifyArchive(restored(), writableStore(batches, one))).toMatchObject({ ok: true, problems: [], excused: lost.length });
+    // A row of batch 1, which the restore kept, deleted since: still a finding.
+    expect((await verifyArchive(restored({ [EPOCH]: [] }), writableStore(batches, one))).problems).toEqual(missing(1, keptRows));
+    // A lost row that comes back: that restore no longer reads as one, so nothing of it is excused.
+    const back = await verifyArchive(
+      restored({ [EPOCH]: keptRows, [at(1)]: [[`journal:${ORG}:e2`, hash('9')]] }, { [EPOCH]: [high('5')], [at(1)]: [high('4')] }),
+      writableStore(batches, one),
+    );
+    expect(back.problems).toContainEqual({ code: 'row_changed', seq: 2, ref: `journal:${ORG}:e2` });
+    expect(back.problems).toContainEqual({ code: 'restore_ack_mismatch', seq: 2, ref: restoreAckKey(1) });
+    // A reference named under another batch excuses nothing.
+    const misplaced = lost.map(([, ref]): [number, string] => [1, ref]);
+    expect((await verifyArchive(restored(), writableStore(batches, ackChain(batches, [{ refs: misplaced, intervals: [[1, 2, at(1)]] }])))).problems).toEqual(
+      missing(2, batches[1]!.rows),
+    );
+    // The newest acknowledgement is the one in force: one that drops the excuses leaves the rows findings.
+    expect((await verifyArchive(restored(), writableStore(batches, ackChain(batches, [{ refs: lost }, { refs: [], intervals: [] }])))).problems).toEqual(
+      missing(2, batches[1]!.rows),
+    );
+  });
+
+  it('trusts no acknowledgement of a chain with a gap, a broken link, an object that does not parse, or one that adds to an earlier restore (#2020)', async () => {
+    const batches = restoreChain();
+    const lost = batches[1]!.rows.map(([ref]): [number, string] => [2, ref]);
+    const restored = () => dbOf({ batches, recorded: 2, present: { [EPOCH]: keptRows }, highs: { [EPOCH]: [high('5')] } });
+    const [first, second] = Object.values(ackChain(batches, [{ refs: lost.slice(0, 1) }, { refs: lost.slice(0, 1) }])) as [RestoreAck, RestoreAck];
+    const cases: Array<[string, Record<string, unknown>, string, string]> = [
+      ['a gap', { [restoreAckKey(1)]: first, [restoreAckKey(3)]: { ...second, sequence: 3 } }, 'restore_ack_unreadable', restoreAckKey(3)],
+      ['a broken link', { [restoreAckKey(1)]: first, [restoreAckKey(2)]: { ...second, prevSha256: GENESIS_SHA256 } }, 'restore_ack_unreadable', restoreAckKey(2)],
+      ['not json', { [restoreAckKey(1)]: 'not json' }, 'restore_ack_unreadable', restoreAckKey(1)],
+      ['a ref outside its restores', { [restoreAckKey(1)]: { ...first, refs: [[3, 'audit:x3']] } }, 'restore_ack_unreadable', restoreAckKey(1)],
+      // The second adds an excuse to the first one's restore.
+      ['an added excuse', ackChain(batches, [{ refs: lost.slice(0, 1) }, { refs: lost }]), 'restore_ack_mismatch', restoreAckKey(2)],
+    ];
+    for (const [what, objects, code, key] of cases) {
+      const result = await verifyArchive(restored(), writableStore(batches, objects));
+      expect(result.problems, what).toEqual([{ code, seq: 0, ref: key }, ...missing(2, batches[1]!.rows)]);
+    }
+  });
+
+  it('writes an acknowledgement and records the batches after the backup point; a later restore that brought a row back drops its excuse (#2020)', async () => {
+    const batches = restoreChain();
+    const recordedCalls: unknown[][] = [];
+    const db = fakeDb((query) => {
+      if (query.sql.includes('archive_record(')) recordedCalls.push([...query.parameters]);
+      return [];
+    });
+    const store = writableStore(batches);
+    const restoredAt = (recorded: number, present: Record<string, Array<[string, string]>>) =>
+      dbOf({ batches, recorded, present, highs: { [EPOCH]: [high('5')] }, series: [{ series_id: SERIES, next_number: '7' }] });
+
+    // Restore A loses batch 2.
+    const a = await restoreReport(restoredAt(1, { [EPOCH]: keptRows }), store, { backupPoint: at(1) });
+    const lost = batches[1]!.rows.map(([ref]): [number, string] => [2, ref]);
+    expect(a).toMatchObject({ lostRefs: lost, acknowledgedRefs: lost, latestAck: null });
+    expect(await acknowledgeRestore(db, store, a, new Date(at(10)))).toBe(restoreAckKey(1));
+    expect(JSON.parse(new TextDecoder().decode(store.objects.get(restoreAckKey(1))))).toEqual(ackChain(batches, [{ refs: lost }])[restoreAckKey(1)]);
+    expect(recordedCalls).toEqual([[2, at(1), at(2), batches[1]!.rows.length, batches[1]!.batchSha256, batches[1]!.chainSha256, archiveKey(2)]]);
+    // A second run over the same restore writes nothing new.
+    expect(await acknowledgeRestore(db, store, await restoreReport(restoredAt(1, { [EPOCH]: keptRows }), store, { backupPoint: at(1) }))).toBe(restoreAckKey(1));
+    expect(await store.list(RESTORE_ACK_PREFIX)).toEqual([restoreAckKey(1)]);
+
+    // Restore B, from a backup taken before restore A that holds batch 2's journal entry: its excuse is dropped, so a
+    // later deletion of that entry is a finding. Same range as restore A, under the next sequence, linked to it.
+    const kept2 = lostRows.filter(([ref]) => ref === `journal:${ORG}:e2`);
+    const b = await restoreReport(restoredAt(1, { [EPOCH]: keptRows, [at(1)]: kept2 }), store, { backupPoint: at(1.5) });
+    expect(b.latestAck?.sequence).toBe(1);
+    expect(b.acknowledgedRefs.map(([, ref]) => ref)).not.toContain(`journal:${ORG}:e2`);
+    expect(await acknowledgeRestore(db, store, b, new Date(at(20)))).toBe(restoreAckKey(2));
+    const deleted = await verifyArchive(restoredAt(2, { [EPOCH]: keptRows }), store);
+    expect(deleted.problems).toEqual([{ code: 'row_missing', seq: 2, ref: `journal:${ORG}:e2` }]);
+
+    // Nothing at all when the archive has a problem.
+    await expect(acknowledgeRestore(db, store, { ...b, problems: [{ code: 'chain_broken', seq: 2 }] })).rejects.toThrow(/nothing is acknowledged/);
+  });
+
+  // Five batches, each with one journal entry. A real restore loses a suffix of them; a deletion leaves later ones.
+  const five = () => chainOf([1, 2, 3, 4, 5].map((n) => ({ version: 7 as const, rows: [[`journal:${ORG}:e${n}`, hash(String(n))] as [string, string]] })));
+  const entryOf = (batches: ArchiveBatch[], n: number): Array<[string, string]> => batches[n - 1]!.rows;
+  // The database holds the entries of the given batches, and recorded `recorded` of them.
+  const holding = (batches: ArchiveBatch[], recorded: number, kept: number[]) =>
+    dbOf({ batches, recorded, present: Object.fromEntries(kept.map((n) => [n === 1 ? EPOCH : at(n - 1), entryOf(batches, n)])) });
+
+  it('refuses to read a deletion as a restore: a row lost while newer rows are still there is a finding, acknowledged or not (#2020)', async () => {
+    const batches = five();
+    const deletedRef: [number, string] = [2, entryOf(batches, 2)[0]![0]];
+    // The database owner forgets batches 2 to 5 and deletes batch 2's entry; batches 3 to 5 keep theirs. The restore
+    // check refuses it, so nothing is acknowledged.
+    const forged = await restoreReport(holding(batches, 1, [1, 3, 4, 5]), writableStore(batches), { backupPoint: at(1) });
+    expect(forged.problems).toEqual([{ code: 'restore_ack_mismatch', seq: 2, ref: entryOf(batches, 3)[0]![0] }]);
+    // Without a backup point nothing is acknowledged at all.
+    const pointless = await restoreReport(holding(batches, 1, [1]), writableStore(batches));
+    await expect(acknowledgeRestore(fakeDb(() => []), writableStore(batches), pointless)).rejects.toThrow(/--backup-point/);
+
+    // Acknowledgements written straight to the store, with the database holding every row but the deleted one:
+    const verify = (acks: Record<string, RestoreAck>, order?: string[]) => verifyArchive(holding(batches, 5, [1, 3, 4, 5]), writableStore(batches, acks, order));
+    const notExcused = (code: string, seq: number) => [{ code, seq, ref: restoreAckKey(1) }, { code: 'row_missing', seq: 2, ref: deletedRef[1] }];
+    // - bound to the newest batch, with a backup point before the row: newer rows are still there;
+    expect((await verify(ackChain(batches, [{ refs: [deletedRef], batchesAtRestore: 5, intervals: [[2, 5, at(1)]] }]))).problems).toEqual(
+      notExcused('restore_ack_mismatch', 2),
+    );
+    // - or a point far after the row;
+    expect((await verify(ackChain(batches, [{ refs: [deletedRef], batchesAtRestore: 5, intervals: [[2, 5, at(2 + 120)]] }]))).problems).toEqual(
+      notExcused('restore_ack_mismatch', 2),
+    );
+    // - or claiming batch 2 was the newest ([2, 2, end of batch 2]), written after batches 3 to 5: not bound;
+    const stale = ackChain(batches, [{ refs: [deletedRef], batchesAtRestore: 2, intervals: [[2, 2, at(2)]] }]);
+    expect((await verify(stale)).problems).toEqual(notExcused('restore_ack_mismatch', 0));
+    // - or naming the newest batch with another batch's chain hash.
+    const wrongChain = ackChain(batches, [{ refs: [deletedRef], batchesAtRestore: 5, intervals: [[2, 5, at(5)]], lastChainSha256: batches[3]!.chainSha256 }]);
+    expect((await verify(wrongChain)).problems).toEqual(notExcused('restore_ack_mismatch', 0));
+    // The same claim about batch 2, written before batch 3 was, is bound: a restore to the end of batch 2, whose rows
+    // stamped within RESTORE_SLACK_MS before its point count as lost with it. That is the window left: a row of that
+    // last hour, deleted between the restore and its check, is excused with it (worm-archive.md, "What is left").
+    const keys = batches.map((b) => archiveKey(b.seq));
+    const bound = await verify(stale, [keys[0]!, keys[1]!, restoreAckKey(1), ...keys.slice(2)]);
+    expect(bound).toMatchObject({ ok: true, excused: 1 });
+
+    // A real restore to a point in batch 2 loses it and everything after: acknowledged, then excused.
+    const real = await restoreReport(holding(batches, 1, [1]), writableStore(batches), { backupPoint: at(1) });
+    expect(real).toMatchObject({ problems: [], acknowledgedIntervals: [[2, 5, at(1)]] });
+    expect(real.acknowledgedRefs).toEqual([2, 3, 4, 5].map((n): [number, string] => [n, entryOf(batches, n)[0]![0]]));
+    const realStore = writableStore(batches);
+    await acknowledgeRestore(fakeDb(() => []), realStore, real);
+    expect(await verifyArchive(holding(batches, 5, [1]), realStore)).toMatchObject({ ok: true, excused: 4 });
+    // A row of a batch that restore kept, deleted later, is a finding in the report too.
+    const later = await restoreReport(holding(batches, 5, []), realStore);
+    expect(later.problems).toEqual([{ code: 'row_missing', seq: 1, ref: entryOf(batches, 1)[0]![0] }]);
+  });
+
+  it('refuses an edit restamped past the newest batch: no row after the point, and no lost row back (#2020)', async () => {
+    const batches = five();
+    // The database owner edits batch 2's entry and moves it, and every row after it, past batch 5 (stamped far ahead),
+    // then the check is run with the edited row's time as the point. The restored database holds rows after the point:
+    // refused, whatever the upper bound.
+    const restamped = dbOf({
+      batches,
+      recorded: 1,
+      present: { [EPOCH]: entryOf(batches, 1), '2099-01-01T00:00:00.000Z': [[entryOf(batches, 2)[0]![0], hash('9')], ...[3, 4, 5].map((n) => entryOf(batches, n)[0]!)] },
+    });
+    const report = await restoreReport(restamped, writableStore(batches), { backupPoint: at(1) });
+    expect(report.problems).toEqual([{ code: 'restore_ack_mismatch', seq: 2, ref: entryOf(batches, 2)[0]![0] }]);
+
+    // And the verifier: an acknowledgement in force whose lost row comes back, in a later batch or among the rows not
+    // archived yet, excuses nothing.
+    const lost = [2, 3, 4, 5].map((n): [number, string] => [n, entryOf(batches, n)[0]![0]]);
+    const acks = ackChain(batches, [{ refs: lost, batchesAtRestore: 5, intervals: [[2, 5, at(1)]] }]);
+    const sixth = chainOf([1, 2, 3, 4, 5, 6].map((n) => ({ version: 7 as const, rows: [[`journal:${ORG}:e${n === 6 ? 2 : n}`, hash(String(n))] as [string, string]] })));
+    // The sixth batch holds batch 2's entry again; the chain of six shares the first five batches.
+    const store6 = writableStore(sixth, acks, [...sixth.slice(0, 5).map((b) => archiveKey(b.seq)), restoreAckKey(1), archiveKey(6)]);
+    const db6 = dbOf({ batches: sixth, recorded: 6, present: { [EPOCH]: entryOf(sixth, 1), [at(5)]: entryOf(sixth, 6) } });
+    const inBatch = await verifyArchive(db6, store6);
+    expect(inBatch.problems).toContainEqual({ code: 'restore_ack_mismatch', seq: 2, ref: entryOf(batches, 2)[0]![0] });
+    expect(inBatch.excused).toBe(0);
+    const tail = await verifyArchive(
+      dbOf({ batches, recorded: 5, present: { [EPOCH]: entryOf(batches, 1), '2099-01-01T00:00:00.000Z': [[entryOf(batches, 2)[0]![0], hash('9')]] } }),
+      writableStore(batches, acks),
+    );
+    expect(tail.problems).toContainEqual({ code: 'restore_ack_mismatch', seq: 2, ref: entryOf(batches, 2)[0]![0] });
+    expect(tail.excused).toBe(0);
+    // Without it coming back, the same acknowledgement excuses the four rows.
+    const clean = await verifyArchive(dbOf({ batches, recorded: 5, present: { [EPOCH]: entryOf(batches, 1) } }), writableStore(batches, acks));
+    expect(clean).toMatchObject({ ok: true, excused: 4 });
+  });
+
+  it('never excuses silently: records the count, alerts on every run while the acknowledgement is recent by the store, and fails a key with two versions (#2020)', async () => {
+    const batches = restoreChain();
+    const lost = batches[1]!.rows.map(([ref]): [number, string] => [2, ref]);
+    const answer = (previous: string | null) => {
+      const calls: unknown[][] = [];
+      const db = fakeDb((query) => {
+        if (query.sql.includes('archive_verified(')) {
+          calls.push([...query.parameters]);
+          return [{ previous }];
+        }
+        if (query.sql.includes('archive_batches()')) {
+          return batches.map((b) => ({ seq: String(b.seq), window_from: new Date(b.window.from), window_to: new Date(b.window.to), chain_sha256: b.chainSha256, object_key: archiveKey(b.seq) }));
+        }
+        const [from, to] = query.parameters as [string, string];
+        if (query.sql.includes('archive_series_highs(')) return EPOCH >= from && EPOCH < to ? [highAnswer(high('5'))] : [];
+        if (query.sql.includes('archive_row_hashes(')) return EPOCH >= from && EPOCH < to ? keptRows.map(([ref, row_sha256]) => ({ ref, row_sha256 })) : [];
+        return [];
+      });
+      return { db, calls };
+    };
+    const store = () => writableStore(batches, ackChain(batches, [{ refs: lost }]));
+    // The store wrote the acknowledgement third, a few seconds after its clock's start (writableStore).
+    const written = new Date(Date.UTC(2026, 9, 22) + 3000);
+    const day = 86_400_000;
+    const at = (days: number) => ({ now: () => new Date(written.getTime() + days * day) });
+    const first = answer(null);
+    const recent = await verifyArchive(first.db, store(), at(1));
+    expect(recent).toMatchObject({ ok: true, excused: lost.length, restoreAck: 1, restoreAckWrittenAt: written.toISOString(), alertRestoreAck: true });
+    expect(restoreAckAlert(recent)).toContain(`restore acknowledgement #1, written ${written.toISOString()}, excuses ${lost.length} row(s)`);
+    // The run records the count and the sequence, for the record only.
+    expect(first.calls[0]?.slice(4)).toEqual([lost.length, 1]);
+    // Whatever the database says it saw before, the alert repeats on every run for 14 days by the store's clock.
+    expect(await verifyArchive(answer('9000000000000000').db, store(), at(13))).toMatchObject({ alertRestoreAck: true });
+    const old = await verifyArchive(answer(null).db, store(), at(15));
+    expect(old).toMatchObject({ ok: true, restoreAck: 1, alertRestoreAck: false });
+    expect(restoreAckAlert(old)).toBeNull();
+    // The number of days is the deployment's (ARCHIVE_RESTORE_ALERT_DAYS).
+    expect(await verifyArchive(answer(null).db, store(), { ...at(15), restoreAlertDays: 30 })).toMatchObject({ alertRestoreAck: true });
+    // A store that cannot tell when it wrote the acknowledgement does not bind it: nothing is excused, and the run fails.
+    const { writtenAt: _w, ...blind } = store();
+    const unbound = await verifyArchive(answer(null).db, blind, at(30));
+    expect(unbound).toMatchObject({ ok: false, restoreAck: null, excused: 0 });
+    expect(unbound.problems).toContainEqual({ code: 'restore_ack_mismatch', seq: 0, ref: restoreAckKey(1) });
+    // Without one, nothing is excused and nothing alerts.
+    expect(await verifyArchive(answer(null).db, writableStore(batches), at(1))).toMatchObject({ excused: 0, restoreAck: null, alertRestoreAck: false });
+
+    // A batch or an acknowledgement with a second version (a PUT over it, or a delete) is a finding. The failing run
+    // still alerts about the recent acknowledgement, and its error names it.
+    const versioned = { ...store(), versionCounts: async (prefix: string) => new Map(prefix === 'chain/v1/' ? [[archiveKey(2), 2]] : [[restoreAckKey(1), 1]]) };
+    const failing = await verifyArchive(answer(null).db, versioned, at(1));
+    expect(failing.problems).toContainEqual({ code: 'object_versions', seq: 0, ref: archiveKey(2) });
+    expect(failing).toMatchObject({ ok: false, alertRestoreAck: true });
+    expect(new ArchiveMismatchError(failing).message).toContain('restore acknowledgement #1 in force');
+
+    // The alert the worker posts before the run reads the database comes from the store alone: the newest object, by
+    // key, while recent, even one that does not parse.
+    expect(await restoreAckStoreAlert(store(), at(1))).toContain(`restore acknowledgement ${restoreAckKey(1)}, written ${written.toISOString()}`);
+    expect(await restoreAckStoreAlert(store(), at(15))).toBeNull();
+    expect(await restoreAckStoreAlert(writableStore(batches), at(1))).toBeNull();
+    expect(await restoreAckStoreAlert(writableStore(batches, { [restoreAckKey(1)]: 'not json' }), at(1))).toContain(restoreAckKey(1));
+    const { writtenAt: _blindAt, ...blindStore } = store();
+    expect(await restoreAckStoreAlert(blindStore, at(30))).toContain('at a time the store cannot tell');
+  });
+
+  it('writes a verification marker for a run that passed, with the chain head and no tenant data, and reads it back from the store alone (#2082)', async () => {
+    const batches = chainOf([
+      { version: 7, rows: keptRows, highs: [high('5')] },
+      { version: 7, rows: lostRows, highs: [high('6')] },
+    ]);
+    const db = dbOf({ batches, recorded: 2, present: { [EPOCH]: keptRows, [at(1)]: lostRows }, highs: { [EPOCH]: [high('5')], [at(1)]: [high('6')] }, series: [{ series_id: SERIES, next_number: '7' }] });
+    const store = writableStore(batches);
+    const passed = await verifyArchive(db, store);
+    expect(passed.problems).toEqual([]);
+    expect(passed).toMatchObject({ ok: true, batches: 2, headChainSha256: batches[1]!.chainSha256 });
+
+    // Before the first marker, the store says when it wrote its first batch, so the prober can tell a new deployment
+    // from a verification that never passed.
+    expect(await readVerifyMarker(store)).toEqual({ key: null, writtenAt: null, problem: null, rewritten: [], firstBatchAt: await store.writtenAt!(archiveKey(1)), incremental: false, fullPassAt: null });
+
+    const now = new Date('2026-10-30T02:15:07.123Z');
+    const key = await writeVerifyMarker(store, passed, now);
+    expect(key).toBe('verify/v1/20261030T021507Z.json');
+    expect(key).toBe(verifyMarkerKey(now));
+    // Only the time, the batch count and the chain hash: nothing of an org.
+    const body = JSON.parse(new TextDecoder().decode(store.objects.get(key!)!)) as Record<string, unknown>;
+    expect(body).toEqual({ format: 'crove-verify-marker', version: 1, verifiedAt: now.toISOString(), batches: 2, chainSha256: batches[1]!.chainSha256 });
+    expect(JSON.stringify(body)).not.toContain(ORG);
+    // Create-only: a second run in the same second writes nothing over it.
+    expect(await writeVerifyMarker(store, passed, now)).toBeNull();
+    // A run that did not pass writes none.
+    expect(await writeVerifyMarker(store, { ...passed, ok: false }, new Date('2026-10-31T02:15:07Z'))).toBeNull();
+    expect(await store.list(VERIFY_MARKER_PREFIX)).toEqual([key]);
+
+    // The prober reads the newest marker and the store's own write time for it, not the time the marker states.
+    const read = await readVerifyMarker(store);
+    expect(read).toEqual({ key, writtenAt: await store.writtenAt!(key!), problem: null, rewritten: [], firstBatchAt: null, incremental: false, fullPassAt: await store.writtenAt!(key!) });
+
+    // A newer marker that names a chain hash the store's batch does not hold, or that does not parse, is a problem.
+    const forged = writableStore(batches, {
+      [key!]: body,
+      'verify/v1/20261031T021507Z.json': { ...body, chainSha256: batches[0]!.chainSha256 },
+    });
+    expect((await readVerifyMarker(forged)).problem).toBe('it names a chain hash that batch 2 in the store does not hold');
+    const beyond = writableStore(batches, { 'verify/v1/20261031T021507Z.json': { ...body, batches: 3 } });
+    expect((await readVerifyMarker(beyond)).problem).toBe('it names a chain hash that batch 3 in the store does not hold');
+    const garbled = writableStore(batches, { 'verify/v1/20261031T021507Z.json': 'not json' });
+    expect((await readVerifyMarker(garbled)).problem).toBe('it does not read as a verification marker');
+    // A store with no batch yet: a marker of an empty run names no chain hash, and holds.
+    const empty = writableStore([]);
+    expect(await writeVerifyMarker(empty, { ...passed, batches: 0, headChainSha256: null }, now)).toBe(key);
+    expect((await readVerifyMarker(empty)).problem).toBeNull();
+  });
+
+  it('reports a marker key with more than one version, in the verifier and from the store alone, and leaves an expired one and the restore check alone (#2082)', async () => {
+    const batches = chainOf([
+      { version: 7, rows: keptRows, highs: [high('5')] },
+      { version: 7, rows: lostRows, highs: [high('6')] },
+    ]);
+    const db = dbOf({ batches, recorded: 2, present: { [EPOCH]: keptRows, [at(1)]: lostRows }, highs: { [EPOCH]: [high('5')], [at(1)]: [high('6')] }, series: [{ series_id: SERIES, next_number: '7' }] });
+    const now = new Date('2026-10-30T12:00:00Z');
+    const options = { now: () => now };
+    const key = 'verify/v1/20261030T020000Z.json';
+    const body = { format: 'crove-verify-marker', version: 1, verifiedAt: '2026-10-30T02:00:00.000Z', batches: 2, chainSha256: batches[1]!.chainSha256 };
+    const base = writableStore(batches, { [key]: body });
+    // A store that keeps versions: the given counts per key (delete markers included, as S3 lists them).
+    const counted = (versions: Record<string, number>): ArchiveStore & { objects: Map<string, Uint8Array> } => ({
+      ...base,
+      versionCounts: async (prefix) => new Map(Object.entries(versions).filter(([k]) => k.startsWith(prefix))),
+    });
+
+    // One version each: nothing to report, from the verifier or from the store alone.
+    const single = counted({ [key]: 1, [archiveKey(1)]: 1, [archiveKey(2)]: 1 });
+    expect(await verifyArchive(db, single, options)).toMatchObject({ ok: true, problems: [] });
+    expect((await readVerifyMarker(single, now)).rewritten).toEqual([]);
+
+    // A marker written over (two versions) and another deleted (a delete marker over its version): both are findings.
+    const other = 'verify/v1/20261029T020000Z.json';
+    const rewritten = counted({ [key]: 2, [other]: 2, [archiveKey(1)]: 1, [archiveKey(2)]: 1 });
+    expect(await verifyArchive(db, rewritten, options)).toMatchObject({
+      ok: false,
+      problems: [
+        { code: 'object_versions', seq: 0, ref: key },
+        { code: 'object_versions', seq: 0, ref: other },
+      ],
+    });
+    expect(await readVerifyMarker(rewritten, now)).toMatchObject({ key, rewritten: [other, key] });
+    // The restore check is about what a restore restores, not about markers.
+    expect((await restoreReport(db, rewritten)).problems.filter((p) => p.code === 'object_versions')).toEqual([]);
+
+    // A deleted newest marker is gone from the listing, but its delete marker still counts.
+    const deleted = { ...counted({ [key]: 2 }), list: async (prefix: string) => (prefix.startsWith('verify/') ? [] : base.list(prefix)) };
+    expect(await readVerifyMarker(deleted, now)).toMatchObject({ key: null, rewritten: [key] });
+
+    // A marker past its 400 days may have been expired by a lifecycle rule, which leaves a delete marker: not reported.
+    // One inside them is, and so is one whose key names no time.
+    const expired = 'verify/v1/20250901T020000Z.json';
+    const lastYear = 'verify/v1/20251001T020000Z.json';
+    const lifecycle = counted({ [key]: 1, [expired]: 2, [lastYear]: 2 });
+    expect((await verifyArchive(db, lifecycle, options)).problems).toEqual([{ code: 'object_versions', seq: 0, ref: lastYear }]);
+    expect((await readVerifyMarker(lifecycle, now)).rewritten).toEqual([lastYear]);
+    expect(verifyMarkerExpired(expired, now)).toBe(true);
+    expect(verifyMarkerExpired(lastYear, now)).toBe(false);
+    expect(verifyMarkerExpired('verify/v1/garbled.json', now)).toBe(false);
+  });
+
+  it('accepts a row lost with a time before the backup point, as a transaction still open at the backup is (#2020)', async () => {
+    const batches = five();
+    // The backup point is in batch 3: batch 3's entry, stamped before it, was kept; batch 2's, older, was lost with a
+    // transaction that committed after the snapshot.
+    const mixed = await restoreReport(holding(batches, 1, [1, 3]), writableStore(batches), { backupPoint: at(2.5) });
+    expect(mixed).toMatchObject({ problems: [], acknowledgedIntervals: [[2, 5, at(2.5)]] });
+  });
+
+  it('acknowledges nothing for a restore whose report has no backup point, also when an older acknowledgement covers part of it (#2020)', async () => {
+    const batches = five();
+    const first = ackChain(batches, [{ refs: [[2, entryOf(batches, 2)[0]![0]]], batchesAtRestore: 2, intervals: [[2, 2, at(1)]] }]);
+    const keys = batches.map((b) => archiveKey(b.seq));
+    // Written before batch 3, so it is bound to batch 2.
+    const older = writableStore(batches, first, [keys[0]!, keys[1]!, restoreAckKey(1), ...keys.slice(2)]);
+    const partial = await restoreReport(holding(batches, 1, [1]), older);
+    expect(partial.latestAck?.sequence).toBe(1);
+    await expect(acknowledgeRestore(fakeDb(() => []), older, partial)).rejects.toThrow(/--backup-point/);
+    expect(await older.list(RESTORE_ACK_PREFIX)).toEqual([restoreAckKey(1)]);
+  });
+
+  // #2121: the nightly run reads only the batches after the last passing run's; the monthly full pass reads them all.
+  describe('incremental verification (#2121)', () => {
+    const checkpointOf = (batches: ArchiveBatch[], seq: number) => ({ seq, chainSha256: batches[seq - 1]!.chainSha256 });
+    // The batches a store is asked for, by sequence.
+    function counting(store: ArchiveStore) {
+      const read: number[] = [];
+      const wrapped: ArchiveStore = {
+        ...store,
+        get: async (key) => {
+          const named = /^chain\/v1\/0*(\d+)\.json$/.exec(key);
+          if (named) read.push(Number(named[1]));
+          return store.get(key);
+        },
+      };
+      return { store: wrapped, read };
+    }
+
+    it('reads and re-hashes only the batches after the checkpoint, and still chains from it', async () => {
+      const batches = five();
+      const db = holding(batches, 5, [1, 2, 3, 4, 5]);
+      const { store, read } = counting(writableStore(batches));
+      const full = await verifyArchive(db, store);
+      expect(full).toMatchObject({ ok: true, mode: 'full', batches: 5, batchesRead: 5, rows: 5 });
+      expect(read).toEqual([1, 2, 3, 4, 5]);
+
+      read.length = 0;
+      const nightly = await verifyArchive(db, store, { from: checkpointOf(batches, 3) });
+      expect(nightly).toMatchObject({ ok: true, problems: [], mode: 'incremental', batches: 5, batchesRead: 2, rows: 2, headChainSha256: batches[4]!.chainSha256 });
+      // The checkpoint's own batch is read once, to seed the chain; batches 1 and 2 are not touched.
+      expect(read).toEqual([3, 4, 5]);
+
+      // Nothing new since the last run: only the checkpoint batch is read.
+      read.length = 0;
+      expect(await verifyArchive(db, store, { from: checkpointOf(batches, 5) })).toMatchObject({ ok: true, mode: 'incremental', batchesRead: 0, rows: 0 });
+      expect(read).toEqual([5]);
+    });
+
+    it('checks the new batches in full: a changed row, a broken chain, a window gap and a batch hash after the checkpoint all fail', async () => {
+      const batches = five();
+      const from = checkpointOf(batches, 3);
+      // A row of batch 4 changed in the database.
+      const changed = holding(batches, 5, [1, 2, 3, 4, 5]);
+      const edited = dbOf({ batches, recorded: 5, present: { [EPOCH]: entryOf(batches, 1), [at(1)]: entryOf(batches, 2), [at(2)]: entryOf(batches, 3), [at(3)]: [[entryOf(batches, 4)[0]![0], hash('f')]], [at(4)]: entryOf(batches, 5) } });
+      expect((await verifyArchive(changed, writableStore(batches), { from })).ok).toBe(true);
+      expect((await verifyArchive(edited, writableStore(batches), { from })).problems).toEqual([{ code: 'row_changed', seq: 4, ref: entryOf(batches, 4)[0]![0] }]);
+      // Batch 5 does not link to batch 4.
+      const forged = batches.map((b) => (b.seq === 5 ? { ...b, prevChainSha256: hash('a') } : b));
+      expect((await verifyArchive(changed, writableStore(forged), { from })).problems).toContainEqual({ code: 'chain_broken', seq: 5 });
+    });
+
+    it('is held to the chain hash the earlier run recorded, and to the store still holding that batch', async () => {
+      const batches = five();
+      const db = holding(batches, 5, [1, 2, 3, 4, 5]);
+      // The batch at the checkpoint is not the one the earlier run saw: history changed since.
+      expect((await verifyArchive(db, writableStore(batches), { from: { seq: 3, chainSha256: hash('e') } })).problems).toEqual([{ code: 'chain_broken', seq: 3 }]);
+      // The store lost batches since the earlier run: the database still records them.
+      const lost = batches.slice(0, 2);
+      expect((await verifyArchive(db, writableStore(lost), { from: checkpointOf(batches, 4) })).problems).toContainEqual({ code: 'object_missing', seq: 4 });
+    });
+
+    it('leaves an old batch rewritten to the full pass, which fails on it; the nightly one does not look', async () => {
+      const batches = five();
+      const db = holding(batches, 5, [1, 2, 3, 4, 5]);
+      const from = checkpointOf(batches, 4);
+      // Batch 2's row list rewritten in the store, its batch hash left as it was.
+      const rewritten = batches.map((b) => (b.seq === 2 ? { ...b, rows: [[entryOf(batches, 2)[0]![0], hash('9')] as [string, string]] } : b));
+      expect(await verifyArchive(db, writableStore(rewritten), { from })).toMatchObject({ ok: true, mode: 'incremental' });
+      const full = await verifyArchive(db, writableStore(rewritten));
+      expect(full.ok).toBe(false);
+      expect(full.problems).toContainEqual({ code: 'batch_hash_mismatch', seq: 2 });
+      // The same for a row changed in the database under an old batch.
+      const edited = dbOf({ batches, recorded: 5, present: { [EPOCH]: entryOf(batches, 1), [at(1)]: [[entryOf(batches, 2)[0]![0], hash('f')]], [at(2)]: entryOf(batches, 3), [at(3)]: entryOf(batches, 4), [at(4)]: entryOf(batches, 5) } });
+      expect((await verifyArchive(edited, writableStore(batches), { from })).ok).toBe(true);
+      expect((await verifyArchive(edited, writableStore(batches))).problems).toEqual([{ code: 'row_changed', seq: 2, ref: entryOf(batches, 2)[0]![0] }]);
+    });
+
+    it('reads every batch while a restore acknowledgement is in force, whatever the checkpoint', async () => {
+      const batches = restoreChain();
+      const lost = batches[1]!.rows.map(([ref]): [number, string] => [2, ref]);
+      const db = dbOf({ batches, recorded: 2, present: { [EPOCH]: keptRows }, highs: { [EPOCH]: [high('5')] }, series: [{ series_id: SERIES, next_number: '7' }] });
+      const result = await verifyArchive(db, writableStore(batches, ackChain(batches, [{ refs: lost }])), { from: checkpointOf(batches, 2) });
+      expect(result).toMatchObject({ ok: true, mode: 'full', batchesRead: 2, excused: lost.length });
+    });
+
+    describe('the nightly job (#2121)', () => {
+      const now = new Date('2026-11-15T03:10:00Z');
+      const batches = five();
+      const body = (day: string, extra: Record<string, unknown> = {}) => ({
+        format: 'crove-verify-marker',
+        version: 1,
+        verifiedAt: `${day}T03:15:00.000Z`,
+        batches: 5,
+        chainSha256: batches[4]!.chainSha256,
+        ...extra,
+      });
+      const good = () => holding(batches, 5, [1, 2, 3, 4, 5]);
+      // A row of batch 2, an old batch, changed in the database.
+      const edited = () =>
+        dbOf({ batches, recorded: 5, present: { [EPOCH]: entryOf(batches, 1), [at(1)]: [[entryOf(batches, 2)[0]![0], hash('f')]], [at(2)]: entryOf(batches, 3), [at(3)]: entryOf(batches, 4), [at(4)]: entryOf(batches, 5) } });
+      function night(db: Db, store: ReturnType<typeof writableStore>, forceFull = false) {
+        const alerts: string[] = [];
+        const lines: string[] = [];
+        const failures: string[] = [];
+        const run = runNightlyVerification({
+          db,
+          store,
+          forceFull,
+          opsAlert: (line) => alerts.push(line),
+          log: (line) => lines.push(line),
+          logFailure: (elapsed, message) => failures.push(`[archive] ALERT after ${elapsed}: ${message}`),
+          now: () => now,
+        });
+        return { run, alerts, lines, failures };
+      }
+
+      it('runs an incremental pass on an ordinary night and writes its marker, with no alert', async () => {
+        const store = writableStore(batches, { 'verify/v1/20261114T031500Z.json': body('2026-11-14') });
+        const ran = night(good(), store);
+        await ran.run;
+        expect(ran.alerts).toEqual([]);
+        expect(ran.lines).toEqual([expect.stringMatching(/^\[archive\] verified \(incremental\) 0 of 5 batch\(es\), 0 row\(s\) in \d+ s$/)]);
+        const written = (await store.list(VERIFY_MARKER_PREFIX)).filter((k) => k !== 'verify/v1/20261114T031500Z.json');
+        expect(written).toEqual([verifyMarkerKey(now)]);
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(written[0]!)!))).toMatchObject({ incremental: true, lastFullAt: '2026-11-14T03:15:00.000Z' });
+      });
+
+      it('on a full-pass night, writes the quick pass marker first, and posts the alert at once when the full pass finds a mismatch', async () => {
+        // The last full pass was 36 days ago: due tonight.
+        const store = writableStore(batches, { 'verify/v1/20261010T031500Z.json': body('2026-10-10') });
+        const ran = night(edited(), store);
+        await expect(ran.run).rejects.toThrow(/ARCHIVE_MISMATCH: 1 problem\(s\) over 5 batch\(es\): row_changed/);
+        // The quick pass ran and held, and wrote a fresh heartbeat marker (which is what hides the failure from the prober).
+        const markers = (await store.list(VERIFY_MARKER_PREFIX)).filter((k) => k !== 'verify/v1/20261010T031500Z.json');
+        expect(markers).toHaveLength(1);
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(markers[0]!)!))).toMatchObject({ incremental: true, lastFullAt: '2026-10-10T03:15:00.000Z' });
+        expect(ran.lines[0]).toBe('[archive] full verification: the last full pass was on 2026-10-10');
+        expect(ran.lines[1]).toMatch(/^\[archive\] verified \(incremental\) 0 of 5/);
+        // ... so the alert goes out the moment the full pass fails: the webhook, outside the database, codes only.
+        expect(ran.alerts).toEqual([expect.stringMatching(/^\[archive\] ALERT ARCHIVE_MISMATCH: 1 problem\(s\) over 5 batch\(es\): row_changed;/)]);
+        expect(ran.alerts[0]).not.toContain(entryOf(batches, 2)[0]![0]);
+        expect(ran.failures).toEqual([expect.stringMatching(/^\[archive\] ALERT after \d+ s: ARCHIVE_MISMATCH/)]);
+        // No full marker was written, so tomorrow is a full pass again, still.
+        expect(await planVerification(store, new Date(now.getTime() + 86_400_000))).toMatchObject({ mode: 'full' });
+      });
+
+      it('writes the full pass marker after the quick one when both pass, a forced full pass runs alone, and a failed quick pass stops the night', async () => {
+        const store = writableStore(batches, { 'verify/v1/20261010T031500Z.json': body('2026-10-10') });
+        await night(good(), store).run;
+        const keys = (await store.list(VERIFY_MARKER_PREFIX)).filter((k) => k !== 'verify/v1/20261010T031500Z.json');
+        // Both ended in the same (frozen) second: the full pass's marker took the next one, and it is the newest.
+        expect(keys).toEqual([verifyMarkerKey(now), verifyMarkerKey(new Date(now.getTime() + 1000))]);
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(keys[1]!)!))).not.toHaveProperty('incremental');
+        expect(await planVerification(store, new Date(now.getTime() + 86_400_000))).toMatchObject({ mode: 'incremental' });
+
+        // A job queued with {"full": true} reads every batch even on an ordinary night.
+        const recent = writableStore(batches, { 'verify/v1/20261114T031500Z.json': body('2026-11-14') });
+        const forced = night(good(), recent, true);
+        await forced.run;
+        expect(forced.lines[0]).toBe('[archive] full verification: requested by the job');
+        expect(forced.lines[1]).toMatch(/^\[archive\] verified \(full\) 5 of 5 batch\(es\)/);
+
+        // A checkpoint the store's batch no longer matches fails the quick pass, which stops the night before the full one.
+        const rewritten = writableStore(batches, { 'verify/v1/20261010T031500Z.json': { ...body('2026-10-10'), chainSha256: hash('e') } });
+        const broken = night(good(), rewritten);
+        await expect(broken.run).rejects.toThrow(/chain_broken/);
+        expect(broken.alerts).toEqual([expect.stringMatching(/ARCHIVE_MISMATCH.*chain_broken/)]);
+        expect(await rewritten.list(VERIFY_MARKER_PREFIX)).toEqual(['verify/v1/20261010T031500Z.json']);
+      });
+    });
+
+    describe('planning from the markers in the store', () => {
+      const now = new Date('2026-11-15T03:10:00Z');
+      const batches = five();
+      const marker = (day: string, extra: Record<string, unknown> = {}, seq = 5) => ({
+        format: 'crove-verify-marker',
+        version: 1,
+        verifiedAt: `${day}T03:15:00.000Z`,
+        batches: seq,
+        chainSha256: batches[seq - 1]!.chainSha256,
+        ...extra,
+      });
+      const markerKey = (day: string) => `verify/v1/${day.replaceAll('-', '')}T031500Z.json`;
+      const planOf = (markers: Record<string, unknown>) => planVerification(writableStore(batches, markers), now);
+
+      it('starts from the newest marker while a full pass is recent, and says full when there is none, or it is old', async () => {
+        expect(await planOf({})).toMatchObject({ mode: 'full', checkpoint: null, lastFullAt: null, reason: 'no verification marker yet' });
+        // A marker of a full pass (no incremental flag, as every marker before #2121): the checkpoint and the full pass.
+        expect(await planOf({ [markerKey('2026-11-14')]: marker('2026-11-14') })).toEqual({ mode: 'incremental', checkpoint: checkpointOf(batches, 5), lastFullAt: '2026-11-14T03:15:00.000Z', reason: '' });
+        // Incremental markers after it move the checkpoint, not the full pass.
+        const mixed = {
+          [markerKey('2026-11-01')]: marker('2026-11-01', {}, 2),
+          [markerKey('2026-11-13')]: marker('2026-11-13', { incremental: true }, 3),
+          [markerKey('2026-11-14')]: marker('2026-11-14', { incremental: true }, 4),
+        };
+        expect(await planOf(mixed)).toMatchObject({ mode: 'incremental', checkpoint: checkpointOf(batches, 4), lastFullAt: '2026-11-01T03:15:00.000Z' });
+        // The last full pass 30 days ago or more: full, keeping the checkpoint for the heartbeat run.
+        const stale = {
+          [markerKey('2026-10-10')]: marker('2026-10-10', {}, 2),
+          [markerKey('2026-11-14')]: marker('2026-11-14', { incremental: true }, 4),
+        };
+        expect(await planOf(stale)).toMatchObject({ mode: 'full', checkpoint: checkpointOf(batches, 4), lastFullAt: '2026-10-10T03:15:00.000Z', reason: 'the last full pass was on 2026-10-10' });
+        expect(await planOf({ [markerKey('2026-11-14')]: marker('2026-11-14', { incremental: true }) })).toMatchObject({ mode: 'full', reason: 'no full pass among the newest markers' });
+      });
+
+      it('runs a full pass for a marker it cannot trust: unreadable, empty, dated in the future, or with a wrong flag', async () => {
+        expect(await planOf({ [markerKey('2026-11-14')]: 'not json' })).toMatchObject({ mode: 'full', checkpoint: null });
+        expect(await planOf({ [markerKey('2026-11-14')]: { ...marker('2026-11-14'), incremental: false } })).toMatchObject({ mode: 'full' });
+        expect(await planOf({ [markerKey('2026-11-14')]: { ...marker('2026-11-14'), batches: 0, chainSha256: null } })).toMatchObject({ mode: 'full', checkpoint: null });
+        expect(await planOf({ [markerKey('2026-12-30')]: marker('2026-12-30') })).toMatchObject({ mode: 'full', reason: expect.stringContaining('no credible time') });
+        // An incremental marker dated in the future pins no checkpoint either.
+        expect(await planOf({ [markerKey('2026-11-01')]: marker('2026-11-01', {}, 2), [markerKey('2026-12-30')]: marker('2026-12-30', { incremental: true }) })).toMatchObject({ mode: 'full', reason: expect.stringContaining('no credible time') });
+      });
+
+      it('falls due after about 30 days, counted from the marker a run stamps when it ends', async () => {
+        // 03:15 on the 16th of October to 03:10 on the 15th of November: 29 days and 23 hours and 55 minutes.
+        const edge = { [markerKey('2026-10-16')]: marker('2026-10-16') };
+        expect(await planOf(edge)).toMatchObject({ mode: 'full', reason: 'the last full pass was on 2026-10-16' });
+        expect(await planOf({ [markerKey('2026-10-17')]: marker('2026-10-17') })).toMatchObject({ mode: 'incremental' });
+      });
+
+      it('writes the incremental flag on the marker of an incremental run, and nothing new on a full one', async () => {
+        const db = holding(batches, 5, [1, 2, 3, 4, 5]);
+        const store = writableStore(batches);
+        const nightly = await verifyArchive(db, store, { from: checkpointOf(batches, 3) });
+        const key = await writeVerifyMarker(store, nightly, now);
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(key!)!))).toEqual({
+          format: 'crove-verify-marker',
+          version: 1,
+          verifiedAt: now.toISOString(),
+          batches: 5,
+          chainSha256: batches[4]!.chainSha256,
+          incremental: true,
+          lastFullAt: null,
+        });
+        // It records the full pass the plan found, which the prober reads from the newest marker alone.
+        const noted = await writeVerifyMarker(store, nightly, new Date(now.getTime() + 3_600_000), { lastFullAt: '2026-11-01T03:15:00.000Z' });
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(noted!)!))).toMatchObject({ incremental: true, lastFullAt: '2026-11-01T03:15:00.000Z' });
+        expect(await readVerifyMarker(store, now)).toMatchObject({ key: noted, incremental: true, fullPassAt: new Date('2026-11-01T03:15:00.000Z') });
+        // The prober reads it like any marker.
+        expect((await readVerifyMarker(store, now)).problem).toBeNull();
+        const full = await verifyArchive(db, writableStore(batches));
+        const fullKey = await writeVerifyMarker(store, full, new Date(now.getTime() + 86_400_000));
+        expect(Object.keys(JSON.parse(new TextDecoder().decode(store.objects.get(fullKey!)!)))).toEqual(['format', 'version', 'verifiedAt', 'batches', 'chainSha256']);
+      });
+
+      it('gives the full pass of a night its own marker even when the quick run ended in the same second', async () => {
+        const db = holding(batches, 5, [1, 2, 3, 4, 5]);
+        const store = writableStore(batches);
+        const quick = await verifyArchive(db, store, { from: checkpointOf(batches, 3) });
+        const full = await verifyArchive(db, store);
+        const first = await writeVerifyMarker(store, quick, now, { lastFullAt: null, distinct: true });
+        const second = await writeVerifyMarker(store, full, now, { distinct: true });
+        expect(first).toBe(verifyMarkerKey(now));
+        expect(second).toBe(verifyMarkerKey(new Date(now.getTime() + 1000)));
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(second!)!))).not.toHaveProperty('incremental');
+        // The newest by key is the full pass, so tomorrow's plan is incremental.
+        expect(await planVerification(store, new Date(now.getTime() + 86_400_000))).toMatchObject({ mode: 'incremental' });
+        // Without `distinct`, a run in the same second still writes nothing over the key.
+        expect(await writeVerifyMarker(store, full, now)).toBeNull();
+      });
+    });
   });
 });

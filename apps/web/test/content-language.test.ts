@@ -1,7 +1,11 @@
-// The English copy holds no Vietnamese (DESIGN.md §8, #1629): every string of content/en.ts, once the allowed example
-// names are taken out, has no Vietnamese letter. The rendered /en page gets the same check in a11y.spec.ts.
+// The English copy holds no Vietnamese (DESIGN.md §8, #1629): every string of content/en.ts and of each app page's
+// English file, once the allowed example names are taken out, has no Vietnamese letter. The rendered English pages get
+// the same check in a11y.spec.ts.
 import { describe, expect, it } from 'vitest';
+import { accountingEn } from '../src/content/accounting-en';
+import { engageEn } from '../src/content/engage-en';
 import { en } from '../src/content/en';
+import { notesEn } from '../src/content/notes-en';
 import { allowedPhrases, vietnameseLeft } from './vietnamese';
 
 function strings(value: unknown, path: string): Array<[path: string, text: string]> {
@@ -11,7 +15,7 @@ function strings(value: unknown, path: string): Array<[path: string, text: strin
   return [];
 }
 
-const copy = strings(en, 'en').map(([path, text]) => [path, text.normalize('NFC')] as const);
+const copy = [...strings(en, 'en'), ...strings(accountingEn, 'accountingEn'), ...strings(engageEn, 'engageEn'), ...strings(notesEn, 'notesEn')].map(([path, text]) => [path, text.normalize('NFC')] as const);
 
 describe('the English copy (content/en.ts)', () => {
   it('has no Vietnamese but the allowed example names', () => {

@@ -14,7 +14,7 @@ import { ThemeSwitcher } from './theme-switcher.tsx';
 import { Logo } from './ui.tsx';
 
 // Shorter or clearer names inside the menu: the work notifications fit the column next to their count, and Social's
-// items say what they hold, since the app itself is named "Mạng xã hội" in the switcher. None may contain another
+// items say what they hold, since the app itself is named "Engage" in the switcher. None may contain another
 // item's name: a link is found by its name (e2e), and a name inside another matches both.
 const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotifications' | 'socialPosts'>> = {
   alerts: 'alertsShort',
@@ -22,7 +22,13 @@ const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotificatio
   social: 'socialPosts',
 };
 
-const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', crm: 'appCrm' };
+const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', hr: 'appHr' };
+
+// A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Ads has none of its own yet, so it takes
+// the banknote of the vouchers, money spent, the accounting overview takes the dashboard of the Home overview, and the reports take the spreadsheet of the VAT return; the type fails to
+// compile for a label that has neither.
+const OWN_ICON = { accountingOverview: 'overview', ads: 'vouchers', adsCampaigns: 'vouchers', socialInbox: 'inbox', reports: 'vat', paymentReminders: 'customers', salesInvoices: 'documents', stock: 'fixedAssets' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
+const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
 
 export interface ShellNavProps {
   slug: string;
@@ -86,7 +92,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                 className="flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
                 activeProps={{ className: 'bg-primary/15 !text-foreground' }}
               >
-                <NavIcon name={item.label} className="size-5" />
+                <NavIcon name={menuIcon(item.label)} className="size-5" />
                 <span>{t(item.label)}</span>
               </Link>
             </li>
@@ -143,13 +149,13 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
           )}
           {current?.groups.map((group, index) => {
             const labelId = `${orgSelectId}-${group.id}`;
-            // The app's first group needs no heading: the app's name above it says what it holds.
-            const heading = index > 0 && isHeadedGroup(group.id) ? group.id : null;
+            // A group named by the app itself (the first of the other apps) needs no heading, and neither does the reports item.
+            const heading = isHeadedGroup(group.id) ? group.id : null;
             return (
               <section
                 key={group.id}
                 className={index === 0 ? '' : 'mt-3'}
-                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': t(`appNames.${current.id}`) })}
+                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
               >
                 {heading && (
                   // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
@@ -169,7 +175,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                           className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-1"
                           activeProps={{ className: 'bg-primary/15 !text-foreground' }}
                         >
-                          <NavIcon name={item.label} />
+                          <NavIcon name={menuIcon(item.label)} />
                           <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>
                           {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
                         </Link>

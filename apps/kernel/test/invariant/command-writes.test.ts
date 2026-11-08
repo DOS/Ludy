@@ -17,11 +17,12 @@ import { z } from 'zod';
 import type { CellResolver } from '@crove/db';
 import { kernelManifest } from '@crove/kernel';
 import { DATA_CLASSES, defineModule, tableWrite, type ModuleManifest } from '@crove/kernel-contract';
-import { Runtime, WRITE_DATA_CLASSES, defineCommand, type AgentApprovers, type CommandDef, type CommandWrite, type ManifestTables } from '@crove/kernel-runtime';
+import { P04_CLEAN_EVENTS, Runtime, WRITE_DATA_CLASSES, defineCommand, type AgentApprovers, type CommandDef, type CommandWrite, type ManifestTables } from '@crove/kernel-runtime';
 import { financeManifest } from '@crove/mod-finance';
 import { loadConfig } from '../../src/config.ts';
 import { moduleDefinitions, moduleManifests, serverRuntime } from '../../src/kernel.ts';
 import { orgPurgeCommand } from '../../src/org-purge.ts';
+import { numberReseedCommand } from '../../src/restore-report.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const noDatabase = (): never => {
@@ -34,7 +35,7 @@ const CONFIG_ENV = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'u
 const config = loadConfig(CONFIG_ENV);
 const manifests = (): ManifestTables[] => moduleManifests(config).map((m) => m.tables);
 const shipped = (): Array<CommandDef<unknown, unknown>> =>
-  [...moduleDefinitions(config).commands, orgPurgeCommand({ store: {} as never })] as Array<CommandDef<unknown, unknown>>;
+  [...moduleDefinitions(config).commands, orgPurgeCommand({ store: {} as never }), numberReseedCommand()] as Array<CommandDef<unknown, unknown>>;
 
 // The server's own sources: the kernel app and every package and module it loads (the runtime package aside, which
 // defines Runtime). Comments are scanned too: a comment that trips a rule below is reworded.
@@ -612,6 +613,56 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(proposals.length).toBeGreaterThan(0);
     const clean = proposals.filter((c) => runtime.commandInfo(c.name)?.contactOrPayment === false).map((c) => c.name);
     expect(clean.filter((name) => !PROPOSALS_WITHOUT_P04.includes(name))).toEqual([]);
+  });
+
+  it('lets a proposal command declared free of contact and payment writes emit only reviewed events, none yet (#1710)', () => {
+    // An event's handlers (a job, the outbox relay) run later under their own declarations, so the proposal's declaration
+    // says nothing about what they write. Deny by default: an event goes on this list only with a review of every handler
+    // it reaches, in a change to this file, which a protected-path review sees.
+    expect(P04_CLEAN_EVENTS).toEqual([]);
+    expect(Object.isFrozen(P04_CLEAN_EVENTS)).toBe(true);
+  });
+
+  it('refuses a command that declares the outbox, since events are the runtime\u2019s (#1710)', () => {
+    const declaresOutbox = defineCommand({
+      sideEffect: 'none',
+      name: 'tevents.declares_outbox',
+      input: z.object({}),
+      risk: 'R1',
+      access: 'system',
+      writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'outbox_event', ['type'])],
+      handler: async () => ({}),
+    }) as CommandDef<unknown, unknown>;
+    expect(() => new Runtime(cells, { manifests: manifests() }).register({ commands: [declaresOutbox] })).toThrow(/events are the runtime's/);
+  });
+
+  it('refuses a proposal command declared free of contact and payment writes that declares a job table, and only that (#2107)', () => {
+    // A row in these starts work later, under the job's own declaration, which the proposal's says nothing about.
+    const startsWork = {
+      'crove_jobs.job': tableWrite(kernelManifest.tables, 'crove_jobs', 'job', ['name']),
+      'crove_jobs.job_dependency': tableWrite(kernelManifest.tables, 'crove_jobs', 'job_dependency', ['child_name']),
+      'crove_jobs.schedule': tableWrite(kernelManifest.tables, 'crove_jobs', 'schedule', ['name']),
+      'crove_jobs.subscription': tableWrite(kernelManifest.tables, 'crove_jobs', 'subscription', ['event']),
+      'crove_jobs.queue': tableWrite(kernelManifest.tables, 'crove_jobs', 'queue', ['name']),
+      'crove_jobs.bam': tableWrite(kernelManifest.tables, 'crove_jobs', 'bam', ['name']),
+    };
+    const command = (access: CommandDef<unknown, unknown>['access'], writes: readonly CommandWrite[]) =>
+      defineCommand({ sideEffect: 'none', name: 'tjobs.command', input: z.object({}), risk: 'R1', access, writes, handler: async () => ({}) }) as CommandDef<unknown, unknown>;
+    const register = (def: CommandDef<unknown, unknown>) => () => new Runtime(cells, { manifests: manifests() }).register({ commands: [def] });
+    for (const [table, write] of Object.entries(startsWork)) {
+      expect(register(command('proposal', [write])), table).toThrow(new RegExp(`may not declare ${table.replace('.', '\\.')}: the job it starts runs later under its own declaration`));
+    }
+    // Next to other tables, too.
+    expect(register(command('proposal', [tableWrite(kernelManifest.tables, 'crove_kernel', 'task_comment', ['body']), startsWork['crove_jobs.job']])), 'with another table').toThrow(/may not declare crove_jobs\.job:/);
+    // Every crove_jobs table of the manifest is classified here: one that starts work above, one that starts none below. A
+    // table a pg-boss upgrade adds fails this until someone says which it is.
+    const startsNone = ['instance', 'queue_stats', 'version', 'warning'];
+    expect(Object.keys(kernelManifest.tables.crove_jobs).sort()).toEqual([...Object.keys(startsWork).map((t) => t.replace('crove_jobs.', '')), ...startsNone].sort());
+    // Not global: the statistics start nothing, a command that is not a proposal queues jobs as before, and a proposal
+    // that writes a contact column is flagged P04 anyway (it is not "free of" them).
+    expect(register(command('proposal', [tableWrite(kernelManifest.tables, 'crove_jobs', 'queue_stats', ['name'])])), 'queue_stats').not.toThrow();
+    expect(register(command('system', [startsWork['crove_jobs.job']])), 'a system command').not.toThrow();
+    expect(register(command('proposal', [tableWrite(kernelManifest.tables, 'crove_kernel', 'party', ['email']), startsWork['crove_jobs.job']])), 'a proposal that writes a contact column').not.toThrow();
   });
 
   it('keeps every contact and payment column of the manifests', () => {

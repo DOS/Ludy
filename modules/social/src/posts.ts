@@ -62,6 +62,7 @@ import { CONTENT_MANAGER_TEMPLATE, preReviewTask, type PreReview } from './agent
 import { reviewLinkCommands, reviewLinkQueries } from './review-links.ts';
 import { reviewInboxQueries } from './review-inbox.ts';
 import { attentionInboxQueries } from './attention-inbox.ts';
+import { socialTodayQueries } from './today.ts';
 import { clientOverviewQueries } from './client-overview.ts';
 import { libraryQueries, refuseUnusableMedia } from './library.ts';
 import { mediaArchiveCommands } from './media-archive.ts';
@@ -1313,6 +1314,8 @@ export interface VariantView {
   queuePaused: boolean;
   attempt: number;
   externalUrl: string | null;
+  // The platform's own id of the published post: what the conversation core joins its comment threads to (#2303).
+  externalPostId: string | null;
   publishedAt: string | null;
   // Taken down from its platform (#860): when the platform confirmed it, and who asked and why. removal: where a
   // person's ask to remove a published channel stands, until it is removed.
@@ -1591,6 +1594,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
               queuePaused: v.queue_slot_at !== null && v.scheduled_at === null && v.error_retry_at === null && pausedQueues.has(v.channel_connection_id),
               attempt: v.attempt,
               externalUrl: v.external_url,
+              externalPostId: v.external_post_id,
               publishedAt: iso(v.published_at),
               removedAt: iso(v.removed_at),
               removedBy: v.status === 'removed' ? v.removed_by : null,
@@ -2087,4 +2091,4 @@ export const mediaFile = defineQuery({
   },
 });
 
-export const socialQueries = [postGet, postReviewDiff, postPreReview, postList, queueGet, queueOpenSlots, mediaFile, ...metricsQueries, ...externalPostQueries, ...lateIdQueries, ...libraryQueries, ...mediaTagQueries, ...policyQueries, ...snippetQueries, ...savedViewQueries,...labelQueries, ...ideaQueries, ...feedQueries, ...reportScheduleQueries, ...brandVoiceQueries, ...watermarkQueries, ...reportBrandingQueries, ...chatAlertQueries, ...channelSetQueries, ...calendarNoteQueries, ...calendarFeedQueries, ...bioQueries, ...activityQueries, ...reviewLinkQueries, ...reviewInboxQueries, ...attentionInboxQueries, ...clientOverviewQueries, ...reportLinkQueries, ...notificationQueries, ...pushQueries, ...linkPreviewQueries, ...channelOptionQueries, ...accountQueries, ...publishHoldQueries, ...versionQueries, ...teamReportQueries, ...goalQueries, ...periodSummaryQueries, ...bannedWordQueries, ...channelAccessQueries, ...reviewChecklistQueries, ...bulkEditQueries];
+export const socialQueries = [postGet, postReviewDiff, postPreReview, postList, queueGet, queueOpenSlots, mediaFile, ...metricsQueries, ...externalPostQueries, ...lateIdQueries, ...libraryQueries, ...mediaTagQueries, ...policyQueries, ...snippetQueries, ...savedViewQueries,...labelQueries, ...ideaQueries, ...feedQueries, ...reportScheduleQueries, ...brandVoiceQueries, ...watermarkQueries, ...reportBrandingQueries, ...chatAlertQueries, ...channelSetQueries, ...calendarNoteQueries, ...calendarFeedQueries, ...bioQueries, ...activityQueries, ...reviewLinkQueries, ...reviewInboxQueries, ...attentionInboxQueries, ...socialTodayQueries, ...clientOverviewQueries, ...reportLinkQueries, ...notificationQueries, ...pushQueries, ...linkPreviewQueries, ...channelOptionQueries, ...accountQueries, ...publishHoldQueries, ...versionQueries, ...teamReportQueries, ...goalQueries, ...periodSummaryQueries, ...bannedWordQueries, ...channelAccessQueries, ...reviewChecklistQueries, ...bulkEditQueries];

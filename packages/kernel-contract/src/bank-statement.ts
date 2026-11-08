@@ -3,7 +3,7 @@
 // rule; the SPA only finds the columns and shows the answer.
 import { z } from 'zod';
 import { zVoucherCode } from './cash-voucher.ts';
-import { zAccountCode, zId, zLocalDate, zMoney, zVoucherAmount, zVoucherType } from './schemas.ts';
+import { BANK_MATCH_REASONS, zAccountCode, zBankMatchedBy, zId, zLocalDate, zMoney, zVoucherAmount, zVoucherType } from './schemas.ts';
 
 // A month of a busy account has a few thousand lines; the cap keeps a request well under the API's body limit.
 export const BANK_IMPORT_MAX_ROWS = 5000;
@@ -20,6 +20,8 @@ export const zBankStatementRow = z.object({
   moneyOut: z.string().max(50),
   balance: z.string().max(50),
   reference: z.string().max(100),
+  // The other side's account number as the file prints it (#2402); absent or '' when the file has no such column.
+  counterpartyAccount: z.string().max(40).optional(),
 });
 export type BankStatementRow = z.infer<typeof zBankStatementRow>;
 
@@ -46,11 +48,17 @@ export const BANK_ROW_ERRORS = [
 ] as const;
 export type BankRowError = (typeof BANK_ROW_ERRORS)[number];
 
-// new: stored by the import. duplicate: the account already has this line (same reference, or same date, amount,
-// balance and occurrence), or the file repeats it. ambiguous: no reference and no balance, and an earlier import has a
-// line of the same date and amount; stored, flagged for a person to decide.
-export const BANK_LINE_STATUSES = ['new', 'duplicate', 'ambiguous'] as const;
+// new: stored by the import. duplicate: the account already has this line (same reference, date and amount, or same
+// date, amount, balance and occurrence), or the file repeats it. ambiguous: no reference and no balance, and an earlier
+// import has a line of the same date and amount; stored, flagged for a person to decide. conflict (#2191): the line's
+// reference is one the account (or the file) already has, but with another date or amount, so it is not the same
+// transaction twice and is never dropped as a duplicate: stored without a key and flagged, as an ambiguous line is.
+export const BANK_LINE_STATUSES = ['new', 'duplicate', 'ambiguous', 'conflict'] as const;
 export type BankLineStatus = (typeof BANK_LINE_STATUSES)[number];
+
+// The line a conflicting one clashes with: the date and signed amount the account already holds under its reference.
+export const zBankLineClash = z.object({ date: zLocalDate, amount: zMoney });
+export type BankLineClash = z.infer<typeof zBankLineClash>;
 
 export const zBankImportPreview = z.object({
   bankAccount: z.string(),
@@ -67,6 +75,8 @@ export const zBankImportPreview = z.object({
       reference: z.string().nullable(),
       // Null for a row with errors.
       status: z.enum(BANK_LINE_STATUSES).nullable(),
+      // For a conflict: the line already there under the same reference (the first, when the account holds several).
+      clash: zBankLineClash.nullable(),
       errors: z.array(z.enum(BANK_ROW_ERRORS)),
     }),
   ),
@@ -74,6 +84,7 @@ export const zBankImportPreview = z.object({
     new: z.number().int().nonnegative(),
     duplicate: z.number().int().nonnegative(),
     ambiguous: z.number().int().nonnegative(),
+    conflict: z.number().int().nonnegative(),
     invalid: z.number().int().nonnegative(),
   }),
   // Where the account's running balance would not follow from the lines once these are stored: the line's balance
@@ -87,12 +98,71 @@ export const zBankImportPreview = z.object({
 });
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
 
+// The lines of a staged statement (#2191), as they stand against the account now: what the member who decides sees before
+// importing. Every conflict comes first, then the file's order; about STATEMENT_LINES_SHOWN lines come back (more when
+// there are more conflicts than that), `total` being all.
+export const STATEMENT_LINES_SHOWN = 300;
+export const zStatementLines = z.object({
+  lines: zBankImportPreview.shape.rows,
+  total: z.number().int().nonnegative(),
+  conflicts: z.number().int().nonnegative(),
+});
+export type StatementLines = z.infer<typeof zStatementLines>;
+
 export const zBankImportResult = z.object({
   importId: zId,
   counts: zBankImportPreview.shape.counts,
   breaks: zBankImportPreview.shape.breaks,
 });
 export type BankImportResult = z.infer<typeof zBankImportResult>;
+
+// The number of a bank account (#2183): what an owner or admin records on a bank account of an entity so a statement file
+// that names the number goes to that account without a bank feed. Typed as the bank prints it (spaces, dots or dashes
+// between digit groups are dropped); the module keeps the digits, 6 to 20 of them. One number belongs to one bank account
+// of an org; a bank account may have several numbers.
+export const zBankAccountNumberSet = z.object({
+  bankAccount: zAccountCode,
+  accountNumber: z.string().trim().min(1).max(40),
+  // The entity whose books the account belongs to (as zLegalEntityChoice): the default one when omitted.
+  legalEntityId: zId.optional(),
+});
+export type BankAccountNumberSet = z.infer<typeof zBankAccountNumberSet>;
+
+export const zBankAccountNumberView = z.object({
+  id: zId,
+  bankAccount: z.string(),
+  // The digits; shown in full to the managers who record it, masked everywhere else (audit rows, the statement card).
+  accountNumber: z.string(),
+  legalEntityId: zId,
+  createdAt: z.string(),
+});
+export type BankAccountNumberView = z.infer<typeof zBankAccountNumberView>;
+
+// A batch of bank transactions from a feed (ADR-0039, #2044): one bank account of one legal entity, each line as the
+// provider reports it, in any order. The finance module checks and stores them as it does a statement's lines
+// (ADR-0021 section 6). Every line carries the bank's reference, which makes its key: a feed pulls overlapping windows
+// and may start mid-day, where the balance key's occurrence count would store a line twice or drop one, so a line
+// without a reference is not a feed line. An adapter maps the bank's own reference (the one statement files print),
+// so a transaction that comes again, from the feed or in a file, is stored once. The worker sends it
+// (finance.bank.ingest, a system command); people never do.
+export const BANK_FEED_MAX_LINES = 5000;
+export const zBankFeedLine = z.object({
+  date: zLocalDate,
+  description: z.string().max(1000),
+  // Signed: money in positive, money out negative; at most 2 decimals, never zero.
+  amount: zMoney,
+  balance: zMoney.nullable(),
+  reference: z.string().trim().min(1).max(100),
+});
+export type BankFeedLine = z.infer<typeof zBankFeedLine>;
+export const zBankFeedIngest = z.strictObject({
+  bankAccount: zAccountCode,
+  legalEntityId: zId,
+  // The adapter the lines came from, as a channel connection names its provider (ADR-0025).
+  source: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
+  lines: z.array(zBankFeedLine).min(1).max(BANK_FEED_MAX_LINES),
+});
+export type BankFeedIngest = z.infer<typeof zBankFeedIngest>;
 
 // What became of a statement line (#326, stage 2a): nothing yet, a báo Có or báo Nợ proposal waiting for approval, or
 // the posted voucher that settles it. A voucher whose entry was reversed settles nothing, so its line is open again.
@@ -128,11 +198,6 @@ export const zBankLines = z.object({
 });
 export type BankLines = z.infer<typeof zBankLines>;
 
-// Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
-// description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
-export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'name', 'balance'] as const;
-export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
-
 export const zBankLineCandidate = z.object({
   party: z.object({ id: zId, name: z.string(), taxCode: z.string().nullable() }),
   reason: z.enum(BANK_MATCH_REASONS),
@@ -162,6 +227,49 @@ export const zBankLineVoucher = z.object({
 });
 export type BankLineVoucher = z.infer<typeof zBankLineVoucher>;
 
+// Why an open line needs a look instead of a one-click group (#2385), from the deterministic checks: several parties
+// could be meant, only a weak reason (the name, the open balance) points at one, no open invoice of the party equals the
+// amount (a partial payment, a bank fee in it), or another line of the same statement names the same invoice.
+export const BANK_LOOK_WHY = ['several', 'weak', 'no_invoice', 'duplicate'] as const;
+export type BankLookWhy = (typeof BANK_LOOK_WHY)[number];
+
+// An open line with its voucher, sorted into a group by finance.bank.match_groups. A clean line has one exact candidate
+// and no warning: the party's tax code or the invoice number is in the description, exactly one party fits, the party's
+// open balance covers the amount and one open invoice of it equals the amount. Everything else is `look`, with the
+// first reason that kept it out of a clean group.
+export const zBankMatchLine = zBankLineVoucher.extend({
+  group: z.enum(['clean', 'look']),
+  why: z.enum(BANK_LOOK_WHY).nullable(),
+});
+export type BankMatchLine = z.infer<typeof zBankMatchLine>;
+
+export const zBankMatchGroups = z.object({
+  clean: z.array(zBankMatchLine),
+  look: z.array(zBankMatchLine),
+  // More lines than one read looks at (BANK_SUGGESTIONS_MAX): the period holds lines this answer leaves out.
+  more: z.boolean(),
+});
+export type BankMatchGroups = z.infer<typeof zBankMatchGroups>;
+
+// A line a voucher settles, listed after the fact (#2385): the line, its voucher, who approved it and when, how the party
+// was found, and whether the voucher was reversed since (a reversed voucher frees its line).
+export const zBankMatchedLine = z.object({
+  line: zBankLine,
+  voucher: z.object({ id: zId, code: z.string(), type: zVoucherType, date: zLocalDate, amount: zMoney, journalEntryId: zId }),
+  party: z.object({ id: zId, name: z.string() }).nullable(),
+  proposalId: zId.nullable(),
+  // The member who approved the voucher's proposal, while they are a member; null for a voucher posted without one.
+  approvedBy: z.object({ name: z.string() }).nullable(),
+  approvedAt: z.iso.datetime({ offset: true }).nullable(),
+  // Null for a voucher made before the match was recorded, or entered without a line's suggestion.
+  matchedBy: zBankMatchedBy.nullable(),
+  reversal: z.object({ id: zId, entryDate: zLocalDate }).nullable(),
+});
+export type BankMatchedLine = z.infer<typeof zBankMatchedLine>;
+
+export const zBankMatched = z.object({ items: z.array(zBankMatchedLine), more: z.boolean() });
+export type BankMatched = z.infer<typeof zBankMatched>;
+
 // The open statement lines of each bank account (no voucher, none waiting for approval), which the Inbox lists as lines
 // to resolve (#326, stage 2b): how many, how many were flagged as ambiguous at import, and the oldest one's date.
 export const zBankOpenLines = z.object({
@@ -190,3 +298,72 @@ export function normalizeStatementAmount(text: string): string {
   if (lastComma >= 0 && compact.indexOf(',') === lastComma) return compact.replace(',', '.');
   return compact;
 }
+
+// A statement read from a file waits for a member with its rows kept in the run's result (#2142): at most this many UTF-8
+// bytes of rows (as JSON), so a file cannot park an unbounded amount in the database. Over it the file is refused with the reason
+// (BANK_IMPORT_MAX_ROWS caps the count: a month of a busy account is far below both).
+export const STAGED_STATEMENT_MAX_BYTES = 4 * 1024 * 1024;
+
+// A statement's amount cell as the text the module judges: a number cell's stored value as it is (it may carry an
+// exponent, Excel writes 1E+16), a typed text made plain by normalizeStatementAmount. A text with an exponent ("1e3")
+// is sent as a value the module refuses instead of 1000. Used by the browser import and by a file a statement came in.
+export function statementAmountText(cell: { kind: string; value: string } | undefined): string {
+  if (!cell) return '';
+  if (cell.kind === 'number') return cell.value;
+  const text = normalizeStatementAmount(cell.value);
+  return /[eE]/.test(text) ? '?' : text;
+}
+
+// A bank feed provider's id as its channel connections name it (ADR-0039): `bank_` and the adapter (`bank_sandbox`),
+// under the channel layer's provider pattern. The Social screens leave these connections out.
+const BANK_FEED_PROVIDER_ID = /^bank_[a-z0-9_]{1,27}$/;
+export const isBankFeedProviderId = (provider: string): boolean => BANK_FEED_PROVIDER_ID.test(provider);
+
+// Maps an account a bank feed connection reaches to one of the org's bank accounts in one legal entity (#2044).
+export const zBankFeedMap = z.strictObject({
+  connectionId: zId,
+  externalAccountId: z.string().trim().min(1).max(200),
+  bankAccount: zAccountCode,
+  legalEntityId: zId.optional(),
+});
+export type BankFeedMap = z.infer<typeof zBankFeedMap>;
+
+export const zBankFeedAccountView = z.object({
+  id: zId,
+  connectionId: zId,
+  provider: z.string(),
+  connectionName: z.string(),
+  connectionStatus: z.enum(['active', 'expired', 'revoked', 'error']),
+  externalAccountId: z.string(),
+  bankAccount: z.string(),
+  legalEntityId: zId,
+  lastSyncedAt: z.string().nullable(),
+});
+export type BankFeedAccountView = z.infer<typeof zBankFeedAccountView>;
+
+// A bank feed connection as the owner's screen lists it, mapped accounts or not (#2099): `bankFeeds.accounts` shows only
+// what is mapped, so a connection just made, or one that expired with nothing mapped, would never show.
+export const zBankFeedConnectionView = z.object({
+  id: zId,
+  provider: z.string(),
+  displayName: z.string(),
+  status: z.enum(['active', 'expired', 'revoked', 'error']),
+  connectedAt: z.string(),
+});
+export type BankFeedConnectionView = z.infer<typeof zBankFeedConnectionView>;
+
+// The accounts a bank feed connection reaches, as the worker listed them with its credential (#2044 part 2b).
+export const BANK_FEED_MAX_ACCOUNTS = 50;
+export const zBankFeedListedAccount = z.object({ externalAccountId: z.string().trim().min(1).max(200), displayName: z.string().trim().min(1).max(200) });
+export type BankFeedListedAccount = z.infer<typeof zBankFeedListedAccount>;
+export const zBankFeedRecordAccounts = z.strictObject({ connectionId: zId, accounts: z.array(zBankFeedListedAccount).max(BANK_FEED_MAX_ACCOUNTS) });
+// One page a pull brought for a mapped account: the cursor it was pulled from (null for the first), and where the next
+// pull starts. A page pulled from a cursor the account has moved past since is refused, so a late sync never moves it
+// back.
+export const zBankFeedRecordPull = z.strictObject({
+  feedAccountId: zId,
+  fromCursor: z.string().min(1).max(500).nullable(),
+  lines: z.array(zBankFeedLine).max(BANK_FEED_MAX_LINES),
+  cursor: z.string().min(1).max(500),
+});
+export type BankFeedRecordPull = z.infer<typeof zBankFeedRecordPull>;

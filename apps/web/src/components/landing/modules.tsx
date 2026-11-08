@@ -1,6 +1,9 @@
-import { Bot, CalendarCheck, Check, Factory, Warehouse, Wheat } from 'lucide-react';
+import { ArrowRight, Bot, Check, Factory, Warehouse, Wheat } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { appPagePath } from '../../content/site';
 import type { Dictionary } from '../../content/vi';
+import { SalesNumberGaps, VatBreakdown } from './finance-fragments';
+import { NotesList, TodoList } from './notes-fragments';
 import { Chip, Section, SectionHead, toneOf } from './ui';
 
 type Modules = Dictionary['modules'];
@@ -28,11 +31,41 @@ function Card({ className = '', children }: { className?: string; children: Reac
   return <article className={`flex min-w-0 flex-col rounded-lg border border-line bg-surface p-5 ${className}`}>{children}</article>;
 }
 
-function CardHead({ name, body, people, deptLabel }: { name: string; body: string; people?: Modules['finance']['people']; deptLabel: string }) {
+function CardHead({
+  name,
+  body,
+  people,
+  points,
+  deptLabel,
+  more,
+}: {
+  name: string;
+  body: string;
+  people?: Modules['finance']['people'];
+  points?: readonly string[];
+  deptLabel: string;
+  more?: { label: string; href: string };
+}) {
   return (
     <div className="flex flex-col gap-2">
       <h3 className="font-display text-xl font-semibold">{name}</h3>
       <p className="max-w-[60ch] text-sm text-muted">{body}</p>
+      {points ? (
+        <ul className="mt-1 flex max-w-[60ch] flex-col gap-1.5 text-sm text-muted">
+          {points.map((point) => (
+            <li key={point} className="flex gap-2">
+              <Check className="mt-0.5 size-4 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
+              <span>{point}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {more ? (
+        <a href={more.href} className="mt-1 inline-flex items-center gap-1 self-start text-sm font-medium text-accent-ink hover:underline">
+          {more.label}
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </a>
+      ) : null}
       {people ? (
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-subtle">
           <span>{deptLabel}</span>
@@ -46,20 +79,26 @@ function CardHead({ name, body, people, deptLabel }: { name: string; body: strin
 }
 
 const ART = { mill: Factory, rice: Wheat, warehouse: Warehouse } as const;
-const VAT_SHADES = ['bg-accent', 'bg-accent/55', 'bg-accent/30'];
 
 // The modules (option E, the owner's pick): each department's module as a small piece of the app, with the people
 // and agents who work in it. Finance is the largest because it is what ships first.
 export function Modules({ dict }: { dict: Dictionary }) {
   const { modules } = dict;
-  const { finance, agents, tasks, social, crm } = modules;
+  const { finance, agents, tasks, notes, social } = modules;
   const t = finance.taccount;
   return (
     <Section id="module" labelledBy="modules-title" tinted>
       <SectionHead id="modules-title" title={modules.title} lead={modules.lead} />
       <div className="grid gap-5 lg:grid-cols-2">
         <Card className="lg:col-span-2">
-          <CardHead name={finance.name} body={finance.body} people={finance.people} deptLabel={modules.deptLabel} />
+          <CardHead
+            name={finance.name}
+            body={finance.body}
+            points={finance.points}
+            people={finance.people}
+            deptLabel={modules.deptLabel}
+            more={{ label: `${modules.pageLink}: ${finance.name}`, href: appPagePath('accounting') }}
+          />
           <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-col rounded-md border border-line bg-bg md:col-span-2 lg:col-span-1">
               <div className="flex items-baseline justify-between gap-3 border-b border-line px-3 py-2.5">
@@ -112,28 +151,14 @@ export function Modules({ dict }: { dict: Dictionary }) {
                   <span className="num border-b-[3px] border-double border-fg pb-0.5 font-semibold">{t.balance}</span>
                 </div>
               </figure>
-              <figure className="rounded-md border border-line bg-bg p-3">
-                <figcaption className="flex items-baseline justify-between gap-2">
-                  <span className="text-sm font-semibold">{finance.vat.title}</span>
-                </figcaption>
-                <div className="num mt-1 font-display text-2xl font-semibold tracking-[-0.01em]">{finance.vat.total}</div>
-                <div className="mt-3 flex h-2.5 gap-0.5 overflow-hidden rounded-sm" aria-hidden="true">
-                  {finance.vat.rows.map((row, i) => (
-                    <span key={row.name} className={`block h-full min-w-1 ${VAT_SHADES[i] ?? 'bg-accent/20'}`} style={{ width: `${row.pct}%` }} />
-                  ))}
-                </div>
-                <ul className="mt-3 flex flex-col gap-1.5 text-xs">
-                  {finance.vat.rows.map((row, i) => (
-                    <li key={row.name} className="flex items-center gap-2">
-                      <span className={`size-2 shrink-0 rounded-[2px] ${VAT_SHADES[i] ?? 'bg-accent/20'}`} aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-muted">{row.name}</span>
-                      <span className="num">{row.amount}</span>
-                    </li>
-                  ))}
-                </ul>
-              </figure>
+              <VatBreakdown vat={finance.vat} />
             </div>
           </div>
+          <SalesNumberGaps sales={finance.sales} className="mt-4" />
+          <p className="mt-4 flex items-center gap-2 text-xs text-subtle">
+            <Chip tone="neutral">{finance.soonLabel}</Chip>
+            <span>{finance.soon}</span>
+          </p>
         </Card>
 
         <Card>
@@ -193,9 +218,34 @@ export function Modules({ dict }: { dict: Dictionary }) {
           </ul>
         </Card>
 
+        {/* Ludy Notes (#1671, #1673): notes with their private or shared mark, and one member's own to-dos. */}
         <Card className="lg:col-span-2">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
-            <CardHead name={social.name} body={social.body} people={social.people} deptLabel={modules.deptLabel} />
+            <CardHead
+              name={notes.name}
+              body={notes.body}
+              points={notes.points}
+              people={notes.people}
+              deptLabel={modules.deptLabel}
+              more={{ label: `${modules.pageLink}: ${notes.name}`, href: appPagePath('notes') }}
+            />
+            <div className="grid min-w-0 gap-4 md:grid-cols-2">
+              <NotesList notes={notes} />
+              <TodoList notes={notes} />
+            </div>
+          </div>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
+            <CardHead
+              name={social.name}
+              body={social.body}
+              points={social.points}
+              people={social.people}
+              deptLabel={modules.deptLabel}
+              more={{ label: `${modules.pageLink}: ${social.name}`, href: appPagePath('engage') }}
+            />
             {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1,
                 #1629). It carries the week's name, which the list inside had. */}
             <div role="group" aria-label={social.weekLabel} tabIndex={0} className="min-w-0 overflow-x-auto">
@@ -232,60 +282,6 @@ export function Modules({ dict }: { dict: Dictionary }) {
                   );
                 })}
               </ol>
-            </div>
-          </div>
-        </Card>
-
-        {/* CRM & Calendar (#1568): the public booking page as the client sees it, and what reaches the host. */}
-        <Card className="lg:col-span-2">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
-            <CardHead name={crm.name} body={crm.body} people={crm.people} deptLabel={modules.deptLabel} />
-            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-              <figure className="min-w-0 rounded-md border border-line bg-bg p-3">
-                <figcaption>
-                  <div className="text-sm font-semibold">{crm.pageTitle}</div>
-                  <div className="text-xs text-subtle">{crm.pageSub}</div>
-                </figcaption>
-                <div className="mt-3 text-xs text-subtle">{crm.slotsLabel}</div>
-                <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {crm.days.map((day) => (
-                    <li key={day.label} className="flex min-w-0 flex-col gap-1.5">
-                      <span className="text-[11px] text-subtle">{day.label}</span>
-                      {day.slots.length === 0 ? (
-                        <span className="rounded-sm border border-dashed border-line px-1.5 py-1 text-center text-[11px] text-subtle">{crm.noSlots}</span>
-                      ) : (
-                        day.slots.map((slot) => {
-                          const picked = 'picked' in day && day.picked === slot;
-                          return (
-                            <span
-                              key={slot}
-                              className={`num rounded-sm border px-1.5 py-1 text-center text-xs ${picked ? 'border-accent bg-accent text-accent-fg' : 'border-line bg-surface'}`}
-                            >
-                              {slot}
-                              {picked ? <span className="sr-only">, {crm.pickedLabel}</span> : null}
-                            </span>
-                          );
-                        })
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </figure>
-              <div className="flex min-w-0 flex-col gap-3">
-                <div className="rounded-md border border-line bg-bg p-3 text-xs">
-                  <div className="flex items-center gap-2">
-                    <CalendarCheck className="size-4 shrink-0 text-ok" aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold">{crm.booked.title}</span>
-                    <Chip tone={toneOf('ok')}>{crm.booked.state}</Chip>
-                  </div>
-                  <div className="mt-2 font-medium">{crm.booked.who}</div>
-                  <div className="num text-subtle">{crm.booked.when}</div>
-                </div>
-                <p className="flex gap-2 rounded-md border border-dashed border-accent/50 bg-bg p-3 text-xs text-muted">
-                  <Bot className="mt-0.5 size-4 shrink-0 text-accent-ink" aria-hidden="true" />
-                  <span>{crm.suggest}</span>
-                </p>
-              </div>
             </div>
           </div>
         </Card>

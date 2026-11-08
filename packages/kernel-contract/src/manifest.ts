@@ -103,20 +103,38 @@ export interface RouteDeclaration {
   readonly permission?: string;
   // The app of a screen no menu item names, reached from inside that app (the guide), so a deep link opens with it.
   readonly app?: string;
+  // A screen that serves several modules at once (the reports, one tab for each). It opens, and its menu item shows,
+  // where any of these modules runs, in place of the module that declares it; each part of the screen still asks for
+  // its own module (an API call of a module that is not installed answers not installed).
+  readonly modules?: readonly string[];
 }
 
 // A menu item of the app's shell (plan §5.2 `nav`, DESIGN.md §9, #1652): one of the module's routes, in a group of an
 // app's menu or, with `app: null`, among the org's own screens at the foot of the app switcher. The label is a key
-// under `nav` in the app's messages, in Vietnamese and English; apps are listed, and their groups ordered, in the order
-// their items first appear.
+// under `nav` in the app's messages, in Vietnamese and English; apps are listed in the order their items first appear,
+// and an app's groups in the order the shell fixes for it (apps/app/src/lib/apps.ts), because one app's groups come
+// from several modules.
 export type NavDeclaration =
   | { readonly app: string; readonly group: string; readonly path: string; readonly label: string }
   | { readonly app: null; readonly path: string; readonly label: string };
+
+// A screen of the app outside /o/$slug (#1660): a share target, an OAuth callback, a link sent outside the org. A
+// deployment without the module answers it not found, as the API answers its calls, and every route of the app's
+// router outside /o/$slug belongs to exactly one manifest.
+export interface OutsideRouteDeclaration {
+  // The full path, as the router writes it: '/-/share', '/-/b/$org/$type'.
+  readonly path: string;
+  // Opened without an account (a client's or a visitor's link): its route asks for no sign-in, and the module guard
+  // runs before any (apps/app/test/module-screens.test.ts checks both).
+  readonly public?: true;
+}
 
 // A module's screens and menu items. They are data with no server code, so the app's bundle reads them from
 // @crove/kernel-contract (MODULE_SCREENS in screens.ts) and each module's manifest names its own entry there.
 export interface ModuleScreens {
   readonly routes: readonly RouteDeclaration[];
+  // Its screens outside /o/$slug, when it has any.
+  readonly outside?: readonly OutsideRouteDeclaration[];
   readonly nav: readonly NavDeclaration[];
 }
 

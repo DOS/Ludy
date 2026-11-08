@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, myOrgs, upsertIdentity, type ExportRecord, type OrgExportView } from '@crove/kernel';
+import { EXPORT_TABLE_NAMES, OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, myOrgs, upsertIdentity, type ExportRecord, type OrgExportView } from '@crove/kernel';
 import { BlobNotFoundError, Runtime, defineQuery, exportKey, fileKey, readVerified, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import type { AuthUser } from '../src/auth.ts';
@@ -220,6 +220,28 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const { org, owner, member } = await orgWithMember('Công ty Xuất');
     await runtime.execute('kernel.org.offboard', { confirmSlug: org.slug }, { actor: asMfa(owner.id), orgId: org.orgId });
 
+    // A system audit row, which names the worker process that wrote it (#1951): the org's copy leaves the name out.
+    const systemCommand = randomUUID();
+    const worker = await workerPool.connect();
+    try {
+      await worker.query('BEGIN');
+      await worker.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
+      await worker.query(
+        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+         VALUES ($1, 'system', 'test.system', $2, 'ok', repeat('0', 64), '{"rows": 1}')`,
+        [org.orgId, systemCommand],
+      );
+      await worker.query('COMMIT');
+    } finally {
+      worker.release();
+    }
+    const reader = new pg.Client({ connectionString: adminUrl });
+    await reader.connect();
+    const stamped = await reader
+      .query<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command_id = $2', [org.orgId, systemCommand])
+      .finally(() => reader.end());
+    expect(stamped.rows[0]?.detail).toMatchObject({ rows: 1, workerInstance: expect.any(String) });
+
     const generatedAt = new Date('2026-10-16T00:00:00Z');
     const record = await runOrgExport({ runtime: workerRuntime, store, sealer, retentionDays: 40 }, org.orgId, { now: () => generatedAt });
     // The tax portal's purchase lists are kept records (#465): an export carries them.
@@ -249,6 +271,8 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     expect((await rowsOf('kernel.tenant_member')).map((r) => r.user_id).sort()).toEqual([owner.id, member.id].sort());
     expect((await rowsOf('kernel.legal_entity')).map((r) => [r.name, r.is_default])).toEqual([[expect.any(String), true]]);
     expect((await rowsOf('kernel.audit_event')).some((r) => r.command === 'kernel.org.offboard')).toBe(true);
+    expect((await rowsOf('kernel.audit_event')).find((r) => r.command_id === systemCommand)).toMatchObject({ actor_type: 'system', detail: { rows: 1 } });
+    expect((await rowsOf('kernel.audit_event')).every((r) => !(r.detail && typeof r.detail === 'object' && 'workerInstance' in r.detail))).toBe(true);
     const manifest = JSON.parse(decode(sealer.open(await store.get(record.manifestKey), exportAad(org.orgId, 'manifest'), 'aes-256-gcm'))) as OrgExportManifest;
     expect(manifest).toMatchObject({ orgId: org.orgId, generatedAt: '2026-10-16T00:00:00.000Z', snapshot: 'repeatable read', fileCount: 1, parts: record.parts });
     // The stored files are the kernel.file rows: key, generation and sha256 of each blob, which stays under org/.
@@ -271,7 +295,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     });
     // The other org has no export and is untouched.
     const otherView = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: asUser(other.owner.id), orgId: other.org.orgId });
-    expect(otherView).toEqual({ status: 'active', requestedAt: null, export: null });
+    expect(otherView).toEqual({ status: 'active', requestedAt: null, ownerRunTables: [...OWNER_RUN_EXPORT_TABLE_NAMES], export: null });
     await expect(runtime.query('kernel.org.export.get', {}, { actor: asUser(other.member.id), orgId: other.org.orgId })).rejects.toMatchObject({
       status: 403,
     });
@@ -514,6 +538,81 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const state = await purgeState();
     expect(state.refusal).toBe('export_pending');
     expect(state.exportedAt).toBe(state.own);
+
+    // A rebind waits for an export record in flight and then sees it (#1867): it never re-records the older export over
+    // one committed while it read. The database owner stands in for the export job: it takes the org's export lock,
+    // records a newer export, and commits only once the rebind is waiting.
+    const before = (await workerRuntime.query<ExportRecord>('kernel.org.export.current', {}, system))!;
+    const job = new pg.Client({ connectionString: adminUrl });
+    await job.connect();
+    try {
+      await job.query('BEGIN');
+      await job.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_kernel.org_export:' || $1, 0))`, [org.orgId]);
+      await job.query(
+        `INSERT INTO crove_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+         VALUES ($1, 'system', 'kernel.org.export.record', gen_random_uuid(), 'ok', repeat('0', 64), $2::jsonb)`,
+        [
+          org.orgId,
+          JSON.stringify({
+            format: before.format,
+            manifest_key: before.manifestKey,
+            manifest_sha256: before.manifestSha256,
+            manifest_generation: before.manifestGeneration,
+            file_count: before.fileCount,
+            encryption: before.encryption,
+            expires_at: new Date(Date.parse(before.expiresAt) + 86_400_000).toISOString(),
+            parts: before.parts,
+          }),
+        ],
+      );
+      const rebinding = workerRuntime.execute('kernel.org.export.record', { ...before, rebind: true }, system).then(
+        () => 'recorded',
+        (error: { code?: string }) => error.code,
+      );
+      // The rebind is waiting on the lock.
+      for (let tries = 0; ; tries++) {
+        const waiting = await withAdmin(
+          async (admin) => (
+            await admin.query<{ n: string }>(
+              `SELECT count(*) AS n FROM pg_catalog.pg_locks
+               WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())`,
+            )
+          ).rows[0]?.n,
+        );
+        if (Number(waiting) > 0) break;
+        if (tries > 100) throw new Error('the rebind never waited for the export lock');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      await job.query('COMMIT');
+      expect(await rebinding).toBe('EXPORT_REBIND_MISMATCH');
+    } finally {
+      await job.end();
+    }
+
+    // A record whose transaction began before another of the org's records that took the lock first would sort under
+    // it (occurred_at is its transaction's start): it is refused, and recording in a new transaction comes after it.
+    // A row dated after this transaction's start stands for that other record. Only the rows that stand for an export
+    // count, those the purge check reads (system, crove.org-export.v2; #1883): a future-dated row of another format or
+    // none refuses nothing and hides nothing. These rows stay in this case's own org, which no later case uses (each makes its own).
+    const latest = (await workerRuntime.query<ExportRecord>('kernel.org.export.current', {}, system))!;
+    const plant = (detail: Record<string, unknown>) =>
+      withAdmin((admin) =>
+        admin.query(
+          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256, detail)
+           VALUES ($1, now() + interval '1 hour', 'system', 'kernel.org.export.record', gen_random_uuid(), 'ok', repeat('0', 64), $2::jsonb)`,
+          [org.orgId, JSON.stringify(detail)],
+        ),
+      );
+    await plant({});
+    await plant({ format: 'crove.org-export.v1' });
+    await expect(workerRuntime.execute('kernel.org.export.record', record, system)).resolves.toEqual({ ok: true });
+    // Nor do they hide the export: the current export and the owner's view read the same rows.
+    expect(await workerRuntime.query('kernel.org.export.current', {}, system)).toEqual(record);
+    const shown = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: asUser(owner.id), orgId: org.orgId });
+    expect(shown.export?.manifestGeneration).toBe(record.manifestGeneration);
+    await plant({ format: 'crove.org-export.v2' });
+    await expect(workerRuntime.execute('kernel.org.export.record', record, system)).rejects.toMatchObject({ code: 'EXPORT_RECORD_STALE' });
+    await expect(workerRuntime.execute('kernel.org.export.record', { ...latest, rebind: true }, system)).rejects.toMatchObject({ code: 'EXPORT_RECORD_STALE' });
   });
 
   it('runs a streamed query in one REPEATABLE READ, READ ONLY transaction that may idle while the sink works', async () => {

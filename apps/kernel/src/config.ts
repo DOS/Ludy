@@ -1,8 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { EXTRACT_TIMING } from '@crove/extract-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
+import { parseAllowedOrigins } from './cors.ts';
 import { exportSealer } from './export-seal.ts';
 
 // The product name when BRAND_NAME is unset (#1040).
@@ -18,12 +20,13 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'crm', 'notes'] as const;
+export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings'] as const;
 export type ModuleId = (typeof AVAILABLE_MODULES)[number];
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
-// added when missing. An unknown name stops the boot, so a typo never silently turns a module off.
-const modules = optional.transform((value, ctx): readonly ModuleId[] => {
+// added when missing. An unknown name stops the boot, so a typo never silently turns a module off. The prober reads it
+// too, as the modules the deployment runs (#1894).
+export const modulesSetting = optional.transform((value, ctx): readonly ModuleId[] => {
   if (value === undefined) return AVAILABLE_MODULES;
   const names = value
     .split(',')
@@ -39,23 +42,69 @@ const modules = optional.transform((value, ctx): readonly ModuleId[] => {
   return AVAILABLE_MODULES.filter((module) => module === 'kernel' || names.includes(module));
 });
 
+// The extract jobs a worker runs at once when EXTRACT_WORKER_CONCURRENCY is unset (#2119): the AI call, 10 to 20 s for a PDF
+// that needs it, is what the parallelism hides.
+export const DEFAULT_EXTRACT_WORKER_CONCURRENCY = 4;
+
 const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   // Loopback by default; the Docker image sets 0.0.0.0 and compose publishes the port on loopback.
   HOST: z.string().default('127.0.0.1'),
   // Number of reverse proxies in front of Crove whose X-Forwarded-For entries are trusted (0 = none).
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // Where the API answers: the auth proxy (`/auth/v1`), webhooks, short links (`/l/<code>`), link-in-bio pages and
+  // feeds. With the web app served from the same origin (self-host) it is also where people open the app.
   PUBLIC_URL: z.string().default('http://localhost:8080'),
+  // Where people open the web app, when it is served from another origin than the API (a split deployment, #2261: the app
+  // at app.<domain>, the API at api.<domain>). Every link that opens a screen of the app (invite, notification and report
+  // mail, calendar feed events, chat alerts) and the OAuth return addresses (`/channels/oauth/<provider>/callback`,
+  // `/calendar/oauth/<provider>/callback`, pages of the app) are built from it. Unset: PUBLIC_URL, as before. A different
+  // origin must also be listed in CORS_ALLOWED_ORIGINS.
+  // An origin only (scheme, host, optional port): a path, query or user information is refused, as in CORS_ALLOWED_ORIGINS.
+  APP_URL: optional.pipe(
+    z
+      .url({ protocol: /^https?$/ })
+      .refine((v) => URL.canParse(v) && new URL(v).origin === v, 'APP_URL is an origin only (scheme, host, optional port; no path, query, user information or trailing slash)')
+      .optional(),
+  ),
+  // The exact origins whose pages may call this API from a browser (#2261), comma separated: the web app's origin in a
+  // split deployment. Never `*`; https only (http for localhost). Unset: no CORS headers at all, which is right when the
+  // app is served from this API's own origin.
+  CORS_ALLOWED_ORIGINS: optional.transform((v, ctx) => {
+    try {
+      return parseAllowedOrigins(v);
+    } catch (error) {
+      ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : String(error) });
+      return z.NEVER;
+    }
+  }),
   // Which modules' commands, queries, jobs, routes and menus this deployment registers. Migrations still apply to
   // every schema (one linear ledger); per-org access is entitlements (Decision 10), not this setting.
-  CROVE_MODULES: modules,
+  CROVE_MODULES: modulesSetting,
   DATABASE_URL: z.string().min(1),
   WORKER_DATABASE_URL: optional,
   // Reset each pooled connection's session before it goes back to the pool (#117, plan §3.3). Keep true for direct
   // connections (self-host); set false only behind a transaction-mode pooler (PgBouncer, Supavisor), where the reset
   // would reach another server connection and the pooler's own reset governs.
   DB_RESET_ON_RELEASE: z.enum(['true', 'false']).default('true'),
+  // Connections of the API's pool (DATABASE_URL, the app login) and of the worker's (WORKER_DATABASE_URL), per process
+  // (#2175). Both default to the 10 they were fixed at; raise one when the pool's wait shows in the slow queries or the
+  // logs, keeping the sum over every process under the database's max_connections (docs/runbooks/observability.md).
+  // The worker's floor is 2: the calendar sweep and write-back hold one connection for their lock while their queries need
+  // another, so a pool of 1 would hang them (and every other job behind them).
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+  WORKER_DATABASE_POOL_MAX: z.coerce.number().int().min(2).max(200).default(10),
+  // json: every log line of the API, the worker and the prober is one JSON object with the request or job ids (#2175,
+  // apps/kernel/src/log.ts); text: the plain lines, the default for a laptop. `pnpm pilot:check` recommends json on a public URL.
+  LOG_FORMAT: z.enum(['json', 'text']).default('text'),
   ADMIN_DATABASE_URL: optional,
+  // The database holds other systems' schemas, roles and event triggers beside Ludy's (Ludy Cloud inside DOS's Supabase
+  // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
+  // false (the default, and every self-host) keeps every database-wide guard.
+  CROVE_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
+  // The mode is locked to the database once `migrate` has recorded it: a run that asks for the other one is refused unless
+  // this is true, for the one run a person decides to switch it in.
+  CROVE_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).
   // Empty (a compose `${VAR:-}`) counts as unset; coerced, it would be 0 and fail every role's config.
@@ -86,7 +135,8 @@ const schema = z.object({
   S3_VERSIONING: z.enum(['required', 'off']).default('required'),
   // Browsers upload to a staging key and download through presigned URLs (plan §7.6). The bucket needs a CORS rule
   // for PUBLIC_URL (POST and GET). false keeps every transfer streaming through the kernel; Cloudflare R2 needs false
-  // (it has no POST policy uploads, so Crove refuses to start with true on an R2 endpoint).
+  // (it has no POST policy uploads, so Crove refuses to start with true on an R2 endpoint). It does not switch off the
+  // signed reads Zalo OA, Instagram and Threads fetch media by (#2192): those need an https endpoint, not this setting.
   S3_PRESIGNED_URLS: z.enum(['true', 'false']).default('true'),
   // The S3 endpoint browsers reach, when it differs from S3_ENDPOINT (presigned URLs are signed for this host). On a
   // public PUBLIC_URL it must be https: it is where browsers send files, and it lands in the CSP connect-src.
@@ -102,6 +152,9 @@ const schema = z.object({
   ARCHIVE_RETENTION_DAYS: z.coerce.number().int().min(1).max(36_500).default(3650),
   // How long after a row is written it is archived at the earliest, so a transaction still open is not cut off.
   ARCHIVE_LAG_SECONDS: z.coerce.number().int().min(60).max(86_400).default(600),
+  // Days the nightly verifier alerts, on every run, about the restore acknowledgement in force after the store wrote it
+  // (#2020, docs/runbooks/worm-archive.md).
+  ARCHIVE_RESTORE_ALERT_DAYS: z.coerce.number().int().min(1).max(365).default(14),
   // Fiscal year archive packages (issue #922) in the STORAGE=s3 bucket: lock each part in ARCHIVE_LOCK_MODE for this
   // many days (the bucket needs Object Lock). 0: the bucket's default retention, if any. Local disk has no lock.
   S3_ARCHIVE_LOCK_DAYS: z.coerce.number().int().min(0).max(36_500).default(0),
@@ -118,6 +171,10 @@ const schema = z.object({
   // Presigned upload grants (kernel.file.upload.begin) one user may open per org in any rolling minute, counted in the
   // database across API instances (issue #223). Bounds the staging objects an abandoned upload loop leaves behind.
   UPLOAD_BEGIN_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(20),
+  // Excel and XML exports of the books (GET /api/export/*) one API process runs at once (#2121): each holds its rows and
+  // the finished file in memory and compresses it. Past it, and past two for one user, an export answers 503
+  // EXPORT_BUSY with Retry-After. Per process, like UPLOAD_COMPLETE_CONCURRENCY.
+  EXPORT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
   // Org exports (issue #212, plan §7.9): kept EXPORT_RETENTION_DAYS (35 to 90) after they are made, then deleted by the
   // worker's daily retention job.
   EXPORT_RETENTION_DAYS: z.coerce.number().int().min(35).max(90).default(35),
@@ -207,13 +264,21 @@ const schema = z.object({
   ORG_LIMIT_INBOUND_EMAILS_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(300),
   ORG_LIMIT_ATTACHMENT_MB_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(1000),
   ORG_LIMIT_EXTRACTION_PAGES_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(1500),
+  // Customer mail to the org's conversation address (#2439) has a budget of its own, so spam on a published address never defers an invoice.
+  ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(300),
   ORG_LIMIT_AI_COST_PER_DAY: z.string().regex(/^\d{1,9}(\.\d{1,6})?$/).default('20'),
   AI_PRICE_INPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   AI_PRICE_OUTPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
+  // The monthly AI budget (#2382) an org with none of its own gets, in the unit of the AI_PRICE_* prices: at 100% new model
+  // calls are refused while the books keep working, and an owner can raise it for their org (an R3 command with a fresh
+  // second factor). Unset: no default budget, so an org has none until an owner sets one. It counts only with prices set.
+  AI_DEFAULT_MONTHLY_BUDGET: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().regex(/^\d{1,12}(\.\d{1,6})?$/).optional()),
   // Detective security alerts (#996): the worker alerts when one user acts in more than SECURITY_ALERT_ORG_THRESHOLD
   // orgs, or the deployment sees more than SECURITY_ALERT_REFUSAL_THRESHOLD refusals, within
   // SECURITY_ALERT_WINDOW_SECONDS, and on every owner or admin grant; a lasting signal repeats after
   // SECURITY_ALERT_REPEAT_MINUTES. Alerts go to the log, and to ALERT_WEBHOOK_URL when it is set (the prober's chat).
+  // The same window holds the operational ALERT lines of each process (a failed export, a stopped sweep: #1993) to one
+  // post per kind.
   SECURITY_ALERT_WINDOW_SECONDS: z.coerce.number().int().min(60).max(86_400).default(300),
   SECURITY_ALERT_ORG_THRESHOLD: z.coerce.number().int().min(1).max(1_000_000).default(20),
   SECURITY_ALERT_REFUSAL_THRESHOLD: z.coerce.number().int().min(1).max(1_000_000).default(500),
@@ -246,6 +311,23 @@ const schema = z.object({
   CREDENTIAL_KEY_PREVIOUS: optional,
   // The offline sandbox channel (Social plan §3.5): connect and publish without any platform account.
   CHANNEL_SANDBOX: z.enum(['true', 'false']).default('true'),
+  // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
+  // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
+  EINVOICE_SANDBOX: z.enum(['true', 'false']).optional(),
+  // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
+  // has one.
+  BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
+  // The secret the sandbox bank feed's signed notices are checked with (POST /api/bank-feed/bank_sandbox/webhook); unset:
+  // the sandbox takes no notices. At least 32 characters.
+  BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
+  // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
+  // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
+  // reach no books: the ads screen only shows them beside the ledger's total.
+  ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
+  // Whether the worker may create the objects of an approved campaign at Meta (#2296, W2-3: a campaign, an ad set, a creative and an ad, every one PAUSED; nothing
+  // un-pauses). Off by default: with it off a launch on a Meta account stays queued, untouched. It is for the owner's own live check on a stack the owner runs;
+  // a public deployment refuses it until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are on main.
+  ADS_LIVE_LAUNCH: z.enum(['true', 'false']).default('false'),
   // Bluesky (S9): accounts connect with an app password, no app of the deployment's own is needed. On unless false.
   CHANNEL_BLUESKY: z.enum(['true', 'false']).default('true'),
   // Telegram channels (#747): a bot the shop makes with @BotFather posts to its channel; no app of the deployment's own is
@@ -261,41 +343,90 @@ const schema = z.object({
   // every call to a site goes through the egress guard. On unless false.
   CHANNEL_WORDPRESS: z.enum(['true', 'false']).default('true'),
   // The deployment's Meta app (Facebook Pages, Social plan S6). Set both to offer Facebook Pages; neither hides them.
-  // The app's valid OAuth redirect URI is PUBLIC_URL/channels/oauth/facebook_page/callback.
+  // The app's valid OAuth redirect URI is APP_URL/channels/oauth/facebook_page/callback.
   CHANNEL_META_APP_ID: optional,
   CHANNEL_META_APP_SECRET: optional,
+  // The secret CHANNEL_META_APP_SECRET replaces while Meta may still sign webhook notices with it during a rotation (conversation core CV2, #2307).
+  CHANNEL_META_APP_SECRET_PREVIOUS: optional,
+  // The verify token Meta sends on GET /api/channels/facebook/webhook when subscribing the app's Page webhook (conversation core CV2, #2307).
+  // Set alongside CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, the route /api/channels/facebook/webhook exists and Page comment notices are taken in.
+  CHANNEL_META_WEBHOOK_VERIFY_TOKEN: optional,
+  // Reconcile recent comments on connected Facebook Pages that granted pages_read_user_content (conversation core CV2, #2307).
+  CHANNEL_FACEBOOK_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
+  // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
+  // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
+  // Marketing API together), so the same id and secret can be given twice; but a Meta user token carries every permission
+  // the person ever granted that app, so with a shared app the ads token can also hold the Pages ones (the connection
+  // records the full set), and a separate app keeps it to ads_read. The app's valid OAuth redirect URI is
+  // APP_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
+  CHANNEL_META_ADS_APP_ID: optional,
+  CHANNEL_META_ADS_APP_SECRET: optional,
+  // The Meta app for the write connection of an ad account, which can run ads (ADR-0043, #2294, W0b): set both to offer "Connect to run
+  // ads" on the Ads screen (it also needs the org's switch on); neither hides it. It may be the read ads app above (the owner's own account:
+  // a classic app holds Facebook Login and the Marketing API together) or an app of its own. A Meta permission belongs to the pair of the
+  // app and the person, and a token of a shared app holds every permission the person ever granted it, the reading tokens of the same
+  // person included: with the one app, switching running ads off closes the Meta reading connections too, and a deployment others reach
+  // needs an app of its own (neither the read ads app nor the Pages app), so no reading token can hold the permission (#2366). Either
+  // way Meta's data deletion callback verifies a request against this app's secret too, and finds the person's write grant by the hash
+  // keyed with it; set the callback address in both apps. The app's valid OAuth redirect URI is APP_URL/channels/oauth/metawrite_ads/callback.
+  // The Graph version is CHANNEL_META_GRAPH_VERSION.
+  CHANNEL_META_ADS_WRITE_APP_ID: optional,
+  CHANNEL_META_ADS_WRITE_APP_SECRET: optional,
+  // The Google Cloud OAuth web client for Google Ads, read only (ADR-0040, #2220): set both to offer "Connect a Google Ads
+  // account" on the Ads screen; neither hides it. Each deployment brings its own Google Cloud project and OAuth client (no
+  // developer token: Google sunset them in 2026-09), and the callback URI is APP_URL/channels/oauth/google_ads/callback.
+  CHANNEL_GOOGLE_ADS_CLIENT_ID: optional,
+  CHANNEL_GOOGLE_ADS_CLIENT_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
-  // callback URL is PUBLIC_URL/channels/oauth/zalo_oa/callback.
+  // callback URL is APP_URL/channels/oauth/zalo_oa/callback.
   CHANNEL_ZALO_APP_ID: optional,
   CHANNEL_ZALO_APP_SECRET: optional,
+  // The Zalo app's OA secret key (not the app secret): the key Zalo signs its webhook notices with (conversation core, #2304). Set, the
+  // route POST /api/channels/zalo/webhook exists and customers' messages to the connected OAs are taken in. A credential: it is read from
+  // the environment only, never logged, stored or put in an answer; rotate it by changing it in the Zalo app and here together.
+  CHANNEL_ZALO_OA_SECRET_KEY: optional,
+  // The key CHANNEL_ZALO_OA_SECRET_KEY replaces, kept while Zalo may still sign with it (a rotation in the console, then here).
+  CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: optional,
+  // Read the OA's recent chats to fill what the webhook missed (conversation core CV5b, #2329): off until the live check has settled the
+  // answers' shapes, the message ids above all (the history must name a message as the webhook does, or it would store it twice).
+  CHANNEL_ZALO_HISTORY: z.enum(['true', 'false']).default('false'),
+  // The hosts a customer's image on Zalo may be fetched from (conversation core CV5c, #2357): domain suffixes separated by commas, each
+  // matching the host itself and its subdomains. Unset: the built-in list (ZALO_MEDIA_HOSTS in @crove/channel), which is [S, U] until the
+  // live check settles it (docs/runbooks/zalo-conversations-live-check.md row 18). An image from any other host is never fetched.
+  CHANNEL_ZALO_MEDIA_HOSTS: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/threads/callback.
+  // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,
   CHANNEL_THREADS_APP_SECRET: optional,
   // The deployment's LinkedIn app (Share on LinkedIn, Sign In with OpenID Connect), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/linkedin/callback.
+  // APP_URL/channels/oauth/linkedin/callback.
   CHANNEL_LINKEDIN_CLIENT_ID: optional,
   CHANNEL_LINKEDIN_CLIENT_SECRET: optional,
   // LinkedIn post counts (#797): true once the LinkedIn app has member post analytics (r_member_postAnalytics).
   CHANNEL_LINKEDIN_ANALYTICS: z.enum(['true', 'false']).default('false'),
   // LinkedIn Company Pages (#1077): true once the LinkedIn app has the Community Management API (w_organization_social,
-  // r_organization_admin). Callback URL: PUBLIC_URL/channels/oauth/linkedin_page/callback.
+  // r_organization_admin). Callback URL: APP_URL/channels/oauth/linkedin_page/callback.
   CHANNEL_LINKEDIN_ORGANIZATIONS: z.enum(['true', 'false']).default('false'),
   // A separate LinkedIn app for Company Pages: LinkedIn grants the Community Management API only to an app with no other
   // product, so a deployment that also posts as members sets these; without them pages use the member app above.
   CHANNEL_LINKEDIN_PAGE_CLIENT_ID: optional,
   CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET: optional,
   // The deployment's Google Cloud project for YouTube uploads (YouTube Data API v3, an OAuth web client), S9. Callback
-  // URL: PUBLIC_URL/channels/oauth/youtube/callback.
+  // URL: APP_URL/channels/oauth/youtube/callback.
   CHANNEL_GOOGLE_CLIENT_ID: optional,
   CHANNEL_GOOGLE_CLIENT_SECRET: optional,
   // Google Business Profile posts (#709), with the same Google project once Google has approved it for the Business
   // Profile APIs (Basic API Access). Off by default: an unapproved project gets no answer from them. Callback URL:
-  // PUBLIC_URL/channels/oauth/google_business/callback.
+  // APP_URL/channels/oauth/google_business/callback.
   CHANNEL_GOOGLE_BUSINESS: z.enum(['true', 'false']).default('false'),
+  // Outside calendars members connect (#2123, #1374): the operator's own Google OAuth web client with the Calendar API
+  // enabled (scope calendar.freebusy). Not the project above: it is a different app and consent screen. Callback URL:
+  // APP_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
+  CALENDAR_GOOGLE_CLIENT_ID: optional,
+  CALENDAR_GOOGLE_CLIENT_SECRET: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/tiktok/callback.
+  // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
   CHANNEL_TIKTOK_CLIENT_SECRET: optional,
   // The TikTok app also has the Display API: connections ask for video.list, and posts' counts are read (#744).
@@ -304,7 +435,7 @@ const schema = z.object({
   // to the creator's TikTok inbox as a draft. Off by default: TikTok refuses a sign-in that asks for a scope the app lacks.
   CHANNEL_TIKTOK_INBOX: z.enum(['true', 'false']).default('false'),
   // The deployment's X app (OAuth 2.0, a confidential client with PKCE), S9; X bills each post to its account.
-  // Callback URL: PUBLIC_URL/channels/oauth/x/callback.
+  // Callback URL: APP_URL/channels/oauth/x/callback.
   CHANNEL_X_CLIENT_ID: optional,
   CHANNEL_X_CLIENT_SECRET: optional,
   // X post counts (#797): every read is billed by X, so the metrics sweep reads X posts only when this is true.
@@ -338,6 +469,18 @@ const schema = z.object({
   // crove-extract, the parsing sandbox (plan §7.6, External-tenant gate T12), e.g. http://crove-extract:8090.
   // Required for the worker role: the worker never parses PDF, XML or MIME itself. The API role does not use it.
   EXTRACT_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // Extract jobs the worker runs at once (#2119), each one reading a file and, for a PDF or a photo, calling the AI. Unset:
+  // 4, or the sandbox's slots when it has fewer. EXTRACT_CONCURRENCY is the sandbox's own setting of that name (its
+  // parser slots, 1 to 8, the sandbox's own default being 1); give the worker the same value, since it cannot ask: docker
+  // compose passes 4 to both. The worker never runs more extract jobs than the sandbox has slots, and keeps within the AI
+  // provider's rate limit by this setting going down, not up.
+  EXTRACT_WORKER_CONCURRENCY: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(8).optional()),
+  EXTRACT_CONCURRENCY: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(8).default(EXTRACT_TIMING.concurrency)),
+  // Times the AI SDK sends an invoice-reading call again after a 429, a 5xx or a network error, before the document's
+  // job fails and pg-boss retries it (#2119). The whole call, retries included, stops at the 120 s timeout; this bounds
+  // the provider calls one document costs to 1 + AI_MAX_RETRIES (2 by default, the SDK's own default being 3), and so
+  // the cost and the rate-limit load of a document that keeps failing. 0 sends each call once.
+  AI_MAX_RETRIES: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(0).max(5).default(1)),
   // Outbound mail (invites, issue #129), the same SMTP settings the bundled Supabase Auth uses. Unset SMTP_HOST: mail
   // is off, and the inviter passes the link on. Port 465 is implicit TLS; with SMTP_USER and SMTP_PASS on any other
   // port the server must offer STARTTLS.
@@ -357,6 +500,11 @@ const schema = z.object({
   // argument. GET /version reports it, so the deploy's smoke test can tell the new image from the old one. Unset (a
   // local build): "dev".
   CROVE_BUILD: optional.pipe(z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, 'CROVE_BUILD is a build id: letters, digits, dot, dash, underscore').optional()),
+  // When that commit was made (#1952): its committer date, ISO 8601, the image's CROVE_BUILD_TIME build argument. A
+  // SHA has no order, so builds are compared by this date: the API's /readyz waits while a live worker runs an older
+  // build (plan §3.5, worker build >= API build), and each worker records its own in its heartbeat. Unset (a local
+  // build): no comparison.
+  CROVE_BUILD_TIME: optional.pipe(z.iso.datetime({ offset: true, error: 'CROVE_BUILD_TIME is an ISO 8601 date and time with its offset' }).optional()),
   // Where the app's "Góp ý / Hỗ trợ" (feedback and support) link goes: an https: page (a chat group, a help desk) or
   // a mailto: address. Unset hides the link. Browsers see it through /api/config, so it must hold nothing secret.
   SUPPORT_URL: optional.pipe(
@@ -384,7 +532,7 @@ const schema = z.object({
   PRIVACY_URL: optional.pipe(z.url({ protocol: /^https$/ }).optional()),
   // The prober's last result for the public status page PUBLIC_URL/status (#678, status-page.ts): the file the
   // prober writes as PROBER_STATUS_FILE, on a volume both share. Unset: no /status page and no link to it in the app.
-  STATUS_FILE: optional.pipe(z.string().startsWith('/', 'STATUS_FILE is an absolute path').optional()),
+  STATUS_FILE: optional.pipe(z.string().refine((p) => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p), 'STATUS_FILE is an absolute path').optional()),
   // Stock photos from Pexels in the Social media library and the composer (#1106): the API key of a Pexels account
   // (https://www.pexels.com/api/). Unset: nothing is offered and Crove never calls Pexels. The key stays on the server;
   // searches and image downloads go through the API, so browsers never reach Pexels.
@@ -393,6 +541,9 @@ const schema = z.object({
   // base64url (the `vapid-keys` role prints a new pair), and the contact push services may write to about it (a mailto:
   // address or an https: URL). All three or none: unset, the app offers no push and nothing is sent. Changing the pair
   // ends every subscription; members turn push on again.
+  // The all-in-one role puts the HTTP edge on the worker's all-org database login and every secret, so on a public
+  // PUBLIC_URL the kernel starts it only with this opt-in (assertSplitRoles); the pilot runs api and worker apart.
+  CROVE_ALLOW_ALL_IN_ONE: optional.pipe(z.enum(['true', 'false']).optional()),
   VAPID_PUBLIC_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{87}$/, 'VAPID_PUBLIC_KEY is the base64url public key the vapid-keys role prints').optional()),
   VAPID_PRIVATE_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'VAPID_PRIVATE_KEY is the base64url private key the vapid-keys role prints').optional()),
   VAPID_SUBJECT: optional.pipe(z.string().max(200).optional()),
@@ -422,6 +573,13 @@ const schema = z.object({
   // Inbound email: <token>@INBOUND_DOMAIN, delivered by a mail worker to POST /api/inbound/email.
   INBOUND_DOMAIN: optional,
   INBOUND_SECRET: optional,
+  // The name your receiving mail server writes in the Authentication-Results header it adds to each mail (its authserv-id, RFC 8601, usually its host
+  // name). With it, a customer mail whose sender passes DMARC, or DKIM for the From domain, is shown as verified, may join a thread by its References and
+  // brings the contact link with it; unset, no sender is verified (#2439). Never a name an earlier hop can write: your server must replace such a header.
+  INBOUND_AUTHSERV_ID: optional.pipe(z.string().regex(/^[A-Za-z0-9.-]{1,253}$/, 'INBOUND_AUTHSERV_ID is a host name').optional()),
+  // During a rotation of INBOUND_SECRET (#1214): the value the mail worker may still send, accepted as well until the
+  // worker sends the new one; then remove it (docs/runbooks/secret-rotation.md, section 2).
+  INBOUND_SECRET_PREVIOUS: optional,
   // Cloudflare Turnstile on the public booking form (#1353, CAL-2, plan docs/plan/calendar.md §3.4): both or neither.
   // With them, the page shows the widget and the kernel checks its token with Cloudflare before recording a request.
   TURNSTILE_SITE_KEY: optional.pipe(z.string().regex(/^[0-9A-Za-z_-]{1,100}$/, 'TURNSTILE_SITE_KEY is a Turnstile site key').optional()),
@@ -438,9 +596,10 @@ const schema = z.object({
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK'> & {
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX'> & {
   AUTH_ISSUER: string;
   AUTH_SESSION_CHECK: SessionCheckMode;
+  EINVOICE_SANDBOX: 'true' | 'false';
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -457,6 +616,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...raw,
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
+    EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
@@ -466,6 +626,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (config.INBOUND_SECRET && config.INBOUND_SECRET.length < 32) {
     throw new Error('INBOUND_SECRET must be at least 32 characters');
+  }
+  // The previous value follows the current one's rules, and is never the current one or a sample value (#1214). The
+  // messages never carry either value.
+  if (config.INBOUND_SECRET_PREVIOUS) {
+    if (!config.INBOUND_SECRET) throw new Error('INBOUND_SECRET_PREVIOUS is set without INBOUND_SECRET');
+    if (config.INBOUND_SECRET_PREVIOUS.length < 32) throw new Error('INBOUND_SECRET_PREVIOUS must be at least 32 characters');
+    if (config.INBOUND_SECRET_PREVIOUS === config.INBOUND_SECRET) throw new Error('INBOUND_SECRET_PREVIOUS must differ from INBOUND_SECRET');
+    if (/change-?me/i.test(config.INBOUND_SECRET_PREVIOUS)) throw new Error('INBOUND_SECRET_PREVIOUS still has a sample value');
   }
   // A widget without the secret could not be checked, and a secret without the widget would refuse every booking.
   if (Boolean(config.TURNSTILE_SITE_KEY) !== Boolean(config.TURNSTILE_SECRET)) {
@@ -484,6 +652,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `AUTH_SIGNUP_POLICY=${config.AUTH_SIGNUP_POLICY} is enforced by the /auth/v1 proxy in front of the bundled Supabase Auth (AUTH_UPSTREAM_URL); ` +
         'with a remote Supabase Auth, restrict sign-up there and leave AUTH_SIGNUP_POLICY unset',
     );
+  }
+  // Only where the sandbox is used (the worker; the API resets EXTRACT_URL), so a stray value never stops another role.
+  if (config.EXTRACT_URL && config.EXTRACT_WORKER_CONCURRENCY !== undefined && config.EXTRACT_WORKER_CONCURRENCY > config.EXTRACT_CONCURRENCY) {
+    throw new Error('EXTRACT_WORKER_CONCURRENCY must not exceed EXTRACT_CONCURRENCY, the sandbox parser slots: more extract jobs than slots only wait, or are refused as busy');
   }
   if (config.STORAGE === 's3' && !config.S3_BUCKET) throw new Error('STORAGE=s3 needs S3_BUCKET');
   if (config.ARCHIVE_STORE === 's3' && !config.ARCHIVE_S3_BUCKET) throw new Error('ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET');
@@ -509,6 +681,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('set both CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or neither');
   }
   if (config.CHANNEL_META_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_APP_ID)) throw new Error('CHANNEL_META_APP_ID is the numeric id of the Meta app');
+  if (config.CHANNEL_META_APP_SECRET_PREVIOUS !== undefined) {
+    if (config.CHANNEL_META_APP_SECRET === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_META_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === config.CHANNEL_META_APP_SECRET) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
+  }
+  if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
+    if (!config.CHANNEL_META_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN)) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN is the verify token for the Meta Page webhook: 8 to 200 characters, no spaces');
+  }
+  if (Boolean(config.CHANNEL_META_ADS_APP_ID) !== Boolean(config.CHANNEL_META_ADS_APP_SECRET)) {
+    throw new Error('set both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET, or neither');
+  }
+  if (config.CHANNEL_META_ADS_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_ADS_APP_ID)) throw new Error('CHANNEL_META_ADS_APP_ID is the numeric id of the Meta app');
+  if (Boolean(config.CHANNEL_META_ADS_WRITE_APP_ID) !== Boolean(config.CHANNEL_META_ADS_WRITE_APP_SECRET)) {
+    throw new Error('set both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET, or neither');
+  }
+  if (config.CHANNEL_META_ADS_WRITE_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_ADS_WRITE_APP_ID)) throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the numeric id of the Meta app');
+  // One Meta app has one secret: a write app that has the id of the read ads app or of the Pages app is that app, and its secret is the
+  // same one (a half-done rotation would leave the hash of a person's write grant unmatched by the data deletion callback).
+  for (const [name, id, secret] of [
+    ['CHANNEL_META_ADS_APP', config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_APP_SECRET],
+    ['CHANNEL_META_APP', config.CHANNEL_META_APP_ID, config.CHANNEL_META_APP_SECRET],
+  ] as const) {
+    if (config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_ID === id && config.CHANNEL_META_ADS_WRITE_APP_SECRET !== secret) {
+      throw new Error(`CHANNEL_META_ADS_WRITE_APP_ID is the id of ${name}_ID but its secret is not ${name}_SECRET; one Meta app has one secret`);
+    }
+  }
+  // An app that serves the Pages and the writing but not the reads: the person's Pages and Instagram tokens would hold the permission to
+  // change campaigns, and the close at the switch-off covers the reading connections only. Use the read ads app, or an app of its own.
+  if (config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_ID === config.CHANNEL_META_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_ID !== config.CHANNEL_META_ADS_APP_ID) {
+    throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the Pages app but not the read ads app: the Pages and Instagram tokens of the person who grants it could then change campaigns; use the read ads app or a Meta app of its own');
+  }
   if (Boolean(config.CHANNEL_THREADS_APP_ID) !== Boolean(config.CHANNEL_THREADS_APP_SECRET)) throw new Error('set both CHANNEL_THREADS_APP_ID and CHANNEL_THREADS_APP_SECRET, or neither');
   if (config.CHANNEL_THREADS_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_THREADS_APP_ID)) throw new Error('CHANNEL_THREADS_APP_ID is the numeric id of the Threads app');
   if (Boolean(config.CHANNEL_LINKEDIN_CLIENT_ID) !== Boolean(config.CHANNEL_LINKEDIN_CLIENT_SECRET)) throw new Error('set both CHANNEL_LINKEDIN_CLIENT_ID and CHANNEL_LINKEDIN_CLIENT_SECRET, or neither');
@@ -519,17 +723,64 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.CHANNEL_TIKTOK_CLIENT_KEY) !== Boolean(config.CHANNEL_TIKTOK_CLIENT_SECRET)) throw new Error('set both CHANNEL_TIKTOK_CLIENT_KEY and CHANNEL_TIKTOK_CLIENT_SECRET, or neither');
   if (config.CHANNEL_TIKTOK_CLIENT_KEY && !/^[A-Za-z0-9]{8,64}$/.test(config.CHANNEL_TIKTOK_CLIENT_KEY)) throw new Error('CHANNEL_TIKTOK_CLIENT_KEY is the client key of the TikTok app');
   if (Boolean(config.CHANNEL_GOOGLE_CLIENT_ID) !== Boolean(config.CHANNEL_GOOGLE_CLIENT_SECRET)) throw new Error('set both CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET, or neither');
+  if (Boolean(config.CHANNEL_GOOGLE_ADS_CLIENT_ID) !== Boolean(config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET)) throw new Error('set both CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET, or neither');
+  if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_ADS_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
+  if (Boolean(config.CALENDAR_GOOGLE_CLIENT_ID) !== Boolean(config.CALENDAR_GOOGLE_CLIENT_SECRET)) throw new Error('set both CALENDAR_GOOGLE_CLIENT_ID and CALENDAR_GOOGLE_CLIENT_SECRET, or neither');
+  if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CHANNEL_X_CLIENT_ID) !== Boolean(config.CHANNEL_X_CLIENT_SECRET)) throw new Error('set both CHANNEL_X_CLIENT_ID and CHANNEL_X_CLIENT_SECRET, or neither');
   if (Boolean(config.CHANNEL_PINTEREST_APP_ID) !== Boolean(config.CHANNEL_PINTEREST_APP_SECRET)) throw new Error('set both CHANNEL_PINTEREST_APP_ID and CHANNEL_PINTEREST_APP_SECRET, or neither');
   if (config.CHANNEL_PINTEREST_APP_ID && !/^\d{4,32}$/.test(config.CHANNEL_PINTEREST_APP_ID)) throw new Error('CHANNEL_PINTEREST_APP_ID is the numeric id of the Pinterest app');
   if (config.CHANNEL_X_CLIENT_ID && !/^[A-Za-z0-9_-]{16,64}$/.test(config.CHANNEL_X_CLIENT_ID)) throw new Error('CHANNEL_X_CLIENT_ID is the OAuth 2.0 client id of the X app');
+  if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET !== undefined) {
+    if (config.BANK_FEED_SANDBOX !== 'true') throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET is set without BANK_FEED_SANDBOX=true');
+    if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET.length < 32) throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET must be at least 32 characters');
+  }
   if (Boolean(config.CHANNEL_ZALO_APP_ID) !== Boolean(config.CHANNEL_ZALO_APP_SECRET)) throw new Error('set both CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET, or neither');
   if (config.CHANNEL_ZALO_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_ZALO_APP_ID)) throw new Error('CHANNEL_ZALO_APP_ID is the numeric id of the Zalo app');
+  if (config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS !== undefined) {
+    if (config.CHANNEL_ZALO_OA_SECRET_KEY === undefined) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is set without CHANNEL_ZALO_OA_SECRET_KEY');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is an OA secret key: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS === config.CHANNEL_ZALO_OA_SECRET_KEY) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is the same as CHANNEL_ZALO_OA_SECRET_KEY: remove it');
+  }
+  if (config.CHANNEL_ZALO_OA_SECRET_KEY !== undefined) {
+    if (!config.CHANNEL_ZALO_APP_ID) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY needs CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY is the OA secret key of the Zalo app: 8 to 200 characters, no spaces');
+  }
+  if (config.CHANNEL_ZALO_MEDIA_HOSTS !== undefined) {
+    const hosts = zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS);
+    if (hosts.length === 0 || hosts.length > 20 || hosts.some((h) => !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(h))) {
+      throw new Error('CHANNEL_ZALO_MEDIA_HOSTS is up to 20 domain names (for example zdn.vn) separated by commas, each matching the domain and its subdomains');
+    }
+  }
   if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
     const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.CROVE_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
     if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
+  }
+  // A web app on another origin than the API calls it cross-origin, which the browser allows only for a listed origin.
+  if (config.APP_URL !== undefined && URL.canParse(config.PUBLIC_URL)) {
+    const appOrigin = new URL(config.APP_URL).origin;
+    if (appOrigin !== new URL(config.PUBLIC_URL).origin && !config.CORS_ALLOWED_ORIGINS.includes(appOrigin)) {
+      throw new Error(`APP_URL is another origin than PUBLIC_URL, so the app calls this API cross-origin: list ${appOrigin} in CORS_ALLOWED_ORIGINS`);
+    }
+  }
+  // Temporary objects can exist in a shared database (PUBLIC keeps TEMPORARY), and only the pool's own reset after each
+  // checkout (DISCARD TEMP) clears them, which a transaction-mode pooler would send to another backend.
+  if (config.CROVE_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
+    throw new Error('CROVE_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
+  }
+  // Supabase's transaction-mode pooler listens on port 6543 (its session mode and the direct connection on 5432): the one
+  // URL-level sign of the pooler the reset cannot work behind. Another pooler is the operator's to keep out (runbook).
+  if (config.CROVE_SHARED_DATABASE === 'true') {
+    for (const [name, url] of [['DATABASE_URL', config.DATABASE_URL], ['WORKER_DATABASE_URL', config.WORKER_DATABASE_URL]] as const) {
+      if (url !== undefined && URL.canParse(url) && new URL(url).port === '6543') {
+        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: CROVE_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
+      }
+    }
+  }
+  if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
+    throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
@@ -546,11 +797,46 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.AUTH_JWT_SECRET && SAMPLE_SECRETS.has(config.AUTH_JWT_SECRET)) {
       throw new Error('AUTH_JWT_SECRET is a sample value; generate a random secret before exposing Crove');
     }
+    // docker-compose.yml falls back to these passwords when a variable is unset, so a deployment that forgot one would
+    // otherwise run its database logins on a value this public repository publishes. Only the setting is named.
+    for (const name of ['DATABASE_URL', 'WORKER_DATABASE_URL', 'ADMIN_DATABASE_URL', 'DATABASE_LISTEN_URL'] as const) {
+      if (hasSampleDbPassword(config[name])) {
+        throw new Error(`${name} carries a database password shipped in .env.example or docker-compose.yml; set a random one (openssl rand -base64 24) before exposing Crove`);
+      }
+    }
     if ([config.TURNSTILE_SITE_KEY, config.TURNSTILE_SECRET].some((key) => key !== undefined && TURNSTILE_TEST_KEY.test(key))) {
       throw new Error("TURNSTILE_SITE_KEY or TURNSTILE_SECRET is one of Cloudflare's test keys; use the widget's real keys before exposing Crove");
     }
     if (config.AUTH_AUTOCONFIRM === 'true') {
       throw new Error('AUTH_AUTOCONFIRM=true lets anyone claim any email address; set it to false and configure SMTP');
+    }
+    // ADR-0039 point 3: the sandbox feed writes made-up bank lines, so it stays on development deployments.
+    if (config.BANK_FEED_SANDBOX === 'true') {
+      throw new Error('BANK_FEED_SANDBOX=true writes made-up bank lines into the books; it is for local development only');
+    }
+    // ADR-0040: the sandbox ad platform reports made-up spend, which the Ads screen sets beside the real ledger. docker
+    // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
+    if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
+      throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
+    }
+    // ADR-0044 point 8 (#2502): the offline provider "issues" invoices that the intake reads into sales of the books, so it stays on development deployments. docker compose
+    // falls back to EINVOICE_SANDBOX=true, so a public deployment that runs the finance module must set it to false.
+    if (config.EINVOICE_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+      throw new Error('EINVOICE_SANDBOX=true issues made-up sales invoices into the books; it is for local development only: set EINVOICE_SANDBOX=false');
+    }
+    // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
+    // the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. Turning it on in production is a step the owner approves.
+    if (config.ADS_LIVE_LAUNCH === 'true') {
+      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta and switch them on, which spends real money; it is for the owner\'s own live check only and a public deployment refuses it until the live-check runbook is done and the owner has approved the production step list: set ADS_LIVE_LAUNCH=false');
+    }
+    // ADR-0043 point 4 (#2366): with the read ads app or the Pages app as the write app, once the owner connects to run ads, that person's
+    // reading tokens can change campaigns too, in every org of the deployment while the switch-off closes them one org at a time. A
+    // deployment others reach runs ads with a Meta app of its own.
+    if (
+      config.CHANNEL_META_ADS_WRITE_APP_ID &&
+      ([config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_APP_ID].includes(config.CHANNEL_META_ADS_WRITE_APP_ID) || [config.CHANNEL_META_ADS_APP_SECRET, config.CHANNEL_META_APP_SECRET].includes(config.CHANNEL_META_ADS_WRITE_APP_SECRET))
+    ) {
+      throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the read ads app or the Pages app: a public deployment runs ads with a Meta app of its own, so no reading token can hold the permission to change campaigns');
     }
     if (config.AUTH_SESSION_CHECK === 'off') {
       throw new Error('AUTH_SESSION_CHECK=off keeps signed-out sessions working; use db (bundled Supabase Auth) or jwt');
@@ -561,10 +847,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.AUTH_STEP_UP === 'off') {
       throw new Error('AUTH_STEP_UP=off lets a stolen session approve and change roles without MFA; set it to required');
     }
-    // A provider sends the authorization code to PUBLIC_URL/channels/oauth/<provider>/callback (#375).
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID];
-    if (oauthApps.some(Boolean) && !config.PUBLIC_URL.startsWith('https://')) {
-      throw new Error('channel OAuth sends authorization codes back to PUBLIC_URL; a public PUBLIC_URL must be https when a CHANNEL_* app is set');
+    // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
+    // page of the web app.
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
+      throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
+    }
+    if (config.APP_URL !== undefined && !config.APP_URL.startsWith('https://')) {
+      throw new Error('APP_URL is where people open the app and every link in mail points at it; a public APP_URL must be https');
+    }
+    // A browser origin on plain http (a laptop's dev server) is no caller of a public API.
+    if (config.CORS_ALLOWED_ORIGINS.some((origin) => !origin.startsWith('https://'))) {
+      throw new Error('CORS_ALLOWED_ORIGINS lists an http origin on a public deployment; list https origins only');
     }
     // Browsers send files to, and fetch them from, this endpoint, and it is allowed in the app's CSP connect-src.
     const browserEndpoint = config.S3_PUBLIC_ENDPOINT ?? config.S3_ENDPOINT;
@@ -591,11 +885,60 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return config;
 }
 
+// The domains CHANNEL_ZALO_MEDIA_HOSTS names, in lower case; none when it is unset.
+export function zaloMediaHostsOf(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h !== '');
+}
+
+// The extract jobs this worker runs at once: EXTRACT_WORKER_CONCURRENCY, else 4 or the sandbox's slots if fewer (#2119).
+export function extractConcurrency(config: Pick<Config, 'EXTRACT_WORKER_CONCURRENCY' | 'EXTRACT_CONCURRENCY'>): number {
+  return config.EXTRACT_WORKER_CONCURRENCY ?? Math.min(DEFAULT_EXTRACT_WORKER_CONCURRENCY, config.EXTRACT_CONCURRENCY);
+}
+
 // How many client addresses it must take, at least, to use up Supabase Auth's deployment-wide email budget.
 export const EMAIL_BUDGET_MIN_CLIENTS = 10;
 
 // Values shipped in docker-compose.yml and .env.example. Fine on localhost, never on a public URL.
 const SAMPLE_SECRETS = new Set(['local-only-jwt-secret-change-me-0123456789', 'change-me-to-a-long-random-string-0123456789']);
+// Database passwords shipped in docker-compose.yml (the fallbacks) and .env.example. The rule is checked on a public
+// PUBLIC_URL when the kernel loads its settings; pilot-check keeps its own list in step (KNOWN_DEFAULTS).
+export const SAMPLE_DB_PASSWORDS: ReadonlySet<string> = new Set([
+  'local-postgres-password',
+  'local-app-password',
+  'local-worker-password',
+  'local-prober-password',
+  'local-reporter-password',
+  'local-auth-password',
+  'change-me-postgres',
+  'change-me-app',
+  'change-me-worker',
+  'change-me-prober',
+  'change-me-reporter',
+  'change-me-auth',
+]);
+
+// Whether a database URL carries one of those passwords, or any `change-me` placeholder (broader than the shipped
+// values on purpose: it is a sample whatever its tail). The password may sit in the userinfo or in a `?password=` query
+// parameter, which node-postgres reads too. A value that is not a URL has no password to read here (the connection
+// itself fails later). The prober's and the reporter's URLs are read by their own roles; pilot-check fails their
+// sample *_PASSWORD settings.
+export function hasSampleDbPassword(url: string | undefined): boolean {
+  if (url === undefined || !URL.canParse(url)) return false;
+  const parsed = new URL(url);
+  return [parsed.password, parsed.searchParams.get('password') ?? ''].some((raw) => {
+    let password = raw;
+    try {
+      password = decodeURIComponent(raw);
+    } catch {
+      // Keep the raw spelling.
+    }
+    return SAMPLE_DB_PASSWORDS.has(password) || /change-?me/i.test(password);
+  });
+}
+
 // The context token key the test suites use (vitest.config.ts, vitest.invariant.config.ts): public, so never a
 // deployment's.
 const SAMPLE_CONTEXT_TOKEN_KEYS = [Buffer.from('test-only-context-token-key-0123456789')];
@@ -614,9 +957,10 @@ export function isR2Endpoint(url: string | undefined): boolean {
   }
 }
 
-function isHostedSupabase(url: string): boolean {
+export function isHostedSupabase(url: string): boolean {
   try {
-    return new URL(url).hostname.endsWith('.supabase.co');
+    // The DNS root's trailing dot names the same host.
+    return new URL(url).hostname.replace(/\.$/, '').endsWith('.supabase.co');
   } catch {
     return false;
   }
@@ -631,6 +975,30 @@ export function assertExportKey(config: Pick<Config, 'PUBLIC_URL' | 'EXPORT_ENCR
   }
 }
 
+// The all role refuses to start on a public PUBLIC_URL unless CROVE_ALLOW_ALL_IN_ONE=true (#2118): the API would run on
+// the worker's database login, which enters the system context of every org, and on every secret. A missing
+// compose.pilot.yml, or a stray profile, would otherwise do that silently. Run api and worker as two processes
+// (docs/runbooks/deploy.md, "The pilot layout"). Checked when a role starts, like the export key above.
+//
+// The api role holds no worker login at all on a public PUBLIC_URL (#2133): it refuses to start when WORKER_DATABASE_URL is
+// set. The pilot layout keeps it out with `!reset` under `extends`, which needs compose 2.24 or newer, and a host file or
+// an `env_file` can put it back; the API is the process the internet reaches, and the worker's login enters the system
+// context of every org, so the kernel checks it itself and does not rely on how the container was composed.
+export function assertSplitRoles(config: Pick<Config, 'PUBLIC_URL' | 'CROVE_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL'>, role: 'api' | 'worker' | 'all'): void {
+  if (role === 'all' && !isLocalUrl(config.PUBLIC_URL) && config.CROVE_ALLOW_ALL_IN_ONE !== 'true') {
+    throw new Error(
+      'the all role runs the API on the worker database login and every secret; on a public PUBLIC_URL run api and worker as separate processes ' +
+        '(docs/runbooks/deploy.md, "The pilot layout"), or set CROVE_ALLOW_ALL_IN_ONE=true to accept that',
+    );
+  }
+  if (role === 'api' && !isLocalUrl(config.PUBLIC_URL) && config.WORKER_DATABASE_URL !== undefined) {
+    throw new Error(
+      'the api role must not hold WORKER_DATABASE_URL on a public PUBLIC_URL: that login enters the system context of every org, and only the worker needs it; ' +
+        'remove it from the api container (docs/runbooks/deploy.md, "The pilot layout")',
+    );
+  }
+}
+
 export function isLocalUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname;
@@ -638,6 +1006,11 @@ export function isLocalUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Where people open the web app (#2261): APP_URL in a split deployment, else PUBLIC_URL, which then serves both.
+export function appUrl(config: Pick<Config, 'APP_URL' | 'PUBLIC_URL'>): string {
+  return config.APP_URL ?? config.PUBLIC_URL;
 }
 
 export function publicAuthUrl(config: Config): string {
@@ -657,5 +1030,6 @@ export function usageLimits(config: Config): UsageLimits {
     attachment_bytes: String(config.ORG_LIMIT_ATTACHMENT_MB_PER_DAY * 1024 * 1024),
     extraction_pages: String(config.ORG_LIMIT_EXTRACTION_PAGES_PER_DAY),
     ai_cost: config.ORG_LIMIT_AI_COST_PER_DAY,
+    conversation_emails: String(config.ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY),
   };
 }

@@ -109,6 +109,125 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(existsSync(`${dir}/.deploy/lock`)).toBe(false);
   });
 
+  // #2118, #2133: the pilot's split API and worker. compose.pilot.yml ships with each release, next to its compose file;
+  // the host chooses the layout by listing it in COMPOSE_FILE, and the pins of api and worker follow that choice.
+  const SPLIT = 'db migrate auth auth-grants crove-extract mailpit api worker';
+  const PILOT_ENV = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml\n';
+  const NOT_PILOT_ENV = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n';
+  const filesOf = () => readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean);
+  const pins = (c: string) => [`api: { image: '${image(c)}', build: !reset null }`, `worker: { image: '${image(c)}', build: !reset null }`];
+
+  it('uses the release\'s compose.pilot.yml only when COMPOSE_FILE lists it: after the release file, before the pins, host file last', () => {
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    // The release carries the file, but the host has not chosen the layout: not passed, not copied, no pins for api and worker.
+    writeFileSync(`${root}/compose.pilot.yml`, '# release a\nservices: {}\n');
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/compose.host.yml`);
+    expect(existsSync(`${dir}/compose.pilot.yml`)).toBe(false);
+    expect(existsSync(`${dir}/releases/${releaseDir('v1.0.0', 'a')}/compose.pilot.yml`)).toBe(true);
+    expect(running()).not.toContain('api: {');
+
+    // Listed: the release's copy becomes the host's, in the order the plain docker compose of COMPOSE_FILE uses.
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    writeFileSync(`${root}/compose.pilot.yml`, '# release b\nservices: {}\n');
+    rmSync(`${log}.files`);
+    const res = deploy('v1.1.0', 'b', { STUB_SERVICES: SPLIT });
+    expect(res.status, res.out).toBe(0);
+    expect(filesOf().length).toBeGreaterThan(5);
+    for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/compose.pilot.yml ${dir}/docker-compose.override.yml ${dir}/compose.host.yml`);
+    expect(readFileSync(`${dir}/compose.pilot.yml`, 'utf8')).toContain('# release b');
+    // The pins of the release reach api and worker, for a plain docker compose on the host.
+    for (const pin of pins('b')) expect(running()).toContain(pin);
+    // The split roles roll worker first, then the API, and the smoke test finds the API's port.
+    const c = calls();
+    // The all-in-one container of an earlier layout goes first, so it keeps neither the API's port nor the worker's jobs.
+    expect(indexOf(c, 'compose rm --stop --force crove')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'compose rm --stop --force crove')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(indexOf(c, 'compose up --detach --no-build --no-deps worker')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 api'));
+    expect(c.some((l) => l === 'compose port api 8080')).toBe(true);
+
+    // The next release brings its own copy, so the host's stays in step with its docker-compose.yml.
+    writeFileSync(`${root}/compose.pilot.yml`, '# release c\nservices: {}\n');
+    expect(deploy('v1.2.0', 'c', { STUB_SERVICES: SPLIT }).status).toBe(0);
+    expect(readFileSync(`${dir}/compose.pilot.yml`, 'utf8')).toContain('# release c');
+  });
+
+  it('takes the pins of api and worker out when the host goes back to one container, and from a release staged with them (#2133)', () => {
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    writeFileSync(`${root}/compose.pilot.yml`, '# pilot\nservices: {}\n');
+    expect(deploy('v1.0.0', 'a', { STUB_SERVICES: SPLIT }).status).toBe(0);
+    expect(deploy('v1.1.0', 'b', { STUB_SERVICES: SPLIT }).status).toBe(0);
+    for (const pin of pins('b')) expect(running()).toContain(pin);
+    // A release staged by an earlier deploy.sh carries the pins in its own override file. It is release b, the one the
+    // rollback below goes back to, so the pins really are activated again.
+    const staged = `${dir}/releases/${releaseDir('v1.1.0', 'b')}/docker-compose.override.yml`;
+    writeFileSync(staged, `${readFileSync(staged, 'utf8')}${pins('b').map((l) => `  ${l}\n`).join('')}`);
+
+    // Back to one container: only COMPOSE_FILE changes. The file stays on the host, unused; no bare api or worker is defined.
+    writeFileSync(`${dir}/.env`, NOT_PILOT_ENV);
+    rmSync(`${log}.files`);
+    expect(deploy('v1.2.0', 'c').status).toBe(0);
+    for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml`);
+    expect(running()).not.toContain('api: {');
+    expect(running()).not.toContain('worker: {');
+    // A rollback to the release with the old pins: stripped on activation, so the active override has none either.
+    expect(run(['rollback']).status).toBe(0);
+    expect(running()).not.toContain('api: {');
+    expect(running()).not.toContain('worker: {');
+    expect(running()).toContain(`crove: { image: '${image('b')}', build: !reset null }`);
+    // And forward again into the pilot layout: the pins come back with the layout.
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    expect(deploy('v1.3.0', 'd', { STUB_SERVICES: SPLIT }).status).toBe(0);
+    for (const pin of pins('d')) expect(running()).toContain(pin);
+  });
+
+  // #2120: the database image with WAL archiving is the host's file too; a deploy that dropped it would recreate `db`
+  // without pgBackRest while the volume keeps pushing WAL with it.
+  it('passes compose.wal.yml after the pins and before compose.host.yml, and refuses a COMPOSE_FILE that names it when it is missing (#2120)', () => {
+    const filesOf = () => readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean);
+    writeFileSync(`${dir}/compose.wal.yml`, 'services: {}\n');
+    writeFileSync(`${dir}/compose.host.yml`, 'services: {}\n');
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/docker-compose.override.yml ${dir}/compose.wal.yml ${dir}/compose.host.yml`);
+    rmSync(`${dir}/compose.wal.yml`);
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.wal.yml\n');
+    const res = deploy('v1.1.0', 'b');
+    expect(res.status, res.out).toBe(2);
+    expect(res.out).toContain('lists compose.wal.yml but');
+  });
+
+  it('stops before pulling when COMPOSE_FILE lists compose.pilot.yml and neither the release nor the host has the file, rather than roll the all-in-one crove (#2118, #2133)', () => {
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit crove' });
+    expect(res.status, res.out).toBe(2);
+    expect(res.out).toContain('lists compose.pilot.yml but this release does not carry it');
+    expect(calls().some((l) => l.startsWith('pull '))).toBe(false);
+    // Any way a dotenv file may spell the assignment counts, and a name inside a comment does not.
+    const layout = 'docker-compose.yml:compose.pilot.yml:docker-compose.override.yml';
+    for (const line of [`COMPOSE_FILE = ${layout}`, `export COMPOSE_FILE=${layout}`, `  COMPOSE_FILE="${layout}" # pilot`, `COMPOSE_FILE=${layout}\r`]) {
+      writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\n${line}\n`);
+      expect(deploy('v1.0.0', 'a').status, line).toBe(2);
+    }
+    for (const line of ['COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml # not compose.pilot.yml', `# COMPOSE_FILE=${layout}`]) {
+      writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\n${line}\n`);
+      expect(deploy('v1.0.0', 'a').status, line).toBe(0);
+    }
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    rmSync(`${log}.files`, { force: true });
+    // A copy the host already has is enough for a release that does not ship one (an older release).
+    writeFileSync(`${dir}/compose.pilot.yml`, 'services: {}\n');
+    expect(deploy('v1.0.0', 'a', { STUB_SERVICES: SPLIT }).status).toBe(0);
+    for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/compose.pilot.yml ${dir}/docker-compose.override.yml`);
+  });
+
+  it('says so when it cannot remove the old crove container, and goes on', () => {
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit api worker', STUB_RM_FAIL: '1' });
+    expect(res.status, res.out).toBe(0);
+    expect(res.out).toContain('could not remove the old crove container (the deploy goes on): rm: stub failure');
+  });
+
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.
   describe('build check', () => {
     const build = (c: string) => digest(c).slice(0, 12);
@@ -180,7 +299,100 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(ps).toBeGreaterThan(worker);
     expect(api).toBeGreaterThan(ps);
     expect(indexOf(c, 'compose port api 8080')).toBeGreaterThan(api);
-    expect(c.some((l) => / crove$/.test(l))).toBe(false);
+    expect(c.some((l) => / crove$/.test(l) && !l.startsWith('compose rm '))).toBe(false);
+  });
+
+  // #1965 (plan §3.5): toward an older release the API goes first, so the worker that runs is never older than the API
+  // that serves (whose /readyz waits on an older worker, #1952); toward a newer one, the worker first.
+  describe('separate services, toward an older release (#1965)', () => {
+    const env = { STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const worker = 'compose up --detach --no-build --no-deps worker';
+    const api = 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 api';
+    const last = (lines: string[], text: string) => lines.findLastIndex((l) => l.includes(text));
+
+    it('rolls the API before the worker on a rollback, and the worker before the API on the second one', () => {
+      expect(deploy('v1.0.0', 'a', env).status).toBe(0);
+      expect(deploy('v1.1.0', 'b', env).status).toBe(0);
+      rmSync(log);
+      let res = run(['rollback'], env);
+      expect(res.status, res.out).toBe(0);
+      let c = calls();
+      expect(indexOf(c, api)).toBeGreaterThan(-1);
+      expect(indexOf(c, worker)).toBeGreaterThan(indexOf(c, api));
+      // The worker is still checked: it stays up before the instance is called ready.
+      expect(indexOf(c, 'compose ps --status running --services')).toBeGreaterThan(indexOf(c, worker));
+      expect(indexOf(c, 'compose port api 8080')).toBeGreaterThan(indexOf(c, worker));
+      expect(res.out).toContain('rolling the API (toward an older build: the API before the worker)');
+      // The second rollback returns to the release deployed later: toward it, the worker first again.
+      rmSync(log);
+      res = run(['rollback'], env);
+      expect(res.status, res.out).toBe(0);
+      c = calls();
+      expect(indexOf(c, worker)).toBeGreaterThan(-1);
+      expect(indexOf(c, api)).toBeGreaterThan(indexOf(c, worker));
+      expect(res.out).not.toContain('the API before the worker');
+    });
+
+    it('recovers a failed deploy API first, toward the release that ran before', () => {
+      expect(deploy('v1.0.0', 'a', env).status).toBe(0);
+      rmSync(log);
+      const res = deploy('v1.1.0', 'b', { ...env, STUB_BAD_DIGEST: digest('b') });
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain(`rolled back to ${releaseDir('v1.0.0', 'a')}, which serves again`);
+      const c = calls();
+      // The deploy: the worker, then the API. The recovery: the API, then the worker.
+      expect(indexOf(c, api)).toBeGreaterThan(indexOf(c, worker));
+      expect(last(c, worker)).toBeGreaterThan(last(c, api));
+      expect(last(c, api)).toBeGreaterThan(indexOf(c, api));
+    });
+
+    it('recovers a failed rollback worker first, toward the newer release it left', () => {
+      expect(deploy('v1.0.0', 'a', env).status).toBe(0);
+      expect(deploy('v1.1.0', 'b', env).status).toBe(0);
+      rmSync(log);
+      const res = run(['rollback'], { ...env, STUB_BAD_DIGEST: digest('a') });
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain(`rolled back to ${releaseDir('v1.1.0', 'b')}, which serves again`);
+      const c = calls();
+      // The rollback: the API, then the worker. The recovery: the worker, then the API.
+      expect(indexOf(c, worker)).toBeGreaterThan(indexOf(c, api));
+      expect(last(c, worker)).toBeGreaterThan(indexOf(c, worker));
+      expect(last(c, api)).toBeGreaterThan(last(c, worker));
+    });
+
+    it('recovers forward, worker first, when the older worker does not stay up after the API was rolled back', () => {
+      expect(deploy('v1.0.0', 'a', env).status).toBe(0);
+      expect(deploy('v1.1.0', 'b', env).status).toBe(0);
+      rmSync(log);
+      const res = run(['rollback'], { ...env, STUB_WORKER_DOWN_DIGEST: digest('a') });
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain('the worker is not running');
+      expect(res.out).toContain(`rolled back to ${releaseDir('v1.1.0', 'b')}, which serves again`);
+      const c = calls();
+      expect(indexOf(c, worker)).toBeGreaterThan(indexOf(c, api));
+      expect(last(c, worker)).toBeGreaterThan(indexOf(c, worker));
+      expect(last(c, api)).toBeGreaterThan(last(c, worker));
+    });
+
+    // The build time the image carries orders the rolls, not when the release was deployed: a deploy of an older tag
+    // rolls the API first, and the rollback from it, to the newer build, the worker first (Codex and review, #1965).
+    it('orders by the build time the images carry, so a deploy of an older tag rolls the API first', () => {
+      const times = { ...env, STUB_BUILD_TIMES: `${digest('a')}=2026-10-01T10:00:00+07:00 ${digest('b')}=2026-10-02T09:00:00+07:00` };
+      expect(deploy('v1.1.0', 'b', times).status).toBe(0);
+      expect(readFileSync(`${dir}/releases/${releaseDir('v1.1.0', 'b')}/release.env`, 'utf8')).toContain(`BUILD_EPOCH=${Date.parse('2026-10-02T02:00:00Z') / 1000}`);
+      rmSync(log);
+      let res = deploy('v1.0.0', 'a', times);
+      expect(res.status, res.out).toBe(0);
+      let c = calls();
+      expect(indexOf(c, worker)).toBeGreaterThan(indexOf(c, api));
+      rmSync(log);
+      res = run(['rollback'], times);
+      expect(res.status, res.out).toBe(0);
+      c = calls();
+      expect(indexOf(c, api)).toBeGreaterThan(indexOf(c, worker));
+      // The older tag's release records its build time too.
+      expect(readFileSync(`${dir}/releases/${releaseDir('v1.0.0', 'a')}/release.env`, 'utf8')).toMatch(/BUILD_EPOCH=\d+/);
+    });
   });
 
   it('does not roll the API when the new worker does not stay up, and rolls back', () => {

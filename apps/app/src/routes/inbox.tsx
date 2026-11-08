@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { JOURNAL_VOUCHER_KIND } from '@crove/kernel-contract';
+import { JOURNAL_VOUCHER_KIND, type FileStatus } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -12,27 +12,37 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { cn } from '@crove/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
+import { AiMeter } from '../components/ai-meter.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
+import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
+import { ProposalBadges } from '../components/proposal-badges.tsx';
+import { ProposalGroups } from '../components/proposal-groups.tsx';
+import { StagedMarketplace } from '../components/staged-marketplace.tsx';
+import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
+import { cleanGroups } from '../lib/proposal-groups.ts';
 import { SM_UP, useMediaQuery } from '../lib/media.ts';
+import { browserCodec, needsShrink, preparePhotos } from '../lib/photo.ts';
 import { useReviewShortcuts } from '../lib/review-shortcuts.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
 import { providerName } from '../lib/social.ts';
+import { FILE_STATE_VARIANT, fileChipVariant, fileProposal, type FileState } from '../lib/status.ts';
 import { toast } from '../lib/toast.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 import {
   INBOX_TABS,
   bulkSelectable,
+  countUnclassified,
+  hasUnclassifiedLines,
   canApproveProposals,
   planBatches,
   proposalName,
   sendBatches,
-  showMatched,
   steppedIndex,
   type BulkBatch,
   type BulkProgress,
@@ -40,6 +50,10 @@ import {
   type InboxTab,
 } from '../lib/review.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+
+// What the upload takes, and what a photo of a receipt is taken as.
+const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp';
+const UPLOAD_ACCEPT = `.xml,.pdf,.zip,.xlsx,.csv,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,${PHOTO_ACCEPT}`;
 
 // One bulk approval (issue #315): the batches planned when it started, how far it got, and the names to report.
 interface BulkRun {
@@ -50,16 +64,16 @@ interface BulkRun {
   sending: boolean;
   // The approver closed the step-up prompt or the error: the batches not sent stay pending.
   stopped: boolean;
+  // The run is a clean group's (#2379): the checkboxes' selection is not the run's and stays as it is.
+  group: boolean;
 }
 
 // One proposal as the Inbox lists it.
 type InboxItem = Awaited<ReturnType<typeof client.inbox.list>>[number];
 
-const FILE_STATUS = { processing: 'brand', waiting: 'warning', proposed: 'success', duplicate: 'warning', failed: 'destructive', expanded: 'success' } as const;
-type FileStatus = keyof typeof FILE_STATUS;
-
-function isFileStatus(status: string): status is FileStatus {
-  return Object.hasOwn(FILE_STATUS, status);
+// A file's chip, as the intake list shows the same state (lib/status.ts, #2000).
+function isFileStatus(status: string): status is FileState {
+  return Object.hasOwn(FILE_STATE_VARIANT, status);
 }
 
 // Bank statement lines with no voucher yet, per bank account (#326, stage 2b): each links to its account and the month
@@ -145,11 +159,44 @@ function FailedJobs() {
   );
 }
 
+// Mails with no invoice attached whose text held the seller's lookup link or code (#2286): each is a card to open the
+// provider's page, copy the code and upload the XML it gives. For members of the org (the list is empty for others); an
+// item stays until someone dismisses it or it is pruned. The card shows the code, which opens the invoice for anyone who
+// has it, so nothing here is logged or sent anywhere but to the provider's page the person opens.
+function OriginalsNeeded() {
+  const t = useTranslations('inbox.originalNeeded');
+  const live = useStreamLive();
+  const list = useQuery({ ...orpc.inbox.originals.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
+  const dismiss = useMutation(
+    orpc.inbox.dismissOriginal.mutationOptions({
+      onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.inbox.originals.key() }),
+      onError: (error) => toast(errorMessage(error), 'error'),
+    }),
+  );
+  const data = list.data;
+  if (!data || data.total === 0) return null;
+  return (
+    <section className="mt-6" data-testid="originals-needed">
+      <h2 className="text-sm font-medium text-foreground">{t('title', { count: data.total })}</h2>
+      <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('hint')}</p>
+      {data.items.map((item) => (
+        <LookupOriginalCard
+          key={item.id}
+          hints={[{ provider: item.provider, url: item.url, code: item.code }]}
+          sellerTaxCode={null}
+          onDismiss={() => dismiss.mutate({ id: item.id })}
+          dismissing={dismiss.isPending}
+        />
+      ))}
+      {data.total > data.items.length && <p className="text-xs text-muted-foreground">{t('more', { count: data.total - data.items.length })}</p>}
+    </section>
+  );
+}
+
 // The name a proposal goes by in the list, its checkbox and the bulk report: the customer of a sale (#313; its seller is
 // the org itself), the seller of a purchase, else its title.
-// Social posts waiting for the viewer's review (#749), where Social runs: each opens its post, where it is decided.
 // Social work that needs a person (#771): channels to reconnect and posts that did not go out, each opening where it
-// is fixed.
+// is fixed. Posts waiting for the viewer's review are not listed here: they open from Social's own review tab (#2234).
 function SocialAttention({ slug }: { slug: string }) {
   const t = useTranslations('inbox.socialAttention');
   const live = useStreamLive();
@@ -181,40 +228,6 @@ function SocialAttention({ slug }: { slug: string }) {
       {data.total > data.channels.length + data.posts.length && (
         <Link to="/o/$slug/social" params={{ slug }} className="mt-2 inline-block text-sm text-link underline">
           {t('more', { count: data.total - data.channels.length - data.posts.length })}
-        </Link>
-      )}
-    </Card>
-  );
-}
-
-function SocialReviews({ slug }: { slug: string }) {
-  const t = useTranslations('inbox.socialReviews');
-  const f = useFormat();
-  const live = useStreamLive();
-  const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
-  const items = reviews.data?.items ?? [];
-  if (items.length === 0) return null;
-  const more = (reviews.data?.total ?? 0) - items.length;
-  return (
-    <Card className="mt-6 block p-4">
-      <p className="text-sm font-medium text-foreground">{t('title', { count: reviews.data?.total ?? items.length })}</p>
-      <ul className="mt-2 divide-y text-sm">
-        {items.map((item) => (
-          <li key={item.postId} className="py-2">
-            <Link to="/o/$slug/social/$id" params={{ slug, id: item.postId }} className="block text-foreground hover:underline">
-              {item.title || item.excerpt || t('noText')}
-            </Link>
-            {item.title && item.excerpt && <p className="truncate text-xs text-muted-foreground">{item.excerpt}</p>}
-            <p className="text-xs text-subtle-foreground">
-              {item.channels.map((c) => `${providerName(c.provider)} · ${c.displayName}`).join(', ')}
-              {item.at ? ` · ${t('goesOut', { when: f.dateTime(item.at) })}` : ` · ${t('noTime')}`}
-            </p>
-          </li>
-        ))}
-      </ul>
-      {more > 0 && (
-        <Link to="/o/$slug/social" params={{ slug }} className="mt-2 inline-block text-sm text-link underline">
-          {t('more', { count: more })}
         </Link>
       )}
     </Card>
@@ -254,6 +267,13 @@ function SocialMails({ slug }: { slug: string }) {
 export function InboxPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('inbox');
+  const proposalWords = useTranslations('inboxDetail.status');
+  // A file's chip words: a proposed file says its proposal's status (#2009), any other its own.
+  const fileWords = (file: FileStatus) => {
+    const proposal = fileProposal(file.status, file.proposalStatus, file.voided);
+    if (proposal === 'voided') return t('fileStatus.voided');
+    return proposal ? proposalWords(proposal) : isFileStatus(file.status) ? t(`fileStatus.${file.status}`) : file.status;
+  };
   const f = useFormat();
   // The tab lives in the address (#1513), left out for the pending proposals.
   const search: InboxSearch = useSearch({ strict: false });
@@ -262,6 +282,7 @@ export function InboxPage() {
   const setTab = (next: InboxTab) => void navigate({ to: '/o/$slug/inbox', params: { slug }, search: next === 'pending' ? {} : { status: next } });
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
   const org = useQuery(orpc.org.get.queryOptions());
@@ -273,16 +294,53 @@ export function InboxPage() {
   });
   const items = useQuery({ ...orpc.inbox.list.queryOptions({ input: { status: tab } }), refetchInterval: pollEvery(live, 5000, SAFETY_POLL_MS) });
 
+  // The "Chưa phân loại" filter (#2091): only the pending proposals with a line no rule matched, with how many there are.
+  const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
+  const unclassifiedCount = countUnclassified(items.data ?? []);
+  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly;
+  const listed = unclassifiedFilter ? (items.data ?? []).filter(hasUnclassifiedLines) : (items.data ?? []);
+
   // Many documents or ZIP archives at once, each file uploaded and followed on its own (#314).
   const intake = useIntake();
   // Reads a file that could not be read again (for example after AI was configured).
   const reextract = useMutation(orpc.files.reextract.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries() }));
 
+  // Opens the one file input as the file picker, or as the phone's rear camera for a receipt (#2384): `capture` is set for
+  // the photo and removed for the picker, so the same input, and the same upload below, serve both. A photo is one file
+  // at a time; a desktop browser ignores `capture` and opens its picker either way.
+  function openPicker(camera: boolean) {
+    const input = inputRef.current;
+    if (!input) return;
+    if (camera) {
+      input.setAttribute('capture', 'environment');
+      input.accept = PHOTO_ACCEPT;
+      input.multiple = false;
+    } else {
+      input.removeAttribute('capture');
+      input.accept = UPLOAD_ACCEPT;
+      input.multiple = true;
+    }
+    input.click();
+  }
+
+  // Hands the chosen files to the intake. A photo larger than the direct upload limit is shrunk on the device first, still
+  // readable (lib/photo.ts); anything else goes as it is, at once.
+  function startFiles(chosen: File[]) {
+    if (chosen.length === 0) return;
+    if (!chosen.some(needsShrink)) {
+      intake.start(chosen);
+      return;
+    }
+    setPreparing(true);
+    void preparePhotos(chosen, browserCodec)
+      .then((prepared) => intake.start(prepared))
+      .finally(() => setPreparing(false));
+  }
+
   function onDrop(event: DragEvent) {
     event.preventDefault();
     setDragging(false);
-    const dropped = [...event.dataTransfer.files];
-    if (dropped.length) intake.start(dropped);
+    startFiles([...event.dataTransfer.files]);
   }
 
   const processing = (files.data ?? []).filter((f) => f.status === 'processing').length;
@@ -292,7 +350,12 @@ export function InboxPage() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [bulk, setBulk] = useState<BulkRun | null>(null);
   const bulkEnabled = tab === 'pending' && canApproveProposals(org.data?.role, org.data?.permissions);
-  const selectable = bulkEnabled ? (items.data ?? []).filter((item) => bulkSelectable(item, REVERSAL_KIND)) : [];
+  const selectable = bulkEnabled ? listed.filter((item) => bulkSelectable(item, REVERSAL_KIND)) : [];
+  // Clean purchases grouped by vendor and learned rule (#2379), with the rules behind them of the entity chosen in the shell.
+  const shellEntity = useChosenEntity();
+  const groupsOn = bulkEnabled && config.modules.includes('finance');
+  const groups = groupsOn ? cleanGroups(listed, REVERSAL_KIND) : [];
+  const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready, staleTime: 30_000 });
   const chosen = selectable.filter((item) => selected.has(item.id));
   const sending = bulk?.sending ?? false;
   // Invoices whose digital signature is unverified (#674): approving them, in bulk as one by one, asks the approver to
@@ -314,27 +377,31 @@ export function InboxPage() {
       (step) => setBulk((current) => (current ? { ...current, progress: step } : current)),
     );
     setBulk((current) => (current ? { ...current, progress, sending: false } : current));
-    if (!progress.error) setSelected(new Set());
+    if (!progress.error && !run.group) setSelected(new Set());
     await queryClient.invalidateQueries();
   }
 
-  function startBulk() {
-    if (chosen.length === 0 || sending || !confirmUnverified) return;
-    const confirmed = confirmedUnverified;
-    setConfirmedUnverified(new Set());
+  // Approves the chosen proposals, or one clean group (#2379): its proposals have no unverified signature, so there is
+  // nothing to confirm, and it runs as any bulk approval does, under one step-up.
+  function startBulk(group?: InboxItem[]) {
+    const picked = group ?? chosen;
+    if (picked.length === 0 || sending || (group === undefined && !confirmUnverified)) return;
+    const confirmed = group === undefined ? confirmedUnverified : new Set<string>();
+    if (group === undefined) setConfirmedUnverified(new Set());
     void sendBulk({
       batches: planBatches(
-        chosen.map((item) => ({
+        picked.map((item) => ({
           id: item.id,
           revision: item.revision,
           ...(item.signatureStatus === 'unverified' && confirmed.has(confirmKey(item)) ? { acceptUnverifiedSignature: true } : {}),
         })),
       ),
       progress: { results: [], next: 0, error: null },
-      names: Object.fromEntries(chosen.map((item) => [item.id, proposalName(item)])),
-      total: chosen.length,
+      names: Object.fromEntries(picked.map((item) => [item.id, proposalName(item)])),
+      total: picked.length,
       sending: false,
       stopped: false,
+      group: group !== undefined,
     });
   }
 
@@ -361,7 +428,7 @@ export function InboxPage() {
     links[at]?.scrollIntoView({ block: 'nearest' });
   };
   useReviewShortcuts({ next: () => moveFocus(1), previous: () => moveFocus(-1) });
-  // The bulk checkbox and the check badges of one proposal, for the table and the phone's blocks alike (#1270).
+  // The bulk checkbox of one proposal, for the table and the phone's blocks alike (#1270); its badges are ProposalBadges.
   const selectBox = (item: InboxItem) =>
     bulkSelectable(item, REVERSAL_KIND) ? (
       <Checkbox
@@ -380,23 +447,6 @@ export function InboxPage() {
     ) : (
       <Checkbox checked={false} disabled aria-label={t('bulk.notSelectable')} title={t('bulk.notSelectable')} />
     );
-  const checkBadges = (item: InboxItem) => (
-    <div className="flex flex-wrap gap-1">
-      {/* A reversal a user asked for has no invoice checks; its card shows the entry it reverses. */}
-      {item.kind === REVERSAL_KIND && <Badge variant="secondary">{t('reversalKind')}</Badge>}
-      {item.kind === VOUCHER_KIND && <Badge variant="secondary">{t('voucherKind')}</Badge>}
-      {item.kind === JOURNAL_VOUCHER_KIND && <Badge variant="secondary">{t('journalVoucherKind')}</Badge>}
-      {item.direction === 'sale' && <Badge variant="secondary">{t('saleKind')}</Badge>}
-      {item.duplicateOf && <Badge variant="warning">{t('maybeDuplicate')}</Badge>}
-      {item.signatureStatus === 'unverified' && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
-      {item.failedChecks > 0 && <Badge variant="destructive">{t('failedChecks', { count: item.failedChecks })}</Badge>}
-      {item.warnChecks > 0 && <Badge variant="warning">{t('warnChecks', { count: item.warnChecks })}</Badge>}
-      {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
-      {showMatched(item, REVERSAL_KIND, VOUCHER_KIND, JOURNAL_VOUCHER_KIND) && (
-        <Badge variant="success">{t('matched')}</Badge>
-      )}
-    </div>
-  );
 
   // The browser may refuse the clipboard: say so, and the address stays on screen to select (#1384).
   const copyAddress = (address: string) =>
@@ -421,22 +471,26 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button size="lg" onClick={() => inputRef.current?.click()} disabled={intake.uploading}>
-              {intake.uploading ? <Spinner className="text-current" /> : null}
+            <Button loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
               {t('upload')}
+            </Button>
+            {/* On a phone this opens the rear camera; a desktop browser ignores `capture` and opens the file picker. A stack
+                of receipts is one photo after another: each is its own file, read and proposed on its own (#2384). */}
+            <Button variant="outline" size="lg" loading={preparing} data-testid="capture-button" onClick={() => openPicker(true)}>
+              {t('capture')}
             </Button>
           </div>
         }
       />
+      <AiMeter module="finance" className="mb-3" />
       <input
         ref={inputRef}
         type="file"
         multiple
         hidden
-        accept=".xml,.pdf,.zip,application/zip,image/jpeg,image/png,image/webp"
+        accept={UPLOAD_ACCEPT}
         onChange={(e) => {
-          const chosen = [...(e.target.files ?? [])];
-          if (chosen.length) intake.start(chosen);
+          startFiles([...(e.target.files ?? [])]);
           e.target.value = '';
         }}
       />
@@ -503,10 +557,12 @@ export function InboxPage() {
       )}
 
       <IntakePanel intake={intake} />
+      {config.modules.includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
+      {config.modules.includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
       {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
       {config.modules.includes('social') && <SocialAttention slug={slug} />}
-      {config.modules.includes('social') && <SocialReviews slug={slug} />}
       {config.modules.includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
 
       {(files.data?.length ?? 0) > 0 && (
@@ -519,14 +575,27 @@ export function InboxPage() {
             {files.data?.slice(0, 8).map((file) => (
               <span
                 key={file.id}
+                data-testid="recent-file"
                 className="inline-flex max-w-full items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-xs"
                 title={file.error ?? undefined}
               >
                 <span className="max-w-[16rem] truncate text-muted-foreground">{file.filename}</span>
-                <Badge variant={isFileStatus(file.status) ? FILE_STATUS[file.status] : 'secondary'}>
-                  {isFileStatus(file.status) ? t(`fileStatus.${file.status}`) : file.status}
+                {/* A proposed file shows its proposal's status (#2009): waiting, posted or rejected. */}
+                <Badge variant={isFileStatus(file.status) ? fileChipVariant(file.status, file.proposalStatus, file.voided) : 'secondary'}>
+                  {fileWords(file)}
                 </Badge>
-                {file.status === 'failed' && file.canReextract && (
+                {/* A bank statement a member imported or skipped (#2142) says who did, from the audit row of the decision. */}
+                {file.statement?.decidedBy && (
+                  <span className="text-subtle-foreground" data-testid="statement-decided-by">
+                    {t('staged.decidedBy', {
+                      state: file.statement.state,
+                      name: file.statement.decidedBy.name ?? t('staged.formerMember'),
+                      when: f.dateTime(file.statement.decidedBy.at),
+                    })}
+                  </span>
+                )}
+                {/* A file not read, or a posting voided by a reversal (#2032), may be read again from here. */}
+                {(file.status === 'failed' || file.voided) && file.canReextract && (
                   <button
                     type="button"
                     disabled={reextract.isPending}
@@ -611,6 +680,7 @@ export function InboxPage() {
             </Button>
           </Card>
         )}
+        {groups.length > 0 && !bulk && <ProposalGroups groups={groups} rules={groupRules.data ?? []} slug={slug} sending={sending} onApprove={startBulk} />}
         {bulkEnabled && selectable.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <Label className="font-normal text-muted-foreground">
@@ -623,17 +693,20 @@ export function InboxPage() {
               {t('bulk.selectAll', { count: selectable.length })}
             </Label>
             {chosen.length > 0 && <span className="text-sm text-subtle-foreground">{t('bulk.selected', { count: chosen.length })}</span>}
+            {/* The button keeps its label and width while it works, so the batch it is on is said beside it. */}
+            {sending && bulk && (
+              <span role="status" className="text-sm text-muted-foreground">
+                {t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })}
+              </span>
+            )}
             <div className="ml-auto flex gap-2">
               {chosen.length > 0 && !sending && (
                 <Button variant="ghost" size="lg" onClick={() => setSelected(new Set())}>
                   {t('bulk.clear')}
                 </Button>
               )}
-              <Button size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
-                {sending ? <Spinner className="text-current" /> : null}
-                {sending && bulk
-                  ? t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })
-                  : t('bulk.approve', { count: chosen.length })}
+              <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={() => startBulk()}>
+                {t('bulk.approve', { count: chosen.length })}
               </Button>
             </div>
             {unverifiedChosen > 0 && (
@@ -645,12 +718,29 @@ export function InboxPage() {
             <p className="w-full text-xs text-subtle-foreground">{t('bulk.hint')}</p>
           </div>
         )}
+        {tab === 'pending' && config.modules.includes('finance') && (
+          <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={t('filter.label')}>
+            <Button variant={unclassifiedOnly ? 'outline' : 'secondary'} size="sm" aria-pressed={!unclassifiedOnly} onClick={() => setUnclassifiedOnly(false)}>
+              {t('filter.all', { count: items.data?.length ?? 0 })}
+            </Button>
+            <Button
+              variant={unclassifiedOnly ? 'secondary' : 'outline'}
+              size="sm"
+              aria-pressed={unclassifiedOnly}
+              data-testid="filter-unclassified"
+              onClick={() => setUnclassifiedOnly(true)}
+            >
+              {t('filter.unclassified', { count: unclassifiedCount })}
+            </Button>
+            {unclassifiedOnly && <span className="text-xs text-subtle-foreground">{t('filter.unclassifiedHint')}</span>}
+          </div>
+        )}
         {items.isLoading ? (
           <TableSkeleton columns={5} />
-        ) : (items.data?.length ?? 0) === 0 ? (
+        ) : listed.length === 0 ? (
           <Empty
-            title={tab === 'pending' ? t('emptyPending') : t('emptyOther')}
-            hint={tab === 'pending' ? t('emptyPendingHint') : undefined}
+            title={unclassifiedFilter ? t('filter.unclassifiedEmpty') : tab === 'pending' ? t('emptyPending') : t('emptyOther')}
+            hint={tab === 'pending' && !unclassifiedFilter ? t('emptyPendingHint') : undefined}
             action={
               tab === 'pending' && config.modules.includes('finance') ? (
                 <Link to="/o/$slug/guide" params={{ slug }} className="text-sm text-link hover:underline">
@@ -675,7 +765,7 @@ export function InboxPage() {
                 t('columns.received'),
               ]}
             >
-              {items.data?.map((item) => (
+              {listed.map((item) => (
                 <TableRow key={item.id}>
                   {bulkEnabled && (
                     <TableCell className="w-10 px-4 py-3">
@@ -695,7 +785,7 @@ export function InboxPage() {
                   <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(item.total)}</TableCell>
                   {showEntity && <TableCell className="px-4 py-3 text-muted-foreground">{entityOf(item)}</TableCell>}
                   <TableCell className="px-4 py-3">
-                    {checkBadges(item)}
+                    <ProposalBadges item={item} />
                   </TableCell>
                   <TableCell className="px-4 py-3 text-xs text-subtle-foreground">{f.dateTime(item.createdAt)}</TableCell>
                 </TableRow>
@@ -703,7 +793,7 @@ export function InboxPage() {
             </DataTable>
           ) : (
             <ul className="space-y-2">
-              {items.data?.map((item) => (
+              {listed.map((item) => (
                 <li key={item.id} className="flex gap-3 rounded-xl border bg-card p-3">
                   {bulkEnabled && <div className="pt-0.5">{selectBox(item)}</div>}
                   <div className="min-w-0 flex-1 space-y-1">
@@ -719,14 +809,14 @@ export function InboxPage() {
                     {item.status === 'expired' && item.expiredAfterDays !== null && (
                       <p className="text-xs text-warning">{t('expiredReason', { days: item.expiredAfterDays })}</p>
                     )}
-                    {checkBadges(item)}
+                    <ProposalBadges item={item} />
                   </div>
                 </li>
               ))}
             </ul>
           )
         )}
-        {(items.data?.length ?? 0) > 0 && <p className="mt-3 text-xs text-subtle-foreground">{t('listShortcuts')}</p>}
+        {listed.length > 0 && <p className="mt-3 text-xs text-subtle-foreground">{t('listShortcuts')}</p>}
       </TabsContent>
       </Tabs>
     </>

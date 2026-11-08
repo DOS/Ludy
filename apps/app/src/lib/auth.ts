@@ -1,5 +1,6 @@
 import { AuthClient } from '@supabase/auth-js';
 import type { Translate } from '../i18n/runtime.ts';
+import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
 
@@ -14,6 +15,9 @@ export interface PublicConfig {
   modules: string[];
   // presigned: files go to the bucket through a staging upload (plan §7.6); direct: through the kernel.
   uploads?: 'presigned' | 'direct';
+  // The server can hand a platform a short-lived URL to fetch a post's images from, even with direct uploads (#2192);
+  // older servers send none.
+  platformMediaUrls?: boolean;
   // The kernel serves /api/stream (issue #69); without it the screens poll.
   stream?: boolean;
   // The feedback and support link (SUPPORT_URL, issue #310): https: or mailto:, null when the deployment has none.
@@ -33,6 +37,9 @@ export interface PublicConfig {
   taxPortalSync?: boolean;
   // The offline sandbox channel can be connected (CHANNEL_SANDBOX); `oauth` lists the providers connected through
   // their OAuth dialog that the server has app credentials for.
+  bankFeeds?: { sandbox: boolean };
+  // The ad platforms the deployment offers (ADR-0040): the offline sandbox.
+  ads?: { sandbox: boolean };
   channels?: { sandbox: boolean; bluesky?: boolean; telegram?: boolean; mastodon?: boolean; discord?: boolean; wordpress?: boolean; oauth?: string[] };
 }
 
@@ -42,7 +49,7 @@ let client: Client | null = null;
 
 export async function loadConfig(): Promise<PublicConfig> {
   if (config) return config;
-  const response = await fetch('/api/config');
+  const response = await fetch(apiUrl('/api/config'));
   if (!response.ok) throw new ClientError('common.configLoadFailed', (t) => t('common.configLoadFailed'));
   config = (await response.json()) as PublicConfig;
   return config;
@@ -61,7 +68,7 @@ export function auth(): Client {
     headers: authAnonKey ? { apikey: authAnonKey, Authorization: `Bearer ${authAnonKey}` } : {},
     storageKey: 'crove-auth',
     // A sign-up from an accept link carries the invite token for the proxy's sign-up policy (#563).
-    fetch: withInviteToken((input, init) => fetch(input, init), window.location.origin),
+    fetch: withInviteToken((input, init) => fetch(input, init), new URL(authUrl, serverOrigin()).origin),
     // Email links (confirmation, recovery) come back with a one-time code that only this browser can exchange.
     flowType: 'pkce',
     autoRefreshToken: true,
@@ -128,6 +135,32 @@ function within<T>(promise: Promise<T>, fallback: T): Promise<T> {
 export async function secondFactorStillOwed(client: Pick<Client, 'mfa'> = auth()): Promise<boolean> {
   await within(verifying, undefined);
   return within(needsSecondFactorNow(client), true);
+}
+
+// What a request refused with MFA_REQUIRED leads to (#1611, #1912): the challenge when the session still owes its second
+// factor, or a failed check; otherwise the refused requests go again, now with the session this tab has verified. A
+// burst sent just before this tab saved that session would otherwise keep its error on screen: such as the refresh the
+// invalidation stream asks for when the server closes it because the factor was verified (reason 'mfa'), whose queries
+// do not retry an MFA refusal by themselves. Once per MFA_RETRY_GAP_MS: a server that keeps refusing what this tab sees
+// as verified gets no loop of retries, and the error stays on screen as before.
+export const MFA_RETRY_GAP_MS = 5_000;
+
+export async function afterMfaRefusal(deps: {
+  stillOwed: () => Promise<boolean>;
+  openChallenge: () => void;
+  retryRefused: () => void;
+  lastRetry: { at: number };
+  now?: () => number;
+}): Promise<void> {
+  const owed = await deps.stillOwed().catch(() => true);
+  if (owed) {
+    deps.openChallenge();
+    return;
+  }
+  const now = (deps.now ?? Date.now)();
+  if (now - deps.lastRetry.at < MFA_RETRY_GAP_MS) return;
+  deps.lastRetry.at = now;
+  deps.retryRefused();
 }
 
 // Supabase Auth error codes with a message of their own; any other error shows the server's message.

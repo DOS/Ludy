@@ -102,7 +102,8 @@ suite('crove_jobs from committed migrations', () => {
       expect(queues.rows).toEqual(
         [...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].sort().map((name) => ({
           name,
-          policy: name === QUEUES.agentWake || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
+          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give.
+          policy: name === QUEUES.einvoiceIssue ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
           dead_letter: name === QUEUES.deadLetter ? null : QUEUES.deadLetter,
         })),
       );

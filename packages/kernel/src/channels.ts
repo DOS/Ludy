@@ -11,7 +11,7 @@
 //   crove_worker alone), and only while the member who connected the account is still in the org.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { isAdProviderId, isAdWriteProviderId, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
@@ -53,6 +53,8 @@ export const zChannelConnect = z.strictObject({
   scopes: z.array(z.string().min(1).max(200)).max(100),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
   credential: z.strictObject({ keyId: zKeyId, envelope: zEnvelope }),
+  // Keyed hash of the platform user who granted the connection (CV6 #2305, CV2 #2307: Meta's data-deletion callback).
+  grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
 });
 export type ChannelConnectInput = z.infer<typeof zChannelConnect>;
 
@@ -71,6 +73,12 @@ export const channelConnect = defineCommand({
       status: 'active' as const,
       status_reason: null,
       connected_by: userId,
+      // A reconnect is a takeover: the Meta user who granted the connection before no longer holds it, so Meta's data deletion callback
+      // (CV6, #2305) does not reach this connection's conversations through them. The connector that knows the new grantor sets it again
+      // (Ads connections keep their hash on the ad account table instead).
+      granted_by_hash: isAdProviderId(input.provider) ? null : (input.grantedByHash ?? null),
+      // A reconnect is read again at once for what the webhook missed (CV5b, #2329).
+      history_synced_at: null,
       updated_at: ctx.now,
     };
     // Two connects of one account at once serialize here, so the second finds the first's row and reconnects
@@ -110,7 +118,9 @@ export const channelConnect = defineCommand({
 
 export const channelDisconnect = defineCommand({
   name: 'kernel.channel.disconnect',
-  input: z.strictObject({ connectionId: zId }),
+  // `reason` is for a command that closes a connection for a reason the screen has words for (Ads closes a reading connection whose
+  // token can also change campaigns when running ads is switched off, #2294): it becomes the status reason. The API never passes it.
+  input: z.strictObject({ connectionId: zId, reason: z.literal('spend_scopes').optional() }),
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,
@@ -128,7 +138,7 @@ export const channelDisconnect = defineCommand({
     if (row.status !== 'revoked') {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
-        .set({ status: 'revoked', status_reason: 'disconnected', updated_at: ctx.now })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -172,6 +182,84 @@ export const channelMarkExpired = defineCommand({
       .execute();
     await ctx.emit('kernel.channel.expired', { connection_id: input.connectionId, provider: row.provider, reason: input.reason });
     return { connectionId: input.connectionId, status: 'expired' as const };
+  },
+});
+
+// A platform's own data deletion request (Meta's callback for Ads, plan docs/plan/ads.md section 9, #2219): the connection is
+// closed as a disconnect closes it, and its tokens are forgotten, but by the worker as the system, not by a member. Run once
+// per connection; one already closed only has its credential dropped again.
+export const channelRevokeByPlatform = defineCommand({
+  name: 'kernel.channel.revoke_by_platform',
+  // `reason` 'account_erased' is for the erasure of an ad account whose write grant is another person's than the requester's: the platform's deletion request
+  // is not that person's, so the connection is closed under its own reason and the revoke at the platform is held for it (ads W2-1, #2296).
+  input: z.strictObject({ connectionId: zId, reason: z.literal('account_erased').optional() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['status', 'provider'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (row.status !== 'revoked') {
+      await ctx.trx
+        .updateTable('crove_kernel.channel_connection')
+        // The ad account's name and the permissions its token held go with the token: what a revoked connection keeps is its
+        // platform id and the time it closed.
+        .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.connectionId)
+        .execute();
+      await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
+    }
+    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    return { connectionId: input.connectionId, status: 'revoked' as const };
+  },
+});
+
+// An ads write connection whose connector is no longer an owner or admin of the org (removed, demoted or disabled), closed by the revoke sweep as the
+// system (ads W2-1, #2296): its token can no longer be used (credential_get refuses it), so it would sit in Ludy for ever while the person's permission at
+// the platform stays valid. Closing it drops the credential, which the ads module's trigger on that table copies into the sealed holding of the revoke, in
+// the same transaction; the revoke runs from there. Only ads write connections are closed this way, and only while the connector is gone, as the
+// database says under the row's lock (channel_connector_gone): a connector who is still an owner or admin leaves the connection as it is.
+export const channelCloseOrphan = defineCommand({
+  name: 'kernel.channel.close_orphan',
+  input: z.strictObject({ connectionId: zId }),
+  // R2 and external like the member's own disconnect: closing it feeds the revoke sweep, which calls the platform.
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['status', 'provider'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (!isAdWriteProviderId(row.provider)) throw new DomainError('CHANNEL_NOT_ORPHAN', 409, 'Chỉ kết nối chạy quảng cáo mới đóng được theo cách này');
+    if (row.status === 'revoked') return { connectionId: input.connectionId, closed: false };
+    const { rows } = await sql<{ gone: boolean }>`SELECT crove_kernel.channel_connector_gone(${input.connectionId}::uuid) AS gone`.execute(ctx.trx);
+    if (rows[0]?.gone !== true) return { connectionId: input.connectionId, closed: false };
+    await ctx.trx
+      .updateTable('crove_kernel.channel_connection')
+      .set({ status: 'revoked', status_reason: 'member_left', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
+    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    ctx.audit({ connection_id: input.connectionId, provider: row.provider });
+    return { connectionId: input.connectionId, closed: true };
   },
 });
 
@@ -340,13 +428,25 @@ const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOS
 // The org's connections, live ones first. Never a credential: the columns are listed, not selected with *.
 export const channelsList = defineQuery({
   name: 'kernel.channel.list',
-  input: z.object({ includeRevoked: z.boolean().optional() }),
+  input: z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() }),
   access: ALL,
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
       .selectFrom('crove_kernel.channel_connection')
       .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at'])
-      .where('org_id', '=', ctx.orgId);
+      .where('org_id', '=', ctx.orgId)
+      // Social and messaging channels only: a bank feed's connection (provider bank_..., ADR-0039) is the finance
+      // module's, listed with its accounts by finance.bank_feed.accounts. Left out before the limit, so they never
+      // crowd a channel out.
+      .where('provider', 'not like', 'bank\\_%')
+      // Nor an ad account's (provider ..._ads, ADR-0040): the ads module lists it with its settings.
+      .where('provider', 'not like', '%\\_ads')
+      // Nor an e-invoice provider's (provider einvoice_..., ADR-0044): its external account id holds the seller's tax code and the legal entity, which only the
+      // finance module's list shows, to the members of that entity.
+      .where('provider', 'not like', 'einvoice\\_%')
+      // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
+      // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
+      .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email');
     if (!input.includeRevoked) q = q.where('status', '<>', 'revoked');
     const rows = await q.orderBy(sql`status = 'revoked'`).orderBy('connected_at', 'desc').limit(500).execute();
     return rows.map((r) => ({
@@ -389,5 +489,5 @@ export const channelCredential = defineQuery({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
 export const channelQueries = [channelsList, channelCredential];

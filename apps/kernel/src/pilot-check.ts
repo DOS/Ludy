@@ -1,12 +1,16 @@
 // The `pilot-check` image role (issue #308, backlog review 2026-10-17 M1-8): a preflight for a deployment that a
-// consenting design partner will use. It reads the deployment's settings (the .env that docker compose reads) and,
-// with --url, probes the running instance. It fails loudly on anything the pilot readiness checklist forbids and lists
+// consenting design partner will use. It reads the deployment's settings (the .env that docker compose reads), asks the
+// files bucket for its Object Lock when evidence holds are on, and, with --url, probes the running instance. It fails loudly on anything the pilot readiness checklist forbids and lists
 // the items only a person can confirm (docs/runbooks/pilot-readiness.md).
 //
 //   pilot-check [--url https://crove.example.com]
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
+import { ORG_HEADER } from '@crove/kernel-contract';
+import { S3BlobStore, parseVaultKey, type S3Sender } from '@crove/kernel-runtime';
+import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
+import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
 import { loadProberConfig } from './prober.ts';
 
@@ -42,21 +46,12 @@ export const REQUIRED_SECRETS = [
 ] as const;
 
 export const KNOWN_DEFAULTS: ReadonlySet<string> = new Set([
+  // The database passwords of .env.example and the docker-compose.yml fallbacks, which the kernel also refuses in a
+  // database URL on a public PUBLIC_URL (config.ts).
+  ...SAMPLE_DB_PASSWORDS,
   // .env.example
-  'change-me-postgres',
-  'change-me-app',
-  'change-me-worker',
-  'change-me-prober',
-  'change-me-reporter',
-  'change-me-auth',
   'change-me-to-a-long-random-string-0123456789',
-  // docker-compose.yml fallbacks
-  'local-postgres-password',
-  'local-app-password',
-  'local-worker-password',
-  'local-prober-password',
-  'local-reporter-password',
-  'local-auth-password',
+  // docker-compose.yml fallback
   'local-only-jwt-secret-change-me-0123456789',
   // docker-compose.split.yml (a local test stack)
   'split-stack-inbound-secret-0123456789abcdef',
@@ -124,6 +119,82 @@ function secretProblem(name: string, secret: string | undefined, minLength: numb
   return null;
 }
 
+// The compose files a split pilot lists in COMPOSE_FILE (docs/runbooks/deploy.md): compose.pilot.yml moves the all-in-one
+// `crove` service behind the `all-in-one` profile and starts `api` and `worker` apart (tools/deploy/compose.pilot.yml).
+const PILOT_COMPOSE_FILE = 'compose.pilot.yml';
+
+function list(raw: string | undefined, separator: RegExp): string[] {
+  return (raw ?? '')
+    .split(separator)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+// Whether the API and the worker run as separate processes. The all-in-one role (`all`) gives the HTTP edge the worker's
+// database login, which enters the system context of every org, and every secret. The deployment's compose files tell
+// (COMPOSE_FILE lists compose.pilot.yml, COMPOSE_PROFILES does not start the all-in-one service); a deployment without
+// docker compose names its roles in CROVE_ROLES. Names settings only, never a value.
+function rolesProblem(env: Env): string | null {
+  // The kernel's own opt-in to run the all role on a public URL (config.ts assertSplitRoles).
+  if (value(env, 'CROVE_ALLOW_ALL_IN_ONE')?.toLowerCase() === 'true') {
+    return 'CROVE_ALLOW_ALL_IN_ONE is set: the kernel then accepts the all-in-one role (the API on the worker database login and every secret) on a public PUBLIC_URL; unset it and run api and worker apart (docs/runbooks/deploy.md)';
+  }
+  // `*` is every profile, the all-in-one service among them.
+  const profiles = list(value(env, 'COMPOSE_PROFILES'), /,/);
+  if (profiles.includes('all-in-one') || profiles.includes('*')) {
+    return 'COMPOSE_PROFILES includes all-in-one (or *): the API then runs with the worker in one container (command all), on the worker database login and every secret; drop that profile and run api and worker apart (docs/runbooks/deploy.md)';
+  }
+  // The list separator is ':' (';' on Windows hosts), and an entry may be a path: the file name is matched as a whole entry.
+  const composeFile = value(env, 'COMPOSE_FILE');
+  const listsPilotFile = /(?:^|[:;/\\])compose\.pilot\.yml(?:$|[:;])/.test(composeFile ?? '');
+  // CROVE_ROLES is the deployment's own statement, for one without docker compose; it never outvotes a COMPOSE_FILE that
+  // says the opposite.
+  if (composeFile !== undefined && !listsPilotFile) {
+    return `COMPOSE_FILE does not list ${PILOT_COMPOSE_FILE}: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} (docs/runbooks/deploy.md)`;
+  }
+  const roles = list(value(env, 'CROVE_ROLES')?.toLowerCase(), /[\s,]+/);
+  if (roles.length > 0) {
+    if (roles.includes('all')) return 'CROVE_ROLES includes all: run api and worker as separate processes (docs/runbooks/deploy.md)';
+    return roles.includes('api') && roles.includes('worker') ? null : 'CROVE_ROLES must name both api and worker, each as its own container or service (docs/runbooks/deploy.md)';
+  }
+  if (listsPilotFile) return null;
+  return `COMPOSE_FILE and CROVE_ROLES are unset: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} in COMPOSE_FILE (docs/runbooks/deploy.md), or name the roles in CROVE_ROLES for a deployment without docker compose`;
+}
+
+// CROVE_MODULES names the modules the pilot runs; empty runs every module, Social's public routes included.
+function modulesProblem(env: Env): string | null {
+  const names = list(value(env, 'CROVE_MODULES')?.toLowerCase(), /,/);
+  if (names.length === 0) {
+    return `CROVE_MODULES is empty: the deployment then runs every module (${AVAILABLE_MODULES.join(', ')}), Social's public routes among them; set CROVE_MODULES=finance, or the modules the pilot uses (docs/runbooks/deploy.md)`;
+  }
+  const unknown = names.filter((name) => !(AVAILABLE_MODULES as readonly string[]).includes(name));
+  return unknown.length > 0 ? `CROVE_MODULES names ${unknown.length} module(s) this build does not ship (available: ${AVAILABLE_MODULES.join(', ')}); the kernel refuses to start on it` : null;
+}
+
+// The per-org AI cost limit counts tokens at AI_PRICE_*; with both at 0 every call costs nothing to the cap.
+function aiCostProblem(env: Env): string | null {
+  if (value(env, 'AI_API_KEY') === undefined) return null;
+  const priced = ['AI_PRICE_INPUT_PER_MTOK', 'AI_PRICE_OUTPUT_PER_MTOK'].some((name) => Number(value(env, name) ?? '0') > 0);
+  return priced ? null : 'AI_API_KEY is set while AI_PRICE_INPUT_PER_MTOK and AI_PRICE_OUTPUT_PER_MTOK are both 0: AI usage then costs nothing to ORG_LIMIT_AI_COST_PER_DAY and the cap does nothing; set the price of the model per million tokens';
+}
+
+// A web app on another origin than the API (#2261) calls it cross-origin, which a browser allows only for an exact origin
+// the API lists: the app's own. A wildcard, a path, plain http or a missing app origin each break or weaken that.
+function splitProblem(env: Env, appUrl: string | undefined, publicUrl: string | undefined): string | null {
+  let allowed: readonly string[];
+  try {
+    allowed = parseAllowedOrigins(value(env, 'CORS_ALLOWED_ORIGINS'));
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  if (appUrl === undefined || !URL.canParse(appUrl)) return allowed.length > 0 ? 'CORS_ALLOWED_ORIGINS is set without APP_URL: set APP_URL to where people open the app (the origin that calls the API), or unset it for a same-origin deployment' : null;
+  const appOrigin = new URL(appUrl).origin;
+  if (publicUrl !== undefined && URL.canParse(publicUrl) && new URL(publicUrl).origin === appOrigin) return allowed.length > 0 ? 'APP_URL is the same origin as PUBLIC_URL, so nothing calls the API cross-origin: unset CORS_ALLOWED_ORIGINS' : null;
+  if (!allowed.includes(appOrigin)) return `APP_URL is ${appOrigin}, another origin than PUBLIC_URL, but CORS_ALLOWED_ORIGINS does not list it: the browser refuses every call the app makes`;
+  const others = allowed.filter((origin) => origin !== appOrigin);
+  return others.length > 0 ? `CORS_ALLOWED_ORIGINS also lists ${others.join(', ')}: only the web app's origin needs to call the API; remove the others` : null;
+}
+
 /** Checks the deployment's settings (the .env docker compose reads, or the environment of a non-compose deploy). */
 export function checkEnv(env: Env): CheckResult[] {
   const results: CheckResult[] = [];
@@ -139,6 +210,9 @@ export function checkEnv(env: Env): CheckResult[] {
   tls.push(publicUrl ? httpsProblem('PUBLIC_URL', publicUrl) : 'PUBLIC_URL is unset (docker compose then uses http://localhost:8080)');
   const authUrl = value(env, 'PUBLIC_AUTH_URL');
   if (authUrl) tls.push(httpsProblem('PUBLIC_AUTH_URL', authUrl));
+  // A split deployment (#2261) serves the web app from its own origin: people open APP_URL.
+  const appUrl = value(env, 'APP_URL');
+  if (appUrl) tls.push(httpsProblem('APP_URL', appUrl));
   // Presigned transfers send files from the browser straight to the bucket (S3_PUBLIC_ENDPOINT, else S3_ENDPOINT;
   // AWS S3 itself when both are empty, which is https).
   if (value(env, 'STORAGE') === 's3' && value(env, 'S3_PRESIGNED_URLS') !== 'false') {
@@ -155,6 +229,16 @@ export function checkEnv(env: Env): CheckResult[] {
     );
   }
   add('TLS', tls, 'PUBLIC_URL and the other browser-facing URLs are https, and TRUSTED_PROXY_HOPS counts the reverse proxy in front');
+  if (appUrl !== undefined || value(env, 'CORS_ALLOWED_ORIGINS') !== undefined) add('Split app and API', [splitProblem(env, appUrl, publicUrl)], 'the web app calls the API cross-origin and only its own origin is allowed');
+
+  // The settings below guard a deployment other people reach: a loopback or unset PUBLIC_URL is a local run, and TLS
+  // above already fails it.
+  const publicDeployment = publicUrl !== undefined && URL.canParse(publicUrl) && !isLocalHost(new URL(publicUrl).hostname);
+  if (publicDeployment) {
+    add('Roles', [rolesProblem(env)], 'the API and the worker run as separate processes (api and worker), not as the all-in-one role');
+    add('Modules', [modulesProblem(env)], `CROVE_MODULES=${list(value(env, 'CROVE_MODULES')?.toLowerCase(), /,/).join(',')}: only those modules run (kernel is always on)`);
+    add('AI cost cap', [aiCostProblem(env)], value(env, 'AI_API_KEY') === undefined ? 'no AI key is set: no AI call is made' : 'AI_PRICE_* is set, so ORG_LIMIT_AI_COST_PER_DAY counts the AI cost');
+  }
 
   // Secrets: none left at a value this public repository ships.
   const secrets: (string | null)[] = REQUIRED_SECRETS.map((name) =>
@@ -169,11 +253,34 @@ export function checkEnv(env: Env): CheckResult[] {
     }
   }
   if (value(env, 'INBOUND_DOMAIN')) secrets.push(secretProblem('INBOUND_SECRET', value(env, 'INBOUND_SECRET'), MIN_TOKEN_SECRET_LENGTH));
+  // The previous inbound secret of a rotation (#1214), under the current one's rules, and never the same value. Its
+  // value is never printed.
+  const inboundPrevious = value(env, 'INBOUND_SECRET_PREVIOUS');
+  if (inboundPrevious !== undefined) {
+    secrets.push(secretProblem('INBOUND_SECRET_PREVIOUS', inboundPrevious, MIN_TOKEN_SECRET_LENGTH));
+    // The kernel refuses to start on either (config.ts).
+    if (value(env, 'INBOUND_SECRET') === undefined) secrets.push('INBOUND_SECRET_PREVIOUS is set without INBOUND_SECRET');
+    else if (inboundPrevious === value(env, 'INBOUND_SECRET')) secrets.push('INBOUND_SECRET_PREVIOUS is the same as INBOUND_SECRET');
+  }
   // Optional secrets: only a shipped sample value is wrong.
-  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'CREDENTIAL_KEY', 'CHANNEL_META_APP_SECRET', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
+  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
     if (name === 'INBOUND_SECRET' && value(env, 'INBOUND_DOMAIN')) continue;
     const secret = value(env, name);
     if (secret && (KNOWN_DEFAULTS.has(secret) || /change-?me/i.test(secret))) secrets.push(`${name} still has a sample value`);
+  }
+  // The credential keys (ADR-0025): a key that does not parse stops the API and the worker; the ids of those that do
+  // name what the worker opens, for the manual line below (#1888).
+  // Without CREDENTIAL_KEY the current key is the key file's, which the preflight does not read.
+  const credentialKeys: string[] = value(env, 'CREDENTIAL_KEY') ? [] : ['the key in CREDENTIAL_KEY_FILE (docker compose: /data/keys/credential.key on the keys volume)'];
+  for (const name of ['CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS']) {
+    const key = value(env, name);
+    // A sample value is failed above, as for every optional secret.
+    if (!key || KNOWN_DEFAULTS.has(key) || /change-?me/i.test(key)) continue;
+    try {
+      credentialKeys.push(`${name} (${parseVaultKey(key).id})`);
+    } catch {
+      secrets.push(`${name} is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)`);
+    }
   }
   add('Secrets', secrets, 'the database passwords, AUTH_JWT_SECRET and EXPORT_ENCRYPTION_KEY are set, and no secret is a shipped sample value');
 
@@ -194,6 +301,16 @@ export function checkEnv(env: Env): CheckResult[] {
   const stepUp = value(env, 'AUTH_STEP_UP');
   if (stepUp !== undefined && stepUp !== 'required') auth.push(`AUTH_STEP_UP=${stepUp}: approvals and member changes must need MFA; set AUTH_STEP_UP=required`);
   add('Email confirmation and MFA step-up', auth, 'AUTH_AUTOCONFIRM=false with an SMTP server, and AUTH_STEP_UP=required');
+
+  // Ads live launch (ADR-0043, #2296 W2-3): with ADS_LIVE_LAUNCH on the worker creates campaign objects at Meta (every one paused). That is for the owner's own live
+  // check, not for a deployment others reach, until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. The kernel's own
+  // config refuses it on a public PUBLIC_URL too, but this check reads the raw environment, so it says so itself.
+  const liveLaunch = value(env, 'ADS_LIVE_LAUNCH');
+  add(
+    'Ads live launch off',
+    liveLaunch === 'true' ? ['ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta and switch them on, which spends real money; it is for the owner\'s own live check only, until the live-check runbook is done and the owner has approved the production step list: set ADS_LIVE_LAUNCH=false'] : [],
+    'ADS_LIVE_LAUNCH is off (the default)',
+  );
 
   // Sign-up closed (the bundled Supabase Auth refuses new accounts, GOTRUE_DISABLE_SIGNUP), or limited by the kernel's
   // /auth/v1 proxy to invited emails or allowed domains (AUTH_SIGNUP_POLICY, #350).
@@ -224,7 +341,18 @@ export function checkEnv(env: Env): CheckResult[] {
   // The prober's own rules (a Telegram webhook needs the chat id, limits are whole numbers), once the URLs are sound.
   if (!alerts.some((p) => p !== null)) {
     try {
-      loadProberConfig({ ...env });
+      let prober = loadProberConfig({ ...env });
+      // The shared .env holds the worker's S3 key, which Compose never passes to the prober. A refusal over that key is the
+      // .env's, not the prober's: read the prober again as Compose runs it, without the key, so a prober with no key of its
+      // own and no opt-in to the default credential chain (#2098) is reported rather than hidden behind the worker's key.
+      // A prober key that is the worker's key is still reported (read with the worker's key in sight).
+      if (prober.archiveMarker && 'error' in prober.archiveMarker && prober.archiveMarker.workerKey) {
+        prober = loadProberConfig({ ...env, S3_ACCESS_KEY_ID: undefined, S3_SECRET_ACCESS_KEY: undefined });
+      }
+      // A setting the marker check cannot use disables only that check (#2094), so the load no longer throws: say so here.
+      if (prober.archiveMarker && 'error' in prober.archiveMarker) {
+        alerts.push(`the prober would not check the WORM verification marker: ${prober.archiveMarker.error} (docs/runbooks/worm-archive.md)`);
+      }
     } catch (error) {
       alerts.push(error instanceof Error ? error.message : String(error));
     }
@@ -268,6 +396,8 @@ export function checkEnv(env: Env): CheckResult[] {
     } catch {
       backups.push('BACKUP_ENCRYPTION_KEY is not 32 bytes as base64 or hex (openssl rand -base64 32)');
     }
+  } else if (publicDeployment) {
+    backups.push('BACKUP_ENCRYPTION_KEY is unset: whoever can read the backup bucket can read the books; set a key of its own, kept apart from the bucket (openssl rand -base64 32, docs/runbooks/backup-and-restore.md)');
   }
   const backupHeartbeat = value(env, 'BACKUP_HEARTBEAT_URL');
   if (backupHeartbeat) backups.push(secretUrlProblem('BACKUP_HEARTBEAT_URL', backupHeartbeat));
@@ -293,6 +423,96 @@ export function checkEnv(env: Env): CheckResult[] {
             message: 'PROBER_HEARTBEAT_URL is unset: nothing pages the owner when the prober itself stops or cannot deliver; set it (docs/runbooks/alerts.md) or accept that',
           },
         ]),
+    // The worker on the SDK's default credential chain (no S3_ACCESS_KEY_ID) and the prober opted in to the same chain
+    // (#2109): on one host that almost certainly means the prober runs under the worker's role, which writes the archive.
+    // Not beside a failure of those settings, nor when the prober has a pair of its own (both are reported on their own).
+    ...(!alerts.some((problem) => problem !== null) &&
+    value(env, 'ARCHIVE_STORE') === 's3' &&
+    value(env, 'S3_ACCESS_KEY_ID') === undefined &&
+    value(env, 'PROBER_ARCHIVE_S3_DEFAULT_CHAIN') === 'true' &&
+    value(env, 'PROBER_ARCHIVE_S3_ACCESS_KEY_ID') === undefined &&
+    value(env, 'PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY') === undefined
+      ? [
+          {
+            item: 'Alerts',
+            status: 'manual' as const,
+            message:
+              "ARCHIVE_STORE=s3 with no S3_ACCESS_KEY_ID (the worker reads and writes the archive on the SDK's default credential chain) and PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true: " +
+              "on one host the prober then runs under the worker's role, which writes. Confirm the prober's role only reads the archive bucket, or give it a read-only PROBER_ARCHIVE_S3_* key pair (docs/runbooks/worm-archive.md)",
+          },
+        ]
+      : []),
+    // Without json lines no log line names its request or org, so "the upload failed at 10:42" cannot be traced (#2175).
+    ...(publicDeployment && value(env, 'LOG_FORMAT') !== 'json'
+      ? [
+          {
+            item: 'Logs',
+            status: 'manual' as const,
+            message:
+              'LOG_FORMAT is not json: set LOG_FORMAT=json so every log line is one JSON object with its request id (the x-request-id answer header) and org id, then find a request with docker compose logs api | grep <request id> (docs/runbooks/observability.md)',
+          },
+        ]
+      : []),
+    // A rotation of the inbound secret left half done keeps the old value working (#1214).
+    ...(inboundPrevious === undefined
+      ? []
+      : [
+          {
+            item: 'Secrets',
+            status: 'manual' as const,
+            message:
+              'INBOUND_SECRET_PREVIOUS is set: an inbound secret rotation is under way and the old value is still accepted; once the mail worker sends the new INBOUND_SECRET, remove it and restart (docs/runbooks/secret-rotation.md, section 2)',
+          },
+        ]),
+    // A rotation of the Zalo OA secret key left half done: the previous key is still accepted, and a leaked one must never be (#2348).
+    ...(value(env, 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS')
+      ? [
+          {
+            item: 'Zalo OA key rotation',
+            status: 'manual' as const,
+            message:
+              'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is set, so notices signed with the old key are still accepted: remove it and restart once the rotation is done (minutes after Zalo starts signing with the new key); never put a leaked key there (docs/runbooks/zalo-conversations-live-check.md, section 0)',
+          },
+        ]
+      : []),
+    // A rotation of the Meta app secret left half done: the previous secret is still accepted for Page webhook signatures (#2307).
+    ...(value(env, 'CHANNEL_META_APP_SECRET_PREVIOUS')
+      ? [
+          {
+            item: 'Meta app secret rotation',
+            status: 'manual' as const,
+            message:
+              'CHANNEL_META_APP_SECRET_PREVIOUS is set, so Page webhook notices signed with the old secret are still accepted: remove it and restart once the rotation is done; never put a leaked secret there (docs/runbooks/facebook-conversations-live-check.md)',
+          },
+        ]
+      : []),
+    // Envelopes under a key the worker cannot open (#1888): only the worker sees the database's key ids, so it logs them.
+    {
+      item: 'Credential key',
+      status: 'manual',
+      message:
+        `the worker opens tokens and subject keys sealed under ${credentialKeys.length > 0 ? credentialKeys.join(' and ') : 'no valid key (see Secrets)'}; ` +
+        'confirm its log since its last start has no "[credential-reseal] ERROR sealed under a key this worker cannot open" and no "[subject-key-reseal] ERROR" line (docker compose logs worker | grep "cannot open"; ' +
+        'the crove service in the all-in-one layout): the key was lost, or CREDENTIAL_KEY_PREVIOUS removed before every channel token and team chat target was resealed (docs/runbooks/credential-key.md)',
+    },
+    ...(publicDeployment
+      ? [
+          {
+            item: 'Roles',
+            status: 'manual' as const,
+            message: 'confirm docker compose ps lists api and worker and no crove service, and that the API container has no WORKER_DATABASE_URL (docker compose exec api printenv | cut -d= -f1 | grep -c WORKER_DATABASE_URL prints 0)',
+          },
+        ]
+      : []),
+    // WAL archiving (#2120) runs in the database container: the preflight cannot see whether `wal.sh setup` was run, only
+    // whether the stack lists the overlay that makes it possible.
+    {
+      item: 'WAL archiving',
+      status: 'manual',
+      message: /(?:^|[:;/\\,])compose\.wal\.yml(?:$|[:;,])/.test(value(env, 'COMPOSE_FILE') ?? '')
+        ? 'confirm tools/backup/wal.sh info lists a full base backup and a WAL range up to a few minutes ago, and the prober runs (it alerts as wal_archive when segments stop reaching the bucket; docs/runbooks/backup-and-restore.md, "Point in time recovery")'
+        : 'COMPOSE_FILE does not list tools/backup/compose.wal.yml: the database archives no WAL, so a restore goes back to last night\'s backup and up to 24 hours of data can be lost; set it up before real data arrives (docs/runbooks/backup-and-restore.md, "Point in time recovery")',
+    },
     {
       item: 'Extraction sandbox',
       status: 'manual',
@@ -301,9 +521,9 @@ export function checkEnv(env: Env): CheckResult[] {
     {
       item: 'RLS matrix',
       status: 'manual',
-      message: 'confirm the CI db job and the invariant suite (rls-matrix.db.test.ts, T8) are green on the commit you deploy',
+      message: `${RLS_MANUAL} (with --url, pilot-check reads them from GitHub)`,
     },
-    ...(backupKey
+    ...(backupKey || publicDeployment
       ? []
       : [
           {
@@ -326,8 +546,9 @@ export function checkEnv(env: Env): CheckResult[] {
       status: 'manual',
       message: 'confirm a restore onto a scratch stack passed this month (restore.sh ends with "restore of <run> passed") and note the RPO and RTO it shows (docs/runbooks/backup-and-restore.md)',
     },
-    // Evidence holds (#1009): the worker can hold posted invoice files only on an S3 bucket with Object Lock, which
-    // nothing here can see; without it, it logs one ALERT a day and posting goes on.
+    // Evidence holds (#1009): the worker can hold posted invoice files only on an S3 bucket with Object Lock; without
+    // it, it logs one ALERT a day and posting goes on. runPilotCheck replaces this line with the bucket's answer when
+    // holds are on (probeEvidenceHolds, #1996).
     {
       item: 'Evidence holds',
       status: 'manual',
@@ -363,6 +584,38 @@ function reason(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+const CORS_STRANGER = 'https://not-the-app.invalid';
+
+/**
+ * The CORS answer of a split deployment (#2261), asked as a browser would: a preflight from the web app's origin gets that
+ * origin back and no wildcard, one from another origin gets no CORS header. Run with --url on the API.
+ */
+export async function probeCors(origin: string, appOrigin: string, fetchFn: Fetch = fetch): Promise<CheckResult> {
+  const item = 'Split app and API';
+  const init = (from: string): RequestInit => ({
+    method: 'OPTIONS',
+    redirect: 'manual',
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    headers: { origin: from, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type,x-crove-org' },
+  });
+  try {
+    const app = await fetchFn(`${origin}/api/rpc`, init(appOrigin));
+    const given = app.headers.get('access-control-allow-origin');
+    if (given !== appOrigin) return { item, status: 'fail', message: `a preflight from ${appOrigin} to ${origin}/api/rpc got Access-Control-Allow-Origin ${given === null ? 'none' : given} (status ${app.status}): the app cannot call the API; check CORS_ALLOWED_ORIGINS and what sits in front of the API` };
+    // A browser also needs a 2xx preflight that allows the headers the app sends.
+    const allowed = (app.headers.get('access-control-allow-headers') ?? '').toLowerCase().split(',').map((h) => h.trim());
+    const missing = ['authorization', 'content-type', ORG_HEADER].filter((h) => !allowed.includes(h));
+    if (!app.ok || missing.length > 0) {
+      return { item, status: 'fail', message: `the preflight from ${appOrigin} to ${origin}/api/rpc answered ${app.status}${missing.length > 0 ? ` and does not allow the header(s) ${missing.join(', ')}` : ''}: browsers block the app's calls; check what sits in front of the API` };
+    }
+    const stranger = await fetchFn(`${origin}/api/rpc`, init(CORS_STRANGER));
+    if (stranger.headers.get('access-control-allow-origin') !== null) return { item, status: 'fail', message: `a preflight from ${CORS_STRANGER} got an Access-Control-Allow-Origin header: the API answers CORS for an origin off the list; allow only ${appOrigin}` };
+    return { item, status: 'pass', message: `${origin} answers CORS for ${appOrigin} only` };
+  } catch (error) {
+    return { item, status: 'fail', message: `the CORS probe of ${origin} failed: ${reason(error)}` };
+  }
 }
 
 /** Probes the running deployment at `origin`: TLS, no plain-http service, a sign-up nobody may make, and email confirmation. */
@@ -515,11 +768,167 @@ export function formatResults(unordered: readonly CheckResult[]): string {
   return lines.join('\n');
 }
 
+// The source repository whose CI ran the commit a deployment reports (#1995): DOS/Ludy unless CROVE_SOURCE_REPO names a
+// fork, as owner/name.
+export const DEFAULT_SOURCE_REPO = 'DOS/Ludy';
+// The checks of the ci workflow that hold the RLS matrix and the rest of the database tests (T8), and the gate that
+// gathers them with lint, typecheck and the unit tests; on main they run on every push.
+const DATABASE_CHECKS = /^Database tests\b/;
+const GATE_CHECK = 'Lint, typecheck, test';
+const RLS_MANUAL = 'confirm the CI db job and the invariant suite (rls-matrix.db.test.ts, T8) are green on the commit you deploy';
+
+interface CheckRun {
+  name: string;
+  status: string;
+  conclusion: string | null;
+}
+
+/**
+ * Whether CI passed on the build the deployment runs (#1995): the commit /version reports, the ci workflow's database
+ * tests (the RLS matrix among them) and its gate, read from GitHub's API for the source repository. PASS when all
+ * finished green, FAIL naming the ones that did not, MANUAL when it cannot tell (no build id, a commit GitHub does not
+ * know, checks still running, the API out of reach): the person checks by hand, as before. GITHUB_TOKEN, when set,
+ * raises the API's rate limit; a public repository needs none.
+ */
+export async function probeBuildChecks(origin: string, env: Env, fetchFn: Fetch = fetch): Promise<CheckResult> {
+  const manual = (why: string): CheckResult => ({ item: 'RLS matrix', status: 'manual', message: `${why}: ${RLS_MANUAL}` });
+  const init = (extra: RequestInit = {}): RequestInit => ({ signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), ...extra });
+  const repo = value(env, 'CROVE_SOURCE_REPO') ?? DEFAULT_SOURCE_REPO;
+  if (!/^(?!\.{1,2}\/)[A-Za-z0-9_.-]{1,100}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/.test(repo)) return { item: 'RLS matrix', status: 'fail', message: `CROVE_SOURCE_REPO is owner/name of a GitHub repository, not ${repo}` };
+  let build: string;
+  try {
+    // A 503 (the database is down) still names the build. What the instance answers is never printed: only a commit id
+    // that matches is used.
+    const response = await fetchFn(`${origin}/version`, init({ redirect: 'error' }));
+    const answer = (await response.json().catch(() => ({}))) as { build?: unknown };
+    if (typeof answer.build !== 'string' || !/^[0-9a-f]{40}$/.test(answer.build)) {
+      return manual(response.ok ? 'the instance reports no commit id as its build (a local build)' : `${origin}/version answered ${response.status} without a commit id`);
+    }
+    build = answer.build;
+  } catch (error) {
+    return manual(`${origin}/version failed: ${reason(error)}`);
+  }
+  const short = build.slice(0, 12);
+  const token = value(env, 'GITHUB_TOKEN');
+  let runs: CheckRun[];
+  try {
+    const response = await fetchFn(
+      `https://api.github.com/repos/${repo}/commits/${build}/check-runs?per_page=100`,
+      init({ redirect: 'error', headers: { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', ...(token ? { authorization: `Bearer ${token}` } : {}) } }),
+    );
+    if (!response.ok) {
+      const limited = response.status === 429 || (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0');
+      return manual(`GitHub answered ${response.status} for the checks of ${repo}@${short}${limited ? ' (rate limited: export GITHUB_TOKEN and run again)' : ''}`);
+    }
+    const page = (await response.json()) as { total_count?: number; check_runs?: CheckRun[] };
+    runs = page.check_runs ?? [];
+    if (typeof page.total_count === 'number' && page.total_count > runs.length) {
+      return manual(`${repo}@${short} has ${page.total_count} checks, more than one page of GitHub's answer`);
+    }
+  } catch (error) {
+    return manual(`could not read the checks of ${repo}@${short} from GitHub: ${reason(error)}`);
+  }
+  const wanted = runs.filter((r) => DATABASE_CHECKS.test(r.name) || r.name === GATE_CHECK);
+  if (!wanted.some((r) => r.name === GATE_CHECK) || !wanted.some((r) => DATABASE_CHECKS.test(r.name))) {
+    return manual(`${repo}@${short} has no ${GATE_CHECK} or database-test check (a commit CI never ran)`);
+  }
+  const failed = wanted.filter((r) => r.status === 'completed' && r.conclusion !== 'success').map((r) => `${r.name} (${r.conclusion ?? 'no conclusion'})`);
+  if (failed.length > 0) return { item: 'RLS matrix', status: 'fail', message: `CI did not pass on the deployed build ${repo}@${short}: ${[...new Set(failed)].sort().join(', ')}` };
+  if (wanted.some((r) => r.status !== 'completed')) return manual(`CI is still running on the deployed build ${repo}@${short}`);
+  return { item: 'RLS matrix', status: 'pass', message: `CI passed on the deployed build ${repo}@${short}: ${[...new Set(wanted.map((r) => r.name))].sort().join(', ')}` };
+}
+
+// Whether the files bucket can hold objects (#1996): its Object Lock, read the way the worker reads it before it sets a
+// retention hold (S3BlobStore's holds.available). True or false; throws when the bucket does not answer.
+export type ObjectLockProbe = (env: Env) => Promise<boolean>;
+
+// With a client, that client is asked instead of one built from the settings (tests); connect also tells GCS, which has
+// no Object Lock API, from S3.
+export function objectLockProbe(client?: S3Sender): ObjectLockProbe {
+  return async (env) => {
+    const options = {
+      bucket: value(env, 'S3_BUCKET') ?? '',
+      region: value(env, 'S3_REGION') ?? 'us-east-1',
+      endpoint: value(env, 'S3_ENDPOINT'),
+      accessKeyId: value(env, 'S3_ACCESS_KEY_ID'),
+      secretAccessKey: value(env, 'S3_SECRET_ACCESS_KEY'),
+      forcePathStyle: value(env, 'S3_FORCE_PATH_STYLE') === 'true',
+      presign: false,
+    };
+    const store = client ? new S3BlobStore(client, options.bucket) : S3BlobStore.connect(options);
+    return store.holds.available();
+  };
+}
+
+export const filesBucketObjectLock: ObjectLockProbe = objectLockProbe();
+
+type S3Failure = { name?: unknown; code?: unknown; cause?: { code?: unknown }; $metadata?: { httpStatusCode?: unknown } };
+
+// The name of an S3 error with its HTTP status, or the system code of a network one (ENOTFOUND), never its message
+// (which may quote the request).
+function s3Reason(error: unknown): string {
+  const failure = (error ?? {}) as S3Failure;
+  const status = failure.$metadata?.httpStatusCode;
+  const code = typeof failure.code === 'string' ? failure.code : failure.cause?.code;
+  const detail = typeof status === 'number' ? ` (${status})` : typeof code === 'string' ? ` (${code})` : '';
+  return `${typeof failure.name === 'string' ? failure.name : 'error'}${detail}`;
+}
+
+// A refused call: the keys lack the permission, rather than the bucket being out of reach.
+function s3Refused(error: unknown): boolean {
+  const failure = (error ?? {}) as S3Failure;
+  return failure.$metadata?.httpStatusCode === 403 || failure.name === 'AccessDenied';
+}
+
+/**
+ * The evidence holds item (#1996) when posted invoice files should get a retention hold (STORAGE=s3, EVIDENCE_LOCK_DAYS
+ * above 0): PASS when the files bucket has Object Lock enabled, FAIL when it has not (the worker would hold nothing),
+ * MANUAL when the bucket does not answer (keys without s3:GetBucketObjectLockConfiguration, the bucket out of reach).
+ * Null otherwise: the manual line of checkEnv stands. Nothing is written to the bucket.
+ */
+export async function probeEvidenceHolds(env: Env, probe: ObjectLockProbe = filesBucketObjectLock): Promise<CheckResult | null> {
+  if (value(env, 'STORAGE') !== 's3' || !(Number(value(env, 'EVIDENCE_LOCK_DAYS') ?? '3650') > 0)) return null;
+  const bucket = value(env, 'S3_BUCKET');
+  if (!bucket) return null;
+  let enabled: boolean;
+  try {
+    enabled = await Promise.race([
+      probe(env),
+      new Promise<never>((_, reject) => setTimeout(() => reject(Object.assign(new Error('no answer'), { name: 'Timeout' })), PROBE_TIMEOUT_MS).unref()),
+    ]);
+  } catch (error) {
+    return {
+      item: 'Evidence holds',
+      status: 'manual',
+      message:
+        `could not read the Object Lock of the files bucket ${bucket} (${s3Reason(error)}` +
+        `${s3Refused(error) ? '; the keys need s3:GetBucketObjectLockConfiguration on it' : ''}): ` +
+        'confirm the files bucket has Object Lock enabled and the worker log shows no "[evidence-hold] ALERT" (docs/runbooks/evidence-holds.md)',
+    };
+  }
+  return enabled
+    ? {
+        item: 'Evidence holds',
+        status: 'pass',
+        message:
+          `the files bucket ${bucket} has Object Lock enabled, so the worker can hold posted invoice files; ` +
+          'a hold that fails (keys without s3:PutObjectRetention) logs "[evidence-hold] ALERT", posted to ALERT_WEBHOOK_URL when set',
+      }
+    : {
+        item: 'Evidence holds',
+        status: 'fail',
+        message:
+          `the files bucket ${bucket} has no Object Lock: posted invoice files would get no retention hold; ` +
+          'enable Object Lock on it, or keep evidence another way (a GCS retention policy, an R2 bucket lock) and set EVIDENCE_LOCK_DAYS=0 (docs/runbooks/evidence-holds.md)',
+      };
+}
+
 export async function runPilotCheck(
   argv: readonly string[],
   env: Env = process.env,
   fetchFn: Fetch = fetch,
   print: (line: string) => void = console.log,
+  objectLock: ObjectLockProbe = filesBucketObjectLock,
 ): Promise<number> {
   let args: PilotArgs;
   try {
@@ -528,8 +937,18 @@ export async function runPilotCheck(
     print(`[pilot-check] ${error instanceof Error ? error.message : String(error)}`);
     return PILOT_EXIT.error;
   }
-  const results = checkEnv(env);
-  if (args.url) results.push(...(await probeDeployment(args.url, fetchFn)));
+  let results = checkEnv(env);
+  // The files bucket's Object Lock (#1996) replaces the manual evidence holds line when holds are on.
+  const holds = await probeEvidenceHolds(env, objectLock);
+  if (holds) results = [...results.filter((r) => !(r.item === 'Evidence holds' && r.status === 'manual')), holds];
+  if (args.url) {
+    results.push(...(await probeDeployment(args.url, fetchFn)));
+    const appUrl = value(env, 'APP_URL');
+    if (appUrl !== undefined && URL.canParse(appUrl) && new URL(appUrl).origin !== new URL(args.url).origin) results.push(await probeCors(args.url, new URL(appUrl).origin, fetchFn));
+    // The CI of the deployed build (#1995) replaces the manual RLS matrix line.
+    const ci = await probeBuildChecks(args.url, env, fetchFn);
+    results = [...results.filter((r) => !(r.item === 'RLS matrix' && r.status === 'manual')), ci];
+  }
   print(formatResults(results));
   return results.some((r) => r.status === 'fail') ? PILOT_EXIT.failed : PILOT_EXIT.ok;
 }

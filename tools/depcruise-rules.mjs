@@ -57,13 +57,6 @@ export function checkModuleGraph(modules) {
 export const EXCEPTIONS = [
   {
     rule: 'domain-pure',
-    from: ['modules/finance/src/domain/portal-api.ts'],
-    to: '^packages/kernel-runtime/src/',
-    reason:
-      "normalizePortalInvoices throws the runtime's DomainError (PORTAL_LIST_TOO_LARGE, 422) so the portal sync answers with that status and message, and readSyncedList catches it by class. DomainError lives in the command runtime, a protected path; moving it to an isomorphic package is #1680.",
-  },
-  {
-    rule: 'domain-pure',
     from: ['modules/social/src/domain/publish.ts'],
     to: '^packages/channel/src/',
     reason:
@@ -73,17 +66,27 @@ export const EXCEPTIONS = [
     rule: 'no-deep-import',
     from: [
       'apps/kernel/test/archive.db.test.ts',
+      'apps/kernel/test/bank-statement-file.test.ts',
       'apps/kernel/test/finance-late-invoice.db.test.ts',
+      'apps/kernel/test/finance-marketplace.db.test.ts',
       'apps/kernel/test/finance-missing-invoices.db.test.ts',
       'apps/kernel/test/finance-portal-list.db.test.ts',
       'apps/kernel/test/http.test.ts',
       'apps/kernel/test/portal-sync.db.test.ts',
       'apps/kernel/test/tax-portal.test.ts',
       'e2e/tests/bulk-intake.spec.ts',
+      'e2e/tests/marketplace-orders.spec.ts',
     ],
     to: '^(apps/extract/test/(zip|xlsx)-fixture\\.ts|e2e/fake-tax-portal/server\\.ts)$',
     reason:
       'Test fixtures shared by the tests of several packages: the zip and xlsx builders of apps/extract and the fake tax portal of e2e. Test code that never ships; copies would drift.',
+  },
+  {
+    rule: 'no-deep-import',
+    from: ['apps/kernel/test/bank-statement-file.test.ts'],
+    to: '^apps/extract/test/statement-fixture\\.ts$',
+    reason:
+      '#2142: the worker test reads the same made-up bank statement (xlsx and CSV) through the real sandbox that the sandbox\'s own test reads, so the two cannot drift. Test code that never ships; this one file pair only.',
   },
   {
     rule: 'no-deep-import',

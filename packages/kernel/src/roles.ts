@@ -14,7 +14,7 @@ import { BUILTIN_ROLE_KEYS, zId, zRoleAssignInput, type BuiltinRoleKey, type Mem
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { lastChiefAccountant } from './approval.ts';
-import { positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';
+import { lockChartChanges, positionsHeldBy, rerouteStrandedTasks } from './task-reroute.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -27,6 +27,7 @@ export const ROLE_LABELS: Record<BuiltinRoleKey, string> = {
   'desk.agent': 'Nhân viên chăm sóc khách hàng',
   'hr.manager': 'Quản lý nhân sự',
   external_accountant: 'Kế toán thuê ngoài',
+  'finance.entity_chief_accountant': 'Kế toán trưởng pháp nhân',
 };
 
 const isBuiltin = (key: string): key is BuiltinRoleKey => (BUILTIN_ROLE_KEYS as readonly string[]).includes(key);
@@ -97,6 +98,8 @@ export async function myPermissions(ctx: QueryContext): Promise<string[]> {
 async function lockForRoleChange(ctx: CommandContext, targetId: string): Promise<{ actorId: string; role: MemberRole }> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới giao được vai trò');
   const actorId = ctx.actor.userId;
+  // Before the members' locks: both callers re-route (#1858).
+  await lockChartChanges(ctx);
   const rows = await ctx.trx
     .selectFrom('crove_kernel.tenant_member')
     .select(['user_id', 'role'])
@@ -119,7 +122,7 @@ interface PgError {
 }
 
 // The refusals of role_assignment_grant() and role_assignment_revoke() (P0001, the code as message) as domain errors.
-function roleRefusal(error: unknown): never {
+export function roleRefusal(error: unknown): never {
   const pg = error as PgError;
   if (pg?.code === 'P0001') {
     switch (pg.message) {

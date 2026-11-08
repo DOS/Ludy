@@ -27,11 +27,18 @@ const CONTROL_PLANE: ModuleManifest = {
     crove_kernel: {
       auth_email_send: columns(['id', 'client_hash', 'target_hash', 'reserved_at']),
       auth_session: columns(['user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason', 'evidence_at']),
+      // The keys of the blobs of deleted images (#2357), emptied by the worker once each object is gone: no tenant column, no personal data.
+      conversation_blob_doomed: columns(['storage_key', 'queued_at', 'not_before', 'claimed_until', 'attempts']),
+      conversation_deletion_request: columns(['code', 'requested_at', 'completed_at', 'connections', 'sibling_codes', 'next_attempt_at'], { user_hash: 'sensitive' }),
+      conversation_inbound_pending: columns(['seq', 'provider', 'received_at', 'claimed_until', 'attempts'], { body: 'pii' }),
+      // The Ludy extension's one-time codes and tokens (#2582): only SHA-256 hashes of secrets, a PKCE challenge, scopes and a device label.
+      extension_auth_code: columns(['org_id', 'id', 'user_id', 'code_challenge_method', 'scopes', 'device_name', 'created_at', 'expires_at', 'consumed_at', 'failed_attempts'], { code_hash: 'sensitive', code_challenge: 'sensitive' }),
+      extension_token: columns(['org_id', 'id', 'user_id', 'device_name', 'scopes', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by'], { token_hash: 'sensitive' }),
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
-      inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at'], { token: 'sensitive' }),
+      inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at', 'kind'], { token: 'sensitive' }),
       inbound_pending: columns(['seq', 'blob_id', 'raw_sha256', 'size_bytes', 'received_at'], { recipient: 'sensitive' }),
       stream_ticket: columns(['ticket_hash', 'user_id', 'stream_org_id', 'session_id', 'aal', 'mfa_at', 'token_expires_at', 'expires_at', 'created_at']),
-      user_account: columns(['id', 'issuer', 'created_at', 'last_seen_at', 'disabled_at'], { subject: 'pii', email: 'contact', display_name: 'pii' }),
+      user_account: columns(['id', 'issuer', 'created_at', 'last_seen_at', 'disabled_at'], { subject: 'pii', email: 'contact', display_name: 'pii', status_reason: 'pii' }),
     },
   },
   permissions: [],
@@ -56,6 +63,10 @@ const CLASS_OF_KIND: Record<PersonalDataKind, readonly DataClass[]> = {
   email_list: ['contact'],
   name: ['pii'],
   tax_code: ['national_id', 'national_id_if_individual'],
+  // Free text a person wrote (a note's body, #1678), which may name or describe anyone.
+  free_text: ['pii'],
+  // A bank account number (#2402).
+  account_number: ['payment'],
   other: ['pii', 'contact', 'payment', 'national_id', 'national_id_if_individual', 'sensitive'],
 };
 const PERSONAL_HANDLINGS: readonly PersonalDataHandling[] = ['erase', 'keep_legal', 'keep_record'];
@@ -237,8 +248,9 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
     expect(problems).toEqual([]);
     // Every function and policy names its permissions in a form the scan attributes (#1641).
     expect(sqlProblems, 'database functions or policies that name a permission the manifest check cannot read').toEqual([]);
-    // The database names both permissions on main: unlock_period() and the accountant preset's chief accountant guard.
-    expect([...new Set(sqlUses.map((u) => u.permission))].sort()).toEqual(['finance.period.unlock', 'finance.proposal.approve']);
+    // The database names four permissions on main: unlock_period(), the accountant preset's chief accountant guard,
+    // vat_return_filed_guard (#1508) and the conversation core's read of private messages (#2303).
+    expect([...new Set(sqlUses.map((u) => u.permission))].sort()).toEqual(['finance.period.unlock', 'finance.proposal.approve', 'finance.vat.file', 'kernel.conversation.direct.read']);
     expect(grants.length).toBeGreaterThan(0);
     expect(
       permissionProblems(MANIFESTS, { uses: [...uses, ...sqlUses], grants }),

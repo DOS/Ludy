@@ -143,8 +143,8 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
   });
 
   it('applies migrations to every schema, whatever CROVE_MODULES says', async () => {
-    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('crove_kernel', 'crove_finance', 'crove_crm')");
-    expect(schemas.map((s) => s.nspname).sort()).toEqual(['crove_crm', 'crove_finance', 'crove_kernel']);
+    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('crove_kernel', 'crove_finance', 'crove_crm', 'crove_ads')");
+    expect(schemas.map((s) => s.nspname).sort()).toEqual(['crove_ads', 'crove_crm', 'crove_finance', 'crove_kernel']);
   });
 
   it('registers only the enabled modules', () => {
@@ -159,11 +159,19 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     expect(all.commands.map((c) => c.name)).toContain('crm.event_type.create');
     const crmOnly = moduleDefinitions(configFor('crm'));
     expect([...new Set([...crmOnly.commands, ...crmOnly.queries].map((d) => d.name.split('.')[0]))].sort()).toEqual(['crm', 'kernel']);
+    // CRM slice 1 (#2223): deals, the pipeline, the contacts and the contact import ride with the crm module alone.
+    const crmNames = [...crmOnly.commands, ...crmOnly.queries].map((d) => d.name);
+    for (const name of ['crm.deal.create', 'crm.deal.move', 'crm.deal.board', 'crm.stage.add', 'crm.contact.list', 'crm.import.stage', 'crm.import.commit', 'crm.import.expire']) expect(crmNames, name).toContain(name);
     // And the notes module (#1671).
     expect(all.commands.map((c) => c.name)).toContain('notes.note.create');
     const notesOnly = moduleDefinitions(configFor('notes'));
     expect([...new Set([...notesOnly.commands, ...notesOnly.queries].map((d) => d.name.split('.')[0]))].sort()).toEqual(['kernel', 'notes']);
     expect(names.filter((name) => name.startsWith('notes.'))).toEqual([]);
+    // And the ads module (#2217): nothing of it without it, and it alone brings only the kernel along.
+    expect(all.commands.map((c) => c.name)).toContain('ads.account.link');
+    const adsOnly = moduleDefinitions(configFor('ads'));
+    expect([...new Set([...adsOnly.commands, ...adsOnly.queries].map((d) => d.name.split('.')[0]))].sort()).toEqual(['ads', 'kernel']);
+    expect(names.filter((name) => name.startsWith('ads.'))).toEqual([]);
   });
 
   it('answers COMMAND_NOT_FOUND for a disabled module and not_installed for a lookup into it', async () => {
@@ -193,6 +201,27 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     expect(ok.status === 'ok' && Array.isArray(ok.value)).toBe(true);
   });
 
+  // The CRM's screens joined the Engage app (#2435): the shell changed, not the modules. The accounting reads its customers and vendors from the kernel's
+  // parties through finance's own queries, so they answer the same with the crm module off and on, and a contact the crm module made is a party like any other.
+  it("answers the accounting's customer and vendor reads the same with the crm module off and on (#2435)", async () => {
+    const actor = asUser(owner);
+    const every = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes'];
+    const answers: unknown[] = [];
+    for (const enabled of [['kernel', 'finance'], ['kernel', 'finance', 'crm']]) {
+      const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, absentModules: every.filter((m) => !enabled.includes(m)) }).register(moduleDefinitions(configFor(enabled.join(','))));
+      expect(runtime.installed('crm'), enabled.join()).toBe(enabled.includes('crm'));
+      expect(runtime.installed('finance'), enabled.join()).toBe(true);
+      const customers = await runtime.query<{ items: unknown[] }>('finance.customers.list', {}, { actor, orgId });
+      const vendors = await runtime.query<unknown[]>('finance.vendors.list', {}, { actor, orgId });
+      const everyone = await runtime.query<unknown[]>('finance.vendors.list', { all: true }, { actor, orgId });
+      expect(Array.isArray(customers.items), enabled.join()).toBe(true);
+      expect(Array.isArray(vendors), enabled.join()).toBe(true);
+      expect(Array.isArray(everyone), enabled.join()).toBe(true);
+      answers.push([customers.items.length, vendors.length, everyone.length]);
+    }
+    expect(answers[0]).toEqual(answers[1]);
+  });
+
   it('boots with only kernel: no finance route or job, kernel flows still work', { timeout: 90_000 }, async () => {
     const port = await freePort();
     const config = configFor('kernel', port);
@@ -208,7 +237,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage });
     expect(kernel.modules).toEqual(['kernel']);
     // As an earlier run with finance and notes left them (#1471): their cron schedules, and a tick each queued.
-    const crons = [QUEUES.periodBalanceVerify, QUEUES.notesTrash, QUEUES.notesRemind];
+    const crons = [QUEUES.periodBalanceVerify, QUEUES.crmImportExpire, QUEUES.crmDealStale, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
     for (const queue of crons) {
       await adminQuery("INSERT INTO crove_jobs.schedule (name, cron) VALUES ($1, '0 3 * * *') ON CONFLICT DO NOTHING", [queue]);
       await adminQuery('INSERT INTO crove_jobs.job (name) VALUES ($1)', [queue]);
@@ -228,7 +257,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       expect(await (await fetch(`${origin}/api/config`)).json()).toMatchObject({ modules: ['kernel'] });
 
       // Finance routes are not registered.
-      for (const file of ['journal.xlsx', 'misa/purchases.xlsx', 'misa/receipts.xlsx', 'misa/payments.xlsx', 'vat.xlsx?period=2026-09', 'ledger.xlsx?period=2026-09', 'statements.xlsx?period=2026-09', 'fixed-assets.xlsx', 'statements-htkk.xml?year=2026']) {
+      for (const file of ['journal.xlsx', 'misa/purchases.xlsx', 'misa/receipts.xlsx', 'misa/payments.xlsx', 'misa/bank-receipts.xlsx', 'misa/bank-payments.xlsx', 'vat.xlsx?period=2026-09', 'ledger.xlsx?period=2026-09', 'statements.xlsx?period=2026-09', 'fixed-assets.xlsx', 'statements-htkk.xml?year=2026']) {
         const exported = await fetch(`${origin}/api/export/${file}`, { headers });
         expect(exported.status, file).toBe(404);
         expect(await exported.json()).toEqual({ code: 'NOT_FOUND' });
@@ -240,8 +269,17 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       for (const [path, input] of [['crm/eventTypes/list', {}], ['crm/eventTypes/setActive', { eventTypeId: randomUUID(), active: false }]] as const) {
         expect((await rpc(path, input)).status, path).toBe(404);
       }
+      // Nor are its deals, pipeline, contacts and contact import (#2223).
+      for (const [path, input] of [['crm/pipeline/stages', {}], ['crm/deals/board', {}], ['crm/deals/list', {}], ['crm/contacts/list', {}], ['crm/contactImport/preview', { batchId: randomUUID() }]] as const) {
+        expect((await rpc(path, input)).status, path).toBe(404);
+      }
       // Nor are the notes module's (#1671): nothing of it loads.
       for (const [path, input] of [['notes/list', { view: 'mine' }], ['notes/create', { title: 'Ghi chú' }], ['notes/privateCounts', {}]] as const) {
+        expect((await rpc(path, input)).status, path).toBe(404);
+      }
+
+      // Nor are the ads module's (#2217): no screen data, no sandbox link.
+      for (const [path, input] of [['ads/accounts', {}], ['ads/summary', { adAccountId: randomUUID(), from: '2026-09-01', to: '2026-09-30' }], ['ads/syncRuns', { adAccountId: randomUUID() }], ['ads/connectSandbox', { displayName: 'Quảng cáo', idempotencyKey: randomUUID() }]] as const) {
         expect((await rpc(path, input)).status, path).toBe(404);
       }
 
@@ -273,6 +311,61 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       expect(scheduled?.n).toBe('0');
       const [ticks] = await adminQuery<{ n: string }>("SELECT count(*)::text AS n FROM crove_jobs.job WHERE name = ANY ($1) AND state = 'created'", [crons]);
       expect(ticks?.n).toBe('0');
+    } finally {
+      await stop();
+    }
+  });
+
+  it('boots with kernel and crm alone: the pipeline, a contact import and a deal work, no finance route, the import sweep is scheduled', { timeout: 120_000 }, async () => {
+    const port = await freePort();
+    const config = configFor('crm', port);
+    const identity: IdentityPort = {
+      sessions: { mode: 'off', liveCheckForR3: false, check: async () => {} },
+      revoker: null,
+      authenticator: () => async () => {
+        const user: AuthUser = { userId: owner, email: 'modules-owner@example.com', name: null, aal: 'aal1', sessionId: SESSION, mfaAt: null };
+        return user;
+      },
+    };
+    const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage: new MemoryStore() });
+    expect(kernel.modules).toEqual(['kernel', 'crm']);
+    const stop = await kernel.start('all');
+    try {
+      const origin = `http://127.0.0.1:${port}`;
+      const rpc = async <T>(path: string, input: unknown = {}): Promise<{ status: number; body: T }> => {
+        const res = await fetch(`${origin}/api/rpc/${path}`, {
+          method: 'POST',
+          headers: { authorization: 'Bearer fake-token', [ORG_HEADER]: slug, 'content-type': 'application/json' },
+          body: JSON.stringify({ json: input }),
+        });
+        return { status: res.status, body: ((await res.json()) as { json: T }).json };
+      };
+      expect(await (await fetch(`${origin}/api/config`)).json()).toMatchObject({ modules: ['crm', 'kernel'] });
+      // Finance is not there.
+      expect((await rpc('journal/list')).status).toBe(404);
+      // The pipeline: set up once, six stages.
+      const stages = await rpc<{ id: string; name: string; kind: string }[]>('crm/pipeline/setup');
+      expect(stages.status).toBe(200);
+      expect(stages.body.map((s) => s.name)).toEqual(['Mới', 'Đã liên hệ', 'Báo giá', 'Thương lượng', 'Thắng', 'Thua']);
+      // A contact import: stage, then commit; the party exists.
+      const row = { kind: null, name: 'Công ty Một Mình', taxCode: null, email: 'mot@khach.test', phone: null, address: null };
+      const staged = await rpc<{ batch: { id: string; newRows: number } }>('crm/contactImport/stage', { filename: 'lien-he.csv', rows: [row] });
+      expect(staged.status).toBe(200);
+      expect(staged.body.batch.newRows).toBe(1);
+      const done = await rpc<{ batch: { createdRows: number } }>('crm/contactImport/commit', { batchId: staged.body.batch.id, onDuplicate: 'skip' });
+      expect(done.body.batch.createdRows).toBe(1);
+      const found = await rpc<{ id: string; name: string }[]>('crm/parties/search', { q: 'Một Mình' });
+      expect(found.body.map((p) => p.name)).toEqual(['Công ty Một Mình']);
+      // A deal for it, on the board.
+      const deal = await rpc<{ id: string; stageKind: string }>('crm/deals/create', { partyId: found.body[0]?.id, title: 'Gói đầu tiên', amount: '1000000', expectedClose: null });
+      expect(deal.status).toBe(200);
+      const board = await rpc<{ columns: { stage: { name: string }; count: number }[] }>('crm/deals/board');
+      expect(board.body.columns.find((c) => c.stage.name === 'Mới')?.count).toBe(1);
+      // The import sweep and the stale-deal rule are scheduled with the module.
+      const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmImportExpire]);
+      expect(scheduled?.n).toBe('1');
+      const [staleScheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmDealStale]);
+      expect(staleScheduled?.n).toBe('1');
     } finally {
       await stop();
     }

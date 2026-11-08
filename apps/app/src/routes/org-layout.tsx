@@ -14,12 +14,14 @@ import { orpc } from '../lib/api.ts';
 import { ALL_NAV, appOfPath, installedApps, type AppId } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { installedItems } from '../lib/modules.ts';
+import { shellBadges } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
 import { THEMES } from '../lib/theme.ts';
 import { useThemeSetting } from '../lib/theme-runtime.ts';
 import { signOut } from '../lib/session-actions.ts';
+import { useRouteFocus } from '../lib/route-focus.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { SAFETY_POLL_MS, pollEvery, useInvalidationStream, useStreamLive } from '../lib/stream-hook.ts';
 import { unreadLabel } from '../lib/social-notifications.ts';
@@ -37,8 +39,8 @@ function useSettled<T>(value: T, ms: number): T {
 }
 
 export function OrgLayout() {
-  const NAV = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
-  const apps = useMemo(() => installedApps(getConfig().modules), []);
+  const allNav = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
+  const allApps = useMemo(() => installedApps(getConfig().modules), []);
   // The app of the screen (#1528), from the URL so a deep link opens in its app; on the org's own screens (Settings,
   // the chart) the menu keeps the app last used.
   const { pathname } = useLocation();
@@ -49,6 +51,8 @@ export function OrgLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   // The phone's header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575).
   const phoneHeader = useRef<HTMLElement>(null);
+  const main = useRef<HTMLElement>(null);
+  const screenName = useRouteFocus(main);
   useScrollRoom(phoneHeader, 'top');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
@@ -62,21 +66,31 @@ export function OrgLayout() {
     ...orpc.inbox.list.queryOptions({ input: { status: 'pending' } }),
     refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS),
   });
-  // Social posts waiting for the viewer's review (#749) count toward the inbox, where Social runs.
-  const socialOn = NAV.some((n) => n.module === 'social');
+  // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox. Asked of the modules, not of the
+  // menu: the reports item (#2435) is the social module's but shows where crm or ads runs alone, and Social's reads answer not installed there.
+  const socialOn = getConfig().modules.includes('social');
   const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And what needs a person there (#771): channels to reconnect, posts that did not go out.
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And background work that failed (#1720), which only owners and admins see.
   const roleHere = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  // HR holds the people payroll is run for: owners and admins only (the queries and the database refuse everyone else too), so nobody else is offered its app or its palette entry.
+  const managerHere = roleHere === 'owner' || roleHere === 'admin';
+  const NAV = useMemo(() => (managerHere ? allNav : allNav.filter((n) => n.module !== 'hr')), [allNav, managerHere]);
+  const apps = useMemo(() => (managerHere ? allApps : allApps.filter((a) => a.id !== 'hr')), [allApps, managerHere]);
   const failedJobs = useQuery({
     ...orpc.inbox.raised.queryOptions({ input: {} }),
     enabled: roleHere === 'owner' || roleHere === 'admin',
     refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS),
   });
-  const inboxCount = (pending.data?.length ?? 0) + (reviews.data?.total ?? 0) + (attention.data?.total ?? 0) + (failedJobs.data?.total ?? 0);
+  const menuBadges = shellBadges({
+    pending: pending.data?.length ?? 0,
+    attention: attention.data?.total ?? 0,
+    failedJobs: failedJobs.data?.total ?? 0,
+    reviews: reviews.data?.total ?? 0,
+  });
   // The member's unread notifications (#637), where Social runs.
-  const notifications = useNotifications(NAV.some((n) => n.module === 'social'));
+  const notifications = useNotifications(socialOn);
   const unread = unreadLabel(notifications.data?.unread ?? 0);
   // The kernel's and finance's (#671).
   const work = useWorkNotifications();
@@ -235,7 +249,7 @@ export function OrgLayout() {
       apps={apps}
       app={screenApp ?? lastApp}
       inApp={screenApp !== null}
-      badges={{ inbox: inboxCount > 0 ? inboxCount : null, alerts: workUnread, notifications: unread }}
+      badges={{ ...menuBadges, alerts: workUnread, notifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       onOpenPalette={() => {
@@ -249,6 +263,21 @@ export function OrgLayout() {
 
   return (
     <div className="flex min-h-full bg-background">
+      {/* The first stop of the keyboard (WCAG 2.4.1, #2115): fixed, so the sticky phone header never covers it. */}
+      <a
+        href="#main-content"
+        onClick={(e) => {
+          e.preventDefault();
+          main.current?.focus();
+        }}
+        className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-2 focus-visible:left-2 focus-visible:z-50 focus-visible:rounded-lg focus-visible:border focus-visible:border-ring focus-visible:bg-background focus-visible:px-4 focus-visible:py-3 focus-visible:text-sm focus-visible:font-medium focus-visible:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        {t('skipToContent')}
+      </a>
+      {/* Names the new screen to a screen reader after a navigation (#2115). */}
+      <div role="status" aria-live="polite" data-route-announcer className="sr-only">
+        <span key={screenName.seq}>{screenName.name}</span>
+      </div>
       <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex">{shellNav()}</aside>
       <div className="min-w-0 flex-1">
         {/* The phone's header (issue #1245): the menu button, the org's name and the palette; the rest is in the drawer. */}
@@ -260,7 +289,7 @@ export function OrgLayout() {
             className="relative grid size-11 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
           >
             <NavIcon name="menu" className="size-5" />
-            {inboxCount > 0 && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary" aria-hidden="true" />}
+            {menuBadges.inbox !== null && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary" aria-hidden="true" />}
           </button>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{org?.name ?? <Logo />}</span>
           <button type="button" onClick={() => setPaletteOpen(true)} className="min-h-11 rounded-lg border px-2 text-xs text-subtle-foreground">
@@ -270,7 +299,8 @@ export function OrgLayout() {
         <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
           {shellNav(() => setMenuOpen(false))}
         </NavDrawer>
-        <main className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8 md:py-8">
+        {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
+        <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8">
           <OrgLeftNotice />
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>

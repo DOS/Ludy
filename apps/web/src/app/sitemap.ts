@@ -1,11 +1,14 @@
 import type { MetadataRoute } from 'next';
-import { SITE_URL } from '../content/site';
+import { APP_PAGES, SITE_URL, type AppPageKey } from '../content/site';
 
-// Both language versions, each pointing at the other (hreflang), so search engines show the right one.
+// One URL per page (#2360): both languages share it, the visitor's language picks which one is served, so there are no
+// per-language entries and no hreflang alternates. A crawler sends no language and is served Vietnamese. The app pages
+// come from the list in content/site.ts.
 export default function sitemap(): MetadataRoute.Sitemap {
-  const languages = { vi: `${SITE_URL}/`, en: `${SITE_URL}/en` };
-  return [
-    { url: `${SITE_URL}/`, changeFrequency: 'weekly', priority: 1, alternates: { languages } },
-    { url: `${SITE_URL}/en`, changeFrequency: 'weekly', priority: 0.8, alternates: { languages } },
-  ];
+  const apps = (Object.keys(APP_PAGES) as AppPageKey[]).map((key) => ({
+    url: `${SITE_URL}${APP_PAGES[key].path}`,
+    changeFrequency: 'weekly' as const,
+    priority: 0.9,
+  }));
+  return [{ url: `${SITE_URL}/`, changeFrequency: 'weekly', priority: 1 }, ...apps];
 }

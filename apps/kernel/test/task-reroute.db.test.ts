@@ -89,6 +89,39 @@ suite('tasks a chart or role change would strand (#1799)', () => {
         ).rows[0]?.id as string,
     );
 
+  const appUrl = () => {
+    const url = new URL(adminUrl);
+    url.username = 'crove_app';
+    url.password = 'test-app-pw';
+    return url.toString();
+  };
+
+  // Polls until a lock is awaited: by the given backend (on the given table, or on a row, if said), or the advisory lock
+  // of the given key (as pg_advisory_xact_lock(hashtextextended(key, 0)) takes it) by a backend of this database.
+  async function untilWaiting(what: string, where: { pid: number; table?: string; row?: true } | { advisory: string }) {
+    for (let tries = 0; ; tries++) {
+      const { rows } = await admin((c) =>
+        'advisory' in where
+          ? c.query(
+              `SELECT 1 FROM pg_catalog.pg_locks l, (SELECT pg_catalog.hashtextextended($1, 0) AS v) k
+               WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1
+                 AND l.classid = ((k.v >> 32) & 4294967295)::oid AND l.objid = (k.v & 4294967295)::oid
+                 AND l.database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())`,
+              [where.advisory],
+            )
+          : c.query(
+              `SELECT 1 FROM pg_catalog.pg_locks WHERE pid = $1 AND NOT granted
+                 AND ($2::regclass IS NULL OR (locktype = 'relation' AND relation = $2::regclass))
+                 AND (NOT $3 OR locktype IN ('transactionid', 'tuple'))`,
+              [where.pid, where.table ?? null, where.row ?? false],
+            ),
+      );
+      if (rows.length > 0) return;
+      if (tries > 400) throw new Error(`${what} never waited`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
   const taskRow = (id: string) =>
     admin(
       async (c) =>
@@ -193,12 +226,21 @@ suite('tasks a chart or role change would strand (#1799)', () => {
     // It is among the lead's own tasks now.
     const mine = await app.query<{ tasks: Array<{ id: string }> }>('kernel.task.list', { mine: true }, { actor: asUser(lead), orgId });
     expect(mine.tasks.map((t) => t.id)).toContain(ofDefault);
+    // The notice names the task by its title as it reads when shown, and keeps no copy of it (#1977): a title the
+    // personal-data erasure redacts reads redacted in the notice too.
+    const notice = async () =>
+      (await app.query<{ items: Array<{ subjectId: string | null; detail: Record<string, string> }> }>('kernel.notification.list', {}, { actor: asUser(lead), orgId })).items.find(
+        (i) => i.subjectId === ofDefault,
+      );
+    const titleOf = async () => (await admin((c) => c.query<{ title: string }>('SELECT title FROM crove_kernel.task WHERE id = $1', [ofDefault]))).rows[0]?.title;
+    expect((await notice())?.detail).toEqual({ title: await titleOf() });
+    const stored = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.notification WHERE kind = 'kernel.task_rerouted' AND subject_id = $1`, [ofDefault]));
+    expect(stored.rows).toEqual([{ detail: {} }]);
+    await admin((c) => c.query(`UPDATE crove_kernel.task SET title = 'Việc đã ẩn' WHERE id = $1`, [ofDefault]));
+    expect((await notice())?.detail).toEqual({ title: 'Việc đã ẩn' });
     // Its activity row takes the task's entity: a member limited to the branch does not read it.
     const seen = async (user: string) => {
-      const url = new URL(adminUrl);
-      url.username = 'crove_app';
-      url.password = 'test-app-pw';
-      const c = new pg.Client({ connectionString: url.toString() });
+      const c = new pg.Client({ connectionString: appUrl() });
       await c.connect();
       try {
         await c.query('BEGIN');
@@ -353,6 +395,294 @@ suite('tasks a chart or role change would strand (#1799)', () => {
         (await c.query<{ user_id: string; detail: Record<string, string> }>(`SELECT user_id, detail FROM crove_kernel.notification WHERE kind = 'kernel.task_rerouted' AND event_id = $1`, [counts.events[0]?.id])).rows,
     );
     expect(notice).toEqual([{ user_id: lead, detail: { count: String(many) } }]);
+  });
+
+  // task_reroute locks its target seats and then their holders' memberships, after the command locked its own seat or
+  // members, so every command that may re-route takes one lock per org before any of its own (#1858): a second chart or
+  // role change of the org waits for it there, holding nothing the first one could need.
+  it('runs the chart and role changes of an org one at a time, each waiting before its own locks (#1858)', async () => {
+    const holder = await member('queued', 'member', null);
+    // Limited to the branch, so revoking the default entity's assignment below leaves one.
+    const next = await member('queued-next', 'member', branch);
+    const own = await seat('Kế toán kho', holder, null);
+    const as = { actor: asMfa(owner), orgId };
+    let assignmentId = '';
+    // Every command that may re-route, in an order each can run in.
+    const changes: Array<[string, () => Promise<unknown>]> = [
+      ['kernel.position.update', () => app.execute('kernel.position.update', { id: own, title: 'Kế toán kho hàng' }, as)],
+      ['kernel.position.assign', () => app.execute('kernel.position.assign', { id: own, holder: { type: 'user', userId: next } }, as)],
+      [
+        'kernel.member.role.assign',
+        async () =>
+          ({ assignmentId } = await app.execute<{ assignmentId: string }>(
+            'kernel.member.role.assign',
+            { userId: next, roleKey: 'external_accountant', legalEntityId: defaultEntity },
+            as,
+          )),
+      ],
+      ['kernel.member.role.revoke', () => app.execute('kernel.member.role.revoke', { assignmentId }, as)],
+      ['kernel.member.change_role', () => app.execute('kernel.member.change_role', { userId: next, role: 'admin' }, as)],
+      ['kernel.member.remove', () => app.execute('kernel.member.remove', { userId: next }, as)],
+    ];
+    for (const [name, run] of changes) {
+      const chart = new pg.Client({ connectionString: adminUrl });
+      await chart.connect();
+      try {
+        await chart.query('BEGIN');
+        await chart.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))', [`crove_kernel.chart:${orgId}`]);
+        const changing = run();
+        await untilWaiting(name, { advisory: `crove_kernel.chart:${orgId}` });
+        // It waits before taking the seat's or the members' locks.
+        await admin((c) => c.query('SELECT 1 FROM crove_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [orgId, own]));
+        await admin((c) => c.query('SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id IN ($2, $3) FOR UPDATE NOWAIT', [orgId, owner, next]));
+        await chart.query('ROLLBACK');
+        await changing;
+      } finally {
+        await chart.end();
+      }
+    }
+  });
+
+  // A deadlock on the definer's own locks is retried once, from its savepoint, which drops them (#1858). The cycle: the
+  // re-route holds the target seat FOR SHARE and waits for its holder's membership, which another session holds and
+  // which then asks for that seat. A third session holds the seat at first, so that the other session is already
+  // waiting when the re-route starts its wait for the membership: PostgreSQL checks for a deadlock once per wait, after
+  // deadlock_timeout (the server's default of 1 s for the re-route, 30 s for the other session), so the re-route is the
+  // one that finds it.
+  it('retries a deadlock on its own locks from its savepoint, which drops them (#1858)', async () => {
+    const lead = await member('deadlock-lead', 'member', null);
+    const holder = await member('deadlock-holder', 'member', null);
+    const leadSeat = await seat('Trưởng ca', lead, null);
+    const own = await seat('Nhân viên ca', holder, leadSeat);
+    const ofBranch = await task(branch, own);
+    // The holder's first entity assignment leaves the branch out; the re-route below is the one its command runs.
+    await admin((c) =>
+      c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        orgId,
+        holder,
+        defaultEntity,
+        owner,
+      ]),
+    );
+    const seatFirst = new pg.Client({ connectionString: adminUrl });
+    const other = new pg.Client({ connectionString: adminUrl });
+    const rerouter = new pg.Client({ connectionString: appUrl() });
+    for (const c of [seatFirst, other, rerouter]) await c.connect();
+    try {
+      await other.query('BEGIN');
+      await other.query(`SET LOCAL deadlock_timeout = '30s'`);
+      await other.query('SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2 FOR UPDATE', [orgId, lead]);
+      await seatFirst.query('BEGIN');
+      await seatFirst.query('SELECT 1 FROM crove_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, leadSeat]);
+
+      await rerouter.query('BEGIN');
+      await enterUser(rerouter, owner, orgId);
+      const pid = (await rerouter.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
+      const otherPid = (await other.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
+      const rerouted = rerouter.query<{ task_id: string; to_position_id: string | null }>(
+        'SELECT task_id, to_position_id FROM crove_kernel.task_reroute($1::uuid[])',
+        [[own]],
+      );
+      await untilWaiting('the re-route', { pid });
+      // The other session queues for the seat behind it.
+      const seatTaken = other.query('SELECT 1 FROM crove_kernel.position WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, leadSeat]);
+      await untilWaiting('the other session', { pid: otherPid });
+      // The re-route takes the seat FOR SHARE and waits for the membership: the cycle is closed.
+      await seatFirst.query('ROLLBACK');
+      // The re-route found the deadlock and dropped its lock on the seat, with its transaction still open.
+      await seatTaken;
+      await other.query('ROLLBACK');
+      // Its retry takes the locks again and moves the task.
+      expect((await rerouted).rows).toEqual([{ task_id: ofBranch, to_position_id: leadSeat }]);
+      await rerouter.query('COMMIT');
+    } finally {
+      for (const c of [seatFirst, other, rerouter]) {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    }
+    expect(await taskRow(ofBranch)).toEqual({ assignee: leadSeat, status: 'todo' });
+    expect((await trail(ofBranch)).activity).toEqual([{ kind: 'task.rerouted', entity: branch }]);
+  });
+
+  // A round's UPDATE skips a task whose target, in its snapshot, is a seat the round has not locked. When that target
+  // then changes to the owners before the round ends, nothing unlocked is left, but the task is still stranded: the
+  // next round moves it (#1902). Two sessions make that interleaving. A SHARE lock on the activity table holds the
+  // round's UPDATE before it takes its snapshot (a statement takes its table locks first) while the chart changes, so
+  // that one task's target is an unlocked seat. A lock on the other task's row then holds the UPDATE after its snapshot
+  // while the chart changes back, so that the skipped task's target is the owners.
+  it('moves a task whose unlocked target changed during the round, in another round (#1902)', async () => {
+    const store = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Kho', 'branch', $2) RETURNING id`, [
+            orgId,
+            owner,
+          ])
+        ).rows[0]?.id as string,
+    );
+    const lead = await member('settle-lead', 'member', defaultEntity);
+    const between = await member('settle-between', 'member', branch);
+    const holder = await member('settle-holder', 'member', store);
+    const leadSeat = await seat('Giám sát', lead, null);
+    const betweenSeat = await seat('Phó giám sát', between, leadSeat);
+    const own = await seat('Thủ kho', holder, leadSeat);
+    // Its holder reads neither entity: the default entity's task goes to the lead, the branch's to the owners.
+    const ofDefault = await task(defaultEntity, own);
+    const ofBranch = await task(branch, own);
+    const reportsTo = (to: string) => admin((c) => c.query('UPDATE crove_kernel.position SET reports_to = $1 WHERE org_id = $2 AND id = $3', [to, orgId, own]));
+    const gate = new pg.Client({ connectionString: adminUrl });
+    const rowLock = new pg.Client({ connectionString: adminUrl });
+    const rerouter = new pg.Client({ connectionString: appUrl() });
+    for (const c of [gate, rowLock, rerouter]) await c.connect();
+    try {
+      await gate.query('BEGIN');
+      await gate.query('LOCK TABLE crove_kernel.activity IN SHARE MODE');
+      await rowLock.query('BEGIN');
+      await rowLock.query('SELECT 1 FROM crove_kernel.task WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, ofDefault]);
+
+      await rerouter.query('BEGIN');
+      await enterUser(rerouter, owner, orgId);
+      const pid = (await rerouter.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
+      const rerouted = rerouter.query<{ task_id: string; to_position_id: string | null }>(
+        'SELECT task_id, to_position_id FROM crove_kernel.task_reroute($1::uuid[])',
+        [[own]],
+      );
+      rerouted.catch(() => {});
+      // The first round locked the lead's seat; its UPDATE waits for the activity table.
+      await untilWaiting('the round', { pid, table: 'crove_kernel.activity' });
+      // The branch's task now goes to the seat between, which the round has not locked.
+      await reportsTo(betweenSeat);
+      await gate.query('ROLLBACK');
+      // The UPDATE took its snapshot, skipped the branch's task and waits for the default entity's task.
+      await untilWaiting("the round's UPDATE", { pid, row: true });
+      // The branch's task goes to the owners again: no stranded task has an unlocked target.
+      await reportsTo(leadSeat);
+      await rowLock.query('ROLLBACK');
+      const expected = [
+        { task_id: ofDefault, to_position_id: leadSeat },
+        { task_id: ofBranch, to_position_id: null },
+      ].sort((a, b) => (a.task_id < b.task_id ? -1 : 1));
+      expect((await rerouted).rows).toEqual(expected);
+      await rerouter.query('COMMIT');
+    } finally {
+      for (const c of [gate, rowLock, rerouter]) {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    }
+    expect(await taskRow(ofDefault)).toEqual({ assignee: leadSeat, status: 'todo' });
+    expect(await taskRow(ofBranch)).toEqual({ assignee: null, status: 'todo' });
+  });
+
+  // A round can move a task to a seat that is itself among the given seats; a concurrent change that strands it there
+  // before the round ends makes a later round move it again. It is answered once (#1907), from the seat it was first
+  // stranded on to its last target, so the command's audit and events count it once; the activity rows keep both moves.
+  // A lock on one task's row holds the first round's UPDATE after its snapshot while the middle seat's holder loses
+  // the entity.
+  it('answers a task moved by two rounds once, from its first seat to its last target (#1907)', async () => {
+    const workshop = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Xưởng', 'branch', $2) RETURNING id`, [
+            orgId,
+            owner,
+          ])
+        ).rows[0]?.id as string,
+    );
+    const lead = await member('twice-lead', 'member', defaultEntity);
+    const middle = await member('twice-middle', 'member', workshop);
+    const holder = await member('twice-holder', 'member', workshop);
+    // The middle seat's holder reads the default entity too, until the change below.
+    const ofDefaultGrant = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4) RETURNING id`,
+            [orgId, middle, defaultEntity, owner],
+          )
+        ).rows[0]?.id as string,
+    );
+    const leadSeat = await seat('Quản đốc', lead, null);
+    const middleSeat = await seat('Tổ trưởng', middle, leadSeat);
+    const own = await seat('Công nhân', holder, middleSeat);
+    const first = await task(defaultEntity, own);
+    const second = await task(defaultEntity, own);
+    const rowLock = new pg.Client({ connectionString: adminUrl });
+    const rerouter = new pg.Client({ connectionString: appUrl() });
+    for (const c of [rowLock, rerouter]) await c.connect();
+    try {
+      await rowLock.query('BEGIN');
+      await rowLock.query('SELECT 1 FROM crove_kernel.task WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, second]);
+
+      await rerouter.query('BEGIN');
+      await enterUser(rerouter, owner, orgId);
+      const pid = (await rerouter.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]?.pid as number;
+      const rerouted = rerouter.query<{ task_id: string; from_position_id: string; to_position_id: string | null }>(
+        'SELECT task_id, from_position_id, to_position_id FROM crove_kernel.task_reroute($1::uuid[])',
+        [[own, middleSeat]],
+      );
+      rerouted.catch(() => {});
+      // The first round moves both tasks to the middle seat; its UPDATE waits for the locked one.
+      await untilWaiting("the first round's UPDATE", { pid, row: true });
+      // The middle seat's holder no longer reads the default entity: once there, the tasks are stranded again.
+      await admin((c) => c.query('DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND id = $2', [orgId, ofDefaultGrant]));
+      await rowLock.query('ROLLBACK');
+      const expected = [first, second]
+        .sort((a, b) => (a < b ? -1 : 1))
+        .map((id) => ({ task_id: id, from_position_id: own, to_position_id: leadSeat }));
+      expect((await rerouted).rows).toEqual(expected);
+      await rerouter.query('COMMIT');
+    } finally {
+      for (const c of [rowLock, rerouter]) {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    }
+    expect(await taskRow(first)).toEqual({ assignee: leadSeat, status: 'todo' });
+    expect(await taskRow(second)).toEqual({ assignee: leadSeat, status: 'todo' });
+    expect((await trail(first)).activity).toEqual([
+      { kind: 'task.rerouted', entity: defaultEntity },
+      { kind: 'task.rerouted', entity: defaultEntity },
+    ]);
+  });
+
+  // The rounds end only when no task of the seats is stranded, so a task's target must never be a seat that would
+  // strand it again: the escalation target and the stranded test read coverage the same way (the #1904 review). Every
+  // seat and entity of the org, in the owner's context the commands run in: a chain of its own with a paused seat, a
+  // vacant one and seats limited to one entity, and whatever the cases above built.
+  it("never targets a seat that does not read the task's entity, nor the task's own seat (#1904 review)", async () => {
+    const top = await seat('Giám đốc vùng', await member('pin-top', 'member', null), null);
+    const paused = await seat('Phó giám đốc vùng', await member('pin-paused', 'member', null), top);
+    await admin((c) => c.query(`UPDATE crove_kernel.position SET status = 'paused' WHERE org_id = $1 AND id = $2`, [orgId, paused]));
+    const { positionId: vacant } = await app.execute<{ positionId: string }>(
+      'kernel.position.create',
+      { title: 'Vị trí trống', module: 'finance', roleKey: 'finance.accountant', reportsTo: paused },
+      { actor: asMfa(owner), orgId },
+    );
+    const ofBranch = await seat('Kế toán chi nhánh vùng', await member('pin-branch', 'member', branch), vacant);
+    const chain = [top, paused, vacant, ofBranch, await seat('Kế toán viên vùng', await member('pin-default', 'member', defaultEntity), ofBranch)];
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await enterUser(c, owner, orgId);
+      const { rows } = await c.query<{ seat: string; entity: string; target: string; reads: boolean }>(
+        `SELECT x.seat, x.entity, x.target, crove_kernel.position_reads_legal_entity($1, x.target, x.entity) AS reads
+         FROM (SELECT p.id AS seat, e.id AS entity, crove_kernel.task_escalation_target($1, p.id, e.id) AS target
+               FROM crove_kernel.position p CROSS JOIN crove_kernel.legal_entity e
+               WHERE p.org_id = $1 AND e.org_id = $1) x
+         WHERE x.target IS NOT NULL`,
+        [orgId],
+      );
+      // Every seat of the chain below the top has a target for every entity: the top's holder reads them all.
+      const entities = (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.legal_entity WHERE org_id = $1', [orgId])).rows[0]?.n ?? 0;
+      expect(rows.filter((r) => chain.includes(r.seat)).length).toBe(entities * (chain.length - 1));
+      expect(rows.filter((r) => r.target === r.seat || !r.reads)).toEqual([]);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
   });
 
   it('answers which tasks only in an owner context', async () => {

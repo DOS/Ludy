@@ -1,6 +1,6 @@
 # Runbook: the credential key
 
-The credential key seals the tokens of connected channels (Facebook Page, Instagram, Zalo OA and the others; ADR-0025). Each token is encrypted with its own random data key, and the data key is wrapped with the credential key, in `crove_kernel.credential`. Both layers are bound to the org, the provider and the account, so an envelope moved to another row does not open.
+The credential key seals the tokens of connected channels (Facebook Page, Instagram, Zalo OA and the others; ADR-0025) in `crove_kernel.credential`, and the targets of team chat alerts (the Telegram bot token or Discord webhook, #863) in `crove_social.chat_alert_target`. Each token is encrypted with its own random data key, and the data key is wrapped with the credential key. Both layers are bound to the org, the provider and the account, so an envelope moved to another row does not open. It also seals the tax portal session a browser holds while it reads the portal (never stored): retiring a key only asks for a new portal sign-in.
 
 ## Where the key lives
 
@@ -32,14 +32,47 @@ Rotate when someone who could read the key loses that access, when the key may h
    [credential-reseal] resealed 12, failed 0; left under an older key: 0 active, 3 to reconnect
    ```
 
-   The counts include team chat alert targets. "Active" counts what the next passes will reseal. "To reconnect" counts credentials of connections that are expired, in error or revoked, or whose connecting member left, and chat alert targets whose saver is no longer an owner or admin: their tokens are not used anyway, and they are sealed with the new key when an owner or admin reconnects the channel or saves the team chat again. A token refresh and a reconnect also seal with the new key. To check by hand (as the database owner; no `crove_*` role can read the tables):
+   The counts include team chat alert targets, whether or not the Social module is on. With Social left out (`CROVE_MODULES`), its targets cannot be resealed, so the log counts them apart and says to keep the previous key:
+
+   ```text
+   [credential-reseal] resealed 0, failed 0; left under an older key: 0 active, 0 to reconnect, 2 team chat alerts waiting for the Social module (keep CREDENTIAL_KEY_PREVIOUS)
+   ```
+
+   Turn Social on again (or finish the rotation before turning it off) and they reseal on the next pass. Chat alert targets "to reconnect" with Social off can only be saved again once Social is on. "Active" counts what the next passes will reseal. "To reconnect" counts credentials of connections that are expired, in error or revoked, or whose connecting member left, and chat alert targets whose saver is no longer an owner or admin: their tokens are not used anyway, and they are sealed with the new key when an owner or admin reconnects the channel or saves the team chat again. A token refresh and a reconnect also seal with the new key. To check by hand (as the database owner; no `crove_*` role can read the tables):
 
    ```sql
    SELECT key_id, count(*) FROM crove_kernel.credential GROUP BY key_id;
    SELECT key_id, count(*) FROM crove_social.chat_alert_target GROUP BY key_id;
    ```
-4. When the log shows 0 active left (and the channels and team chats left to reconnect are ones you are ready to reconnect or save again), remove `CREDENTIAL_KEY_PREVIOUS` and restart. A credential still under the old key after that no longer opens: its channel shows as needing a reconnect. A team chat alert target still under the old key no longer opens either: its alerts stop, and a test line from the Channels page says the chat must be saved again.
+4. **Subject keys (#2640, #2643):** the wrapped data keys of people (`crove_kernel.subject_key`, the payroll identity numbers and bank accounts) are wrapped under a key derived from the credential key. The same sweep reseals them: each wrapped data key is unwrapped under the previous-derived key and wrapped again under the current one, in the worker's memory, with a fresh nonce, up to 200 rows a page and 5 pages a pass. **Only wrapped data keys move**: no sealed value is read or changed, and the database never sees a data key. The worker logs the counts apart from the credentials (ids and counts only, never a subject or a key):
 
-Only one previous key is kept: finish one rotation (step 4) before starting the next, or envelopes sealed with the oldest key stop opening.
+   ```text
+   [subject-key-reseal] resealed 40, failed 0; left under an older key: 0
+   ```
+
+   A subject key the worker cannot unwrap is counted as failed and left as it is, never dropped. One under a key id the worker does not open is also reported by an `[subject-key-reseal] ERROR` line with that key id and its count: set that key again as `CREDENTIAL_KEY_PREVIOUS` on the API and the worker, and the next pass reseals it. `pnpm pilot:check` asks you to confirm the log has no such line. As the database owner, the count query answers whether the pass is done: `SELECT key_id, count(*) FROM crove_kernel.subject_key GROUP BY 1` names only the current key id (or nothing). The pass covers orgs that are active or being offboarded, like the credentials; a closed org's purge deletes its subject keys, and one closed by hand without the purge keeps them under the old key until it is purged. Restart the API and the worker together (step 2): a worker on the new key wraps keys the API can open only once it also has the new key. Until it does, keep `CREDENTIAL_KEY_PREVIOUS`: removing it makes the values sealed under those subjects unreadable. **A second rotation**, which replaces `CREDENTIAL_KEY_PREVIOUS` with the key just retired, permanently loses every subject key still wrapped under the first key, so finish this step first. **After a compromise of the credential key**, rotating protects the subject keys once the pass has run: until then the old key still unwraps them.
+5. When the subject-key count query of step 4 names no old key id, and the log shows 0 active left and no team chat alerts waiting for the Social module, or shows no `[credential-reseal]` line at all (the worker logs nothing once nothing is left; the SQL above says the same), and the channels and team chats left to reconnect are ones you are ready to reconnect or save again, remove `CREDENTIAL_KEY_PREVIOUS` and restart. A credential still under the old key after that no longer opens: its channel shows as needing a reconnect. A team chat alert target still under the old key no longer opens either: its alerts stop, and a test line from the Channels page says the chat must be saved again.
+
+The audit rows of sensitive reads (`QueryDef.sensitive`, #2639, the payroll reads) carry an HMAC of the read's input under a key derived from `CREDENTIAL_KEY` (`h1:` hashes; `none` when no key is set). A new key hashes new rows only: once `CREDENTIAL_KEY_PREVIOUS` is dropped, the hashes of the rows written under the old key can no longer be recomputed, so they cannot be matched to a guessed input. The rows themselves, their actor, time, query and record stay as they were.
+
+The token of a closed ads connection is held sealed for seven days at most, only to remove the person's permissions at the platform (#2296, `crove_ads.ad_token_seal`, ADR-0025's amendment of 2026-11-03). The passes do not reseal these copies, so keep `CREDENTIAL_KEY_PREVIOUS` until none is left under the old key: as the database owner, `SELECT count(*) FROM crove_ads.ad_token_seal WHERE key_id = '<the old key id>'` answers 0, at most seven days after the rotation. A copy whose key was removed too early cannot be opened: the revoke gives it up at once with the code `OPEN_FAILED`, the copy is wiped, and the Ads screen tells the owner to remove the app in the platform's settings by hand.
+
+The passes reseal the envelopes of orgs being offboarded as well (#1889): staff can reopen such an org before its purge (`org-offboarding.md`), so its tokens must outlive the previous key. A closed org has none left: its purge deletes its credentials and chat alert targets. An org closed by hand without the purge keeps them, and they stay counted as active until it is purged.
+
+If the previous key was removed too early, or a key was lost, every pass logs an error naming the key ids the worker cannot open and how many envelopes still need them (key ids and counts only, never a token or an envelope; #1888):
+
+```text
+[credential-reseal] ERROR sealed under a key this worker cannot open: k1-0123456789abcdef (3 active, 2 team chat alerts waiting for the Social module). The key was lost, or CREDENTIAL_KEY_PREVIOUS removed before they were resealed: set that key again as CREDENTIAL_KEY_PREVIOUS on the API and the worker, or reconnect those channels and save those team chats again (docs/runbooks/credential-key.md)
+```
+
+"Active" counts credentials of active connections, and team chat alert targets while Social is on; "waiting" counts the targets waiting for the Social module. Envelopes left to reconnect anyway are not counted here. If the removed key is still at hand (its id is the one named), set it again as `CREDENTIAL_KEY_PREVIOUS` on both and restart: the next passes reseal them and the error stops. Otherwise follow "Losing the key" for those channels and team chats. The worker keeps running either way: everything else works. `pnpm pilot:check` lists the key ids the deployment's `.env` gives the worker and asks you to confirm this error is absent from its log.
+
+When only team chat alert targets waiting for the Social module are left under such a key, the line is a warning instead: nothing clears it before Social is on again and each team chat is saved (or the key is set again), and a second rotation that could not wait loses them on purpose (below). It does not block the pilot preflight.
+
+```text
+[credential-reseal] team chat alerts waiting for the Social module are sealed under a key this worker cannot open: k1-0123456789abcdef (2). Set that key again as CREDENTIAL_KEY_PREVIOUS, or save each team chat again once Social is on (docs/runbooks/credential-key.md)
+```
+
+Only one previous key is kept: finish one rotation (step 4) before starting the next, or envelopes sealed with the oldest key stop opening. A second rotation that cannot wait (a leak) while team chat alerts still wait for the Social module loses them: an owner or admin saves each team chat again once Social is on.
 
 A leaked key and a leaked database together expose every token sealed with that key: rotate, then reconnect the channels so the platforms issue new tokens, and revoke the old ones on each platform where it offers that.

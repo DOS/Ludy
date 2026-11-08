@@ -10,6 +10,10 @@
 //     the shared note's, including the update that makes it private, and nothing of the to-do or the private note. The
 //     viewer's and the entity-limited member's streams get none of them. A shared note the member writes reaches the
 //     owner and the admin too. Org-wide hints reach all five, as {type, id}.
+//   - A hard delete (#1973: the trash sweep, a former member's purge, the erasure, or any other) sends the row's hint
+//     to the same streams as a change: a to-do and a private note to their owner alone, a shared note also to the
+//     members who read shared notes. A delete of many rows in one statement (#1992, #2037) sends one hint per
+//     audience, to the same streams, and none of a private row reaches anyone but its owner.
 // Keep this file self-contained: import package code under test, never helpers from outside test/invariant/. Set
 // CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
@@ -412,6 +416,133 @@ suite('invariant: the hints of to-dos and notes reach only the members who may r
         }
         expect(streams[name].events.some((x) => x.event === 'resync' || x.event === 'close')).toBe(false);
       }
+    } finally {
+      for (const name of ACTORS) await streams[name].cancel();
+    }
+  });
+  // #1973: a hard-deleted to-do or note tells the streams that could read it, and no others, so their open lists drop
+  // it. The private note goes through the trash sweep the worker runs (crove_notes.trash_empty); the others are deleted
+  // by the database owner (the trigger fires for every path that deletes a row).
+  it('sends the hint of a deleted to-do or note to the streams that could read it, and no others', async () => {
+    const streams = Object.fromEntries(await Promise.all(ACTORS.map(async (name) => [name, await streamFor(name)] as const))) as Record<
+      Actor,
+      Awaited<ReturnType<typeof streamFor>>
+    >;
+    try {
+      const got = (events: SseEvent[], id: string) => events.filter((x) => x.event === 'invalidate' && x.data.id === id).length;
+      const task = await todo('author');
+      const privateNote = await note('author', 'private');
+      const shared = await note('author', 'org');
+      await streams.author.waitFor((e) => [task, privateNote, shared].every((id) => got(e, id) >= 1), 5_000);
+      for (const name of ['admin', 'member'] as const) await streams[name].waitFor((e) => got(e, shared) >= 1, 5_000);
+
+      // The private note into the trash 31 days ago (a change, so a second hint; the sweep keeps 30 days), then emptied
+      // by the worker's sweep.
+      await admin((a) => a.query(`UPDATE crove_notes.note SET deleted_at = now() - interval '31 days', revision = revision + 1 WHERE org_id = $1 AND id = $2`, [orgId, privateNote]));
+      await streams.author.waitFor((e) => got(e, privateNote) >= 2, 5_000);
+      const workerUrl = new URL(adminUrl);
+      workerUrl.username = 'crove_worker';
+      workerUrl.password = 'test-worker-pw';
+      const worker = new pg.Client({ connectionString: workerUrl.toString() });
+      await worker.connect();
+      try {
+        await worker.query('BEGIN');
+        await worker.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+        await worker.query('SELECT crove_notes.trash_empty(now())');
+        await worker.query('COMMIT');
+      } finally {
+        await worker.end();
+      }
+      await admin(async (a) => {
+        await a.query('DELETE FROM crove_notes.todo WHERE org_id = $1 AND id = $2', [orgId, task]);
+        await a.query('DELETE FROM crove_notes.note WHERE org_id = $1 AND id = $2', [orgId, shared]);
+      });
+      // Written last: once every stream has its hint, every earlier hint has had its chance to arrive.
+      const file = await ingest();
+      await streams.author.waitFor((e) => got(e, task) >= 2 && got(e, privateNote) >= 3 && got(e, shared) >= 2, 5_000);
+      for (const name of ['admin', 'member'] as const) await streams[name].waitFor((e) => got(e, shared) >= 2, 5_000);
+      for (const name of ACTORS) await streams[name].waitFor((e) => got(e, file) >= 1, 5_000);
+      await new Promise((r) => setTimeout(r, 300));
+
+      const exists = await admin(
+        async (a) =>
+          (
+            await a.query<{ n: number }>(
+              `SELECT (SELECT count(*) FROM crove_notes.note WHERE id = ANY($1)) + (SELECT count(*) FROM crove_notes.todo WHERE id = ANY($1)) AS n`,
+              [[task, privateNote, shared]],
+            )
+          ).rows[0]?.n,
+      );
+      expect(Number(exists)).toBe(0);
+      const ids = [task, privateNote, shared];
+      const counts = Object.fromEntries(ACTORS.map((name) => [name, ids.map((id) => got(streams[name].events, id))]));
+      expect(counts).toEqual({
+        // [to-do (written, deleted), private note (written, trashed, swept), shared note (written, deleted)]
+        author: [2, 3, 2],
+        admin: [0, 0, 2],
+        member: [0, 0, 2],
+        viewer: [0, 0, 0],
+        accountant: [0, 0, 0],
+      });
+      for (const name of ACTORS) {
+        for (const e of streams[name].events.filter((x) => x.event === 'invalidate')) expect(Object.keys(e.data).sort()).toEqual(['id', 'type']);
+      }
+    } finally {
+      for (const name of ACTORS) await streams[name].cancel();
+    }
+  });
+
+  // #1992, #2037: a delete of many rows in one statement goes through the statement trigger (stream_hint_delete), one
+  // hint per audience: each stream gets one for each group of rows it could read, and none for the others.
+  it('sends one hint per audience for a delete of many rows, to the streams that could read them, and no others', async () => {
+    const streams = Object.fromEntries(await Promise.all(ACTORS.map(async (name) => [name, await streamFor(name)] as const))) as Record<
+      Actor,
+      Awaited<ReturnType<typeof streamFor>>
+    >;
+    try {
+      const got = (events: SseEvent[], id: string) => events.filter((x) => x.event === 'invalidate' && x.data.id === id).length;
+      const tasks = [await todo('author'), await todo('author'), await todo('author')];
+      const privates = [await note('author', 'private'), await note('author', 'private'), await note('author', 'private')];
+      const authorShared = [await note('author', 'org'), await note('author', 'org'), await note('author', 'org')];
+      const memberShared = [await note('member', 'org'), await note('member', 'org')];
+      const shared = [...authorShared, ...memberShared];
+      await streams.author.waitFor((e) => [...tasks, ...privates, ...shared].every((id) => got(e, id) >= 1), 5_000);
+      for (const name of ['admin', 'member'] as const) await streams[name].waitFor((e) => shared.every((id) => got(e, id) >= 1), 5_000);
+      const before = Object.fromEntries(ACTORS.map((name) => [name, streams[name].events.length])) as Record<Actor, number>;
+
+      await admin(async (a) => {
+        await a.query('DELETE FROM crove_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[])', [orgId, tasks]);
+        await a.query('DELETE FROM crove_notes.note WHERE org_id = $1 AND id = ANY($2::uuid[])', [orgId, [...privates, ...shared]]);
+      });
+      // Written last: once every stream has its hint, every earlier hint has had its chance to arrive.
+      const file = await ingest();
+      for (const name of ACTORS) await streams[name].waitFor((e) => got(e, file) >= 1, 5_000);
+      await new Promise((r) => setTimeout(r, 300));
+
+      const groupOf = (id: unknown) =>
+        tasks.includes(id as string)
+          ? 'to-dos'
+          : privates.includes(id as string)
+            ? 'private notes'
+            : authorShared.includes(id as string)
+              ? "author's shared notes"
+              : memberShared.includes(id as string)
+                ? "member's shared notes"
+                : `other ${String(id)}`;
+      const received = (name: Actor) =>
+        streams[name].events
+          .slice(before[name])
+          .filter((x) => x.event === 'invalidate' && x.data.id !== file)
+          .map((x) => groupOf(x.data.id))
+          .sort();
+      expect(Object.fromEntries(ACTORS.map((name) => [name, received(name)]))).toEqual({
+        author: ["author's shared notes", "member's shared notes", 'private notes', 'to-dos'],
+        admin: ["author's shared notes", "member's shared notes"],
+        member: ["author's shared notes", "member's shared notes"],
+        viewer: [],
+        accountant: [],
+      });
+      for (const name of ACTORS) expect(streams[name].events.slice(before[name]).some((x) => x.event === 'resync'), name).toBe(false);
     } finally {
       for (const name of ACTORS) await streams[name].cancel();
     }

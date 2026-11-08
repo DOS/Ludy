@@ -12,6 +12,7 @@ import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendRes
 import { bounceAddress } from './invite-mail.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 import { jobKey } from './job-keys.ts';
+import { opsAlert } from './ops-alert.ts';
 
 export const MAIL_SEND_QUEUE = 'kernel-mail-send';
 export const MAIL_BULK_QUEUE = 'kernel-mail-bulk';
@@ -43,12 +44,14 @@ export interface MailTemplateInput {
   // The org's inbound address when this deployment receives mail (#669), else null. A template whose replies should
   // reach the org's Inbox returns it as replyTo.
   inboundAddress: string | null;
+  // The org's conversation address (#2439), when this deployment receives mail and the org has one: the Reply-To of an answer to a customer.
+  conversationAddress?: string | null;
   // The product name users see (BRAND_NAME, #1040), for the template's own texts.
   brand: string;
   execute<T>(command: string, input: unknown): Promise<T>;
 }
 export interface MailTemplate {
-  render(input: MailTemplateInput): Promise<{ subject: string; text: string; html: string; replyTo?: string; attachments?: readonly MailAttachment[] } | null>;
+  render(input: MailTemplateInput): Promise<{ subject: string; text: string; html: string; replyTo?: string; inReplyTo?: string; references?: readonly string[]; fromName?: string; attachments?: readonly MailAttachment[] } | null>;
 }
 export type MailTemplates = Readonly<Record<string, MailTemplate>>;
 
@@ -143,6 +146,7 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
       publicUrl: deps.publicUrl,
       brand: deps.brand ?? DEFAULT_BRAND_NAME,
       inboundAddress: deps.bounceDomain ? `${mail.inboundToken}@${deps.bounceDomain.toLowerCase()}` : null,
+      conversationAddress: deps.bounceDomain && mail.conversationToken ? `${mail.conversationToken}@${deps.bounceDomain.toLowerCase()}` : null,
       execute: <T>(command: string, input: unknown) => deps.runtime.execute<T>(command, input, { actor: ACTOR, orgId: job.orgId }),
     });
   } catch {
@@ -150,12 +154,14 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
   }
   if (!content) return { outcome: 'failed', code: 'TEMPLATE_DATA' };
   const returnPath = mail.bounceToken ? bounceAddress(mail.bounceToken, deps.bounceDomain) : undefined;
-  const outbound: OutboundMail = { to: mail.to, subject: content.subject, text: content.text, html: content.html, messageId: mail.messageIdHeader, ...(returnPath ? { returnPath } : {}), ...(content.replyTo ? { replyTo: content.replyTo } : {}), ...(content.attachments?.length ? { attachments: content.attachments } : {}) };
+  const outbound: OutboundMail = { to: mail.to, subject: content.subject, text: content.text, html: content.html, messageId: mail.messageIdHeader, ...(returnPath ? { returnPath } : {}), ...(content.replyTo ? { replyTo: content.replyTo } : {}), ...(content.inReplyTo ? { inReplyTo: content.inReplyTo } : {}), ...(content.references?.length ? { references: content.references } : {}), ...(content.fromName ? { fromName: content.fromName } : {}), ...(content.attachments?.length ? { attachments: content.attachments } : {}) };
   if (!deps.mailer.enabled) {
-    // The log provider shows the mail in the logs; nothing leaves the deployment.
-    await Promise.resolve()
-      .then(() => deps.mailer.send(outbound))
-      .catch(() => undefined);
+    // The log provider shows the mail in the logs; nothing leaves the deployment. A reply to a customer is not shown: its subject is the customer's.
+    if (mail.templateKey !== 'kernel.conversation_reply') {
+      await Promise.resolve()
+        .then(() => deps.mailer.send(outbound))
+        .catch(() => undefined);
+    }
     return { outcome: 'failed', code: 'MAIL_OFF' };
   }
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -223,7 +229,7 @@ export async function purgeMail(workerDb: Db, batch = 10_000, maxBatches = 100):
     for (const row of rows) cleared[row.store] = (cleared[row.store] ?? 0) + row.deleted;
     const stuck = rows.filter((r) => r.more && r.deleted === 0).map((r) => r.store);
     if (stuck.length > 0) {
-      console.error(`[retention] ALERT mail purge cleared 0 rows while old ones remain: ${stuck.join(', ')}`);
+      opsAlert(`[retention] ALERT mail purge cleared 0 rows while old ones remain: ${stuck.join(', ')}`);
       break;
     }
     if (!rows.some((r) => r.more)) break;

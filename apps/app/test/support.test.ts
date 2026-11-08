@@ -88,6 +88,8 @@ describe('firm guide (#661)', () => {
       vi.misaGoods.title,
       vi.vouchers.exportReceipts,
       vi.vouchers.exportPayments,
+      vi.vouchers.exportBankCredits,
+      vi.vouchers.exportBankDebits,
       vi.journal.export,
     ]) {
       expect(text).toContain(`"${label}"`);

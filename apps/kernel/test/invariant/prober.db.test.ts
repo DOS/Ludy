@@ -81,9 +81,17 @@ suite('prober privileges', () => {
     ]);
   });
 
-  it('lets only crove_prober execute health() and prober_alert_gate(), and only crove_worker execute worker_beat() (EXECUTE matrix)', async () => {
+  it('lets only crove_prober execute health() and prober_alert_gate(), only crove_worker execute worker_beat() and only crove_app execute worker_build_lag() (EXECUTE matrix)', async () => {
     const admin = await connect(adminUrl);
-    const functions = ['crove_kernel.health(integer)', 'crove_kernel.prober_alert_gate(text,integer)', 'crove_kernel.worker_beat(text)'];
+    const functions = [
+      'crove_kernel.health(integer)',
+      'crove_kernel.prober_alert_gate(text,integer)',
+      'crove_kernel.worker_beat(text)',
+      'crove_kernel.worker_beat(text,text[])',
+      // #1952: the beat with the worker's build, and the count of older live workers the API's /readyz reads.
+      'crove_kernel.worker_beat(text,text[],text,timestamp with time zone)',
+      'crove_kernel.worker_build_lag(timestamp with time zone)',
+    ];
     const roles = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'crove_prober', 'crove_reporter'];
     const { rows } = await admin.query<{ fn: string; role: string }>(
       `SELECT f AS fn, r AS role FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r
@@ -94,22 +102,67 @@ suite('prober privileges', () => {
       { fn: 'crove_kernel.health(integer)', role: 'crove_prober' },
       { fn: 'crove_kernel.prober_alert_gate(text,integer)', role: 'crove_prober' },
       { fn: 'crove_kernel.worker_beat(text)', role: 'crove_worker' },
+      { fn: 'crove_kernel.worker_beat(text,text[])', role: 'crove_worker' },
+      { fn: 'crove_kernel.worker_beat(text,text[],text,timestamp with time zone)', role: 'crove_worker' },
+      { fn: 'crove_kernel.worker_build_lag(timestamp with time zone)', role: 'crove_app' },
     ]);
     const defs = await admin.query(
       `SELECT p.oid::regprocedure::text AS fn, p.prosecdef, p.proconfig FROM pg_proc p
        WHERE p.oid IN ('crove_kernel.health(integer)'::regprocedure, 'crove_kernel.prober_alert_gate(text,integer)'::regprocedure,
-                       'crove_kernel.worker_beat(text)'::regprocedure) ORDER BY 1`,
+                       'crove_kernel.worker_beat(text)'::regprocedure, 'crove_kernel.worker_beat(text,text[])'::regprocedure,
+                       'crove_kernel.worker_beat(text,text[],text,timestamptz)'::regprocedure, 'crove_kernel.worker_build_lag(timestamptz)'::regprocedure) ORDER BY 1`,
     );
     expect(defs.rows).toEqual([
       { fn: 'crove_kernel.health(integer)', prosecdef: true, proconfig: PINNED },
       { fn: 'crove_kernel.prober_alert_gate(text,integer)', prosecdef: true, proconfig: PINNED },
       { fn: 'crove_kernel.worker_beat(text)', prosecdef: true, proconfig: PINNED },
+      { fn: 'crove_kernel.worker_beat(text,text[])', prosecdef: true, proconfig: PINNED },
+      { fn: 'crove_kernel.worker_beat(text,text[],text,timestamp with time zone)', prosecdef: true, proconfig: PINNED },
+      { fn: 'crove_kernel.worker_build_lag(timestamp with time zone)', prosecdef: true, proconfig: PINNED },
     ]);
+    // #1997: crove_kernel.archive_health(), the WORM archive's two ages (times only, no tenant data), for crove_prober
+    // alone and a pinned definer.
+    const archive = await admin.query<{ oid: number | null }>(`SELECT to_regprocedure('crove_kernel.archive_health()')::oid AS oid`);
+    const archiveOid = archive.rows[0]?.oid ?? null;
+    expect(archiveOid).not.toBeNull();
+    if (archiveOid !== null) {
+      const runners = await admin.query<{ role: string }>(`SELECT r AS role FROM unnest($1::text[]) r WHERE has_function_privilege(r, $2::oid, 'EXECUTE') ORDER BY 1`, [
+        roles,
+        archiveOid,
+      ]);
+      expect(runners.rows).toEqual([{ role: 'crove_prober' }]);
+      const def = await admin.query(`SELECT p.prosecdef, p.proconfig FROM pg_proc p WHERE p.oid = $1::oid`, [archiveOid]);
+      expect(def.rows).toEqual([{ prosecdef: true, proconfig: PINNED }]);
+      // It answers the two ages and nothing else.
+      const answer = await admin.query('SELECT * FROM crove_kernel.archive_health()');
+      expect(answer.fields.map((f) => f.name)).toEqual(['archive_verify_age_seconds', 'archive_lag_seconds']);
+      expect(answer.rows).toHaveLength(1);
+    }
+    // #1998: crove_kernel.extraction_health(integer), the counts of failed document readings in a window (counts only,
+    // no tenant data), for crove_prober alone and a pinned definer.
+    const extraction = await admin.query<{ oid: number | null }>(`SELECT to_regprocedure('crove_kernel.extraction_health(integer)')::oid AS oid`);
+    const extractionOid = extraction.rows[0]?.oid ?? null;
+    expect(extractionOid).not.toBeNull();
+    if (extractionOid !== null) {
+      const runners = await admin.query<{ role: string }>(`SELECT r AS role FROM unnest($1::text[]) r WHERE has_function_privilege(r, $2::oid, 'EXECUTE') ORDER BY 1`, [
+        roles,
+        extractionOid,
+      ]);
+      expect(runners.rows).toEqual([{ role: 'crove_prober' }]);
+      const def = await admin.query(`SELECT p.prosecdef, p.proconfig FROM pg_proc p WHERE p.oid = $1::oid`, [extractionOid]);
+      expect(def.rows).toEqual([{ prosecdef: true, proconfig: PINNED }]);
+      // It answers the two counts and nothing else.
+      const answer = await admin.query('SELECT * FROM crove_kernel.extraction_health(3600)');
+      expect(answer.fields.map((f) => f.name)).toEqual(['service_failures', 'document_failures']);
+      expect(answer.rows).toHaveLength(1);
+    }
     // crove_prober executes no other Crove function.
     const others = await admin.query<{ fn: string }>(
       `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_jobs'
-         AND p.oid NOT IN ('crove_kernel.health(integer)'::regprocedure, 'crove_kernel.prober_alert_gate(text,integer)'::regprocedure)
+         AND p.oid NOT IN ('crove_kernel.health(integer)'::regprocedure, 'crove_kernel.prober_alert_gate(text,integer)'::regprocedure,
+                           COALESCE(to_regprocedure('crove_kernel.archive_health()')::oid, 0),
+                           COALESCE(to_regprocedure('crove_kernel.extraction_health(integer)')::oid, 0))
          AND has_function_privilege('crove_prober', p.oid, 'EXECUTE')`,
     );
     expect(others.rows).toEqual([]);
@@ -137,7 +190,7 @@ suite('prober privileges', () => {
     const prober = await connect(loginUrl('crove_prober', 'test-prober-pw'));
     const { rows } = await prober.query('SELECT * FROM crove_kernel.health()');
     expect(rows).toHaveLength(1);
-    expect(Object.keys(rows[0] as object)).toEqual([
+    const columns = [
       'checked_at',
       'outbox_pending',
       'outbox_oldest_age_seconds',
@@ -148,7 +201,13 @@ suite('prober privileges', () => {
       'job_oldest_queued_age_seconds',
       'dead_letter_count',
       'worker_heartbeat_age_seconds',
-    ]);
+    ];
+    // health()'s result stays as it is: every migration file must re-apply on the final schema (migrate.db.test.ts),
+    // so its result columns never change; the WORM archive's ages come from archive_health() (#1997).
+    expect(Object.keys(rows[0] as object)).toEqual(columns);
+    // The WORM archive's two ages (#1997): times only.
+    const archive = await prober.query('SELECT * FROM crove_kernel.archive_health()');
+    expect(archive.fields.map((f) => f.name)).toEqual(['archive_verify_age_seconds', 'archive_lag_seconds']);
     const refused = [
       'SELECT 1 FROM crove_kernel.tenant LIMIT 1',
       'SELECT 1 FROM crove_kernel.outbox_event LIMIT 1',
@@ -158,6 +217,7 @@ suite('prober privileges', () => {
       "UPDATE crove_kernel.prober_alert_state SET problem = 'probe'",
       'DELETE FROM crove_kernel.prober_alert_state',
       "SELECT crove_kernel.worker_beat('prober')",
+      "SELECT crove_kernel.worker_beat('prober', ARRAY['kernel'])",
       'SELECT * FROM crove_kernel.outbox_claim(1)',
       "SELECT crove_kernel.enter_system_context('00000000-0000-0000-0000-000000000000')",
       'CREATE TEMP TABLE t (x int)',
@@ -205,8 +265,16 @@ suite('prober privileges', () => {
     await admin.query('BEGIN');
     try {
       await admin.query('GRANT EXECUTE ON FUNCTION crove_kernel.worker_beat(text) TO crove_app');
+      await admin.query('GRANT EXECUTE ON FUNCTION crove_kernel.worker_beat(text, text[]) TO crove_app');
+      // #1952: the beat with the worker's build.
+      await admin.query('GRANT EXECUTE ON FUNCTION crove_kernel.worker_beat(text, text[], text, timestamptz) TO crove_app');
       await admin.query('SET SESSION AUTHORIZATION crove_app');
+      await admin.query('SAVEPOINT beat');
       await expect(admin.query("SELECT crove_kernel.worker_beat('fake')")).rejects.toMatchObject({ code: '42501', message: 'WORKER_ONLY' });
+      await admin.query('ROLLBACK TO SAVEPOINT beat');
+      await expect(admin.query("SELECT crove_kernel.worker_beat('fake', ARRAY['kernel'])")).rejects.toMatchObject({ code: '42501', message: 'WORKER_ONLY' });
+      await admin.query('ROLLBACK TO SAVEPOINT beat');
+      await expect(admin.query("SELECT crove_kernel.worker_beat('fake', ARRAY['kernel'], 'abc', now())")).rejects.toMatchObject({ code: '42501', message: 'WORKER_ONLY' });
     } finally {
       await admin.query('ROLLBACK');
     }

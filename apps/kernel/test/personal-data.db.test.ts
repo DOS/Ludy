@@ -13,10 +13,12 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, PERSONAL_DATA_COLUMNS, upsertIdentity, type PersonalDataColumn } from '@crove/kernel';
-import type { PersonalDataErasure, PersonalDataResult } from '@crove/kernel-contract';
+import { ACTIVITY_SHORT_NUMBER_REASON, createOrg, kernelCommands, kernelQueries, PERSONAL_DATA_COLUMNS, personalDataProbe, UNTOLD_PRIVATE_REASON, upsertIdentity, type PersonalDataColumn } from '@crove/kernel';
+import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
+import { PII_TEXT_CASES } from './pii-text-cases.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -28,6 +30,9 @@ suite('finding a person in the org (#923)', () => {
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
+  // The worker's login, for the system command that turns a notice into notifications (#1678).
+  let workerPool: pg.Pool;
+  let workerRt: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   let org = { orgId: '', owner: '', admin: '', member: '' };
   let other = { orgId: '', owner: '' };
@@ -45,7 +50,7 @@ suite('finding a person in the org (#923)', () => {
 
   const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@pdpl.test`, name: null });
   const find = (value: string, user = org.owner, orgId = org.orgId) =>
-    rt.query<PersonalDataResult>('kernel.personal_data.find', { value }, { actor: asUser(user), orgId });
+    rt.execute<PersonalDataResult>('kernel.personal_data.find', { value }, { actor: asUser(user), orgId });
   const columns = (result: PersonalDataResult) => result.matches.map((m) => m.column).sort();
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const erase = (value: string, user = org.owner) =>
@@ -67,6 +72,11 @@ suite('finding a person in the org (#923)', () => {
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
+    const worker = new URL(adminUrl);
+    worker.username = 'crove_worker';
+    worker.password = 'test-worker-pw';
+    workerPool = createPool({ connectionString: worker.toString(), max: 2 });
+    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
 
     const owner = await identity('owner');
     org = { orgId: (await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`)).orgId, owner, admin: await identity('admin'), member: await identity('member') };
@@ -99,6 +109,7 @@ suite('finding a person in the org (#923)', () => {
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -129,6 +140,270 @@ suite('finding a person in the org (#923)', () => {
     await expect(find('mau.nguyen@example.vn', org.member)).rejects.toMatchObject({ status: 403 });
     await expect(find('Nguyễn Văn Mẫu')).rejects.toMatchObject({ code: 'PERSONAL_DATA_QUERY', status: 422 });
     expect((await find('nobody@example.vn')).matches).toEqual([]);
+  });
+
+  // The shared free-text match (#1678, reused by #1948): whole addresses only, the value never read as a pattern,
+  // digits however they are spaced, a phone with or without +84, and the redaction that goes with it.
+  it('matches and edits out a value inside free text, and refuses a value of another shape (#1678)', async () => {
+    const check = async (text: string | null, kind: string, value: string) =>
+      admin(async (c) => (await c.query<{ found: boolean; edited: string | null }>(
+        `SELECT crove_kernel.text_mentions($1, $2, $3) AS found, crove_kernel.text_redact($1, $2, $3, '[đã xóa]') AS edited`,
+        [text, kind, value],
+      )).rows[0]);
+    // The shared table (pii-text-cases.ts), each value read as the finder reads it.
+    for (const c of PII_TEXT_CASES) {
+      const probe = personalDataProbe(c.value);
+      if (!probe) {
+        expect(c.redacted, c.name).toBe(c.text);
+        continue;
+      }
+      const value = probe.kind === 'email' ? probe.email : probe.digits;
+      expect(await check(c.text, probe.kind, value), c.name).toEqual({ found: c.redacted !== c.text, edited: c.redacted });
+    }
+    expect(await check(null, 'email', 'a@x.example')).toEqual({ found: false, edited: null });
+    // The mark is taken literally: an & or a backslash in it never brings the value back (#1678 review).
+    const marked = await admin(async (c) => (await c.query<{ edited: string }>(`SELECT crove_kernel.text_redact('mail a@x.example.', 'email', 'a@x.example', $1) AS edited`, ['R&D \\1 \\&'])).rows[0]?.edited);
+    expect(marked).toBe('mail R&D \\1 \\&.');
+    // A value of another shape, or another kind, raises instead of matching nothing.
+    for (const [kind, value] of [['email', 'A@X.example'], ['email', 'not an email'], ['digits', '1234'], ['name', 'Nguyễn']]) {
+      await expect(check('x', kind as string, value as string), `${kind} ${value}`).rejects.toMatchObject({ code: '22023' });
+    }
+  });
+
+  // Notes and to-dos (#1678, notes step N9, ADR-0037 section 5): a value among other words. A shared note is listed with
+  // its text; private notes and to-dos (always private) are counted per author and never shown, the finder's own
+  // included. The finder searches whole addresses and digits however they are spaced.
+  it('finds a value inside shared notes, and counts private notes and to-dos per author without their text (#1678)', async () => {
+    const [shared, near] = [randomUUID(), randomUUID()];
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
+           ($1, $2, $4, 'org', 'Khách hàng mới', 'Liên hệ giám đốc: Giam.Doc@khach.example.', '{}'),
+           ($1, $3, $4, 'org', 'Địa chỉ khác', 'xgiam.doc@khach.example và giam.doc@khach.example.test', '{}'),
+           ($1, crove_kernel.uuid_v7(), $5, 'private', 'Riêng một', 'gọi giam.doc@khach.example sau 15h', '{}'),
+           ($1, crove_kernel.uuid_v7(), $5, 'private', 'Riêng hai: giam.doc@khach.example', '', '{}'),
+           ($1, crove_kernel.uuid_v7(), $4, 'private', 'Của chủ', 'không liên quan', '{giam.doc@khach.example}')`,
+        [org.orgId, shared, near, org.owner, org.member],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, details, checklist, sort_key) VALUES
+           ($1, $2, 'Gọi giám đốc', 'Số (000) 777.66.55', '[]', 'a0'),
+           ($1, $2, 'Gửi hồ sơ', NULL, '[{"text": "gửi tới giam.doc@khach.example", "done": false}]', 'a1')`,
+        [org.orgId, org.member],
+      );
+    });
+    const byAuthor = (result: PersonalDataResult) => [...(result.privateItems ?? [])].sort((a, b) => a.authorUserId.localeCompare(b.authorUserId));
+    for (const user of [org.owner, org.admin]) {
+      const result = await find('giam.doc@khach.example', user);
+      // The shared note that holds the whole address, and not the one with longer addresses around it.
+      expect(result.matches.filter((m) => m.column.startsWith('crove_notes.'))).toEqual([
+        expect.objectContaining({ column: 'crove_notes.note.body', handling: 'erase', rowId: shared, row: expect.objectContaining({ visibility: 'org', title: 'Khách hàng mới' }) }),
+      ]);
+      // The private counts are for owners only (#1678 review: a probe of a guessed value is an oracle).
+      if (user === org.admin) expect(result.privateItems).toBeNull();
+      else
+        expect(byAuthor(result), user).toEqual(
+          [
+            { authorUserId: org.member, notes: 2, todos: 1 },
+            { authorUserId: org.owner, notes: 1, todos: 0 },
+          ].sort((a, b) => a.authorUserId.localeCompare(b.authorUserId)),
+        );
+      // No private text, not even the owner's own.
+      for (const secret of ['Riêng một', 'Riêng hai', 'Của chủ', 'Gửi hồ sơ', 'Gọi giám đốc']) expect(JSON.stringify(result), secret).not.toContain(secret);
+    }
+    // Every search leaves an audit row with who, the kind and the counts, never the value.
+    const audits = (
+      await admin((c) =>
+        c.query<{ actor_id: string; detail: unknown }>(
+          `SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.find' AND outcome = 'ok' ORDER BY id DESC LIMIT 2`,
+          [org.orgId],
+        ),
+      )
+    ).rows;
+    expect(audits.map((a) => a.actor_id)).toEqual([org.admin, org.owner]);
+    expect(audits[0]?.detail).toMatchObject({ kind: 'email', matches: 1, private: null });
+    expect(audits[1]?.detail).toMatchObject({ kind: 'email', matches: 1, private: { authors: 2, notes: 3, todos: 1 } });
+    expect(JSON.stringify(audits)).not.toContain('giam.doc');
+    // A phone written with brackets and dots in a to-do's details, found by any spelling.
+    for (const phone of ['0007776655', '+84 007 776 655']) {
+      expect((await find(phone)).privateItems, phone).toEqual([{ authorUserId: org.member, notes: 0, todos: 1 }]);
+    }
+    // Nothing for a value no item holds, and nothing from another org.
+    expect((await find('nobody@khach.example')).privateItems).toEqual([]);
+    expect((await find('giam.doc@khach.example', other.owner, other.orgId)).privateItems).toEqual([]);
+  });
+
+  it('edits the value out of shared notes, and deletes the private items a notice named once their authors were told (#1678)', async () => {
+    const value = 'thu.ky@khach.example';
+    const shared = randomUUID();
+    const memberNotes = [randomUUID(), randomUUID()];
+    const [unrelated, later] = [randomUUID(), randomUUID()];
+    const [memberTodo, adminTodo] = [randomUUID(), randomUUID()];
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES
+           ($1, $2, $6, 'org', 'Gặp THU.KY@khach.example', 'Thư ký: thu.ky@khach.example, số cũ', '{thu.ky@khach.example,khach}'),
+           ($1, $3, $7, 'private', 'Riêng A', 'gửi thu.ky@khach.example', '{}'),
+           ($1, $4, $7, 'private', 'Riêng B: thu.ky@khach.example', '', '{}'),
+           ($1, $5, $7, 'private', 'Riêng C', 'không liên quan', '{}')`,
+        [org.orgId, shared, memberNotes[0], memberNotes[1], unrelated, org.owner, org.member],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, details, checklist, sort_key) VALUES
+           ($1, $2, $4, 'Gọi thư ký', 'thu.ky@khach.example', '[]', 'b0'),
+           ($1, $3, $5, 'Hồ sơ', NULL, '[{"text": "gửi thu.ky@khach.example", "done": false}]', 'b1')`,
+        [org.orgId, memberTodo, adminTodo, org.member, org.admin],
+      );
+    });
+    const privateLeft = async () =>
+      (
+        await admin((c) =>
+          c.query<{ id: string }>(
+            `SELECT id FROM crove_notes.note WHERE org_id = $1 AND visibility = 'private' AND author_user_id = ANY($2) AND id = ANY($4)
+             UNION ALL SELECT id FROM crove_notes.todo WHERE org_id = $1 AND id = ANY($3)`,
+            [org.orgId, [org.member], [memberTodo, adminTodo], [...memberNotes, unrelated, later]],
+          ),
+        )
+      ).rows
+        .map((r) => r.id)
+        .sort();
+    const notify = (user = org.owner) =>
+      rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value }, { actor: asMfa(user), orgId: org.orgId, idempotencyKey: randomUUID() });
+    const byAuthor = <T extends { authorUserId: string }>(items: readonly T[]) => [...items].sort((a, b) => a.authorUserId.localeCompare(b.authorUserId));
+
+    // Before any notice the erasure edits the shared note and deletes no private item: it says how many it kept.
+    const first = await erase(value);
+    expect(Object.fromEntries(first.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]))).toEqual({
+      'crove_notes.note.title': 1,
+      'crove_notes.note.body': 1,
+      'crove_notes.note.tags': 1,
+    });
+    expect(first.kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
+      { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+    ]);
+    const note = (await admin((c) => c.query(`SELECT title, body, tags, revision, search @@ crove_kernel.search_query('khach.example') AS searchable FROM crove_notes.note WHERE id = $1`, [shared]))).rows[0];
+    expect(note).toEqual({ title: 'Gặp [đã xóa]', body: 'Thư ký: [đã xóa], số cũ', tags: ['khach'], revision: 2, searchable: false });
+    expect(await privateLeft()).toEqual([...memberNotes, unrelated, memberTodo, adminTodo].sort());
+
+    // Owners only send the notice; it names ids and counts, never the value or the text.
+    await expect(notify(org.admin)).rejects.toMatchObject({ status: 403 });
+    await expect(notify(org.member)).rejects.toMatchObject({ status: 403 });
+    // The member turned this kind off; the notice reaches them anyway.
+    await admin((c) => c.query(`INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.personal_data_notice')`, [org.orgId, org.member]));
+    const notice = await notify();
+    expect(notice.told).toBe(2);
+    expect(byAuthor(notice.authors)).toEqual(
+      byAuthor([
+        { authorUserId: org.member, notes: 2, todos: 1 },
+        { authorUserId: org.admin, notes: 0, todos: 1 },
+      ]),
+    );
+    const audit = (
+      await admin((c) =>
+        c.query<{ detail: { key: string; notes: string[]; todos: string[]; authors: number; event: string } }>(
+          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok'`,
+          [org.orgId],
+        ),
+      )
+    ).rows;
+    expect(audit).toHaveLength(1);
+    // Each item as '<id>:<revision>', and the event whose notifications prove the authors were told.
+    expect([...(audit[0]?.detail.notes ?? [])].sort()).toEqual(memberNotes.map((id) => `${id}:1`).sort());
+    expect([...(audit[0]?.detail.todos ?? [])].sort()).toEqual([memberTodo, adminTodo].map((id) => `${id}:1`).sort());
+    const { rows: events } = await admin((c) =>
+      c.query<{ id: string; payload: unknown }>(`SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified'`, [org.orgId]),
+    );
+    expect(events).toHaveLength(1);
+    expect(audit[0]?.detail.event).toBe(events[0]?.id);
+    expect(audit[0]?.detail.key).toMatch(/^k1:[0-9a-f]{64}$/);
+    // One key per value however a phone is spelled (with 84 or its leading 0), another per value and per org.
+    const keys = (
+      await admin((c) =>
+        c.query<{ same: boolean; other: boolean; org: boolean }>(
+          `SELECT crove_notes.private_notice_key_of($1, 'digits', '84912345678') = crove_notes.private_notice_key_of($1, 'digits', '0912345678') AS same,
+                  crove_notes.private_notice_key_of($1, 'email', 'thu.ky@khach.example') = crove_notes.private_notice_key_of($1, 'email', 'khac@khach.example') AS other,
+                  crove_notes.private_notice_key_of($1, 'email', 'thu.ky@khach.example') = crove_notes.private_notice_key_of($2, 'email', 'thu.ky@khach.example') AS org`,
+          [org.orgId, other.orgId],
+        ),
+      )
+    ).rows[0];
+    expect(keys).toEqual({ same: true, other: false, org: false });
+    for (const secret of ['thu.ky', 'Riêng', 'Gọi thư ký', 'Hồ sơ']) {
+      expect(JSON.stringify(audit), secret).not.toContain(secret);
+      expect(JSON.stringify(events), secret).not.toContain(secret);
+    }
+
+    // Until the worker has told the authors, the erasure deletes nothing.
+    expect((await erase(value)).kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
+      { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+    ]);
+    // The worker turns the event into one notification per author, with counts only.
+    await workerRt.execute('kernel.notification.dispatch', { eventId: events[0]?.id }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
+    const { rows: notes } = await admin((c) =>
+      c.query<{ user_id: string; detail: Record<string, string>; subject_id: string | null }>(
+        `SELECT user_id, detail, subject_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.personal_data_notice' ORDER BY user_id`,
+        [org.orgId],
+      ),
+    );
+    expect(notes).toEqual(
+      [
+        { user_id: org.member, detail: { notes: '2', todos: '1' }, subject_id: null },
+        { user_id: org.admin, detail: { notes: '0', todos: '1' }, subject_id: null },
+      ].sort((a, b) => a.user_id.localeCompare(b.user_id)),
+    );
+    // Told just now: the erasure waits 24 hours, so the authors can read the notice and take their items first.
+    expect((await erase(value)).kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
+      { column: 'crove_notes.note', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'crove_notes.todo', rows: 2, reason: UNTOLD_PRIVATE_REASON },
+    ]);
+    expect(await privateLeft()).toEqual([...memberNotes, unrelated, memberTodo, adminTodo].sort());
+    // A day later: the notice's audit row and its notifications moved 25 hours back (the audit trail is append-only,
+    // so its trigger is set aside for this one transaction).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [org.orgId]);
+      await c.query('COMMIT');
+    });
+
+    // A private note written after the notice was not named, and a to-do changed since it was named at an older
+    // revision: the erasure keeps both, and deletes the others.
+    await admin((c) => c.query('UPDATE crove_notes.todo SET revision = revision + 1 WHERE org_id = $1 AND id = $2', [org.orgId, memberTodo]));
+    await admin((c) =>
+      c.query(`INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Riêng D', 'thu.ky@khach.example', '{}')`, [
+        org.orgId,
+        later,
+        org.member,
+      ]),
+    );
+    const second = await erase(value);
+    expect(Object.fromEntries(second.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]))).toEqual({
+      'crove_notes.note': 2,
+      'crove_notes.todo': 1,
+    });
+    expect(second.kept.filter((k) => k.column.startsWith('crove_notes.'))).toEqual([
+      { column: 'crove_notes.note', rows: 1, reason: UNTOLD_PRIVATE_REASON },
+      { column: 'crove_notes.todo', rows: 1, reason: UNTOLD_PRIVATE_REASON },
+    ]);
+    expect(await privateLeft()).toEqual([unrelated, later, memberTodo].sort());
+    expect((await find(value)).privateItems).toEqual([{ authorUserId: org.member, notes: 1, todos: 1 }]);
+    const erasedAudit = (
+      await admin((c) =>
+        c.query<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [
+          org.orgId,
+        ]),
+      )
+    ).rows[0];
+    expect(erasedAudit?.detail).toMatchObject({
+      erased: { 'crove_notes.note': 2, 'crove_notes.todo': 1 },
+      kept: { 'crove_notes.note': 1, 'crove_notes.todo': 1 },
+      // The deleted items, by id only.
+      private_deleted: { notes: [...memberNotes].sort(), todos: [adminTodo] },
+    });
+    expect(JSON.stringify(erasedAudit)).not.toContain('thu.ky');
   });
 
   it("finds the legal entities the org keeps books for, kept by law, and the default one as the org's own (#1312)", async () => {
@@ -345,5 +620,258 @@ suite('finding a person in the org (#923)', () => {
     const rows = (await admin((c) => c.query<{ id: string; from_address: string | null; body_text: string | null }>('SELECT id, from_address, body_text FROM crove_kernel.inbound_message WHERE id = ANY($1)', [[theirs, others]]))).rows;
     expect(rows.find((r) => r.id === theirs)).toMatchObject({ from_address: null, body_text: null });
     expect(rows.find((r) => r.id === others)).toMatchObject({ from_address: 'khac@shop-khac.example', body_text: 'Chào chị Mẫu, ưu đãi 20%' });
+  });
+  // Free text that quotes a person (#1948): the finder searches activity lines, task comments, journal entry
+  // descriptions and the reasons on cash and journal vouchers for the value anywhere inside them. The erasure replaces
+  // it in activity lines, and keeps the comments (append-only) and the books (kept by law), listed with their reasons;
+  // its audit row holds counts only.
+  it('finds a person quoted in free text, redacts it in activity lines and keeps the comments and the books (#1948)', async () => {
+    const email = 'Tu.Tran@Example.vn';
+    const seeded = await admin(async (c) => {
+      const line = async (summary: string) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'party.note', $3) RETURNING id`,
+            [org.orgId, person, summary],
+          )
+        ).rows[0]?.id as string;
+      const byEmail = await line(`Đã gửi hợp đồng cho ${email} hôm nay`);
+      const byPhone = await line('Gọi chị Tú ở số 0987.654.321 lúc 9 giờ');
+      const longer = await line('Mã đơn 0987654321999 không phải số điện thoại');
+      const task = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Liên hệ khách', 'human', 'user') RETURNING id`,
+          [org.orgId],
+        )
+      ).rows[0]?.id as string;
+      await c.query(`INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type, author_id) VALUES ($1, $2, $3, 'user', $4)`, [
+        org.orgId,
+        task,
+        `Đã hẹn với tu.tran@example.vn`,
+        org.owner,
+      ]);
+      // An entry, a cash receipt and a journal voucher, each entry with balanced lines, in one transaction (the ledger's
+      // and the vouchers' checks run at commit).
+      const receipt = randomUUID();
+      const voucher = randomUUID();
+      const lines = (entry: string, debit: string, credit: string) =>
+        c.query(
+          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, $3, 100000, 0), ($1, $2, 2, $4, 0, 100000)`,
+          [org.orgId, entry, debit, credit],
+        );
+      await c.query('BEGIN');
+      const advance = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-04', $2, 'test.pdpl', $3) RETURNING id`,
+          [org.orgId, `Tạm ứng cho ${email}`, randomUUID()],
+        )
+      ).rows[0]?.id as string;
+      await lines(advance, '141', '1111');
+      const entry = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-05', 'PT', 'finance.cash_voucher', $2) RETURNING id`,
+          [org.orgId, receipt],
+        )
+      ).rows[0]?.id as string;
+      await lines(entry, '1111', '131');
+      await c.query(
+        `INSERT INTO crove_finance.cash_voucher (org_id, id, voucher_type, number, voucher_date, cash_account, description, amount)
+         VALUES ($1, $2, 'cash_receipt', 1, '2026-09-05', '1111', $3, 100000)`,
+        [org.orgId, receipt, `Thu tiền của ${email}`],
+      );
+      const adjustment = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-06', 'PKT', 'finance.journal_voucher', $2) RETURNING id`,
+          [org.orgId, voucher],
+        )
+      ).rows[0]?.id as string;
+      await lines(adjustment, '6422', '331');
+      await c.query(`INSERT INTO crove_finance.journal_voucher (org_id, id, number, voucher_date, description) VALUES ($1, $2, 1, '2026-09-06', $3)`, [
+        org.orgId,
+        voucher,
+        `Điều chỉnh theo thư của ${email}`,
+      ]);
+      await c.query('COMMIT');
+      return { byEmail, byPhone, longer };
+    });
+
+    const found = await find(email);
+    expect(columns(found)).toEqual([
+      'crove_finance.cash_voucher.description',
+      'crove_finance.journal_entry.description',
+      'crove_finance.journal_voucher.description',
+      'crove_kernel.activity.summary',
+      'crove_kernel.task_comment.body',
+    ]);
+    expect(found.matches.find((m) => m.column === 'crove_kernel.activity.summary')).toMatchObject({ handling: 'erase', rowId: seeded.byEmail });
+    expect(found.matches.find((m) => m.column === 'crove_kernel.task_comment.body')?.handling).toBe('keep_record');
+    expect(found.matches.filter((m) => m.column.startsWith('crove_finance.')).map((m) => m.handling)).toEqual(['keep_legal', 'keep_legal', 'keep_legal']);
+    // A phone however it is spelled, never inside a longer number.
+    const byPhone = await find('+84 987 654 321');
+    expect(byPhone.matches.filter((m) => m.column === 'crove_kernel.activity.summary').map((m) => m.rowId)).toEqual([seeded.byPhone]);
+
+    const erased = await erase(email);
+    expect(erased.erased).toContainEqual({ column: 'crove_kernel.activity.summary', rows: 1 });
+    for (const column of ['crove_kernel.task_comment.body', 'crove_finance.journal_entry.description', 'crove_finance.cash_voucher.description', 'crove_finance.journal_voucher.description']) {
+      expect(erased.kept, column).toContainEqual({ column, rows: 1, reason: expect.any(String) });
+    }
+    await erase('0987654321');
+    const summaries = (
+      await admin((c) => c.query<{ id: string; summary: string }>('SELECT id, summary FROM crove_kernel.activity WHERE id = ANY($1)', [[seeded.byEmail, seeded.byPhone, seeded.longer]]))
+    ).rows;
+    const summary = (id: string) => summaries.find((r) => r.id === id)?.summary;
+    expect(summary(seeded.byEmail)).toBe('Đã gửi hợp đồng cho [đã xóa] hôm nay');
+    expect(summary(seeded.byPhone)).toBe('Gọi chị Tú ở số [đã xóa] lúc 9 giờ');
+    expect(summary(seeded.longer)).toBe('Mã đơn 0987654321999 không phải số điện thoại');
+    // The kept rows are still there to find, and nothing else is.
+    expect(columns(await find(email))).toEqual([
+      'crove_finance.cash_voucher.description',
+      'crove_finance.journal_entry.description',
+      'crove_finance.journal_voucher.description',
+      'crove_kernel.task_comment.body',
+    ]);
+    const audits = (
+      await admin((c) =>
+        c.query<{ detail: unknown }>(
+          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok' ORDER BY id DESC LIMIT 2`,
+          [org.orgId],
+        ),
+      )
+    ).rows;
+    expect(JSON.stringify(audits).toLowerCase()).not.toContain('tu.tran');
+    expect(JSON.stringify(audits)).not.toMatch(/987.?654/);
+  });
+
+  // A number of 8 or 9 digits (an old ID card number) may as well be an amount or a voucher number in a timeline line:
+  // the erasure lists those lines with its reason and leaves them as they are; the definer changes nothing for it
+  // either (#1948, the coordinator's review).
+  it('lists the activity lines a short number matches and leaves them as they are (#1948)', async () => {
+    const line = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary) VALUES ($1, 'kernel.party', $2, 'party.note', 'Mã đối chiếu 23456789 của khách') RETURNING id`,
+            [org.orgId, person],
+          )
+        ).rows[0]?.id as string,
+    );
+    expect((await find('23456789')).matches.filter((m) => m.column === 'crove_kernel.activity.summary').map((m) => m.rowId)).toEqual([line]);
+    const result = await erase('23456789');
+    expect(result.erased.map((e) => e.column)).not.toContain('crove_kernel.activity.summary');
+    expect(result.kept).toContainEqual({ column: 'crove_kernel.activity.summary', rows: 1, reason: ACTIVITY_SHORT_NUMBER_REASON });
+    const summary = (await admin((c) => c.query<{ summary: string }>('SELECT summary FROM crove_kernel.activity WHERE id = $1', [line]))).rows[0]?.summary;
+    expect(summary).toBe('Mã đối chiếu 23456789 của khách');
+  });
+
+  // More free text (#1961): a task's title and description are redacted where they quote the person, as the owner,
+  // even on a closed, tainted task (the task guards hold agents, and taint and status stay); a bank statement
+  // line and a journal line's memo are kept, listed with their reasons. A number under 10 digits leaves tasks as they
+  // are too.
+  it("redacts a person quoted in tasks and keeps bank lines and journal line memos (#1961)", async () => {
+    const email = 'Ha.Le@Example.vn';
+    const seeded = await admin(async (c) => {
+      const task = async (title: string, description: string | null, closed = false) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.task (org_id, title, description, source, created_by_type, status, tainted)
+             VALUES ($1, $2, $3, 'human', 'user', $4, $5) RETURNING id`,
+            [org.orgId, title, description, closed ? 'done' : 'todo', closed],
+          )
+        ).rows[0]?.id as string;
+      const byTitle = await task(`Gọi lại cho ${email}`, null);
+      const byDescription = await task('Liên hệ khách', 'Số của chị Hà: 0976 543 210, gọi sau 9 giờ', true);
+      const short = await task('Đối chiếu mã 34567890', null);
+      const entity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id;
+      await c.query('BEGIN');
+      // A statement line as the bank wrote it, inserted without the import's checks, which this test is not about.
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query(
+        `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
+         VALUES ($1, '1121', $2, 1, '2026-09-07', $3, 250000, $4)`,
+        [org.orgId, randomUUID(), `CK tu ${email} thanh toan`, entity],
+      );
+      await c.query('COMMIT');
+      await c.query('BEGIN');
+      const entry = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-08', 'Chi phí', 'test.pdpl', $2) RETURNING id`,
+          [org.orgId, randomUUID()],
+        )
+      ).rows[0]?.id as string;
+      await c.query(
+        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, memo) VALUES ($1, $2, 1, '6422', 50000, 0, $3), ($1, $2, 2, '1111', 0, 50000, NULL)`,
+        [org.orgId, entry, `Hoàn ứng cho ${email}`],
+      );
+      await c.query('COMMIT');
+      return { byTitle, byDescription, short };
+    });
+
+    expect(columns(await find(email))).toEqual(['crove_finance.bank_line.description', 'crove_finance.journal_line.memo', 'crove_kernel.task.title']);
+    expect((await find('0976543210')).matches.filter((m) => m.column === 'crove_kernel.task.description').map((m) => m.rowId)).toEqual([seeded.byDescription]);
+
+    const byEmail = await erase(email);
+    expect(byEmail.erased).toContainEqual({ column: 'crove_kernel.task.title', rows: 1 });
+    for (const column of ['crove_finance.bank_line.description', 'crove_finance.journal_line.memo']) {
+      expect(byEmail.kept, column).toContainEqual({ column, rows: 1, reason: expect.any(String) });
+    }
+    const byPhone = await erase('+84 976 543 210');
+    expect(byPhone.erased).toContainEqual({ column: 'crove_kernel.task.description', rows: 1 });
+    const shortNumber = await erase('34567890');
+    expect(shortNumber.erased.map((e) => e.column)).not.toContain('crove_kernel.task.title');
+    expect(shortNumber.kept).toContainEqual({ column: 'crove_kernel.task.title', rows: 1, reason: ACTIVITY_SHORT_NUMBER_REASON });
+
+    const tasks = (
+      await admin((c) =>
+        c.query<{ id: string; title: string; description: string | null; status: string; tainted: boolean }>(
+          'SELECT id, title, description, status, tainted FROM crove_kernel.task WHERE id = ANY($1)',
+          [[seeded.byTitle, seeded.byDescription, seeded.short]],
+        ),
+      )
+    ).rows;
+    const row = (id: string) => tasks.find((t) => t.id === id);
+    expect(row(seeded.byTitle)).toMatchObject({ title: 'Gọi lại cho [đã xóa]', description: null });
+    // The closed, tainted task keeps its status and taint.
+    expect(row(seeded.byDescription)).toMatchObject({ title: 'Liên hệ khách', description: 'Số của chị Hà: [đã xóa], gọi sau 9 giờ', status: 'done', tainted: true });
+    expect(row(seeded.short)?.title).toBe('Đối chiếu mã 34567890');
+  });
+
+  // Only the erase command reaches the redaction: an owner's own context, never a member's or a raw tenant call.
+  it('redacts activity lines only in an owner context (#1948)', async () => {
+    const app = new URL(adminUrl);
+    app.username = 'crove_app';
+    app.password = 'test-app-pw';
+    const call = async (user: string) => {
+      const c = new pg.Client({ connectionString: app.toString() });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, user, org.orgId);
+        await c.query(`SELECT crove_kernel.personal_data_redact_activity('email', 'nobody@example.vn')`);
+        return 'answered';
+      } catch (error) {
+        return (error as Error).message;
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    };
+    expect(await call(org.owner)).toBe('answered');
+    expect(await call(org.admin)).toBe('PERSONAL_DATA_OWNER_ONLY');
+    expect(await call(org.member)).toBe('PERSONAL_DATA_OWNER_ONLY');
+    // Nobody but the API login may call it at all: the tenant and worker roles hold no EXECUTE.
+    const grants = await admin(
+      async (c) =>
+        (
+          await c.query<{ role: string; allowed: boolean }>(
+            `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_kernel.personal_data_redact_activity(text, text)', 'EXECUTE') AS allowed
+               FROM pg_catalog.unnest(ARRAY['crove_app', 'crove_tenant', 'crove_worker']) AS r`,
+          )
+        ).rows,
+    );
+    expect(grants).toEqual([
+      { role: 'crove_app', allowed: true },
+      { role: 'crove_tenant', allowed: false },
+      { role: 'crove_worker', allowed: false },
+    ]);
   });
 });

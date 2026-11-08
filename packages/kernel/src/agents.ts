@@ -8,9 +8,10 @@
 // - Agents work only through tasks: checkout, comment, status, escalate, delegate. Every write is made under the
 //   lease the run holds (fencing token checked here, run checked by the database triggers).
 // - The worker starts and finishes runs as the system; an agent enters a context only through a live run.
+import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
+import { auditValue, defaultCoworkerName, tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
 import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
 import {
   DomainError,
@@ -28,8 +29,9 @@ import { decideAgentApproval, eligibleApprovers, type ActorRef } from './approva
 import { refuseWhileReextracting } from './extraction.ts';
 import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
+import { releaseWaitingFiles } from './ai-budget.ts';
 import { memberProfiles } from './profiles.ts';
-import { rerouteStrandedTasks } from './task-reroute.ts';
+import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -257,6 +259,8 @@ export const updatePosition = defineCommand({
   target: (input) => ({ type: 'kernel.position', id: input.id }),
   handler: async (ctx, input) => {
     requireUser(ctx);
+    // Before the seat's lock: a change of le_scope re-routes (#1858).
+    await lockChartChanges(ctx);
     const before = await lockPosition(ctx.trx, ctx.orgId, input.id);
     const set: Record<string, unknown> = {};
     if (input.title !== undefined) set.title = input.title;
@@ -294,6 +298,8 @@ export const assignPosition = defineCommand({
   target: (input) => ({ type: 'kernel.position', id: input.id }),
   handler: async (ctx, input) => {
     requireUser(ctx);
+    // Before the seat's lock: the new holder's tasks re-route (#1858).
+    await lockChartChanges(ctx);
     const position = await lockPosition(ctx.trx, ctx.orgId, input.id);
     let holderUser: string | null = null;
     let holderAgent: string | null = null;
@@ -384,12 +390,21 @@ export const installAgentTemplate = defineCommand({
       throw new DomainError('MODULE_DISABLED', 409, 'Phân hệ của mẫu tác tử AI này chưa được bật', { module: template.module });
     }
     if (input.reportsTo) await lockPosition(ctx.trx, ctx.orgId, input.reportsTo);
+    // The module's AI coworker (Vy, Ly, Dy, Uy) names the agent when the installer gives no name (#2410). The screens
+    // tell agents apart by name, so a second agent of the same module (two finance templates both give Ly) gets the
+    // template's title next to it instead of sharing the name.
+    let displayName = input.displayName;
+    if (displayName === undefined) {
+      const coworker = defaultCoworkerName(template.module);
+      const taken = coworker === null ? undefined : await ctx.trx.selectFrom('crove_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('display_name', '=', coworker).limit(1).executeTakeFirst();
+      displayName = coworker === null ? template.title : taken ? `${coworker} (${template.title})` : coworker;
+    }
     const agent = await ctx.trx
       .insertInto('crove_kernel.agent')
       .values({
         org_id: ctx.orgId,
         template_key: template.key,
-        display_name: input.displayName ?? template.title,
+        display_name: displayName,
         max_risk: template.max_risk,
         daily_run_cap: template.daily_run_cap,
         created_by: userId,
@@ -502,7 +517,9 @@ export const setAgentBudget = defineCommand({
   name: 'kernel.agent.budget.set',
   input: z.object({ scope: zScope, target: z.string().min(1).max(100), monthlyLimit: zAmount, warnPercent: z.number().int().min(1).max(100).optional(), hardStop: z.boolean().optional() }),
   risk: 'R3',
-  sideEffect: 'internal',
+  // External: a raised budget sends the documents that waited for the model to be read again, and the extract queue reaches the
+  // AI endpoint (the egress invariant counts the emitter's side effect, #1653, #2382).
+  sideEffect: 'external',
   access: OWNER,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
@@ -529,8 +546,10 @@ export const setAgentBudget = defineCommand({
       )
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ budget: row.id, scope: input.scope, target, monthly_limit: input.monthlyLimit, hard_stop: input.hardStop ?? true });
     await rewakePending(ctx);
+    // Documents that waited for the AI budget (#2382) are read again at once when the new limit lets them in.
+    const released = await releaseWaitingFiles(ctx);
+    ctx.audit({ budget: row.id, scope: input.scope, target, monthly_limit: input.monthlyLimit, hard_stop: input.hardStop ?? true, released_files: released });
     await ctx.activity('kernel.agent', row.id, 'agent.budget_set', `Đặt ngân sách AI (${input.scope} ${target}): ${input.monthlyLimit}`);
     return { budgetId: row.id };
   },
@@ -651,7 +670,7 @@ async function insertHumanTask(
     .returning(['id', 'tainted', 'request_depth'])
     .executeTakeFirstOrThrow();
   await requestWakeup(ctx, input.assigneePositionId, { taskId: task.id, why: 'assigned' }, task.tainted, task.request_depth);
-  await ctx.emit('kernel.task.created', { taskId: task.id });
+  await ctx.emit('kernel.task.created', { taskId: task.id, positionId: input.assigneePositionId });
   return { taskId: task.id };
 }
 
@@ -687,6 +706,89 @@ export const createTaskFromTodo = defineCommand({
     });
     ctx.audit({ taskId: created.taskId, todoId: input.todoId, positionId: input.positionId });
     return created;
+  },
+});
+
+// A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
+// Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
+// (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
+const TASK_TABLE = kernelManifest.tables.crove_kernel.task;
+export const updateTask = defineCommand({
+  name: 'kernel.task.update',
+  input: z.object({
+    id: zId,
+    title: zTaskTitle.optional(),
+    description: z.string().max(10000).nullable().optional(),
+    assigneePositionId: zId.nullable().optional(),
+    due: z.iso.datetime().nullable().optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  target: (input) => ({ type: 'kernel.task', id: input.id }),
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    // Serialize with chart and role changes when moving the task to another seat (#1858).
+    if (input.assigneePositionId !== undefined) await lockChartChanges(ctx);
+    const before = await ctx.trx
+      .selectFrom('crove_kernel.task')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!before) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
+    if (before.checkout_run_id && before.lock_expires_at && before.lock_expires_at.getTime() > ctx.now.getTime()) {
+      throw new DomainError('TASK_CHECKED_OUT', 409, 'Việc này đang được xử lý');
+    }
+    const nextPositionId = input.assigneePositionId !== undefined ? input.assigneePositionId : before.assignee_position_id;
+    const seatChanged = nextPositionId !== before.assignee_position_id;
+    if (seatChanged && nextPositionId !== null) {
+      const position = await lockPosition(ctx.trx, ctx.orgId, nextPositionId);
+      if (position.status === 'archived') throw new DomainError('POSITION_ARCHIVED', 409, 'Vị trí này đã ngừng sử dụng');
+      if (!(await userHolderCovers(ctx.trx, ctx.orgId, position, before.legal_entity_id))) {
+        throw new DomainError('OUTSIDE_LEGAL_ENTITY', 422, 'Vị trí nhận việc không được xem pháp nhân của việc này', { rule: 'task_legal_entity' });
+      }
+    }
+    const nextTitle = input.title !== undefined ? input.title : before.title;
+    const nextDescription = input.description !== undefined ? input.description : before.description;
+    const nextDue = input.due !== undefined ? input.due : before.due?.toISOString() ?? null;
+    const beforeDue = before.due?.toISOString() ?? null;
+    const changed = [
+      ...(nextTitle !== before.title ? ['title'] : []),
+      ...(nextDescription !== before.description ? ['description'] : []),
+      ...(seatChanged ? ['assigneePositionId'] : []),
+      ...(nextDue !== beforeDue ? ['due'] : []),
+    ];
+    if (changed.length > 0) {
+      await ctx.trx
+        .updateTable('crove_kernel.task')
+        .set({
+          title: nextTitle,
+          description: nextDescription,
+          assignee_position_id: nextPositionId,
+          due: nextDue,
+          // A stale lease left after its run expired is cleared when the seat moves.
+          ...(seatChanged ? { checkout_run_id: null, lock_expires_at: null } : {}),
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', before.id)
+        .execute();
+    }
+    if (seatChanged && !['done', 'cancelled'].includes(before.status)) {
+      await requestWakeup(ctx, nextPositionId, { taskId: before.id, why: 'assigned' }, before.tainted, before.request_depth);
+      await ctx.emit('kernel.task.assigned', { taskId: before.id, positionId: nextPositionId });
+    }
+    ctx.audit({
+      taskId: before.id,
+      changed,
+      title: auditValue(TASK_TABLE, 'title', nextTitle),
+      description: auditValue(TASK_TABLE, 'description', nextDescription),
+      assigneePositionId: nextPositionId,
+      previousAssigneePositionId: before.assignee_position_id,
+      due: nextDue,
+    });
+    return { taskId: before.id };
   },
 });
 
@@ -831,6 +933,35 @@ async function holderCovers(trx: Trx, orgId: string, positionId: string, entityI
   if (entityId === null) return true;
   const { rows } = await sql<{ covers: boolean }>`
     SELECT crove_kernel.position_reads_legal_entity(${orgId}::uuid, ${positionId}::uuid, ${entityId}::uuid) AS covers`.execute(trx);
+  return rows[0]?.covers === true;
+}
+
+// Same rule as holderCovers for a user command (crove_app): an agent or a vacant seat reads the position's le_scope;
+// a member reads the entity when they are an owner or admin, hold an assignment for that entity or the whole org, or
+// hold no assignment at all. Under role_assignment_scope, a caller who can read the task's entity also sees every
+// org-wide assignment and every assignment for that entity, so the only uncomputable case is a member who has no
+// visible assignment here: if the caller is limited to some entities (`ctx_le_scope` without '*'), that member might
+// be limited to another entity only, so a conservative false keeps the task from being handed to someone who cannot read it.
+async function userHolderCovers(
+  trx: Trx,
+  orgId: string,
+  position: { holder_user_id: string | null; le_scope: readonly string[] },
+  entityId: string | null,
+): Promise<boolean> {
+  if (entityId === null) return true;
+  if (!position.holder_user_id) return scopeCovers(position.le_scope, entityId);
+  const { rows } = await sql<{ covers: boolean }>`
+    SELECT COALESCE((
+      SELECT m.role IN ('owner', 'admin')
+          OR EXISTS (
+               SELECT 1 FROM crove_kernel.role_assignment a
+               WHERE a.org_id = m.org_id AND a.user_id = m.user_id
+                 AND (a.legal_entity_id IS NULL OR a.legal_entity_id = ${entityId}::uuid))
+          OR ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+              AND NOT EXISTS (SELECT 1 FROM crove_kernel.role_assignment a WHERE a.org_id = m.org_id AND a.user_id = m.user_id))
+      FROM crove_kernel.tenant_member m
+      WHERE m.org_id = ${orgId}::uuid AND m.user_id = ${position.holder_user_id}::uuid
+    ), false) AS covers`.execute(trx);
   return rows[0]?.covers === true;
 }
 
@@ -1123,11 +1254,7 @@ export const startAgentRun = defineCommand({
         EXISTS (SELECT 1 FROM crove_kernel.budget_policy b
                 WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                   AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${position.module}) OR (b.scope = 'agent' AND b.target = ${agent.id}))
-                  AND (SELECT coalesce(sum(r.cost), 0) FROM crove_kernel.ai_run r
-                       WHERE r.org_id = b.org_id
-                         AND r.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
-                         AND (b.scope = 'org' OR (b.scope = 'module' AND r.module = b.target) OR (b.scope = 'agent' AND r.agent_id::text = b.target)))
-                      >= b.monthly_limit) AS spent,
+                  AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit) AS spent,
         (SELECT count(*)::int FROM crove_kernel.ai_run r WHERE r.org_id = ${ctx.orgId}::uuid AND r.agent_id = ${agent.id}::uuid
            AND r.started_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS today`.execute(ctx.trx);
     const gate = gates[0];
@@ -1277,12 +1404,18 @@ export const chartGet = defineQuery({
         'p.job_description',
         'p.holder_user_id',
         'p.holder_agent_id',
+        'p.le_scope',
         'a.display_name as agent_name',
         'a.status as agent_status',
       ])
       .where('p.org_id', '=', ctx.orgId)
       .orderBy('p.created_at')
       .execute();
+    // A position's legal entities name only those the reader may see (the legal entities' scope policy keeps the
+    // others out of this read), so a member limited to some entities learns no other entity's id (#1763).
+    const visible = new Set(
+      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).execute()).map((e) => e.id),
+    );
     const agents = await ctx.trx
       .selectFrom('crove_kernel.agent')
       .select(['id', 'template_key', 'display_name', 'status', 'max_risk', 'daily_run_cap'])
@@ -1314,6 +1447,7 @@ export const chartGet = defineQuery({
         reportsTo: p.reports_to,
         status: p.status,
         jobDescription: p.job_description,
+        leScope: p.le_scope.includes('*') ? ['*'] : p.le_scope.filter((id) => visible.has(id)),
         holder: p.holder_agent_id
           ? { type: 'agent' as const, agentId: p.holder_agent_id, name: p.agent_name, status: p.agent_status, ai: true }
           : p.holder_user_id
@@ -1477,8 +1611,8 @@ export const templateList = defineQuery({
   },
 });
 
-// The monthly AI budgets with what this month's runs they cover cost so far (the month in Asia/Ho_Chi_Minh, as the
-// run gate counts it). Amounts are decimal strings. Owners and admins: costs are management data.
+// The monthly AI budgets with what this month's model calls they cover cost so far (the month in Asia/Ho_Chi_Minh, read
+// through crove_kernel.ai_budget_spent as the run gate and the meter read it). Amounts are decimal strings. Owners and admins: costs are management data.
 export const budgetList = defineQuery({
   name: 'kernel.agent.budgets.list',
   input: z.object({}),
@@ -1495,10 +1629,7 @@ export const budgetList = defineQuery({
       spent: string;
     }>`
       SELECT b.id, b.scope, b.target, b.monthly_limit::text AS monthly_limit, b.warn_percent, b.hard_stop, b.updated_at,
-        (SELECT coalesce(sum(r.cost), 0)::text FROM crove_kernel.ai_run r
-         WHERE r.org_id = b.org_id
-           AND r.started_at >= pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
-           AND (b.scope = 'org' OR (b.scope = 'module' AND r.module = b.target) OR (b.scope = 'agent' AND r.agent_id::text = b.target))) AS spent
+        crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target)::text AS spent
       FROM crove_kernel.budget_policy b
       WHERE b.org_id = ${ctx.orgId}::uuid
       ORDER BY b.scope, b.target`.execute(ctx.trx);
@@ -1529,7 +1660,14 @@ export const budgetList = defineQuery({
 // may still return a kind and a title (the human path uses them); they are dropped here.
 // legalEntityId: the entity the preparer named (preparedEntity), carried to the worker that creates the proposal.
 const zPrepared = z.object({ command: z.string().min(1).max(200), payload: z.record(z.string(), z.unknown()), legalEntityId: zId.optional() });
-const zProposalRequested = z.object({ agentId: zId, runId: zId, taskId: zId, preparer: z.string().min(1).max(200), draft: zPrepared });
+// The request carries ids and codes only (#1949, ADR-0017 section 1): an event outlives every erasure, in the outbox and
+// its archive, and a draft names a party. The draft waits on the task (pending_draft) under draftId until the worker
+// creates the proposal from it. A request emitted before the switch carried the draft itself and is still read.
+const zProposalRequested = z.union([
+  z.object({ agentId: zId, runId: zId, taskId: zId, preparer: z.string().min(1).max(200), command: z.string().min(1).max(200), draftId: zId, legalEntityId: zId.optional() }),
+  z.object({ agentId: zId, runId: zId, taskId: zId, preparer: z.string().min(1).max(200), draft: zPrepared }),
+]);
+const zPendingDraft = zPrepared.extend({ id: zId });
 const zProposalApproved = z.object({ agentId: zId, runId: zId, taskId: zId, proposalId: zId, revision: z.number().int().positive() });
 
 // The largest draft payload an agent's request carries (UTF-8 bytes of its JSON), checked when it is recorded and
@@ -1552,7 +1690,7 @@ export const proposeFromTask = defineCommand({
   access: [],
   agent: { roles: 'any', taint: 'propagate' },
   // The preparer it runs declares its own.
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', LEASE_COLUMNS), RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', [...LEASE_COLUMNS, 'pending_draft']), RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     const agent = requireAgent(ctx);
@@ -1568,20 +1706,27 @@ export const proposeFromTask = defineCommand({
     if (payloadTooLarge(draft.data.payload)) {
       throw new DomainError('NOT_PROPOSABLE', 422, 'Đề xuất quá lớn', { preparer: input.preparer, reason: 'payload_too_large' });
     }
+    // The draft waits on the task; the event names it (#1949). A later request on the task replaces it, and the worker
+    // then finds an older request's draft gone.
+    const entity = preparedEntity(draft.data);
+    const draftId = randomUUID();
+    const pending: z.infer<typeof zPendingDraft> = { id: draftId, command: draft.data.command, payload: draft.data.payload, ...(entity ? { legalEntityId: entity } : {}) };
     await ctx.emit('kernel.agent.proposal_requested', {
       agentId: agent.agentId,
       runId: agent.runId,
       taskId: task.id,
       preparer: input.preparer,
-      draft: { command: draft.data.command, payload: draft.data.payload, ...(preparedEntity(draft.data) ? { legalEntityId: preparedEntity(draft.data) } : {}) },
+      command: draft.data.command,
+      draftId,
+      ...(entity ? { legalEntityId: entity } : {}),
     } satisfies z.infer<typeof zProposalRequested>);
     await ctx.trx
       .updateTable('crove_kernel.task')
-      .set({ status: 'waiting', checkout_run_id: null, lock_expires_at: null })
+      .set({ status: 'waiting', checkout_run_id: null, lock_expires_at: null, pending_draft: JSON.stringify(pending) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', task.id)
       .execute();
-    ctx.audit({ task: task.id, preparer: input.preparer, proposal_command: info.name, risk: info.risk });
+    ctx.audit({ task: task.id, preparer: input.preparer, proposal_command: info.name, risk: info.risk, draft: draftId });
     return { requested: true as const, command: info.name };
   },
 });
@@ -1661,6 +1806,8 @@ async function emittedBy(
   command: string,
   target: { type: string; id: string },
   detail: Record<string, unknown>,
+  // The audit row must hold no `draft` (#1949): a request of the old shape binds only to a propose made before the switch.
+  withoutDraft = false,
 ): Promise<boolean> {
   if (!event.commandId) return false;
   // The audit row and the event come from one transaction, so they carry the same now(): the time index finds it.
@@ -1673,6 +1820,7 @@ async function emittedBy(
         AND a.target_type = ${target.type} AND a.target_id = ${target.id}::uuid
         AND a.detail ->> 'task' = ${event.data.taskId}
         AND a.detail @> ${JSON.stringify(detail)}::jsonb
+        AND (NOT ${withoutDraft} OR NOT a.detail ? 'draft')
     ) AS bound`.execute(trx);
   return rows[0]?.bound === true;
 }
@@ -1712,8 +1860,30 @@ export const createAgentProposal = defineCommand({
   handler: async (ctx, input) => {
     const event = await outboxEvent(ctx, input.eventId, 'kernel.agent.proposal_requested', zProposalRequested);
     if (!event) return { proposalId: null, reason: 'no_event' as const };
-    const { agentId, runId, taskId, preparer, draft } = event.data;
-    const bound = await emittedBy(ctx.trx, ctx.orgId, event, 'kernel.task.propose', { type: 'kernel.task', id: taskId }, { preparer, proposal_command: draft.command });
+    const { agentId, runId, taskId, preparer } = event.data;
+    const command = 'draft' in event.data ? event.data.draft.command : event.data.command;
+    const draftId = 'draftId' in event.data ? event.data.draftId : null;
+    const bound = await emittedBy(
+      ctx.trx,
+      ctx.orgId,
+      event,
+      'kernel.task.propose',
+      { type: 'kernel.task', id: taskId },
+      { preparer, proposal_command: command, ...(draftId ? { draft: draftId } : {}) },
+      draftId === null,
+    );
+    // Takes this request's draft off its task (#1949): no draft stays on a task once its request is answered, whatever
+    // the answer. Only a bound request's, and only while the task holds that draft.
+    const dropDraft = async () => {
+      if (!bound || !draftId) return;
+      await ctx.trx
+        .updateTable('crove_kernel.task')
+        .set({ pending_draft: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', taskId)
+        .where(sql<boolean>`pending_draft ->> 'id' = ${draftId}`)
+        .execute();
+    };
     const { rows } = bound
       ? await sql<{ run_tainted: boolean; run_status: string; task_tainted: boolean; agent_name: string; stopped: boolean; le_scope: string[] }>`
           SELECT r.tainted AS run_tainted, r.status AS run_status, t.tainted AS task_tainted, a.display_name AS agent_name, p.le_scope,
@@ -1729,8 +1899,34 @@ export const createAgentProposal = defineCommand({
       : { rows: [] };
     const facts = rows[0];
     if (!facts) {
+      await dropDraft();
       ctx.audit({ event: event.id, created: false, reason: 'chain_mismatch' });
       return { proposalId: null, reason: 'chain_mismatch' as const };
+    }
+    // The draft the request names, taken off its task here (#1949). Gone or replaced by a later request on the task, it
+    // asks for nothing. A request already answered with a proposal is a duplicate, though its draft has left the task.
+    const existing = await ctx.trx.selectFrom('crove_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('request_event_id', '=', event.id).executeTakeFirst();
+    if (existing) return { proposalId: null, reason: 'duplicate' as const };
+    let draft: z.infer<typeof zPrepared>;
+    if ('draft' in event.data) {
+      draft = event.data.draft;
+    } else {
+      const row = await ctx.trx
+        .selectFrom('crove_kernel.task')
+        .select('pending_draft')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', taskId)
+        .forUpdate()
+        .executeTakeFirst();
+      const pending = zPendingDraft.safeParse(row?.pending_draft);
+      const entity = 'legalEntityId' in event.data ? event.data.legalEntityId : undefined;
+      if (!pending.success || pending.data.id !== draftId || pending.data.command !== command || pending.data.legalEntityId !== entity) {
+        ctx.audit({ event: event.id, created: false, reason: 'draft_replaced' });
+        return { proposalId: null, reason: 'draft_replaced' as const };
+      }
+      await dropDraft();
+      const { command: pendingCommand, payload, legalEntityId } = pending.data;
+      draft = { command: pendingCommand, payload, ...(legalEntityId ? { legalEntityId } : {}) };
     }
     // A run cancelled by a kill switch or a stop (or failed, or expired) asks for nothing.
     if (facts.run_status !== 'running' && facts.run_status !== 'succeeded') {
@@ -1844,7 +2040,7 @@ export const executeAgentApproval = defineCommand({
     const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
     if (!proposal) return { approved: false, reason: 'not_found' };
     // A re-extraction in flight would replace the content the agent judged (issue #40); the job retries.
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     const decision = await decideAgentApproval(ctx.trx, ctx.orgId, { agentId, runId }, proposal, ctx.command(proposal.command), revision, {
       stoppedSince: event.createdAt,
     });
@@ -1879,6 +2075,7 @@ export const agentCommands = [
   releaseKillSwitch,
   createTask,
   createTaskFromTodo,
+  updateTask,
   checkoutTask,
   commentTask,
   setTaskStatus,

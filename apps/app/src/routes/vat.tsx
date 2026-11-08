@@ -9,7 +9,8 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { periodParts } from '../lib/clients.ts';
@@ -49,11 +50,14 @@ interface Invoice {
   warnings: Warning[];
 }
 
-function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; partyLabel: string }) {
+// A money cell: right-aligned with tabular figures, under a header DataTable aligns the same way (DESIGN.md §4.3, #2001).
+const NUM = 'px-4 py-3 text-right tabular-nums';
+
+export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; partyLabel: string }) {
   const t = useTranslations('vat');
   const f = useFormat();
   return (
-    <DataTable head={[t('columns.issueDate'), t('columns.number'), partyLabel, t('columns.rate'), t('columns.taxable'), t('columns.vat'), t('columns.notes')]}>
+    <DataTable numeric={[4, 5]} head={[t('columns.issueDate'), t('columns.number'), partyLabel, t('columns.rate'), t('columns.taxable'), t('columns.vat'), t('columns.notes')]}>
       {invoices.flatMap((invoice) =>
         invoice.rates.map((rate, i) => (
           <TableRow key={`${invoice.id}-${rate.rate}`}>
@@ -70,8 +74,8 @@ function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; partyLabe
               )}
             </TableCell>
             <TableCell className="px-4 py-3 text-muted-foreground">{t(`rates.${rate.rate}`)}</TableCell>
-            <TableCell className="px-4 py-3 text-foreground tabular-nums">{f.money(rate.taxable)}</TableCell>
-            <TableCell className="px-4 py-3 text-foreground tabular-nums">{f.money(rate.vat)}</TableCell>
+            <TableCell className={`${NUM} text-foreground`}>{f.money(rate.taxable)}</TableCell>
+            <TableCell className={`${NUM} text-foreground`}>{f.money(rate.vat)}</TableCell>
             <TableCell className="px-4 py-3">
               {i === 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -116,7 +120,10 @@ function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canM
         <Empty title={t('empty')} />
       ) : (
         <>
-          <DataTable head={[t('columns.invoice'), t('columns.seller'), t('columns.total'), t('columns.vat'), t('columns.method'), t('columns.status'), ...(canMark ? [t('columns.actions')] : [])]}>
+          <DataTable
+            numeric={[2, 3]}
+            head={[t('columns.invoice'), t('columns.seller'), t('columns.total'), t('columns.vat'), t('columns.method'), t('columns.status'), ...(canMark ? [t('columns.actions')] : [])]}
+          >
             {checks.items.map((item) => {
               const doc = byId.get(item.documentId);
               const busy = mark.isPending && mark.variables?.documentId === item.documentId;
@@ -127,8 +134,8 @@ function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canM
                     {doc && <span className="block text-xs text-subtle-foreground">{f.date(doc.issueDate)}</span>}
                   </TableCell>
                   <TableCell className="px-4 py-3 text-foreground">{doc?.partyName ?? ''}</TableCell>
-                  <TableCell className="px-4 py-3 tabular-nums">{f.money(item.total)}</TableCell>
-                  <TableCell className="px-4 py-3 tabular-nums">{f.money(item.vatAmount)}</TableCell>
+                  <TableCell className={NUM}>{f.money(item.total)}</TableCell>
+                  <TableCell className={NUM}>{f.money(item.vatAmount)}</TableCell>
                   <TableCell className="px-4 py-3 text-muted-foreground">{item.paymentMethod ?? t('methodMissing')}</TableCell>
                   <TableCell className="px-4 py-3">
                     <Badge variant={item.mark?.outcome === 'paid_by_bank' ? 'success' : 'warning'}>{status(item)}</Badge>
@@ -234,7 +241,8 @@ function CarryForward({ data, text, onChange }: { data: VatReport; text: string;
   );
 }
 
-// The period's return as filed (#1400): owners and admins mark it filed with [22], [25] and [43] as on the return, which
+// The period's return as filed (#1400): owners, admins and the entity's chief accountant (#1508) mark it filed with [22],
+// [25] and [43] as on the return, which
 // the next period's [22] starts from, and the tax calendar marks it done; or take both marks back.
 function FiledReturn({
   data,
@@ -309,8 +317,7 @@ function FiledReturn({
             {filed ? t('edit') : t('mark')}
           </Button>
           {filed && (
-            <Button size="sm" variant="ghost" disabled={withdraw.isPending} onClick={() => withdraw.mutate({ period, legalEntityId })}>
-              {withdraw.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={withdraw.isPending} size="sm" variant="ghost" onClick={() => withdraw.mutate({ period, legalEntityId })}>
               {t('withdraw')}
             </Button>
           )}
@@ -334,8 +341,7 @@ function FiledReturn({
           </div>
           {!valid && <ErrorText>{t('invalid')}</ErrorText>}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" type="submit" disabled={!valid || save.isPending}>
-              {save.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={save.isPending} size="sm" type="submit" disabled={!valid || save.isPending}>
               {t('save')}
             </Button>
             <Button size="sm" type="button" variant="ghost" onClick={() => setForm(null)}>
@@ -413,16 +419,15 @@ export function VatPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
+              loading={exportXml.isPending}
               size="lg"
               variant="outline"
               onClick={() => exportXml.mutate()}
               disabled={exportXml.isPending || !data || !taxCode || wrongKind || carried === null}
               title={org.data && !taxCode ? t('exportXmlNeedsTaxCode') : wrongKind ? wrongKindText : undefined}>
-              {exportXml.isPending ? <Spinner className="text-current" /> : null}
               {t('exportXml')}
             </Button>
-            <Button size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
-              {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
               {t('export')}
             </Button>
           </div>
@@ -477,12 +482,12 @@ export function VatPage() {
           <CarryForward data={data} text={carriedText} onChange={(text) => setCarriedEdit(text === null ? null : { period, text })} />
           <section>
             <h2 className="mb-2 text-base font-semibold text-foreground">{t('indicatorsTitle')}</h2>
-            <DataTable head={[t('columns.indicator'), t('columns.description'), t('columns.amount')]}>
+            <DataTable numeric={[2]} head={[t('columns.indicator'), t('columns.description'), t('columns.amount')]}>
               {data.indicators.map((indicator) => (
                 <TableRow key={indicator.code}>
                   <TableCell className="px-4 py-3 font-mono text-xs text-foreground">[{indicator.code}]</TableCell>
                   <TableCell className="px-4 py-3 text-muted-foreground">{indicator.label}</TableCell>
-                  <TableCell className="px-4 py-3 font-medium text-foreground tabular-nums">{f.money(indicator.amount)}</TableCell>
+                  <TableCell className={`${NUM} font-medium text-foreground`}>{f.money(indicator.amount)}</TableCell>
                 </TableRow>
               ))}
             </DataTable>
@@ -510,30 +515,34 @@ export function VatPage() {
             legalEntityId={entity.legalEntityId}
             carried={carried}
             deduct25={deductAmount(deduct, data.indicators.find((i) => i.code === '24')?.amount ?? '0', data.paymentChecks.suggested25)}
-            canFile={canMarkFiled(org.data?.role)}
+            canFile={data.filable ?? canMarkFiled(org.data?.role)}
           />
 
           <PaymentChecks data={data} canMark={canMarkPayment(org.data?.role)} legalEntityId={entity.legalEntityId} />
 
           <section>
             <h2 className="mb-2 text-base font-semibold text-foreground">{t('ratesTitle')}</h2>
-            <DataTable head={[t('columns.rate'), t('columns.outputTaxable'), t('columns.outputVat'), t('columns.inputTaxable'), t('columns.inputVat')]}>
+            <DataTable
+              numeric={[1, 2, 3, 4]}
+              head={[t('columns.rate'), t('columns.outputTaxable'), t('columns.outputVat'), t('columns.inputTaxable'), t('columns.inputVat')]}
+              foot={
+                <TableRow>
+                  <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
+                  <TableCell className={NUM}>{f.money(data.output.totals.taxable)}</TableCell>
+                  <TableCell className={NUM}>{f.money(data.output.totals.vat)}</TableCell>
+                  <TableCell className={NUM}>{f.money(data.input.totals.taxable)}</TableCell>
+                  <TableCell className={NUM}>{f.money(data.input.totals.vat)}</TableCell>
+                </TableRow>
+              }>
               {rateRows.map(({ input, output }) => (
                 <TableRow key={input.rate}>
                   <TableCell className="px-4 py-3 text-foreground">{t(`rates.${input.rate}`)}</TableCell>
-                  <TableCell className="px-4 py-3 tabular-nums">{f.money(output?.taxable ?? '0')}</TableCell>
-                  <TableCell className="px-4 py-3 tabular-nums">{f.money(output?.vat ?? '0')}</TableCell>
-                  <TableCell className="px-4 py-3 tabular-nums">{f.money(input.taxable)}</TableCell>
-                  <TableCell className="px-4 py-3 tabular-nums">{f.money(input.vat)}</TableCell>
+                  <TableCell className={NUM}>{f.money(output?.taxable ?? '0')}</TableCell>
+                  <TableCell className={NUM}>{f.money(output?.vat ?? '0')}</TableCell>
+                  <TableCell className={NUM}>{f.money(input.taxable)}</TableCell>
+                  <TableCell className={NUM}>{f.money(input.vat)}</TableCell>
                 </TableRow>
               ))}
-              <TableRow className="font-medium">
-                <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
-                <TableCell className="px-4 py-3 tabular-nums">{f.money(data.output.totals.taxable)}</TableCell>
-                <TableCell className="px-4 py-3 tabular-nums">{f.money(data.output.totals.vat)}</TableCell>
-                <TableCell className="px-4 py-3 tabular-nums">{f.money(data.input.totals.taxable)}</TableCell>
-                <TableCell className="px-4 py-3 tabular-nums">{f.money(data.input.totals.vat)}</TableCell>
-              </TableRow>
             </DataTable>
           </section>
 
@@ -547,6 +556,8 @@ export function VatPage() {
               <InvoiceTable invoices={data.output.documents} partyLabel={t('columns.buyer')} />
             )}
           </section>
+
+          <SalesNumberGaps period={period} legalEntityId={entity.legalEntityId} enabled={entity.ready && data.output.available} />
 
           <section>
             <h2 className="mb-2 text-base font-semibold text-foreground">{t('inputTitle', { count: f.number(data.input.documents.length) })}</h2>

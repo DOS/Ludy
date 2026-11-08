@@ -19,7 +19,7 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 // words of the row's own columns. The snapshot reads as the system actor, so only tables an owner may read in full
 // belong here.
 export const EXPORT_TABLES = {
-  'kernel.tenant': { from: 'crove_kernel.tenant', omit: ['inbound_token'] },
+  'kernel.tenant': { from: 'crove_kernel.tenant', omit: ['inbound_token', 'conversation_token'] },
   'kernel.tenant_member': { from: 'crove_kernel.tenant_member', omit: [] },
   // Who held which built-in role (#1279), org-wide or for one legal entity.
   'kernel.role_assignment': { from: 'crove_kernel.role_assignment', omit: [] },
@@ -27,7 +27,8 @@ export const EXPORT_TABLES = {
   'kernel.legal_entity': { from: 'crove_kernel.legal_entity', omit: [] },
   'kernel.member_invite': { from: 'crove_kernel.member_invite', omit: ['token_sha256'] },
   'kernel.party': { from: 'crove_kernel.party', omit: ['search'] },
-  'kernel.file': { from: 'crove_kernel.file', omit: [] },
+  // The file rows of meeting audio and video are left out (ADR-0047 point 7, #2579): no export carries a recording, and the rows name the meeting.
+  'kernel.file': { from: "(SELECT f.* FROM crove_kernel.file f WHERE f.source NOT IN ('meeting_audio', 'meeting_video'))", omit: [] },
   'kernel.inbound_message': { from: 'crove_kernel.inbound_message', omit: [] },
   'kernel.extraction': { from: 'crove_kernel.extraction', omit: [] },
   'kernel.proposal': { from: 'crove_kernel.proposal', omit: [] },
@@ -42,7 +43,22 @@ export const EXPORT_TABLES = {
   'kernel.availability_rule': { from: 'crove_kernel.availability_rule', omit: [] },
   'kernel.calendar_event': { from: 'crove_kernel.calendar_event', omit: [] },
   // Connected channel accounts (ADR-0025). Their sealed tokens (crove_kernel.credential) are secrets and stay out.
-  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: [] },
+  // The keyed hash of the Meta user who granted a connection (Meta's data deletion callback) is the deployment's, not the org's.
+  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash'] },
+  // Which members use which channels (#2303), and the conversation core (CV6, #2305): the customers' comments and messages, the
+  // identities they wrote under, the org's internal notes on them and its retention. Read marks are per-member state and stay out.
+  'kernel.channel_access': { from: 'crove_kernel.channel_access', omit: [] },
+  'kernel.conversation_setting': { from: 'crove_kernel.conversation_setting', omit: [] },
+  'kernel.conversation_identity': { from: 'crove_kernel.conversation_identity', omit: [] },
+  'kernel.conversation': { from: 'crove_kernel.conversation', omit: [] },
+  'kernel.conversation_message': { from: 'crove_kernel.conversation_message', omit: [] },
+  // A customer's image: its metadata only (the bytes stay in the store under conversation/<org_id>/, which an export never copies, and the
+  // platform's address is personal data that is gone once the bytes are stored).
+  'kernel.conversation_attachment': { from: 'crove_kernel.conversation_attachment', omit: ['source_url'] },
+  // Vy's drafts that are still in play (a live draft's text, the lengths of the ones a person used) and the org's saved replies (#2310).
+  'kernel.conversation_draft': { from: 'crove_kernel.conversation_draft', omit: [] },
+  'kernel.saved_reply': { from: 'crove_kernel.saved_reply', omit: [] },
+  'kernel.conversation_note': { from: 'crove_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
   // are keyed by the deployment.
   'kernel.mail_message': { from: 'crove_kernel.mail_message', omit: [] },
@@ -55,6 +71,9 @@ export const EXPORT_TABLES = {
   'finance.journal_entry': { from: 'crove_finance.journal_entry', omit: ['search'] },
   'finance.journal_line': { from: 'crove_finance.journal_line', omit: [] },
   'finance.vendor_account_rule': { from: 'crove_finance.vendor_account_rule', omit: [] },
+  // Learned bank-line rules (#2402): which party a statement line's words point at. The keyed hash is org-bound and of no use outside
+  // the deployment, so the export leaves it out.
+  'finance.bank_party_rule': { from: 'crove_finance.bank_party_rule', omit: ['key_hash'] },
   // Learned account rules with their provenance (#1399).
   'finance.categorization_rule': { from: 'crove_finance.categorization_rule', omit: [] },
   // The org's sub-accounts (#319): journal lines name them by code.
@@ -72,6 +91,11 @@ export const EXPORT_TABLES = {
   'crm.event_type': { from: 'crove_crm.event_type', omit: [] },
   // Visitors' bookings (#1318); the request token's hash is the visitor's credential and stays out.
   'crm.booking': { from: 'crove_crm.booking', omit: ['request_token_sha256'] },
+  // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
+  // no credential (that is crove_kernel.credential, which no export reads) and no personal data.
+  'ads.ad_account': { from: 'crove_ads.ad_account', omit: [] },
+  'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
+  'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
   // Notes (#1671, ADR-0037 §6): the shared notes and their links, which the system context's row policies let the
   // snapshot read, without their folded search words; private notes stay out, and private_count records how many
   // each author had (crove_notes.private_counts(), a definer that answers counts only).
@@ -90,6 +114,10 @@ export const EXPORT_TABLES = {
   'social.metric_snapshot': { from: 'crove_social.metric_snapshot', omit: [] },
   'social.queue': { from: 'crove_social.queue', omit: [] },
   'social.queue_slot': { from: 'crove_social.queue_slot', omit: [] },
+  // Meetings (ADR-0047 point 7, #2579): the meetings shared with the whole org, and per recorder how many attendees-only meetings were left out (crove_kernel.
+  // meeting_private_counts, a definer that answers counts only). Never audio or video.
+  'meetings.meeting': { from: 'crove_kernel.meeting_export_rows()', omit: [] },
+  'meetings.private_count': { from: 'crove_kernel.meeting_private_counts()', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;
@@ -108,6 +136,9 @@ export const EXPORT_RETENTION_MIN_DAYS = 35;
 export const EXPORT_RETENTION_MAX_DAYS = 90;
 // A new export request while the last one is younger than this and has not finished is refused.
 export const EXPORT_REQUEST_COOLDOWN_MINUTES = 15;
+// The refusal of an export record whose transaction began before another record of the org that took the lock first
+// (#1867): recording again in a new transaction succeeds.
+export const EXPORT_RECORD_STALE = 'EXPORT_RECORD_STALE';
 
 const zSha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const zGeneration = z.string().regex(GENERATION_PATTERN);
@@ -241,10 +272,16 @@ export const exportSnapshot = defineQuery({
     for (const table of tables) {
       const spec = EXPORT_TABLES[table];
       const omit = spec.omit as readonly string[];
+      // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
+      // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
+      const scrub =
+        table === 'kernel.audit_event'
+          ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
+          : sql``;
       // spec.from is one of the constant names above, never input.
       await sql`
         DECLARE crove_org_export NO SCROLL CURSOR FOR
-        SELECT (to_jsonb(t) - ${sql.val([...omit])}::text[])::text AS line
+        SELECT ((to_jsonb(t) - ${sql.val([...omit])}::text[]) ${scrub})::text AS line
         FROM ${sql.raw(spec.from)} t
         WHERE t.org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
       for (;;) {
@@ -257,6 +294,64 @@ export const exportSnapshot = defineQuery({
       await sql`CLOSE crove_org_export`.execute(ctx.trx);
     }
     return { tables: tables.length, rows };
+  },
+});
+
+// The tables an owner's export adds by an owner-run read (#2676). Their policy (owner_admin, #2530) refuses the system actor
+// the worker runs as, so they are not in EXPORT_TABLES and the snapshot cannot be asked for them: the owner's own session
+// reads them live, through a sensitive stream (kernel.org.export.people) that is audited before it reads and that no system
+// or agent actor can run. The sealed identity and bank account numbers are left out (they open only with the org's subject
+// keys, ADR-0017, and an owner reads them in the app). The pay runs and their lines (#2531) carry no identity or account number: figures, input labels and free text.
+export const OWNER_RUN_EXPORT_TABLES = {
+  'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed'] },
+  'hr.payroll_employment': { from: 'crove_hr.payroll_employment', omit: [] },
+  'hr.payroll_dependent': { from: 'crove_hr.payroll_dependent', omit: [] },
+  'hr.payroll_run': { from: 'crove_hr.payroll_run', omit: [] },
+  'hr.payroll_line': { from: 'crove_hr.payroll_line', omit: [] },
+  // The layouts of the bank's bulk-salary file (#2532): configuration (names, column keys and headers, a content text), no person's data.
+  'hr.payroll_bank_template': { from: 'crove_hr.payroll_bank_template', omit: [] },
+} as const satisfies Record<string, { from: string; omit: readonly string[] }>;
+export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
+export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
+export const zOwnerRunExportTable = z.enum(OWNER_RUN_EXPORT_TABLE_NAMES);
+
+// The refusal of an owner-run table while the org is not closing: the download is part of closing the org, which carries the
+// fresh second factor of kernel.org.offboard (R3), so an owner's ordinary session on an active org cannot bulk-read the staff.
+export const ORG_NOT_OFFBOARDING = 'ORG_NOT_OFFBOARDING';
+
+// One owner-run table as NDJSON, for the signed-in owner (sensitive: the audit row, which names the table, is committed before
+// the read, and only a signed-in person runs it, so the system actor and agents are refused). The tables' own policy lets only an
+// owner or admin of this org read a row; access is narrowed to owners here, as the rest of the export, and to an org that is
+// closing. Runs through Runtime.stream().
+export const exportPeople = defineQuery({
+  name: 'kernel.org.export.people',
+  input: z.object({ table: zOwnerRunExportTable }),
+  access: OWNERS,
+  stream: true,
+  sensitive: true,
+  auditDetail: (input) => ({ table: input.table }),
+  handler: async (ctx, input, sink) => {
+    if (!sink) throw new DomainError('STREAM_ONLY', 400, 'Truy vấn này chỉ đọc theo luồng');
+    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    if (tenant.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    const spec = OWNER_RUN_EXPORT_TABLES[input.table];
+    // spec.from is one of the constant names above, never input.
+    await sql`
+      DECLARE crove_people_export NO SCROLL CURSOR FOR
+      SELECT (to_jsonb(t) - ${sql.val([...spec.omit])}::text[])::text AS line
+      FROM ${sql.raw(spec.from)} t
+      WHERE t.org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+    let rows = 0;
+    for (;;) {
+      const batch = await sql<{ line: string }>`FETCH ${sql.raw(String(EXPORT_FETCH_ROWS))} FROM crove_people_export`.execute(ctx.trx);
+      const last = batch.rows.length < EXPORT_FETCH_ROWS;
+      rows += batch.rows.length;
+      await sink({ table: input.table, lines: batch.rows.map((r) => r.line), last });
+      if (last) break;
+    }
+    await sql`CLOSE crove_people_export`.execute(ctx.trx);
+    return { table: input.table, rows };
   },
 });
 
@@ -286,6 +381,25 @@ export const recordExport = defineCommand({
     if (keys.some((k) => k.key !== exportKey(ctx.orgId, k.sha256))) {
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ không hợp lệ');
     }
+    // One record of the org's export at a time, new or rebound (#1867): a rebind reads the newest export only after a
+    // record in flight has committed (each statement reads what is committed then). The newest record is the one with the
+    // latest occurred_at, the start of its transaction, so a record whose transaction began before one that took the
+    // lock first would sort under it: it is refused instead, and its writer records again in a new transaction.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.org_export:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    const later = await ctx.trx
+      .selectFrom('crove_kernel.audit_event')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('command', '=', 'kernel.org.export.record')
+      .where('outcome', '=', 'ok')
+      // The rows that stand for an export: the system's records of this format, as the purge check reads them (#1883),
+      // rebinds included, since the newest of them decides which export is current.
+      .where('actor_type', '=', 'system')
+      .where(sql<string>`detail ->> 'format'`, '=', EXPORT_FORMAT)
+      .where('occurred_at', '>', sql<Date>`pg_catalog.now()`)
+      .limit(1)
+      .executeTakeFirst();
+    if (later) throw new DomainError('EXPORT_RECORD_STALE', 409, 'Một bản ghi xuất dữ liệu khác vừa được ghi; hãy ghi lại');
     if (input.rebind) {
       const current = await currentExport(ctx.trx, ctx.orgId);
       if (!current || withoutGenerations(current) !== withoutGenerations(input)) {
@@ -327,6 +441,8 @@ export interface ExportTableSummary {
 export interface OrgExportView {
   status: 'active' | 'offboarding' | 'closed';
   requestedAt: string | null;
+  // The tables the owner downloads live while the org is closing (OWNER_RUN_EXPORT_TABLES, #2676).
+  ownerRunTables: OwnerRunExportTable[];
   export: {
     createdAt: string;
     expiresAt: string;
@@ -372,7 +488,7 @@ export const orgExportGet = defineQuery({
   access: OWNERS,
   handler: async (ctx): Promise<OrgExportView> => {
     const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    const newest = (command: string) =>
+    const newest = (command: string, exports = false) =>
       ctx.trx
         .selectFrom('crove_kernel.audit_event')
         .select(['occurred_at', 'detail'])
@@ -381,17 +497,20 @@ export const orgExportGet = defineQuery({
         .where('outcome', '=', 'ok')
         // An agent never runs these commands; its audit rows never stand for them (issue #285).
         .where('actor_type', '<>', 'agent')
+        // The rows that stand for an export, as the record's stale check reads them (#1883).
+        .$if(exports, (q) => q.where('actor_type', '=', 'system').where(sql<string>`detail ->> 'format'`, '=', EXPORT_FORMAT))
         .orderBy('occurred_at', 'desc')
         .orderBy('id', 'desc')
         .limit(1)
         .executeTakeFirst();
     const requested = await newest('kernel.org.offboard');
-    const recorded = await newest('kernel.org.export.record');
+    const recorded = await newest('kernel.org.export.record', true);
     // A v1 record (before #212) does not parse and reads as no export.
     const detail = recorded ? zRecordedExport.safeParse(recorded.detail) : null;
     return {
       status: tenant.status,
       requestedAt: requested ? requested.occurred_at.toISOString() : null,
+      ownerRunTables: [...OWNER_RUN_EXPORT_TABLE_NAMES],
       export:
         recorded && detail?.success
           ? {
@@ -459,7 +578,9 @@ async function currentExport(trx: QueryContext['trx'], orgId: string): Promise<E
     .where('org_id', '=', orgId)
     .where('command', '=', 'kernel.org.export.record')
     .where('outcome', '=', 'ok')
-    .where('actor_type', '<>', 'agent')
+    // The rows that stand for an export, as the record's stale check reads them (#1883).
+    .where('actor_type', '=', 'system')
+    .where(sql<string>`detail ->> 'format'`, '=', EXPORT_FORMAT)
     .orderBy('occurred_at', 'desc')
     .orderBy('id', 'desc')
     .limit(1)
@@ -479,4 +600,4 @@ async function currentExport(trx: QueryContext['trx'], orgId: string): Promise<E
   };
 }
 
-export const offboardingQueries = [exportSnapshot, orgExportGet, exportLiveKeys, exportCurrent];
+export const offboardingQueries = [exportSnapshot, exportPeople, orgExportGet, exportLiveKeys, exportCurrent];

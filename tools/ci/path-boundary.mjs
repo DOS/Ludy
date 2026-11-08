@@ -23,6 +23,9 @@ export const ALLOWED = [
   // The pilot deploy over SSH (#56). The plan places deploy workflows in crove-cloud; until the owner decides where
   // the pilot's deploy lives (#1234's owner items), it stays here, protected (AGENTS.md: tools/deploy/**).
   { path: '.github/workflows/deploy.yml', reason: 'pilot deploy (#56), pending the owner decision listed in #1234' },
+  // Points the `release` branch (Vercel's Production Branch) at a release tag once the backend runs it (#2261); it is part of
+  // the pilot pipeline, so it stays with deploy.yml until the owner decides (#1204, #1234).
+  { path: '.github/workflows/release-branch.yml', reason: 'moves the web app release branch with the pilot deploy (#2261), pending the owner decision listed in #1234 and #1204' },
 ];
 
 const allowed = (path) => ALLOWED.some((a) => (a.path.endsWith('/') ? path.startsWith(a.path) : path === a.path));

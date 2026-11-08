@@ -6,12 +6,16 @@ import type { PostType } from './post-type.ts';
 import type { ChannelOptionsInput, ChannelOptionsResult } from './options.ts';
 import type { Audience } from './audience.ts';
 import type { DailyPerformance } from './performance.ts';
+import { SandboxConversations, type ConversationAdapter } from './conversation.ts';
 
 export * from './oauth.ts';
+export * from './calendar-google.ts';
 export * from './text.ts';
 export * from './meta.ts';
+export * from './meta-conversation.ts';
 export * from './instagram.ts';
 export * from './zalo.ts';
+export * from './zalo-conversation.ts';
 export * from './bluesky.ts';
 export * from './threads.ts';
 export * from './linkedin.ts';
@@ -25,6 +29,7 @@ export * from './pinterest.ts';
 export * from './discord.ts';
 export * from './wordpress.ts';
 export * from './comment.ts';
+export * from './conversation.ts';
 export * from './cover.ts';
 export * from './link-card.ts';
 export * from './post-type.ts';
@@ -59,16 +64,23 @@ export function isChannelProvider(value: string): value is ChannelProviderId {
   return (CHANNEL_PROVIDERS as readonly string[]).includes(value);
 }
 
+// The provider of an account an OAuth connector connects: a channel provider, or an ad platform of @crove/ad-platform
+// (ADR-0040), whose ids end in `_ads` and whose connections the Social screens leave out.
+export type ConnectorProviderId = ChannelProviderId | `${string}_ads`;
+
 // An account a provider connected, with the tokens the kernel seals. `secret` never leaves the server: the
 // caller seals it with the credential broker and drops it.
 export interface ConnectedAccount {
-  provider: ChannelProviderId;
+  provider: ConnectorProviderId;
   externalAccountId: string;
   displayName: string;
   scopes: string[];
   // When the access token expires, if the provider says; null when it does not expire on a timer.
   expiresAt: Date | null;
   secret: string;
+  // A keyed hash of the platform user who granted the connection, for a platform whose data deletion request names the user
+  // (Meta's, for Ads: @crove/ad-platform platformUserHash). Never the platform's id of the person.
+  grantedByHash?: string;
 }
 
 // The offline sandbox (Social plan §3.5): no network, so the whole flow runs on a laptop and in tests. Its token is
@@ -407,6 +419,8 @@ export interface Publisher {
   accountMetrics?(input: AccountMetricsInput): Promise<AccountMetricsResult>;
   // Providers that list the account's own recent posts (#1054), so posts published outside Crove can be counted.
   listRecentPosts?(input: RecentPostsInput): Promise<RecentPostsResult>;
+  // Providers whose comments and private messages the org answers (#2303): the replies and hides of the conversation core.
+  readonly conversations?: ConversationAdapter;
   // Providers that post a first comment (#587). Never retried by itself: an unclear answer goes to a person.
   comment?(input: CommentInput): Promise<CommentResult>;
   // Providers that repost the account's own post (#773). Never retried by itself, like a comment.
@@ -439,6 +453,8 @@ interface SandboxPost {
 export class SandboxPublisher implements Publisher {
   readonly provider = 'sandbox' as const;
   readonly publishSafety: RetrySafety = 'reconcile_only';
+  // The sandbox's comments and private messages live in this process's memory too.
+  readonly conversations = new SandboxConversations();
   private readonly accounts = new Map<string, SandboxPost[]>();
 
   // A comment on a post the sandbox holds, or a reply to one of its comments (a thread's part, #742), kept beside it.

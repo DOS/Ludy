@@ -1,6 +1,6 @@
 // Bulk approval batches and review shortcuts (issue #315).
 import { describe, expect, it } from 'vitest';
-import { BULK_LIMIT, bulkSelectable, canApproveProposals, chunks, nextAfterDecision, nextPendingId, planBatches, previousPendingId, proposalName, reviewShortcut, sendBatches, checksByConcern, showMatched, steppedIndex, type BulkBatch } from '../src/lib/review.ts';
+import { BULK_LIMIT, bulkSelectable, canApproveProposals, chunks, countUnclassified, hasUnclassifiedLines, isAdsProposalKind, nextAfterDecision, nextPendingId, planBatches, previousPendingId, proposalName, reviewShortcut, sendBatches, checksByConcern, showMatched, steppedIndex, type BulkBatch } from '../src/lib/review.ts';
 
 const REVERSAL = 'finance.reversal';
 
@@ -31,6 +31,24 @@ describe('bulk approval', () => {
     expect(bulkSelectable({ ...row, kind: REVERSAL }, REVERSAL)).toBe(false);
     // A pending cash or bank voucher (#327) has no checks and no duplicate, and goes in a bulk approval too.
     expect(bulkSelectable({ ...row, kind: 'finance.cash_voucher' }, REVERSAL)).toBe(true);
+  });
+
+  // #2091: a line no rule matched has no account to approve, so its proposal is reviewed on its own page.
+  it('does not select a proposal with an unclassified line for bulk approval', () => {
+    const row = { status: 'pending', failedChecks: 0, kind: 'finance.purchase', duplicateOf: null };
+    expect(bulkSelectable({ ...row, unclassifiedLines: 0 }, REVERSAL)).toBe(true);
+    expect(bulkSelectable({ ...row, unclassifiedLines: 1 }, REVERSAL)).toBe(false);
+  });
+
+  // #2294: a request to open the way to spend on an ad platform is read on its own page, with the change stated and a fresh
+  // second factor asked for, whatever else about the row looks selectable.
+  it('never selects a request about running ads for bulk approval', () => {
+    const row = { status: 'pending', failedChecks: 0, kind: 'finance.purchase', duplicateOf: null };
+    for (const kind of ['ads.write_enable', 'ads.account_enable', 'ads.cap_set', 'ads.launches_unblock', 'ads.something_later']) {
+      expect(isAdsProposalKind(kind), kind).toBe(true);
+      expect(bulkSelectable({ ...row, kind }, REVERSAL), kind).toBe(false);
+    }
+    for (const kind of ['finance.purchase', 'finance.cash_voucher', 'finance.journal_voucher', 'ad.cap_set', 'advertising.x']) expect(isAdsProposalKind(kind), kind).toBe(false);
   });
 
   it('offers bulk approval to owners and admins only', () => {
@@ -155,10 +173,21 @@ describe('matched badge (#435)', () => {
     expect(showMatched({ ...row, warnChecks: 1 }, REVERSAL, VOUCHER)).toBe(false);
     expect(showMatched({ ...row, failedChecks: 1 }, REVERSAL, VOUCHER)).toBe(false);
     expect(showMatched({ ...row, duplicateOf: 'p0' }, REVERSAL, VOUCHER)).toBe(false);
+    // A posting a reversal voided (#2054) is no longer in the books: no success badge beside its voided chip.
+    expect(showMatched({ ...row, voided: true }, REVERSAL, VOUCHER)).toBe(false);
+    expect(showMatched({ ...row, voided: false }, REVERSAL, VOUCHER)).toBe(true);
     expect(showMatched({ ...row, kind: REVERSAL }, REVERSAL, VOUCHER)).toBe(false);
     expect(showMatched({ ...row, kind: VOUCHER }, REVERSAL, VOUCHER)).toBe(false);
     // A general journal voucher (#888) is entered by hand and has no checks either.
     expect(showMatched({ ...row, kind: 'finance.journal_voucher', extracted: false }, REVERSAL, VOUCHER, 'finance.journal_voucher')).toBe(false);
+  });
+  // #2294: a request about running ads ran no invoice check, so "matched" would claim a verification that never happened, with
+  // or without the kind being listed among the plain ones.
+  it('never shows matched for a request about running ads', () => {
+    for (const kind of ['ads.write_enable', 'ads.account_enable', 'ads.cap_set', 'ads.launches_unblock']) {
+      expect(showMatched({ ...row, kind }, REVERSAL, VOUCHER), kind).toBe(false);
+      expect(showMatched({ ...row, kind, extracted: false }, REVERSAL, VOUCHER), kind).toBe(false);
+    }
   });
   it('never shows matched for an agent proposal that no extraction read', () => {
     const agent = { id: 'a1', name: 'Kế toán AI' };
@@ -189,5 +218,17 @@ describe('check order (#1409)', () => {
       { id: 'e', status: 'warn' },
     ];
     expect(checksByConcern(checks).map((c) => c.id)).toEqual(['c', 'b', 'e', 'a', 'd']);
+  });
+});
+
+describe('the "Chưa phân loại" filter (#2091)', () => {
+  const items = [{ id: 'a', unclassifiedLines: 2 }, { id: 'b', unclassifiedLines: 0 }, { id: 'c' }, { id: 'd', unclassifiedLines: 1 }];
+
+  it('keeps exactly the proposals with at least one unclassified line, and counts them', () => {
+    expect(items.filter(hasUnclassifiedLines).map((i) => i.id)).toEqual(['a', 'd']);
+    expect(countUnclassified(items)).toBe(2);
+    expect(countUnclassified([])).toBe(0);
+    // A list row from a server that does not send the count yet counts as none.
+    expect(hasUnclassifiedLines({})).toBe(false);
   });
 });

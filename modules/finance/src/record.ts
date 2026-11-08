@@ -18,6 +18,8 @@ import {
   RECEIVABLE_ACCOUNT,
   buildPurchaseJournal,
   buildSalesJournal,
+  classificationCheck,
+  isUnclassifiedLine,
   journalIsBalanced,
   money,
   parseTaxCode,
@@ -25,12 +27,14 @@ import {
   type ProposedLine,
 } from '@crove/l10n-vn';
 import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
-import { postJournalEntry } from './ledger.ts';
+import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
+import { postDocumentStock } from './stock-lines.ts';
 import { invoiceLabel, journalMemo } from './memo.ts';
-import { isOwnTaxCode } from './own-tax-code.ts';
+import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { databaseToday, dateLabel, liveOpeningDate } from './period-lock.ts';
 import { BOOK_CURRENCY, checkRate, convertInvoice, foreignNote, toDong } from './domain/foreign-currency.ts';
 
@@ -48,12 +52,15 @@ export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine
 export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['seller'], direction: DocumentDirection): Promise<string> {
   const taxCode = parseTaxCode(ref.taxCode)?.normalized ?? null;
   const name = ref.name.trim() || (direction === 'sale' ? 'Khách hàng chưa rõ tên' : 'Nhà cung cấp chưa rõ tên');
+  // The party found is locked for share until this transaction ends: a journal line of an opening balance names it without a foreign key, so without the lock
+  // a change of its kind (#2438, kernel.party.update checks that nothing points at the party) could commit between that check and the line.
   const existing = taxCode
     ? await ctx.trx
         .selectFrom('crove_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', '=', taxCode)
+        .forShare()
         .executeTakeFirst()
     : await ctx.trx
         .selectFrom('crove_kernel.party')
@@ -61,6 +68,7 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', 'is', null)
         .where((eb) => eb(eb.fn('lower', ['name']), '=', name.toLowerCase()))
+        .forShare()
         .executeTakeFirst();
   if (existing) return existing.id;
   // A member limited to some legal entities may not see a company the org already knows under this tax code (#1280):
@@ -172,12 +180,13 @@ async function correctedDocument(ctx: CommandContext, legalEntityId: string, dir
 // The posted entry of a document in force, which a replacement reverses.
 async function documentEntry(ctx: CommandContext, documentId: string) {
   const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
-    .select(['id', 'entry_date', 'description', 'source_type', 'source_id'])
-    .where('org_id', '=', ctx.orgId)
-    .where('source_type', '=', 'finance.purchase_document')
-    .where('source_id', '=', documentId)
-    .where('reverses_entry_id', 'is', null)
+    .selectFrom('crove_finance.journal_entry as e')
+    .select(['e.id', 'e.entry_date', 'e.description', 'e.source_type', 'e.source_id'])
+    .where('e.org_id', '=', ctx.orgId)
+    .where('e.source_type', '=', 'finance.purchase_document')
+    .where('e.source_id', '=', documentId)
+    .where('e.reverses_entry_id', 'is', null)
+    .where(latestRevision('e'))
     .executeTakeFirst();
   if (!entry) throw new DomainError('INTERNAL', 500, 'Không tìm thấy bút toán của hóa đơn gốc');
   return entry;
@@ -186,15 +195,17 @@ async function documentEntry(ctx: CommandContext, documentId: string) {
 // A sale must be the org's own invoice, and a purchase must not be: the org's tax code (kernel.org.set_tax_code) is
 // read again here, so a proposal raised before it was set or changed cannot book an invoice on the wrong side. The
 // tenant row is read FOR SHARE until commit, so a concurrent kernel.org.set_tax_code waits for this posting.
-async function assertDirection(ctx: CommandContext, payload: PurchaseProposal): Promise<void> {
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).forShare().executeTakeFirst();
-  const orgTaxCode = org?.tax_code ?? null;
-  // The org's branches (#686) issue its own invoices too.
-  const ownInvoice = isOwnTaxCode(payload.seller.taxCode, orgTaxCode);
-  if (directionOf(payload) === 'sale' && !ownInvoice) {
+async function assertDirection(ctx: CommandContext, payload: PurchaseProposal, legalEntityId: string): Promise<void> {
+  // What the invoice is to the books of the entity it is booked in (#2502, #686): that entity's sale (its code or a branch of it), a purchase (a stranger's, or another
+  // entity's of the org when this one is its buyer), or another entity's sale. The org's code and the entities' are read FOR SHARE, so a change of one waits for this posting.
+  const reading = readSeller({ seller: payload.seller.taxCode, buyer: payload.buyer.taxCode, entityId: legalEntityId }, await loadOwnTaxCodes(ctx, { lockTenant: true }));
+  if (directionOf(payload) === 'sale' && reading === 'sale_other_entity') {
+    throw new DomainError('SALE_OTHER_ENTITY', 422, 'Hóa đơn này do một pháp nhân khác của tổ chức phát hành nên không ghi vào sổ của pháp nhân đang chọn được; hãy từ chối đề xuất này rồi tải lại tệp vào đúng pháp nhân');
+  }
+  if (directionOf(payload) === 'sale' && reading === 'purchase') {
     throw new DomainError('NOT_OWN_SALE', 422, 'Mã số thuế người bán không phải mã số thuế của tổ chức nên không ghi sổ như hóa đơn bán ra được; hãy kiểm tra mã số thuế trong Cài đặt rồi đọc lại tệp');
   }
-  if (directionOf(payload) === 'purchase' && ownInvoice) {
+  if (directionOf(payload) === 'purchase' && reading !== 'purchase') {
     throw new DomainError('OWN_INVOICE', 422, 'Người bán là chính tổ chức nên đây là hóa đơn bán ra; hãy đọc lại tệp để ghi sổ như hóa đơn bán ra');
   }
 }
@@ -211,14 +222,14 @@ export function belowOneDongBooked(payload: Pick<PurchaseProposal, 'invoice' | '
   return amounts.find((a) => !money(a).isInteger()) ?? null;
 }
 
-// The refusal of an invoice with an amount below one dong (#1282). Nothing is rounded: where the difference goes is the
-// accountant's decision (#1308).
+// The refusal of an invoice with an amount below one dong (#1282). Extraction rounds one it can (#2235), so this holds an
+// invoice that cannot be rounded to the dong and a proposal stored before the rounding; nothing is rounded here.
 export function amountBelowDongError(amount: string | null): DomainError {
   const shown = amount === null ? '' : ` (${amount})`;
   return new DomainError(
     'AMOUNT_BELOW_DONG',
     422,
-    `Hóa đơn có số tiền lẻ dưới một đồng${shown}, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Kế toán cần quyết định cách làm tròn; trong lúc chờ, có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh.`,
+    `Hóa đơn có số tiền lẻ dưới một đồng${shown}, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Hệ thống không tự làm tròn về đồng được; có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh.`,
     amount === null ? undefined : { amount },
   );
 }
@@ -283,6 +294,19 @@ function assertDirectionAccounts(direction: DocumentDirection, lines: ReadonlyAr
   }
 }
 
+// An invoice goes to the books only with an account on every line (#2091): a line no rule matched carries a placeholder
+// no chart holds, and the reviewer names the line to classify.
+function assertClassified(lines: ReadonlyArray<Pick<ProposedLine, 'lineNo' | 'debitAccount' | 'accountRule'>>): void {
+  const waiting = lines.filter(isUnclassifiedLine).map((l) => l.lineNo);
+  if (waiting.length === 0) return;
+  throw new DomainError(
+    'ACCOUNT_UNCLASSIFIED',
+    422,
+    `Còn ${waiting.length} dòng chưa phân loại (dòng ${waiting.slice(0, 20).join(', ')}${waiting.length > 20 ? ', ...' : ''}): không khớp quy tắc nào; hãy chọn tài khoản cho từng dòng khi sửa đề xuất rồi duyệt lại`,
+    { lines: waiting.slice(0, 20), count: waiting.length },
+  );
+}
+
 export const revisePurchase = defineCommand({
   name: 'finance.purchase.revise',
   input: z.object({
@@ -311,13 +335,21 @@ export const revisePurchase = defineCommand({
       const account = overrides.get(l.lineNo);
       if (!account || account === l.debitAccount) return l;
       chosen.push({ lineNo: l.lineNo, debitAccount: account });
-      return { ...l, debitAccount: account, reason: 'Người dùng chọn', accountRule: { source: 'user' as const } };
+      // The learned rule the line came with is remembered (#2379), so the rule's corrections can be counted; a line a
+      // person changes twice keeps the first rule's id.
+      const was = l.accountRule;
+      const corrected = was?.source === 'learned' ? was.ruleId : was?.source === 'user' ? was.correctedRuleId : undefined;
+      return { ...l, debitAccount: account, reason: 'Người dùng chọn', accountRule: { source: 'user' as const, ...(corrected ? { correctedRuleId: corrected } : {}) } };
     });
     if (chosen.length === 0 && !exchangeRate && !movesEntity) return { changed: false as const, payload };
     // The accounts the user picked now; the others are checked again when the proposal is approved.
     assertDirectionAccounts(directionOf(payload), chosen);
     await assertUsableAccounts(ctx, chosen.map((l) => l.debitAccount));
-    const revised = { ...payload, lines, journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload)) };
+    // The accounts check (#2091) names the lines still waiting for an account, so it follows the picks: the
+    // proposal carries one only when extraction found a line no rule matched.
+    const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
+    const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
+    const revised = { ...payload, lines, checks, journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload)) };
     return { changed: true as const, payload: revised };
   },
 });
@@ -395,9 +427,9 @@ export const recordPurchase = defineCommand({
       throw new DomainError('FOREIGN_MISMATCH', 422, 'Hóa đơn VND không có tỷ giá quy đổi');
     }
     const failed = payload.checks.filter((c) => c.status === 'fail');
-    // An amount below one dong (#1282): the VND ledger refuses it rather than round it, and how to round is the
-    // accountant's decision (#1308). Read from the amounts being booked, so a proposal stored before the amount_scale
-    // check is held here too, before anything is written, and never only at the posting definer.
+    // An amount below one dong (#1282): the VND ledger refuses it rather than round it. Extraction rounds what it can
+    // (#2235), so what is left here was not rounded. Read from the amounts being booked, so a proposal stored before the
+    // amount_scale check is held here too, before anything is written, and never only at the posting definer.
     const fraction = belowOneDongBooked(payload);
     if (fraction !== null || failed.some((c) => c.id === 'amount_scale')) {
       throw amountBelowDongError(fraction);
@@ -408,7 +440,9 @@ export const recordPurchase = defineCommand({
     if (failed.length > 0 && !acceptFailedChecks) {
       throw new DomainError('CHECKS_FAILED', 422, `Còn ${failed.length} kiểm tra không đạt; hãy xác nhận đã đối chiếu chứng từ gốc`);
     }
-    await assertDirection(ctx, payload);
+    // A line no rule matched has no account until a reviewer picks one (#2091). The warning check does not decide this:
+    // the lines do, so a proposal whose check was edited away is held here too.
+    assertClassified(payload.lines);
     // Line accounts come from the approved revision; changing them is an edit (kernel.proposal.edit). A sub-account
     // deactivated since the proposal was made is refused here, with its code.
     const { lines } = payload;
@@ -437,6 +471,7 @@ export const recordPurchase = defineCommand({
           ?.legal_entity_id
       : undefined;
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId ?? stamped);
+    await assertDirection(ctx, payload, legalEntityId);
     const partyId = await upsertParty(ctx, sale ? payload.buyer : payload.seller, direction);
     // The invoice recorded again after its document was voided by a reversal (#165): the new document names the
     // voided one it replaces. Any other document of the same invoice still in force makes this a duplicate, refused
@@ -546,7 +581,7 @@ export const recordPurchase = defineCommand({
         .execute();
     }
 
-    const journalEntryId = await postJournalEntry(ctx, {
+    const journalEntryId = await postNewEntry(ctx, {
       entryDate: lateDate ?? invoice.issueDate,
       description: memo,
       sourceType: 'finance.purchase_document',
@@ -564,6 +599,12 @@ export const recordPurchase = defineCommand({
       })),
     });
     const late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null;
+    // The stock the lines make (#2512): a goods line that matches an item moves it, the others wait in the "Chưa gán hàng" list. The entry above is the same either way.
+    const stock = await postDocumentStock(
+      ctx,
+      { documentId: document.id, legalEntityId, direction, date: entryDate, adjustment: related?.kind === 'adjustment' },
+      lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, amount: l.amount, account: l.debitAccount })),
+    );
 
     // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing.
     const main = sale ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
@@ -598,6 +639,7 @@ export const recordPurchase = defineCommand({
       direction,
       legal_entity_id: legalEntityId,
       ...(learned.length > 0 ? { learned_rules: learned } : {}),
+      ...(stock.moved > 0 || stock.unassigned > 0 ? { stock_moves: stock.moved, stock_unassigned: stock.unassigned } : {}),
       ...(replaces ? { replaces_document_id: replaces } : {}),
       ...(related ? { correction_kind: related.kind, corrects_document_id: corrected?.id ?? null, voided_document_id: voidedOriginal } : {}),
       ...(lateDate ? { invoice_date: invoice.issueDate, posting_date: lateDate, late_reason: late } : {}),

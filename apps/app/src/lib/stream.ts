@@ -4,6 +4,7 @@
 // tested; stream-hook.ts wires it to EventSource and the query client.
 import type { Query, QueryClient } from '@tanstack/react-query';
 import { STREAM_CLOSE_REASONS, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@crove/kernel-contract';
+import { apiUrl } from './api-base.ts';
 
 // oRPC query keys are [path, { type, input }], for example [['inbox', 'get'], { type: 'query', input: { id } }].
 function pathOf(query: Query): string {
@@ -32,11 +33,14 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
   const { id } = hint;
   switch (hint.type) {
     case 'proposal':
-      return path === 'inbox.list' || path === 'files.recent' || (path === 'inbox.get' && inputId(query) === id);
+      // files.batch: the intake list's files whose proposal still waits (#2009), so their chips follow its decision.
+      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id);
     case 'file':
     case 'extraction':
-      // extraction carries the id of the file whose reading changed.
-      return path === 'files.recent' || path === 'inbox.list' || (path === 'inbox.get' && detail(query)?.file?.id === id);
+      // extraction carries the id of the file whose reading changed. files.batch: a re-read of a file the intake list
+      // watches (#2032).
+      // marketplace.staged: an order report read in the sandbox waits as a card until a member decides it (#2515).
+      return path === 'files.recent' || path === 'files.staged' || path === 'marketplace.staged' || path === 'files.batch' || path === 'inbox.list' || (path === 'inbox.get' && detail(query)?.file?.id === id);
     case 'journal_entry': {
       // The ledger reports (#321) read every posted entry, so any new one changes them. A voucher (#327) is posted, and
       // shown as reversed, with an entry.
@@ -47,7 +51,10 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         path === 'ledger.period' ||
         path === 'ledger.account' ||
         path === 'vouchers.list' ||
-        path === 'parties.customers'
+        path === 'parties.customers' ||
+        // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
+        path === 'financeOverview.get' ||
+        path === 'financeOverview.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;
@@ -55,7 +62,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
       return path === 'inbox.get' && (result?.journalEntryId === id || result?.reversedEntryId === id);
     }
     case 'document': {
-      if (path === 'documents.list' || path === 'parties.list' || path === 'parties.customers') return true;
+      // The sales invoice number gaps (#2140) read every recorded sale, so a new or voided document changes them.
+      if (path === 'documents.list' || path === 'parties.list' || path === 'parties.customers' || path === 'vat.salesNumberGaps') return true;
       const result = detail(query)?.result;
       return path === 'inbox.get' && (result?.documentId === id || result?.voidedDocumentId === id);
     }
@@ -198,7 +206,7 @@ export function startStreamClient(deps: StreamClientDeps): () => void {
       return;
     }
     if (stopped) return;
-    const es = deps.open(`/api/stream?ticket=${encodeURIComponent(ticket)}`);
+    const es = deps.open(apiUrl(`/api/stream?ticket=${encodeURIComponent(ticket)}`));
     source = es;
     es.addEventListener('ready', () => {
       if (source !== es) return;

@@ -1,8 +1,10 @@
 // The composition root (plan Decision 12, ADR-0030). createKernel takes the configuration and one adapter per port
 // and starts the server roles; it builds no adapter itself. main.ts wires the open-source defaults from
 // configuration (defaultAdapters); a Crove Cloud entrypoint wires its own adapters into the same factory.
+import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
-import { InvoiceExtractor, SchedulingReader, SocialWriter, type InvoiceReader } from '@crove/agent';
+import { memberMeter } from './ai-meter.ts';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TelegramPublisher,
@@ -24,6 +26,8 @@ import {
   YouTubePublisher,
   YouTubeRefresher,
   GoogleBusinessConnector,
+  GoogleCalendarAdapter,
+  type CalendarAdapter,
   GoogleBusinessPublisher,
   GoogleBusinessRefresher,
   LinkedInPublisher,
@@ -52,6 +56,8 @@ import {
   LocalDiskStore,
   egressFetch,
   Runtime,
+  SUBJECT_WRAP_INFO,
+  SubjectVault,
   type BlobStore,
   readVerified,
   type CommandDef,
@@ -64,15 +70,22 @@ import {
 import { financeAgentPrograms, financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
 import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewContributions, socialQueries } from '@crove/mod-social';
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
+import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
+import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
+import { meetingsCommands, meetingsManifest, meetingsQueries } from '@crove/mod-meetings';
+import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
+import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
-import { AVAILABLE_MODULES, assertExportKey, usageLimits, type Config, type ModuleId } from './config.ts';
+import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
 import { rebindExports as rebindOrgExports } from './export-rebind.ts';
+import { numberReseedCommand, runRestoreReport } from './restore-report.ts';
 import { exportSealer } from './export-seal.ts';
 import { webhookTarget, type WebhookTarget } from './alert.ts';
 import type { SecurityThresholds } from './security-signals.ts';
 import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
+import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
 import { createHttpApp, type StreamDeps } from './http.ts';
@@ -87,9 +100,15 @@ import { createMediaUrls } from './media-urls.ts';
 import { createTaxCodeLookup } from './tax-lookup.ts';
 import { createPortalSync } from './portal-sync.ts';
 import { createTaxPortalClient, testPortalAllowed } from './tax-portal.ts';
-import { startWorker } from './worker.ts';
+import { setInboundAuthservId } from './inbound.ts';
+import { startWorker, workerApplicationName } from './worker.ts';
+import { configureOpsAlerts, flushOpsAlerts } from './ops-alert.ts';
+
+// How long a stop waits for the queued operational alerts to post (#1993).
+const STOP_FLUSH_MS = 5_000;
 import { createPushSender, loadVapidKeys } from './web-push.ts';
 import { WORKER_LAG_EXIT_MS, WORKER_LAG_SUSTAIN_MS, startLagWatchdog } from './back-pressure.ts';
+import { bankFeedProviders } from '@crove/bank-feed';
 
 // Identity (ADR-0027, ADR-0028): who the caller is and whether their session still holds. When
 // sessions.liveCheckForR3 is true, the authenticator must set confirmLive on each user, or every R3 command fails
@@ -125,6 +144,14 @@ export interface KernelAdapters {
   // Reads the days and times a client's message asks for (#1440) through the same endpoint; null: suggestions give
   // the next free slots only.
   scheduler?: Pick<SchedulingReader, 'read'> | null;
+  // Vy's reply drafts for the conversation core (CV8, #2310) through the same endpoint; null: no draft is made and "Vy soạn" says so.
+  conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
+  // Vy's daily brief on Home (#2383) through the same endpoint; null: Home shows the plain template.
+  today?: Pick<TodayWriter, 'brief'> | null;
+  // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
+  adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
+  // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -153,6 +180,11 @@ export interface Kernel {
   // The operator purges an offboarded org by its deletion map and closes it, as the worker (issue #1024,
   // org-purge.ts). Resolves to the exit code.
   purgeOrg(argv: readonly string[]): Promise<number>;
+  // After a restore: what the WORM archive holds that the database lacks, and with --reseed the number series raised
+  // above it, as the worker (issue #2007, restore-report.ts). Resolves to the exit code.
+  restoreReport(argv: readonly string[]): Promise<number>;
+  // After a restore (#2579): deletes again the meetings the shred references name, re-runs the retention and removes the objects that leaves; 0 or 1.
+  shredReplay(): Promise<number>;
 }
 
 // No-op defaults for the optional ports: nothing can be bound, no connector is installed, every module is on.
@@ -180,6 +212,7 @@ export function overviewContributions(config: Pick<Config, 'CROVE_MODULES'>): Ov
 export function moduleDefinitions(config: Config): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
+  setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -193,8 +226,11 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
     }),
     finance: () => ({ commands: financeCommands, queries: financeQueries }),
     social: () => ({ commands: socialCommands, queries: socialQueries }),
+    ads: () => ({ commands: adsCommands, queries: adsQueries }),
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
+    meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
+    hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
   return { commands: enabled.flatMap((m) => m.commands), queries: enabled.flatMap((m) => m.queries) };
@@ -215,8 +251,11 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   kernel: kernelManifest,
   finance: financeManifest,
   social: socialManifest,
+  ads: adsManifest,
   crm: crmManifest,
   notes: notesManifest,
+  meetings: meetingsManifest,
+  hr: hrManifest,
 };
 
 export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {
@@ -227,13 +266,27 @@ export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleMa
 // queries, registered on a runtime given their manifests, so every declared write, and any command registered on it
 // later (the org purge), is checked against them (P04, #1710). apps/kernel/test/invariant/command-writes.test.ts holds
 // the server to both.
+// The vault of the per-subject keys: HKDF-derived from the credential key and from CREDENTIAL_KEY_PREVIOUS the same way, so values sealed before a rotation still open.
+function subjectVaultOf(config: Config): SubjectVault | null {
+  const keys = createCredentialBroker(config).deriveKeys?.(SUBJECT_WRAP_INFO) ?? [];
+  if (keys.length === 0) return null;
+  const vault = new SubjectVault(keys);
+  // The vault keeps its own copies: the derived buffers are wiped.
+  for (const k of keys) k.key.fill(0);
+  return vault;
+}
+
 export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'>): Runtime {
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
   const runtime = new Runtime(cells, {
+    // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
+    readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
     ...options,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
+    // The subject keys (ADR-0017): wrap keys derived from every credential key this deployment opens, none without one.
+    subjectVault: subjectVaultOf(config),
     // Every declared write must name a manifest table with that manifest's column classes (P04, #1710).
     manifests: moduleManifests(config).map((manifest) => manifest.tables),
   }).register(moduleDefinitions(config));
@@ -245,8 +298,8 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
-type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
-  Partial<Pick<Config, 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
+type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
+  Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
 // product), the member app otherwise.
@@ -260,6 +313,90 @@ const pinterestApp = (config: Pick<Config, 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL
   config.CHANNEL_PINTEREST_APP_ID && config.CHANNEL_PINTEREST_APP_SECRET ? { appId: config.CHANNEL_PINTEREST_APP_ID, appSecret: config.CHANNEL_PINTEREST_APP_SECRET } : null;
 const zaloApp = (config: Pick<Config, 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'>) => (config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_APP_SECRET ? { appId: config.CHANNEL_ZALO_APP_ID, appSecret: config.CHANNEL_ZALO_APP_SECRET } : null);
 
+// The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
+// credentials is not offered, and with none the connect buttons are hidden.
+export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID' | 'CALENDAR_GOOGLE_CLIENT_SECRET'>): Partial<Record<string, CalendarAdapter>> {
+  const adapters: Partial<Record<string, CalendarAdapter>> = {};
+  if (config.CALENDAR_GOOGLE_CLIENT_ID && config.CALENDAR_GOOGLE_CLIENT_SECRET) adapters.google_calendar = new GoogleCalendarAdapter({ clientId: config.CALENDAR_GOOGLE_CLIENT_ID, clientSecret: config.CALENDAR_GOOGLE_CLIENT_SECRET });
+  return adapters;
+}
+
+// The ad platforms this deployment offers (ADR-0040): the offline sandbox when ADS_SANDBOX is on, Meta when the deployment
+// has its ad app (#2218). Each is bound to its own hosts; the worker reads through them, and the API only asks which exist.
+// Whether the deployment's write Meta app is the read ads app or the Pages app (the same id): with one app a person's reading tokens can
+// change campaigns once they grant the permission, so switching running ads off closes every Meta reading connection; with an app of its own
+// (a public deployment requires one) they cannot, and only the recorded scopes close. No write app means no write connection to make.
+export function metaWriteAppShared(config: Pick<Config, 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_APP_ID'>): boolean {
+  const write = config.CHANNEL_META_ADS_WRITE_APP_ID;
+  return Boolean(write) && (write === config.CHANNEL_META_ADS_APP_ID || write === config.CHANNEL_META_APP_ID);
+}
+
+// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
+// its own switch when it is built (#2503); until then no host is ever called.
+export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
+  return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
+}
+
+export function adPlatformsOf(
+  config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'> &
+    Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET'>>,
+): Readonly<Record<string, AdPlatform>> {
+  return adPlatforms({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { meta: { appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } } : {}),
+    ...(config.CHANNEL_GOOGLE_ADS_CLIENT_ID && config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET ? { google: { clientId: config.CHANNEL_GOOGLE_ADS_CLIENT_ID, clientSecret: config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET } } : {}),
+  });
+}
+
+// The one call of an ad platform's writer that removes the app's permissions at the platform, by the provider id of the connection whose token is held (#2296,
+// W2-1, ADR-0043 point 4): the narrowed view the revoke sweep is given, never the writer. A write token is proved with the secret of the write app and a read
+// token that holds a spend permission with the secret of the read ads app, each the app that issued it.
+export function adRevokersOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdRevoker>> {
+  return adRevokers({
+    sandbox: config.ADS_SANDBOX === 'true',
+    meta: {
+      ...(config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } : {}),
+      ...(config.CHANNEL_META_ADS_APP_SECRET ? { readAppSecret: config.CHANNEL_META_ADS_APP_SECRET } : {}),
+      ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}),
+    },
+  });
+}
+
+// The calls of a launch of an ad platform's writer, by the provider id of the write connection (#2296, W2-3, ADR-0043 points 2 to 5): the narrowed view the launch
+// job is given, never the writer. The offline sandbox's when ADS_SANDBOX is on; Meta's only when the deployment has its write app AND ADS_LIVE_LAUNCH is on
+// (default off, refused on a public deployment): with it off a launch on a Meta account stays queued, untouched. Every object the job creates is paused.
+export function adWritersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, LaunchWriter>> {
+  return adLaunchWriters({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
+// The pause of what a stopped launch made, by the provider id of the write connection (#2296, W2-4a, ADR-0043 points 4 and 7a): the narrowed view the pause job is
+// given, never the writer. The same providers as the launch writers (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, since
+// without it nothing was ever launched there), and it can do one thing: find the objects that carry a launch's tag and set them PAUSED.
+export function adPausersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPauser>> {
+  return adPausers({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
+// The activators the worker is given (W2-4b), by provider: the frozen view of `activate` and `readStatus`, apart from the writers. The same providers and the same switch
+// as the launch writers (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, which a public deployment refuses).
+export function adActivatorsOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdActivator>> {
+  return adActivators({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
 export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>): Partial<Record<string, OAuthConnector>> {
   const connectors: Partial<Record<string, OAuthConnector>> = {};
   if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) {
@@ -267,6 +404,20 @@ export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>
     connectors.facebook_page = new FacebookPageConnector(app);
     // Instagram professional accounts linked to the user's Pages, through the same Meta app (S6.3).
     connectors.instagram = new InstagramConnector(app);
+  }
+  // Meta ad accounts, read only (ADR-0040, #2218): its own app credentials, which may be the same app as the Pages one.
+  if (config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET) {
+    connectors.meta_ads = new MetaAdsConnector({ appId: config.CHANNEL_META_ADS_APP_ID, appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
+  }
+  // Google Ads accounts, read only (ADR-0040, #2220): OAuth web client in the deployment's Google Cloud project.
+  if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET) {
+    connectors.google_ads = new GoogleAdsConnector({ clientId: config.CHANNEL_GOOGLE_ADS_CLIENT_ID, clientSecret: config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET });
+  }
+  // Meta ad accounts, the connection that can run ads (ADR-0043, #2294, W0b): its own app credentials, which may be the same app as the
+  // read one or the Pages one. It only logs in and lists accounts; no job or queue reaches it, and the readers' registry
+  // (adPlatformsOf) never sees its provider.
+  if (config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_SECRET) {
+    connectors.metawrite_ads = new MetaWriteConnector({ appId: config.CHANNEL_META_ADS_WRITE_APP_ID, appSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
   }
   const zalo = zaloApp(config);
   if (zalo) connectors.zalo_oa = new ZaloOaConnector(zalo);
@@ -353,6 +504,10 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     ai: adapters.ai,
     writer: adapters.writer ?? null,
     scheduler: adapters.scheduler ?? null,
+    conversationWriter: adapters.conversationWriter ?? null,
+    today: adapters.today ?? null,
+    adsCampaignWriter: adapters.adsCampaignWriter ?? null,
+    inboxReader: adapters.inboxReader ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -360,8 +515,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     billing: adapters.billing ?? selfHostBilling,
   };
 
-  function buildRuntime(connectionString: string, applicationName: string) {
-    const pool = createPool({ connectionString, applicationName, max: 10, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true' });
+  function buildRuntime(connectionString: string, applicationName: string, max: number) {
+    const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.CROVE_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
@@ -390,8 +545,13 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     const worker = role === 'worker' || role === 'all';
     // Both roles handle org exports (the worker seals them, the API opens them for download).
     assertExportKey(config);
+    assertSplitRoles(config, role);
     // Browser push (#1238): both roles or neither; a partial or mismatched key set stops the start.
     const vapid = loadVapidKeys(config);
+    // The alert webhook of this process: the worker's security alerts, and the operational ALERT lines of both roles
+    // (#1993), once a window per kind.
+    const alerts = securityAlerts(config);
+    configureOpsAlerts({ target: alerts.target, repeatSeconds: alerts.thresholds.repeatSeconds });
     // The worker alone enters system context, so it never shares the API's login role (External-tenant gate T5).
     const workerUrl = config.WORKER_DATABASE_URL;
     if (worker && !workerUrl) throw new Error('WORKER_DATABASE_URL is required for the worker; connect it as crove_worker');
@@ -406,6 +566,12 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
       if (removed > 0) console.log(`[storage] removed ${removed} stale temporary file(s)`);
     }
     const stops: Array<() => Promise<void>> = [];
+    // Run last (stops run in reverse): the alerts the other stops raised are posted before the process ends, within 5 s
+    // in all, so the container's stop grace period holds.
+    stops.push(async () => {
+      await flushOpsAlerts(STOP_FLUSH_MS);
+      configureOpsAlerts(null);
+    });
     // Safe to call twice (SIGTERM then SIGINT): the second call finds nothing left to stop.
     const stopAll = async () => {
       const pending = stops.splice(0).reverse();
@@ -414,7 +580,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
 
     try {
       if (api) {
-        const { pool, db, runtime } = buildRuntime(config.DATABASE_URL, 'crove-api');
+        const { pool, db, runtime } = buildRuntime(config.DATABASE_URL, 'crove-api', config.DATABASE_POOL_MAX);
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'denied');
@@ -446,13 +612,30 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           authenticate,
           pool,
           aiEnabled: resolved.ai !== null,
-          ...(resolved.writer ? { socialWriter: socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null) } : {}),
+          aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
+          ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
+          ...(resolved.inboxReader ? { conversationReader: resolved.inboxReader } : {}),
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
           ...(config.TAX_PORTAL_SYNC === 'true' ? { portalSync: createPortalSync({ runtime, store, broker: resolved.broker, stepMs: config.TAX_PORTAL_STEP_SECONDS * 1000, client: createTaxPortalClient(config.TAX_PORTAL_URL ? { baseUrl: config.TAX_PORTAL_URL } : {}) }) } : {}),
           mailer: resolved.mail,
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), publicUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          // Meta's data deletion callback for the Ads connection (plan section 9): with the Meta ads app configured.
+          ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
+          ...(config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { adsWriteDeletion: { appSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } } : {}),
+          ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? { conversationsDeletion: { appSecret: config.CHANNEL_META_APP_SECRET } } : {}),
+          // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
+          ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
+          // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
+          ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: config.CHANNEL_META_APP_SECRET, appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
+          // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
+          bankFeedWebhooks: Object.fromEntries(
+            Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
+          ),
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
+          // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
+          // own worker, so it has none to wait for.
+          workerBuildCheck: role === 'api',
         });
         const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST });
         console.log(`[api] listening on ${config.HOST}:${config.PORT}`);
@@ -467,7 +650,10 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
 
       if (worker && workerUrl && extractUrl) {
         console.log(`[extract] parsing in crove-extract at ${new URL(extractUrl).host}`);
-        const { pool, db, runtime } = buildRuntime(workerUrl, 'crove-worker');
+        // The instance the heartbeat names is in every system audit row this worker writes (#1951), cut to what fits in
+        // the connections' application_name, so both name it alike.
+        const instance = hostname().slice(0, 50);
+        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX);
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'granted');
@@ -480,25 +666,30 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             connectionString: workerUrl,
             workerDb: db,
             runtime,
+            instance,
             store,
             extractor: resolved.ai,
-            extract: createExtractClient({ url: extractUrl }),
+            conversationWriter: resolved.conversationWriter,
+            adsCampaignWriter: resolved.adsCampaignWriter,
+            extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,
             refusalTallyRetentionDays: config.REFUSAL_TALLY_RETENTION_DAYS,
+            build: { id: config.CROVE_BUILD ?? null, time: config.CROVE_BUILD_TIME ?? null },
             agentPrograms: { ...financeAgentPrograms, ...socialAgentPrograms, ...crmAgentPrograms },
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, publishers: channelPublishers(config), refreshers: channelRefreshers(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
             publicUrl: config.PUBLIC_URL,
+            appUrl: appUrl(config),
             brand: config.BRAND_NAME,
             // Bounce reports reach this deployment only with both inbound settings (as for the invite mail).
             mail: { mailer: resolved.mail, templates: MAIL_TEMPLATES, brand: config.BRAND_NAME, bounceDomain: config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null },
-            archive: { store: archiveStore, lagSeconds: config.ARCHIVE_LAG_SECONDS },
+            archive: { store: archiveStore, lagSeconds: config.ARCHIVE_LAG_SECONDS, restoreAlertDays: config.ARCHIVE_RESTORE_ALERT_DAYS },
             usageLimits: usageLimits(config),
-            securityAlerts: securityAlerts(config),
-            aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK },
+            securityAlerts: alerts,
+            aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
           }),
@@ -518,7 +709,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     // System commands need system context, which only the worker's login role may enter (External-tenant gate T5).
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for exports-rebind; run it in the worker container');
-    const { pool, runtime } = buildRuntime(workerUrl, 'crove-restore');
+    const { pool, runtime } = buildRuntime(workerUrl, 'crove-restore', config.WORKER_DATABASE_POOL_MAX);
     try {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
@@ -533,7 +724,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function setUserStatus(disabled: boolean, argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error(`WORKER_DATABASE_URL is required for ${disabled ? 'user-disable' : 'user-enable'}; run it in the worker container`);
-    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator');
+    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator', config.WORKER_DATABASE_POOL_MAX);
     try {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
@@ -549,7 +740,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function purgeOrg(argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for org-purge; run it in the worker container');
-    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator');
+    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator', config.WORKER_DATABASE_POOL_MAX);
     runtime.register({ commands: [orgPurgeCommand({ store: resolved.storage })] });
     try {
       await assertRlsEnforced(pool);
@@ -561,7 +752,48 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     }
   }
 
-  return { config, modules: config.CROVE_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg };
+  // The restore-report role (#2007): the worker login is the only role that may read the archive hashes and execute
+  // crove_kernel.number_series_reseed, in the system context its command runs in. Only this runtime registers it.
+  async function restoreReport(argv: readonly string[]): Promise<number> {
+    const workerUrl = config.WORKER_DATABASE_URL;
+    if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for restore-report; run it in the worker container');
+    const { pool, db, runtime } = buildRuntime(workerUrl, 'crove-restore', config.WORKER_DATABASE_POOL_MAX);
+    runtime.register({ commands: [numberReseedCommand()] });
+    try {
+      await assertRlsEnforced(pool);
+      await assertSystemContextAccess(pool, 'granted');
+      return await runRestoreReport({ db, store: createArchiveStore(config), runtime }, argv);
+    } finally {
+      // Best effort: a failure to close never hides the run's own outcome.
+      await pool.end().catch((error: unknown) => console.error('[restore-report] could not close the pool', error));
+    }
+  }
+
+  // The shred replay role (#2579, ADR-0017 section 8): after a restore, every meeting a shred reference of the archive store names is deleted again, and the
+  // objects and file rows that leaves are removed. The worker does the same at start; this runs it on demand from the restore runbook.
+  async function shredReplay(): Promise<number> {
+    const workerUrl = config.WORKER_DATABASE_URL;
+    if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for shred-replay; run it in the worker container');
+    if (!config.CROVE_MODULES.includes('meetings')) {
+      console.log('[shred-replay] the meetings module is not enabled here; nothing to replay');
+      return 0;
+    }
+    const { pool, db, runtime } = buildRuntime(workerUrl, 'crove-restore', config.WORKER_DATABASE_POOL_MAX);
+    try {
+      await assertRlsEnforced(pool);
+      await assertSystemContextAccess(pool, 'granted');
+      const replay = await replayShreds({ runtime, workerDb: db, store: createArchiveStore(config) });
+      // What the retention shredded since the restore point came back too: shred it again before anything else opens.
+      const due = await runMeetingsRetention({ runtime, workerDb: db });
+      const sweep = await sweepMeetingMedia({ runtime, workerDb: db, store: resolved.storage });
+      return replay.failed > 0 || due.failed > 0 || sweep.failed > 0 ? 1 : 0;
+    } finally {
+      // Best effort: a failure to close never hides the run's own outcome.
+      await pool.end().catch((error: unknown) => console.error('[shred-replay] could not close the pool', error));
+    }
+  }
+
+  return { config, modules: config.CROVE_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport, shredReplay };
 }
 
 // The Social writer as the API uses it: drafts, rewrites, hashtags, post ideas (#1181) and period summaries (#1237) as
@@ -596,7 +828,7 @@ export function socialDrafter(writer: NonNullable<KernelAdapters['writer']>, sto
 export function defaultAdapters(config: Config): KernelAdapters {
   const aiConfig =
     config.AI_BASE_URL && config.AI_MODEL
-      ? { baseURL: config.AI_BASE_URL, apiKey: config.AI_API_KEY ?? null, model: config.AI_MODEL, supportsStructuredOutputs: config.AI_STRUCTURED_OUTPUTS === 'true' }
+      ? { baseURL: config.AI_BASE_URL, apiKey: config.AI_API_KEY ?? null, model: config.AI_MODEL, supportsStructuredOutputs: config.AI_STRUCTURED_OUTPUTS === 'true', maxRetries: config.AI_MAX_RETRIES }
       : null;
   return {
     identity: {
@@ -607,6 +839,10 @@ export function defaultAdapters(config: Config): KernelAdapters {
     ai: aiConfig ? new InvoiceExtractor(aiConfig) : null,
     writer: aiConfig ? new SocialWriter(aiConfig) : null,
     scheduler: aiConfig ? new SchedulingReader(aiConfig) : null,
+    conversationWriter: aiConfig ? new ConversationWriter(aiConfig) : null,
+    today: aiConfig ? new TodayWriter(aiConfig) : null,
+    adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
+    inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.
@@ -638,7 +874,7 @@ function securityAlerts(config: Config): { target: WebhookTarget | null; thresho
     );
     return { target, thresholds };
   } catch (error) {
-    console.error(`[security] ALERT ${error instanceof Error ? error.message : String(error)}; security alerts go to the log only`);
+    console.error(`[security] ALERT ${error instanceof Error ? error.message : String(error)}; security and operational alerts go to the log only`);
     return { target: null, thresholds };
   }
 }

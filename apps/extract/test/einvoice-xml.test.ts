@@ -27,6 +27,12 @@ describe('e-invoice XML', () => {
     expect(invoice.hasSignature).toBe(true);
   });
 
+  it('reads the seller\'s bank account when the invoice names one, and leaves it out otherwise (#2380)', () => {
+    expect(parseEInvoiceXml(fixture).seller).not.toHaveProperty('bankAccount');
+    const xml = fixture.toString('utf8').replace('<MST>0101234564</MST>', '<MST>0101234564</MST>\n        <STKNHang>0011 000 000 000</STKNHang>');
+    expect(parseEInvoiceXml(new TextEncoder().encode(xml)).seller.bankAccount).toBe('0011 000 000 000');
+  });
+
   it('produces exactly the parsed fixture that @crove/l10n-vn checks', () => {
     expect(parseEInvoiceXml(fixture)).toEqual(parsed);
   });

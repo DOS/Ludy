@@ -72,7 +72,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     );
     const mine = await connection(orgId, owner);
     const other = await connection(orgId, owner);
-    await admin((c) => c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, mine, owner]));
+    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, mine, owner]));
     return { orgId, owner, member, limited, viewer, mine, other };
   }
 
@@ -311,7 +311,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
 
     // Add channels: a second channel of theirs, with the other channel's file as its own.
     const second = await connection(o.orgId, o.owner);
-    await admin((c) => c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.limited, second, o.owner]));
+    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.limited, second, o.owner]));
     await expect(exec(o, o.limited, 'social.post.add_channels', { postId, channels: [{ connectionId: second, media: [{ fileId: hidden }] }] })).rejects.toMatchObject(hiddenRefusal(hidden));
 
     // The owner and an unlimited member may use it (no channel scope: mediaHidden is FALSE), and archive it.

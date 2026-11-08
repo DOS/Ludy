@@ -5,21 +5,33 @@
 //
 // Only credentials of active connections whose connecting member may still use them are resealed (the rule of
 // credential_get); the others reseal when they are reconnected, and the counts say how many there are. No token is ever logged.
+// Orgs being offboarded are resealed too, as they are counted (#1889): one may return to active before its purge.
 //
 // The sealed targets of team chat alerts (#863, crove_social.chat_alert_target) go through the same pass, under the
 // same lock, when the Social module is on: those whose saver is still an owner or admin are resealed, the others when
-// the chat is saved again, and both are in the counts.
+// the chat is saved again, and both are in the counts. With Social left out (ADR-0031: its tables stay) they are
+// counted all the same (#1878), apart: they reseal only once Social is on again, so the previous key must stay until
+// then, or those targets never open again.
+//
+// The opposite mistake, the previous key retired too early, is reported too (#1888): each pass names the key ids that
+// still seal usable credentials or waiting chat alert targets but that the broker cannot open, with their counts. The
+// worker logs it as an error; nothing stops, since a lost key is a runbook path (reconnect), not an outage.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import type { SealedChannelCredential } from '@crove/kernel';
+import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@crove/kernel';
 import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
+import type { SubjectKeyResealDeps, SubjectKeyResealOutcome } from './subject-key-reseal.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.reseal' };
 const CHAT_ACTOR: SystemActor = { type: 'system', component: 'social.chat_alert.reseal' };
+const MEDIA_ACTOR: SystemActor = { type: 'system', component: 'meetings.media_key.reseal' };
 export const RESEAL_SWEEP_MS = 10 * 60_000;
 const RESEAL_LIMIT = 200;
+const SUBJECT_ACTOR: SystemActor = { type: 'system', component: 'kernel.subject_key.reseal' };
+const SUBJECT_LOCK_KEY = 'crove.subject-key-reseal';
+const SUBJECT_RESEAL_LIMIT = SUBJECT_KEY_RESEAL_BATCH;
 // At most this many pages a pass; the rest waits for the next pass.
 const RESEAL_PAGES = 5;
 const LOCK_KEY = 'crove.credential-reseal';
@@ -36,7 +48,19 @@ export interface ResealOutcome {
   // Envelopes still under a key other than the current one: of active connections, and of the others.
   leftActive: number;
   leftInactive: number;
+  // Team chat alert targets under an older key while the Social module is off: they reseal only once it is on again.
+  leftWaiting: number;
+  // Of those left active or waiting, the ones under a key the broker cannot open, by key id (#1888): they never reseal.
+  unopenable: UnopenableKey[];
   skipped: boolean;
+}
+
+export interface UnopenableKey {
+  keyId: string;
+  // Credentials of active connections and chat alert targets of a current owner or admin, while Social is on.
+  active: number;
+  // Chat alert targets waiting for the Social module.
+  waiting: number;
 }
 
 // The key a broker seals with now; a broker that does not say (another implementation) is not resealed here.
@@ -45,8 +69,14 @@ const currentKeyOf = (broker: CredentialBroker): string | null => {
   return typeof id === 'string' && id ? id : null;
 };
 
+// The keys a broker opens; null when it does not say, and then nothing is reported as unopenable.
+const openableKeysOf = (broker: CredentialBroker): ReadonlySet<string> | null => {
+  const ids = (broker as { keyIds?: unknown }).keyIds;
+  return Array.isArray(ids) && ids.every((id) => typeof id === 'string') ? new Set(ids as string[]) : null;
+};
+
 export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome> {
-  const outcome: ResealOutcome = { resealed: 0, failed: 0, leftActive: 0, leftInactive: 0, skipped: false };
+  const outcome: ResealOutcome = { resealed: 0, failed: 0, leftActive: 0, leftInactive: 0, leftWaiting: 0, unopenable: [], skipped: false };
   const current = currentKeyOf(deps.broker);
   if (!current) return { ...outcome, skipped: true };
   return deps.workerDb.connection().execute(async (db) => {
@@ -78,20 +108,82 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
           console.error('[credential-reseal] chat alert pass', error instanceof Error ? error.name : typeof error);
         });
       }
+      const meetings = deps.runtime.installed('meetings');
+      if (meetings) {
+        await resealMediaKeys(deps, db, current, outcome).catch((error: unknown) => {
+          console.error('[credential-reseal] media key pass', error instanceof Error ? error.name : typeof error);
+        });
+      }
       const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_kernel.credential_key_counts()`.execute(db);
-      const { rows: chatCounts } = social
-        ? await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_social.chat_alert_target_key_counts()`.execute(db)
-        : { rows: [] };
-      for (const c of [...counts, ...chatCounts]) {
+      // Counted whatever is installed: the tables exist with Social left out too (ADR-0031), and a target left under the
+      // previous key must keep it from being retired (#1878).
+      const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_social.chat_alert_target_key_counts()`.execute(db);
+      const { rows: mediaCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_meetings.media_key_counts()`.execute(db);
+      const openable = openableKeysOf(deps.broker);
+      const unopenable = new Map<string, UnopenableKey>();
+      const lost = (keyId: string, active: number, waiting: number) => {
+        if (!openable || openable.has(keyId) || active + waiting === 0) return;
+        const entry = unopenable.get(keyId) ?? { keyId, active: 0, waiting: 0 };
+        entry.active += active;
+        entry.waiting += waiting;
+        unopenable.set(keyId, entry);
+      };
+      for (const c of counts) {
         if (c.key_id === current) continue;
         outcome.leftActive += Number(c.active);
         outcome.leftInactive += Number(c.inactive);
+        lost(c.key_id, Number(c.active), 0);
       }
+      for (const c of chatCounts) {
+        if (c.key_id === current) continue;
+        if (social) outcome.leftActive += Number(c.active);
+        else outcome.leftWaiting += Number(c.active);
+        outcome.leftInactive += Number(c.inactive);
+        lost(c.key_id, social ? Number(c.active) : 0, social ? 0 : Number(c.active));
+      }
+      for (const c of mediaCounts) {
+        if (c.key_id === current) continue;
+        if (meetings) outcome.leftActive += Number(c.active);
+        else outcome.leftWaiting += Number(c.active);
+        outcome.leftInactive += Number(c.inactive);
+        lost(c.key_id, meetings ? Number(c.active) : 0, meetings ? 0 : Number(c.active));
+      }
+      outcome.unopenable = [...unopenable.values()].sort((a, b) => a.keyId.localeCompare(b.keyId));
       return outcome;
     } finally {
       await sql`SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended(${LOCK_KEY}, 0))`.execute(db);
     }
   });
+}
+
+// What a pass logs when envelopes sit under a key the broker cannot open (#1888): the key was lost, or
+// CREDENTIAL_KEY_PREVIOUS removed before they were resealed. Key ids and counts only. Envelopes in use make an error;
+// team chat alert targets waiting for the Social module alone make a warning, since nothing clears them before Social
+// is on again (a second rotation that could not wait loses them on purpose, credential-key.md).
+export function unopenableKeysLog(keys: readonly UnopenableKey[]): Array<{ level: 'error' | 'warn'; line: string }> {
+  const log: Array<{ level: 'error' | 'warn'; line: string }> = [];
+  const inUse = keys.filter((k) => k.active > 0);
+  if (inUse.length > 0) {
+    const parts = inUse.map((k) => `${k.keyId} (${k.active} active${k.waiting > 0 ? `, ${k.waiting} team chat alerts waiting for the Social module` : ''})`);
+    log.push({
+      level: 'error',
+      line:
+        `[credential-reseal] ERROR sealed under a key this worker cannot open: ${parts.join('; ')}. The key was lost, or CREDENTIAL_KEY_PREVIOUS ` +
+        'removed before they were resealed: set that key again as CREDENTIAL_KEY_PREVIOUS on the API and the worker, or reconnect those ' +
+        'channels and save those team chats again (docs/runbooks/credential-key.md)',
+    });
+  }
+  const waiting = keys.filter((k) => k.active === 0);
+  if (waiting.length > 0) {
+    log.push({
+      level: 'warn',
+      line:
+        `[credential-reseal] team chat alerts waiting for the Social module are sealed under a key this worker cannot open: ` +
+        `${waiting.map((k) => `${k.keyId} (${k.waiting})`).join('; ')}. Set that key again as CREDENTIAL_KEY_PREVIOUS, or save each team chat ` +
+        'again once Social is on (docs/runbooks/credential-key.md)',
+    });
+  }
+  return log;
 }
 
 async function resealOne(deps: ResealDeps, row: { org_id: string; connection_id: string; key_id: string }): Promise<boolean> {
@@ -158,4 +250,134 @@ async function resealChatAlert(deps: ResealDeps, row: { org_id: string; alert_id
     options,
   );
   return stored.resealed;
+}
+
+// Media keys of recorded meetings (#2576).
+async function resealMediaKeys(deps: ResealDeps, db: Db, current: string, outcome: ResealOutcome): Promise<void> {
+  let after = null as { created: Date; id: string } | null;
+  for (let page = 0; page < RESEAL_PAGES; page += 1) {
+    const { rows } = await sql<{
+      org_id: string;
+      meeting_id: string;
+      id: string;
+      key_id: string;
+      kind: 'audio' | 'video';
+      wrapped_key: Buffer;
+      created_at: Date;
+    }>`
+      SELECT org_id, meeting_id, id, key_id, kind, wrapped_key, created_at
+        FROM crove_meetings.media_key_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.created ?? null}::timestamptz, ${after?.id ?? null}::uuid)
+    `.execute(db);
+
+    for (const row of rows) {
+      const done = await resealOneMediaKey(deps, db, current, row).catch((error: unknown) => {
+        console.error(`[credential-reseal] media_key ${row.id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+        return false;
+      });
+      if (done) outcome.resealed += 1;
+      else outcome.failed += 1;
+    }
+    const last = rows.at(-1);
+    if (!last || rows.length < RESEAL_LIMIT) break;
+    after = { created: last.created_at, id: last.id };
+  }
+}
+
+async function resealOneMediaKey(
+  deps: ResealDeps,
+  db: Db,
+  current: string,
+  row: { org_id: string; meeting_id: string; id: string; key_id: string; kind: 'audio' | 'video'; wrapped_key: Buffer },
+): Promise<boolean> {
+  const binding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: row.key_id };
+  const oldSubkey = deps.broker.deriveKey
+    ? deps.broker.deriveKey(row.key_id, 'crove.meetings.v1|wrap')
+    : deps.broker.derive && deps.broker.keyId === row.key_id
+      ? deps.broker.derive('crove.meetings.v1|wrap')
+      : null;
+  if (!oldSubkey) return false;
+
+  let dataKey: Buffer | null = null;
+  let newSubkey: Buffer | null = null;
+  try {
+    dataKey = unwrapMediaKeyWithSubkey(row.wrapped_key, binding, oldSubkey);
+
+    const newBinding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: current };
+    newSubkey = deps.broker.deriveKey
+      ? deps.broker.deriveKey(current, 'crove.meetings.v1|wrap')
+      : deps.broker.derive && deps.broker.keyId === current
+        ? deps.broker.derive('crove.meetings.v1|wrap')
+        : null;
+    if (!newSubkey) return false;
+    const newWrapped = wrapMediaKeyWithSubkey(dataKey, newBinding, newSubkey);
+
+    const stored = await deps.runtime.execute<{ resealed: boolean }>(
+      'meetings.media_key.reseal',
+      { id: row.id, fromKeyId: row.key_id, toKeyId: current, fromWrappedKeyHex: row.wrapped_key.toString('hex'), wrappedKeyHex: newWrapped.toString('hex') },
+      { actor: MEDIA_ACTOR, orgId: row.org_id },
+    );
+    return stored.resealed;
+  } finally {
+    dataKey?.fill(0);
+    oldSubkey?.fill(0);
+    newSubkey?.fill(0);
+  }
+}
+
+// The subject keys of people (#2643, ADR-0017 section 7): see subject-key-reseal.ts for what the pass does. It lives here because the worker's one database handle for the reseal passes does.
+export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<SubjectKeyResealOutcome> {
+  const outcome: SubjectKeyResealOutcome = { resealed: 0, failed: 0, left: 0, unopenable: [], skipped: false };
+  const vault = deps.runtime.subjectKeyReseal;
+  if (!vault) return { ...outcome, skipped: true };
+  const current = vault.keyId;
+  // Only the rows under a key this vault opens are read: one under a lost key (or damaged bytes under it) can never hide openable rows behind it, and stays in the database, counted below.
+  const openable = vault.keyIds;
+  return deps.workerDb.connection().execute(async (db) => {
+    const { rows: lock } = await sql<{ locked: boolean }>`SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended(${SUBJECT_LOCK_KEY}, 0)) AS locked`.execute(db);
+    if (!lock[0]?.locked) return { ...outcome, skipped: true };
+    try {
+      let after = null as { orgId: string; id: string } | null;
+      for (let page = 0; page < RESEAL_PAGES; page += 1) {
+        const { rows } = await sql<{ org_id: string; id: string; key_id: string; wrapped_key: Buffer }>`
+          SELECT org_id, id, key_id, wrapped_key FROM crove_kernel.subject_key_reseal_due(${current}, ${openable}::text[], ${SUBJECT_RESEAL_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
+        // Rows come in (org, id) order: one batch per org.
+        const byOrg = new Map<string, Array<{ id: string; fromKeyId: string; fromWrapped: string; keyId: string; wrapped: string }>>();
+        for (const row of rows) {
+          try {
+            const next = vault.rewrap(row.org_id, row.id, row.key_id, row.wrapped_key);
+            const items = byOrg.get(row.org_id) ?? [];
+            items.push({ id: row.id, fromKeyId: row.key_id, fromWrapped: Buffer.from(row.wrapped_key).toString('base64'), keyId: next.keyId, wrapped: next.wrapped.toString('base64') });
+            byOrg.set(row.org_id, items);
+          } catch (error) {
+            // The key id only: never the subject, the bytes or what they wrap.
+            outcome.failed += 1;
+            console.error(`[subject-key-reseal] a subject key under ${row.key_id} did not unwrap`, error instanceof Error ? error.name : typeof error);
+          }
+        }
+        for (const [orgId, items] of byOrg) {
+          try {
+            const done = await deps.runtime.execute<{ resealed: number; skipped: number }>('kernel.subject_key.reseal', { items }, { actor: SUBJECT_ACTOR, orgId });
+            outcome.resealed += done.resealed;
+          } catch (error) {
+            outcome.failed += items.length;
+            console.error(`[subject-key-reseal] org ${createHash('sha256').update(orgId).digest('hex').slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+          }
+        }
+        const last = rows.at(-1);
+        if (!last || rows.length < SUBJECT_RESEAL_LIMIT) break;
+        after = { orgId: last.org_id, id: last.id };
+      }
+      const { rows: counts } = await sql<{ key_id: string; n: string }>`SELECT key_id, n FROM crove_kernel.subject_key_key_counts()`.execute(db);
+      const openableIds = new Set(openable);
+      for (const c of counts) {
+        if (c.key_id === current) continue;
+        outcome.left += Number(c.n);
+        if (!openableIds.has(c.key_id)) outcome.unopenable.push({ keyId: c.key_id, count: Number(c.n) });
+      }
+      outcome.unopenable.sort((a, b) => a.keyId.localeCompare(b.keyId));
+      return outcome;
+    } finally {
+      await sql`SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended(${SUBJECT_LOCK_KEY}, 0))`.execute(db);
+    }
+  });
 }

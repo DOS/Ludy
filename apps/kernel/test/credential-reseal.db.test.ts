@@ -9,7 +9,7 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type SealedChannelCredential } from '@crove/kernel';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { resealCredentials } from '../src/credential-reseal.ts';
+import { resealCredentials, unopenableKeysLog } from '../src/credential-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -168,6 +168,54 @@ suite('credential reseal after a key rotation on PostgreSQL (#776)', () => {
     expect(await keyOf(orphan)).toBe(oldKey.id);
     expect(done.leftActive).toBe(0);
     expect(done.leftInactive).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reseals the credentials of an org being offboarded too, as it counts them (#1889)', async () => {
+    const o = await org();
+    const id = await connect(o, 30 * 24 * HOUR, JSON.stringify({ accessToken: 'token-g' }));
+    // Offboarding: only owners enter it, the worker's system context still does, and staff can reopen it before its
+    // purge, so its tokens must outlive the previous key. Moved as staff, without the triggers (the move's own audit
+    // check is kernel.org.offboard's).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [o.orgId]);
+      await c.query('COMMIT');
+    });
+    const done = await resealCredentials({ runtime: worker, broker: rotated, workerDb });
+    expect(await keyOf(id)).toBe(newKey.id);
+    expect(done.leftActive).toBe(0);
+  });
+
+  // #1888: the previous key retired before the reseal finished. The pass names the key ids that still seal usable
+  // credentials but that the broker cannot open, with their counts, and leaves inactive ones out.
+  it('reports the usable credentials under a key the broker cannot open, by key id, with counts only (#1888)', async () => {
+    const o = await org();
+    const lost = await connect(o, 30 * 24 * HOUR, JSON.stringify({ accessToken: 'token-lost' }));
+    const idle = await connect(o, 30 * 24 * HOUR, JSON.stringify({ accessToken: 'token-idle' }));
+    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [idle]));
+    const done = await resealCredentials({ runtime: worker, broker: after, workerDb });
+    // The usable one cannot be resealed: it is counted under its key id, alone, as the earlier tests resealed or
+    // retired every other credential under the old key; the expired one is left to its reconnect.
+    expect(await keyOf(lost)).toBe(oldKey.id);
+    expect(done.failed).toBeGreaterThanOrEqual(1);
+    expect(done.leftActive).toBe(1);
+    expect(done.unopenable).toEqual([{ keyId: oldKey.id, active: 1, waiting: 0 }]);
+    const log = unopenableKeysLog(done.unopenable);
+    expect(log).toEqual([
+      {
+        level: 'error',
+        line:
+          `[credential-reseal] ERROR sealed under a key this worker cannot open: ${oldKey.id} (1 active). The key was lost, or CREDENTIAL_KEY_PREVIOUS ` +
+          'removed before they were resealed: set that key again as CREDENTIAL_KEY_PREVIOUS on the API and the worker, or reconnect those ' +
+          'channels and save those team chats again (docs/runbooks/credential-key.md)',
+      },
+    ]);
+    expect(JSON.stringify(log)).not.toContain('token-lost');
+    // With the previous key back, the next pass reseals it and reports nothing.
+    const back = await resealCredentials({ runtime: worker, broker: rotated, workerDb });
+    expect(back.unopenable).toEqual([]);
+    expect(await keyOf(lost)).toBe(newKey.id);
   });
 
   it('skips a broker that does not say which key it seals with', async () => {

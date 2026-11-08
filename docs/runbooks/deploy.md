@@ -31,7 +31,7 @@ The workflow builds `ghcr.io/<owner>/<repo>` (the kernel image, `Dockerfile`, wi
 3. Start the database and run `migrate` with the new image (the migrations, then the DDL watch's event triggers, [alerts.md](alerts.md)). If it fails, the services are left as they were and the run exits 1: the old release keeps running.
 4. Start Supabase Auth (it applies its own migrations before it is healthy) and run `auth-grants`.
 5. Start the other services (`crove-extract`, Mailpit, anything from `compose.host.yml`).
-6. Roll the app. With separate `worker` and `api` services, the **worker first**: it must still be running after `CROVE_WORKER_SETTLE` seconds (15), then the API. With the all-in-one `crove` service (the pilot), that one container.
+6. Roll the app. With separate `worker` and `api` services, the **worker first**: it must still be running after `CROVE_WORKER_SETTLE` seconds (15), then the API. With the all-in-one `crove` service (the default `docker-compose.yml`, for a laptop), that one container; the pilot runs the separate services ([The pilot layout](#the-pilot-layout)). Toward an older build (usually a rollback, or the recovery after a failed deploy; also a deploy of an older tag), the **API first**, then the worker, still checked the same way, so a newer API does not serve beside an older worker (plan §3.5; its `/readyz` waits while a live worker runs an older build, #1952, #1965). Older is by the build time the image carries (`CROVE_BUILD_TIME`, recorded as `BUILD_EPOCH` in the release's `release.env`); between releases without one (images from before #1952), by when each was deployed. So a second rollback, back to the newer build, rolls the worker first again.
 7. Wait for `/readyz` (`CROVE_READY_TIMEOUT`, 300 seconds): it answers 200 only when every migration in the image is in the ledger and the session check can read Supabase Auth's tables.
 8. Start the prober (when its profile is on), then run the smoke test on the loopback port.
 9. On success, record the release as current. On a failure in steps 4 to 8, deploy the release that ran before again (same steps without the migration), run the smoke test on it, and exit 1.
@@ -88,12 +88,51 @@ The host is one Linux server with Docker Engine and the compose plugin **v2.24 o
 1. Create a deploy user (for example `crove-deploy`) in the `docker` group. Membership of `docker` is equivalent to root on that machine, so this user and its key are as sensitive as root.
 2. Create an SSH key pair for the workflow (`ssh-keygen -t ed25519 -N '' -f deploy_key`). Put the public key in the deploy user's `~/.ssh/authorized_keys` with the `restrict` option (no port, agent or X11 forwarding, no terminal): `restrict ssh-ed25519 AAAA... crove-deploy`.
 3. Create the stack directory, owned by the deploy user, mode 700: `/opt/crove` by default (`DEPLOY_DIR`).
-4. Write the env file there as `.env` (or at `DEPLOY_ENV_FILE`), mode 600: start from `.env.example`, change every secret, and set at least `PUBLIC_URL` (the https address), `AUTH_AUTOCONFIRM=false` with a real SMTP server, `EXPORT_ENCRYPTION_KEY` and `TRUSTED_PROXY_HOPS=1` behind the reverse proxy. The pilot readiness checklist (M1-8) lists the rest.
-5. Optional: `compose.host.yml` in the same directory (for example, to drop Mailpit's loopback port, which the default compose file publishes for local use: `services: { mailpit: { ports: !reset [] } }`) for local changes the release files must not overwrite (a reverse proxy service, split `api` and `worker` services, extra volumes). Services it adds that run the Ludy images use `image: ${CROVE_IMAGE}` and `${CROVE_EXTRACT_IMAGE}`, which the deploy sets to the release's digests. `COMPOSE_PROFILES=prober` in the env file turns the prober on.
+4. Write the env file there as `.env` (or at `DEPLOY_ENV_FILE`), mode 600: start from `.env.example`, change every secret, and set at least `PUBLIC_URL` (the https address), `AUTH_AUTOCONFIRM=false` with a real SMTP server, `EXPORT_ENCRYPTION_KEY`, `BACKUP_ENCRYPTION_KEY`, `TRUSTED_PROXY_HOPS=1` behind the reverse proxy, `CROVE_MODULES=finance` and the `COMPOSE_FILE` of [The pilot layout](#the-pilot-layout). The pilot readiness checklist (M1-8, [pilot-readiness.md](pilot-readiness.md)) lists the rest, and `pnpm pilot:check` fails the settings it forbids.
+5. Optional: `compose.host.yml` in the same directory (for example, to drop Mailpit's loopback port, which the default compose file publishes for local use: `services: { mailpit: { ports: !reset [] } }`) for local changes the release files must not overwrite (a reverse proxy service, extra volumes; the split `api` and `worker` have a file of their own, below). Services it adds that run the Ludy images use `image: ${CROVE_IMAGE}` and `${CROVE_EXTRACT_IMAGE}`, which the deploy sets to the release's digests (and which a plain `docker compose` there does not know: export them from `releases/<current>/release.env`, `IMAGE=` and `EXTRACT_IMAGE=`, first). `COMPOSE_PROFILES=prober` in the env file turns the prober on.
 6. Put a TLS reverse proxy in front of `127.0.0.1:${PORT}` (the compose file publishes the port on loopback only). `tools/deploy/caddy/` holds one for this layout (a `compose.host.yml` and a `Caddyfile`); the whole server setup, from a fresh machine to the first deploy, is in [provision-pilot.md](provision-pilot.md).
 7. Read the host key for the workflow from a trusted session on the server (`ssh-keyscan -t ed25519 localhost` on the host itself, then replace `localhost` with the address the runner uses; for a port other than 22 the line starts with `[address]:port`). Do not take it from a scan over the network you are trying to protect.
 
-The first deploy creates `releases/`, `.deploy/` and the active compose files. After it, plain `docker compose` in the stack directory sees the same stack: `docker-compose.yml` is the running release's file and `docker-compose.override.yml` pins its images. With a `compose.host.yml`, add `COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml` to the env file so that plain `docker compose` includes it too (the deploy passes the files itself). The nightly backup ([backup-and-restore.md](backup-and-restore.md)) runs `tools/backup` from a checkout with `CROVE_DIR` set to this directory.
+The first deploy creates `releases/`, `.deploy/` and the active compose files. After it, plain `docker compose` in the stack directory sees the same stack: `docker-compose.yml` is the running release's file and `docker-compose.override.yml` pins its images. With a `compose.host.yml`, add `COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml` (with the pilot's `compose.pilot.yml`, [below](#the-pilot-layout), in the order given there) to the env file so that plain `docker compose` includes it too (the deploy passes the files itself). The nightly backup ([backup-and-restore.md](backup-and-restore.md)) runs `tools/backup` from a checkout with `CROVE_DIR` set to this directory.
+
+## The pilot layout
+
+`docker-compose.yml` on its own is the laptop layout: one `crove` container runs the API and the worker together (`command: all`), with every module on. Its API process then holds the worker's database login (`WORKER_DATABASE_URL`, which enters the system context of every org) and every secret, and Social's public routes answer on the public address. A deployment other people reach (a pilot) runs this instead (#2118, from the outside review of 2026-10-29):
+
+| | Laptop (`docker compose up`) | Pilot |
+|---|---|---|
+| Processes | one `crove` container, role `all` | `api` (HTTP edge) and `worker` (outbox, jobs, archive, extraction), same image |
+| Database login of the API | `crove_app` and `crove_worker` | `crove_app` only: no `WORKER_DATABASE_URL`, no `EXTRACT_URL`, not on the `extract` network |
+| Modules | every module | `CROVE_MODULES=finance` (kernel is always on) |
+| Prober | asks `crove` | asks `api` |
+
+`tools/deploy/compose.pilot.yml` makes the pilot layout. It extends the release's `crove` service, so every setting of `docker-compose.yml` reaches both services and nothing is copied; it moves `crove` behind the `all-in-one` profile and defaults `CROVE_MODULES` to `finance` for the API, the worker and the prober. Nothing in `docker-compose.yml` changes, so the laptop layout needs no new setting.
+
+1. Nothing to copy: the file ships inside every release. The deploy workflow uploads `tools/deploy/compose.pilot.yml` next to the release's `docker-compose.yml`, and `deploy.sh` stages it in the release directory and makes it the host's active copy when it activates the release, so it is always the one that matches that release's `docker-compose.yml` (no host copy to keep in step, none to forget). A release from before it existed (a rollback to one) keeps the host's copy.
+2. In the env file set `CROVE_MODULES=finance` and list the file right after `docker-compose.yml`, before the pins: `COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml`. That line is the host's choice of layout: `deploy.sh` passes `compose.pilot.yml` to every compose call, and pins `api` and `worker`, exactly when `COMPOSE_FILE` lists it, in that order (the file extends the release's `crove`, so the release's image pins must come after it). Take it out of `COMPOSE_FILE` to go back to one container (see below); the copy on the host then stays, unused.
+   `deploy.sh` stops with exit 2, before it pulls anything, when `COMPOSE_FILE` names `compose.pilot.yml` and neither the release nor the host has the file; without that check a missing file would silently roll the all-in-one `crove`. The kernel guards the same line twice: it refuses to start the `all` role on a public `PUBLIC_URL` unless `CROVE_ALLOW_ALL_IN_ONE=true` (a deliberate opt-in for a self-hoster who accepts it; `pnpm pilot:check` fails it, and the laptop on `localhost` needs none), and it refuses to start the `api` role on a public `PUBLIC_URL` when `WORKER_DATABASE_URL` is set, so keeping the worker's login out of the API does not rest on how the container was composed (compose 2.24 or newer applying `!reset` under `extends`, a host file, an `env_file`).
+3. Never put `all-in-one` or `*` in `COMPOSE_PROFILES`: that starts `crove` beside them, and `pnpm pilot:check` fails it (the kernel refuses it on a public `PUBLIC_URL` too, without the opt-in above).
+4. On a host that already ran the all-in-one `crove` container, `deploy.sh` removes that container (`docker compose rm --stop --force crove`) before it rolls the worker and the API: left running, it would keep `127.0.0.1:${PORT}` so the new `api` could not bind it, and run the worker's jobs beside the new worker. The database volume is untouched. Do the same by hand (in `/opt/crove`) if you start the layout with plain `docker compose`.
+5. In the pilot layout `deploy.sh` pins the release's image for `api` and `worker` in the generated `docker-compose.override.yml`, as it does for `crove`, so a plain `docker compose` in `/opt/crove` (a manual `up`, `exec`, `logs`, the restore script) runs the deployed digest. The pins follow the layout at the moment a release is activated, whatever it was staged under: going back to one container takes them out of the active override (and out of a release staged with them), so a bare `api` or `worker` is never defined, nor rolled, from a leftover pin.
+6. Check, once, after the first deploy:
+
+   ```bash
+   docker compose ps --services                                    # api, worker, ... and no crove
+   docker compose exec api printenv | cut -d= -f1 | grep -c '^WORKER_DATABASE_URL$'   # 0
+   docker compose exec worker printenv | cut -d= -f1 | grep -c '^CROVE_MODULES$'      # 1
+   ```
+
+A deployment without docker compose (Kubernetes, systemd) runs the same two roles from the one image (`api` and `worker` as the container command) and gives the worker, and only the worker, `WORKER_DATABASE_URL`, `EXTRACT_URL` and the archive settings. It names the roles in `CROVE_ROLES=api,worker` so `pilot:check` can tell.
+
+The nightly backup and a restore name `crove` by default; on this layout set `BACKUP_FILES_SERVICE=worker`, `BACKUP_NODE_SERVICE=worker` and `RESTORE_FILES_SERVICE=worker` ([backup-and-restore.md](backup-and-restore.md), "Set up").
+
+CI boots this layout on every pull request (`ci.yml`, job "Split api and worker on S3", step "Boot the pilot layout"; `tools/e2e/pilot-stack.mjs`): `docker-compose.yml` and `compose.pilot.yml` laid out as on a host, `api` and `worker` apart, the API without the worker login or the sandbox, finance only, and an uploaded e-invoice read by the worker through the shared `files` volume. `tools/test/pilot-compose.test.ts` checks the resolved configuration; the boot checks that it runs.
+
+What this layout does not do yet: the API container still receives the other settings of `docker-compose.yml`, the secrets that only the worker uses among them (the S3 secret key, the archive settings, the channel app secrets), and mounts the same volumes. Trimming them per role is a follow-up (#2130, P3, Icebox); this change takes away the worker's all-org database login, the parsing sandbox and every module but finance.
+
+Going back to one container (a laptop, a test) is taking `compose.pilot.yml` out of `COMPOSE_FILE` and deploying (or `deploy.sh rollback`): the pins leave with it, `crove` is the app again, and the database stays. Run `docker compose rm --stop --force api worker` first so the two old containers do not keep the port.
+
+Two more settings keep a pilot safe by default and are checked by `pnpm pilot:check` on a public `PUBLIC_URL`: `BACKUP_ENCRYPTION_KEY` (the backup bucket never holds the books unsealed) and a price in `AI_PRICE_INPUT_PER_MTOK` or `AI_PRICE_OUTPUT_PER_MTOK` whenever `AI_API_KEY` is set (without one the AI cost cap `ORG_LIMIT_AI_COST_PER_DAY` and the monthly AI budget count nothing; `AI_DEFAULT_MONTHLY_BUDGET` gives every org without a budget of its own a monthly one in the same unit). The kernel itself also refuses to start on a public `PUBLIC_URL` when a database URL (`DATABASE_URL`, `WORKER_DATABASE_URL`, `ADMIN_DATABASE_URL`, `DATABASE_LISTEN_URL`) carries one of the passwords this repository ships in `.env.example` and the compose fallbacks.
 
 ## Settings of each GitHub environment
 
@@ -172,9 +211,53 @@ SELECT pg_catalog.count(*) AS pending FROM crove_kernel.outbox_pending;
 ROLLBACK;
 ```
 
+### A purchase or sale document is posted once (#1928, `20261107110000_crove_finance_document_one_revision.sql` and `20261107120000_crove_finance_document_one_revision_validate.sql`)
+
+The first migration adds the CHECK `journal_entry_document_one_revision` to `crove_finance.journal_entry`: an entry whose source is a purchase or sale document (`source_type = 'finance.purchase_document'`, sales included) is revision 1. It is added `NOT VALID`, so it holds every new row at once. The second migration then validates it against the rows already there.
+
+- No code path has ever posted a document's revision 2, so the check should be empty.
+- A row it lists was written outside the posting path. Such a row would also count in the ledger while its document stays voided, out of the VAT working and the MISA exports.
+
+Run it as the database owner. `journal_entry` is under tenant row-level security, so a login role without an org context sees no rows, and the check would pass falsely. On an environment without the column `source_revision` (before `20261031000000_crove_finance_source_revision.sql`), the query fails on the missing column: every entry there is revision 1, so there is nothing to check. It must return no rows:
+
+```sql
+BEGIN READ ONLY;
+SELECT org_id, id, source_id AS document_id, source_revision, entry_date, created_at
+FROM crove_finance.journal_entry
+WHERE source_type = 'finance.purchase_document' AND source_revision > 1
+ORDER BY org_id, created_at;
+ROLLBACK;
+```
+
+If it lists rows, **stop**:
+- Do not tag the release. Raise them on #1928, with the org, the document and the entry of each row.
+- Do not delete or edit them: journal entries are append-only, and the WORM archive anchors them.
+- The books cannot clear them either, so the validation would fail again on every deploy:
+  - a reversal does not remove the row;
+  - a reversal of revision 2 would need a second void of the document, which `purchase_document_void` (one per document) refuses.
+- The way out is a decision for the owner (with the accountant, #61, for the books), then a forward migration, tracked on #1928. For example, the validation could name the rows it accepts as they are.
+
+If a release with these migrations runs anyway:
+- The first migration commits, so no new revision 2 can be written.
+- The second fails on the check violation, and the deploy stops on that migration.
+- That half state refuses every new revision 2 and loses nothing. It stays until the forward migration above lands.
+
+## Upgrade notes
+
+Settings whose meaning changes between releases, to read before tagging the first release that contains the change. Nothing here changes data.
+
+### The prober's check of the archive's verification marker needs a key of its own (#2082, #2098, #2108)
+
+New in the first release after v0.1.1: the prober reads the newest verification marker from the WORM archive store and alerts when the nightly verification has not passed ([worm-archive.md](worm-archive.md)). It affects only a deployment with `ARCHIVE_STORE=s3`; a local archive (`ARCHIVE_STORE=local`, the default) is read from the archive volume and needs nothing.
+
+- With `ARCHIVE_STORE=s3` the prober needs a key of its own that only reads: `PROBER_ARCHIVE_S3_ACCESS_KEY_ID` and `PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY` (list and list versions on the bucket, get on `verify/*` and `chain/*`). Never the worker's own `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`.
+- The SDK's default credential chain (an instance or task role) is used only when `PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true` says so, with the prober running under a role that only reads. On a host where the worker and the prober share the default chain, that gives the prober the worker's role, which writes the archive: use the pair.
+- With neither the pair nor the opt-in, the marker check is disabled and the prober alerts `archive_marker` on every probe (exit code 1, repeated every `ALERT_REPEAT_MINUTES`) until one of them is set. The other checks, the backup alerts and the test alert are not affected.
+- Before tagging the release, set it in the host's `.env` (or `DEPLOY_ENV_FILE`). Check: `pnpm pilot:check` reports a prober with neither, and asks you to confirm the role when the worker and the prober share the default chain. The prober's start line says `with the prober's own key` or `with the default credential chain`.
+
 ## Deploy a release
 
-1. Merge to `main` and wait for CI. Run the [pre-deploy checks](#pre-deploy-checks) of every migration the release adds that has one.
+1. Merge to `main` and wait for CI. Run the [pre-deploy checks](#pre-deploy-checks) of every migration the release adds that has one. Read the [upgrade notes](#upgrade-notes) for settings the release changes.
 2. Tag the commit and push the tag: `git tag v0.3.0 <commit>` then `git push origin v0.3.0`. (Or create a release with that tag in the GitHub interface.)
 3. The `deploy` workflow runs. Its summary shows the image digests, the result on the host and the public smoke test.
 

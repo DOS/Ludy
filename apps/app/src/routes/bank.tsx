@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankImportResult, BankLine, BankLineStatus, BankLineVoucher, BankRowError } from '@crove/kernel-contract';
+import type { BankImportResult, BankLine, BankLineStatus, BankRowError } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -14,11 +14,13 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { BankMatchGroups } from '../components/bank-match-groups.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
-import { DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { canApproveProposals } from '../lib/review.ts';
 import { VoucherFormCard } from './vouchers.tsx';
 import {
   MAX_STATEMENT_BYTES,
@@ -48,7 +50,7 @@ function thisMonth(): string {
   return `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`;
 }
 
-const STATUS_VARIANT: Record<BankLineStatus, 'success' | 'secondary' | 'warning'> = { new: 'success', duplicate: 'secondary', ambiguous: 'warning' };
+const STATUS_VARIANT: Record<BankLineStatus, 'success' | 'secondary' | 'warning'> = { new: 'success', duplicate: 'secondary', ambiguous: 'warning', conflict: 'warning' };
 
 function StatementImport({ bankAccount, onImported }: { bankAccount: string; onImported: (result: BankImportResult, to: string | null) => void }) {
   const t = useTranslations('bank');
@@ -106,7 +108,10 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
   };
 
   const data = preview.data;
-  const toStore = data ? data.counts.new + data.counts.ambiguous : 0;
+  const toStore = data ? data.counts.new + data.counts.ambiguous + data.counts.conflict : 0;
+  // Every conflict row is listed (#2191), whatever the cap: an import stores them all, so none may go unseen. The other
+  // rows fill what is left of the cap, in the file's order.
+  const shownRows = data ? [...data.rows.filter((r) => r.status === 'conflict'), ...data.rows.filter((r) => r.status !== 'conflict')].slice(0, Math.max(PREVIEW_ROWS, data.counts.conflict)) : [];
 
   return (
     <Card className="mb-6 block space-y-4 p-4">
@@ -147,6 +152,11 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                 {data.order === 'newest_first' && ` ${t('newestFirst')}`}
               </p>
               {data.counts.ambiguous > 0 && <Notice>{t('ambiguousNote')}</Notice>}
+              {data.counts.conflict > 0 && (
+                <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
+                  <AlertDescription className="text-warning">{t('conflictNote', { count: data.counts.conflict })}</AlertDescription>
+                </Alert>
+              )}
               {data.breaks.length > 0 && (
                 <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                   <AlertDescription className="text-warning">
@@ -154,8 +164,8 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                   </AlertDescription>
                 </Alert>
               )}
-              <DataTable head={[t('columns.row'), t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('columns.status')]}>
-                {data.rows.slice(0, PREVIEW_ROWS).map((row) => {
+              <DataTable numeric={[4, 5, 6]} head={[t('columns.row'), t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('columns.status')]}>
+                {shownRows.map((row) => {
                   const out = row.amount?.startsWith('-') ?? false;
                   return (
                     <TableRow key={row.rowNo}>
@@ -168,7 +178,10 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                       <TableCell className={NUM}>{row.balance ? f.money(row.balance) : ''}</TableCell>
                       <TableCell className="px-4 py-3">
                         {row.status ? (
-                          <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
+                          <>
+                            <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
+                            {row.clash && <p className="mt-1 text-xs text-subtle-foreground">{t('clash', { date: f.date(row.clash.date), amount: f.money(row.clash.amount) })}</p>}
+                          </>
                         ) : (
                           <span className="text-destructive">{row.errors.map((e: BankRowError) => t(`errors.${e}`)).join(', ')}</span>
                         )}
@@ -177,16 +190,15 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                   );
                 })}
               </DataTable>
-              {data.rows.length > PREVIEW_ROWS && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - PREVIEW_ROWS })}</p>}
-              <Button size="lg" disabled={!data.ok || toStore === 0 || imported.isPending} onClick={() => input && imported.mutate({ ...input, idempotencyKey })}>
-                {imported.isPending ? <Spinner className="text-current" /> : null}
+              {data.rows.length > shownRows.length && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - shownRows.length })}</p>}
+              <Button loading={imported.isPending} size="lg" disabled={!data.ok || toStore === 0 || imported.isPending} onClick={() => input && imported.mutate({ ...input, idempotencyKey })}>
                 {t('import', { count: toStore })}
               </Button>
               {!data.ok && <p className="text-sm text-destructive">{t('fixRows')}</p>}
             </div>
           )}
           {imported.error && <ErrorText>{errorMessage(imported.error)}</ErrorText>}
-          {imported.data && <Notice>{t('imported', { ...imported.data.counts, stored: imported.data.counts.new + imported.data.counts.ambiguous })}</Notice>}
+          {imported.data && <Notice>{t('imported', { ...imported.data.counts, stored: imported.data.counts.new + imported.data.counts.ambiguous + imported.data.counts.conflict })}</Notice>}
         </div>
       )}
     </Card>
@@ -197,7 +209,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
 function LineVoucher({ slug, line, onClose }: { slug: string; line: BankLine; onClose: () => void }) {
   const t = useTranslations('vouchers');
   const made = useQuery(orpc.bank.lineVoucher.queryOptions({ input: { bankLineId: line.id } }));
-  if (made.isLoading) return <Spinner />;
+  if (made.isLoading) return <CardSkeleton className="mb-6" />;
   if (made.error) return <ErrorText>{errorMessage(made.error)}</ErrorText>;
   if (!made.data) return null;
   if (!made.data.voucher) {
@@ -223,9 +235,10 @@ function LineState({ slug, line, canEnter, onEnter }: { slug: string; line: Bank
   }
   if (line.state.status === 'proposed') {
     return (
-      <Link to="/o/$slug/inbox/$id" params={{ slug, id: line.state.proposalId }} className="text-link underline">
+      // The proposal waiting for a person, in its chip (DESIGN.md §4.4, #2000); the chip is the link that opens it.
+      <Badge variant="proposal" className="hover:underline" render={<Link to="/o/$slug/inbox/$id" params={{ slug, id: line.state.proposalId }} />}>
         {t('state.proposed')}
-      </Link>
+      </Badge>
     );
   }
   if (!canEnter) return <span className="text-subtle-foreground">{t('state.open')}</span>;
@@ -239,87 +252,6 @@ function LineState({ slug, line, canEnter, onEnter }: { slug: string; line: Bank
     >
       {t('makeVoucher')}
     </Button>
-  );
-}
-
-interface ProposeRun {
-  sending: boolean;
-  done: number;
-  failed: Array<{ date: string; message: string }>;
-}
-
-// Asks for the voucher of every open line whose party its description names (by tax code, or by an invoice of the
-// amount), one inbox.request each, as entering them one by one would (#326, stage 2b). Each stays a proposal for an
-// owner or admin to approve; a line refused (another voucher took it meanwhile, say) does not stop the others.
-function ProposeMatched({ bankAccount, month }: { bankAccount: string; month: string }) {
-  const t = useTranslations('bank');
-  const f = useFormat();
-  // The open lines of the entity chosen in the shell (#1280); each voucher goes to that entity's books.
-  const entity = useChosenEntity();
-  const suggestions = useQuery({ ...orpc.bank.suggestions.queryOptions({ input: { bankAccount, period: month, legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
-  const [run, setRun] = useState<ProposeRun | null>(null);
-  const items = suggestions.data ?? [];
-
-  const proposeAll = async (list: readonly BankLineVoucher[]) => {
-    const state: ProposeRun = { sending: true, done: 0, failed: [] };
-    setRun({ ...state });
-    for (const item of list) {
-      const voucher = item.voucher;
-      const party = item.suggested?.party;
-      if (!voucher || !party) continue;
-      try {
-        await client.inbox.request({
-          command: 'finance.voucher.record',
-          idempotencyKey: crypto.randomUUID(),
-          input: {
-            type: voucher.type,
-            date: voucher.date,
-            cashAccount: item.bankAccount,
-            partyId: party.id,
-            description: voucher.description,
-            lines: [{ account: voucher.counterAccount, amount: voucher.amount }],
-            bankLineId: item.line.id,
-            legalEntityId: entity.legalEntityId,
-          },
-        });
-        state.done += 1;
-      } catch (error) {
-        state.failed.push({ date: voucher.date, message: errorMessage(error) });
-      }
-      setRun({ ...state, failed: [...state.failed] });
-    }
-    setRun({ ...state, sending: false, failed: [...state.failed] });
-    await queryClient.invalidateQueries();
-  };
-
-  if (run) {
-    return (
-      <Alert className="mb-4">
-        <AlertDescription>
-          {run.sending ? <Spinner className="mr-2 inline-block text-current" /> : null}
-          {t('proposedAll', { done: run.done })}
-          {run.failed.map((failure, i) => (
-            <span key={i} className="block text-destructive">
-              {t('proposeFailed', { date: f.date(failure.date), message: failure.message })}
-            </span>
-          ))}
-          {!run.sending && (
-            <button type="button" className="ml-2 text-link underline" onClick={() => setRun(null)}>
-              {t('proposeClose')}
-            </button>
-          )}
-        </AlertDescription>
-      </Alert>
-    );
-  }
-  if (items.length === 0) return null;
-  return (
-    <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
-      <p className="text-sm text-muted-foreground">{t('proposeAllHint')}</p>
-      <Button type="button" onClick={() => void proposeAll(items)}>
-        {t('proposeAll', { count: items.length })}
-      </Button>
-    </Card>
   );
 }
 
@@ -358,7 +290,15 @@ export function BankPage() {
 
   return (
     <>
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          <Link to="/o/$slug/bank/matched" params={{ slug }} className="text-sm text-link hover:underline">
+            {t('matchedLink')}
+          </Link>
+        }
+      />
       {accounts.isLoading ? (
         <TableSkeleton columns={5} />
       ) : accounts.error ? (
@@ -396,7 +336,9 @@ export function BankPage() {
           {canImport && current?.active && (
             <StatementImport key={`${account}:${entity.legalEntityId ?? ''}`} bankAccount={account} onImported={(_result, to) => to && setMonth(to.slice(0, 7))} />
           )}
-          {canImport && /^\d{4}-\d{2}$/.test(month) && <ProposeMatched key={`${account}:${month}`} bankAccount={account} month={month} />}
+          {canImport && /^\d{4}-\d{2}$/.test(month) && (
+            <BankMatchGroups key={`${account}:${month}`} slug={slug} bankAccount={account} month={month} canApprove={canApproveProposals(org.data?.role, org.data?.permissions)} />
+          )}
           {entering && <LineVoucher key={entering.id} slug={slug} line={entering} onClose={() => setEntering(null)} />}
           {lines.isLoading ? (
             <TableSkeleton columns={5} />
@@ -406,7 +348,19 @@ export function BankPage() {
             <Empty title={t('empty')} hint={canImport ? t('emptyHint') : undefined} />
           ) : lines.data ? (
             <DataTable
+              numeric={[3, 4, 5]}
               head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('voucherColumn')]}
+              foot={
+                <TableRow>
+                  <TableCell className="px-4 py-3 text-foreground" colSpan={3}>
+                    {t('total')}
+                  </TableCell>
+                  <TableCell className={NUM}>{f.money(lines.data.moneyIn)}</TableCell>
+                  <TableCell className={NUM}>{f.money(lines.data.moneyOut)}</TableCell>
+                  <TableCell className="px-4 py-3" />
+                  <TableCell className="px-4 py-3" />
+                </TableRow>
+              }
             >
               {lines.data.lines.map((line) => (
                 <TableRow key={line.id}>
@@ -428,15 +382,6 @@ export function BankPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              <TableRow className="font-medium">
-                <TableCell className="px-4 py-3 text-foreground" colSpan={3}>
-                  {t('total')}
-                </TableCell>
-                <TableCell className={NUM}>{f.money(lines.data.moneyIn)}</TableCell>
-                <TableCell className={NUM}>{f.money(lines.data.moneyOut)}</TableCell>
-                <TableCell className="px-4 py-3" />
-                <TableCell className="px-4 py-3" />
-              </TableRow>
             </DataTable>
           ) : null}
         </>

@@ -17,6 +17,7 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { cn } from '@crove/ui/lib/utils';
+import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateTimeInput } from './date-time-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -119,6 +120,13 @@ type Job =
 // The forms the bar opens under its buttons.
 type Form = 'move' | 'duplicate' | EditAction;
 const FORMS: readonly BulkAction[] = ['move', 'duplicate', 'labels', 'assign', 'replace', 'addChannel'];
+// The three actions that ask first, with the keys of their question: the title, the description (which says what happens to
+// how many posts), and the button that names the outcome. Cancelling posts asks "keep them" as the other answer.
+const ASKED = {
+  cancel: { title: 'cancelTitle', body: 'confirmCancel', confirm: 'cancelDo', destructive: true, keep: true },
+  retry: { title: 'retryTitle', body: 'confirmRetry', confirm: 'retryDo', destructive: false, keep: false },
+  archive: { title: 'archiveTitle', body: 'confirmArchive', confirm: 'archiveDo', destructive: true, keep: false },
+} as const;
 
 export interface BulkLabelOption {
   id: string;
@@ -239,6 +247,8 @@ export function BulkBar({
     setLabels(new Map(posts.map((p) => [p.id, excerptOf(p.id)])));
     setChannels(new Map(posts.flatMap((p) => p.variants.map((v) => [v.id, channelName(v.connectionId)] as const))));
   };
+  // The action waiting for its confirmation; it stays set while the dialog closes, so the texts do not change under it.
+  const [ask, setAsk] = useState<{ action: 'cancel' | 'retry' | 'archive'; open: boolean }>({ action: 'cancel', open: false });
   const start = (action: BulkAction) => {
     if (action === 'move' || action === 'duplicate' || action === 'labels' || action === 'assign' || action === 'replace' || action === 'addChannel') {
       // An empty search box starts from the list's search.
@@ -246,12 +256,17 @@ export function BulkBar({
       setForm((open) => (open === action ? null : action));
       return;
     }
-    if (action === 'cancel' && !window.confirm(t('confirmCancel', { count: posts.length }))) return;
-    // A retry publishes at once (#1456), so it is confirmed like a cancel.
-    if (action === 'retry' && !window.confirm(t('confirmRetry', { count: posts.length }))) return;
-    if (action === 'archive' && !window.confirm(t('confirmArchive', { count: posts.length }))) return;
+    // A retry publishes at once (#1456), so it is confirmed like a cancel and an archive.
+    if (action === 'cancel' || action === 'retry' || action === 'archive') {
+      setAsk({ action, open: true });
+      return;
+    }
     snapshot();
     run.mutate({ action });
+  };
+  const confirmAsk = () => {
+    snapshot();
+    run.mutate({ action: ask.action });
   };
   const apply = () => {
     if (!validMove(move)) return;
@@ -321,8 +336,19 @@ export function BulkBar({
       </div>
     </div>
   );
+  const asked = ASKED[ask.action];
   return (
     <div className="space-y-2">
+      <ConfirmDialog
+        open={ask.open}
+        onOpenChange={(open) => setAsk((a) => ({ ...a, open }))}
+        title={t(asked.title)}
+        description={t(asked.body, { count: posts.length })}
+        confirm={t(asked.confirm, { count: posts.length })}
+        {...(asked.keep ? { cancel: t('keepThem') } : {})}
+        destructive={asked.destructive}
+        onConfirm={confirmAsk}
+      />
       {posts.length > 0 && (
         <Card className="block space-y-2 p-3">
           <div className="flex flex-wrap items-center gap-2">

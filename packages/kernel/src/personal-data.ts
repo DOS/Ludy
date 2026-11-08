@@ -16,8 +16,8 @@
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { zPersonalDataQuery, type PersonalDataErasure, type PersonalDataResult } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { NOTE_BODY_MAX, NOTE_TITLE_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
+import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -25,8 +25,11 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 export const PERSONAL_DATA_HANDLINGS = ['erase', 'keep_legal', 'keep_org', 'keep_record', 'hashed', 'not_personal'] as const;
 export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 
-// What a value is, for the finder: which columns a searched email, phone or code is compared with.
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'other'] as const;
+// What a value is, for the finder: which columns a searched email, phone or code is compared with. free_text: words
+// among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
+// by freeTextMatch below.
+// account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -41,6 +44,11 @@ export interface PersonalDataColumn {
   // A row whose boolean column `when` is true is handled as this says instead (the org's default legal entity is the
   // business itself; the other entities are the businesses and households it keeps books for).
   override?: { when: string; handling: SearchableHandling; reason: string };
+  // Private items (ADR-0037): the finder lists a row only when it is shared ('unless_shared': its visibility is 'org'),
+  // or never ('always'); private ones are counted per author through crove_notes.private_matches instead, with no text.
+  privateRows?: 'unless_shared' | 'always';
+  // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
+  list?: true;
 }
 
 // Keyed by schema.table.column.
@@ -63,6 +71,12 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_crm.booking.email': { kind: 'email', handling: 'erase', reason: 'The address a visitor gave when booking a meeting' },
   'crove_crm.booking.phone': { kind: 'phone', handling: 'erase', reason: 'The number a visitor gave when booking a meeting' },
   'crove_crm.booking.note': { kind: 'other', handling: 'erase', reason: 'Free text a visitor wrote when booking a meeting, which may name or describe them' },
+  // Rows of a contact import waiting for the member's go-ahead (#2229): the contact as read from the file. They are deleted
+  // on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep); the erasure deletes the rows that name the person sooner.
+  'crove_crm.import_row.email': { kind: 'email', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.phone': { kind: 'phone', handling: 'erase', reason: 'The number as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.tax_code': { kind: 'tax_code', handling: 'erase', reason: 'The tax code as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.address': { kind: 'address', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
   'crove_kernel.party.address': {
     kind: 'address',
     handling: 'erase',
@@ -83,6 +97,24 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
   'crove_kernel.inbound_message.from_address': { kind: 'email', handling: 'erase', reason: 'The sender of a forwarded mail; the stored file keeps the document itself' },
   'crove_kernel.inbound_message.body_text': { kind: 'other', handling: 'erase', reason: 'The text of a forwarded mail (#779), which may name or describe its sender; erased with the address of its sender' },
+  'crove_kernel.conversation_identity.display_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason:
+      'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
+  },
+  'crove_kernel.conversation_identity.external_user_id': {
+    kind: 'email',
+    handling: 'keep_record',
+    reason:
+      "For an email conversation the customer's address (#2439), found by a search of that address: erased with its threads by kernel.conversation.erase_contact, the retention purge and the offboarding of the org, as the display name is, so the generic erase leaves it alone",
+  },
+  'crove_kernel.conversation_message.email_refs': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason:
+      'The Message-IDs a mail answers (#2439), kept only to join a reply to its thread: opaque ids made by mail programs, not addresses or text. They go with the message when the contact is erased, the retention purge runs or the org is offboarded',
+  },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
   'crove_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },
@@ -110,15 +142,100 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'The name of a connected social account, which may be a person; disconnecting removes the account',
   },
+  // A member's connected outside calendar (#2123): the member's own account address, kept only for them.
+  'crove_kernel.calendar_connection.display_name': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own address in an outside calendar (their Google account), the same value as external_account; disconnecting removes it, and it is not exported with the org",
+  },
+  'crove_kernel.calendar_connection.external_account': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own address in an outside calendar (their Google account); disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
+  },
+  // Bank feeds (ADR-0039, #2044): the accounts a connection reaches, as the worker listed them; not the books.
+  'crove_finance.bank_feed_listed_account.display_name': {
+    kind: 'name',
+    handling: 'erase',
+    reason: "The name of a bank account a bank feed reaches, which may be its holder's; the next listing replaces it and disconnecting removes it",
+  },
+  'crove_finance.bank_feed_listed_account.external_account_id': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "The provider's id of a bank account a bank feed reaches, which may be its number; the next listing replaces it and disconnecting removes it",
+  },
   // Finance records.
   'crove_finance.cash_voucher.person_name': {
     kind: 'name',
     handling: 'keep_legal',
     reason: 'The payer or payee named on a phiếu thu or phiếu chi is part of the accounting voucher',
   },
+  // A sales e-invoice draft (#2500): the buyer as the person typed it or took it from a customer. A draft becomes the record of an invoice, kept like the books.
+  // An e-invoice provider connection (#2501): the tax code of the entity it issues for, which is a household's owner's national ID when the entity is a household. The row
+  // is deleted when the connection is closed and with the org's working rows, so there is nothing to keep.
+  'crove_finance.einvoice_connection.seller_tax_code': { kind: 'tax_code', handling: 'erase', reason: "The tax code of the legal entity an e-invoice provider connection issues for; a household's is its owner's national ID number. Deleted when the connection is closed" },
+  'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'crove_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  // Free text that can name a person (#1948): searched for the value anywhere inside it. Social's posts and comments
+  // are left out while Social is paused (decision D5).
+  'crove_kernel.activity.summary': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A line of a record's timeline, which may quote a person's email or phone; the value is replaced inside it",
+  },
+  'crove_kernel.task_comment.body': {
+    kind: 'free_text',
+    handling: 'keep_record',
+    reason: 'A comment on a task is an append-only record of the work, which the erase command cannot change; it goes with the org',
+  },
+  'crove_finance.journal_entry.description': {
+    kind: 'free_text',
+    handling: 'keep_legal',
+    reason: 'The description of a posted journal entry is part of the books, append-only and anchored in the WORM archive',
+  },
+  'crove_finance.cash_voucher.description': {
+    kind: 'free_text',
+    handling: 'keep_legal',
+    reason: 'The reason written on a phiếu thu or phiếu chi is part of the accounting voucher, append-only and kept by law (Accounting Law 88/2015, Art. 41)',
+  },
+  'crove_finance.journal_voucher.description': {
+    kind: 'free_text',
+    handling: 'keep_legal',
+    reason: 'The reason written on a journal voucher is part of the accounting voucher, append-only and kept by law (Accounting Law 88/2015, Art. 41)',
+  },
+  // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
+  // quote the value; a bank statement line and a journal line's memo are kept.
+  'crove_kernel.task.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A task's title, which may quote a person's email or phone; the value is replaced inside it",
+  },
+  'crove_kernel.task.description': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A task's description, which may quote a person's email or phone; the value is replaced inside it",
+  },
+  'crove_finance.bank_line.description': {
+    kind: 'free_text',
+    handling: 'keep_legal',
+    reason: "A line of an imported bank statement as the bank wrote it, evidence for the books; append-only and kept by law (Accounting Law 88/2015, Art. 41)",
+  },
+  'crove_finance.bank_line.counterparty_account': {
+    kind: 'account_number',
+    handling: 'keep_legal',
+    reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). Found by a code of 8 to 20 digits: an account of 6 or 7 digits cannot be searched, since such a short value would also match amounts in free text. The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
+  },
+  'crove_finance.journal_line.memo': {
+    kind: 'free_text',
+    handling: 'keep_legal',
+    reason: 'The memo of a posted journal line is part of the books, append-only and anchored in the WORM archive with its entry',
+  },
   // Social.
   'crove_social.report_branding.display_name': { kind: 'name', handling: 'keep_org', reason: "The agency's name on its white-label client reports (#1053), the business itself" },
   'crove_social.report_schedule.recipients': { kind: 'email_list', handling: 'erase', reason: 'Addresses a scheduled client report is mailed to' },
@@ -127,17 +244,69 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_record',
     reason: 'Review feedback is an append-only record of what a client said about a post; it is removed with the org',
   },
+  // Notes and to-dos (#1678, notes step N9, ADR-0037 section 5): free text a member wrote, which may name or describe a
+  // person. A shared note is listed with its text; a private note and every to-do (always private) are counted per
+  // author, never shown, and the erasure deletes them once their author was told. The folded search words are rebuilt
+  // from the text, so they are not searched themselves.
+  'crove_notes.note.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
+  'crove_notes.note.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
+  'crove_notes.note.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared', list: true },
+  'crove_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags and body, rebuilt from them" },
+  'crove_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
+  // Meetings (ADR-0047 point 7, issue #2579): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), a title may name a person, and the text a meeting gains later (transcript, summary, items) joins this
+  // list in the step that adds it. None of it has an email, a phone number or a tax code a finder could match, so none is searched (kind other); a person's
+  // request is answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an owner may do without reading it (meetings.meeting.owner_delete,
+  // R3). The nightly job deletes every meeting at its own text date and shreds audio and video at theirs.
+  'crove_meetings.meeting.title': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "A meeting's title, which may name a person: deleted with the meeting (its recorder, or an owner for a personal-data request, or the retention job at the text date)",
+  },
+  'crove_meetings.media_key.wrapped_key': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "The wrapped data key of a meeting's audio or video: deleting it is the shredding, and no copy of the ciphertext opens without it",
+  },
+  // The people payroll is run for (#2530, payroll plan 6.6). Their names and addresses are cleared by the owner's erasure of an ended employee after the retention
+  // (hr.payroll.employee.erase), which also deletes the person's key; the finder does not match them by an email, a phone or a number (their numbers are sealed, below).
+  'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
 
-// The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social
-// or crove_crm whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own sign-in
-// account and the deployment's own records) are not tenant data and are left out: the identity provider handles a
-// user's own account, and no tenant code reads them (control-plane-reads.test.ts).
+// Columns that hold personal data the finder and the erasure cannot handle yet, with the step that registers them
+// (#1874). Empty since notes step N9 registered the notes' text (#1678); a column a module classifies as pii before the
+// finder can reach it waits here. apps/kernel/test/personal-data.test.ts asks every pii column of crove_notes to be in
+// one list or the other.
+export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
+
+// Columns that hold a value sealed under its subject's key (ADR-0017, #2640; `<schema>.<table>.<column>`, the place ctx.seal takes). An erasure
+// deletes the subject's key (crove_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling
+// `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
+// here is in no other registry above (apps/kernel/test/personal-data.test.ts).
+export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {
+  'crove_hr.payroll_employee.national_id_sealed': {
+    handling: 'shred',
+    reason: "An employee's identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_hr.payroll_employee.bank_account_sealed': {
+    handling: 'shred',
+    reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+};
+
+// The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,
+// crove_crm, crove_notes, crove_hr or crove_meetings whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
+// sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider
+// handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column
@@ -145,29 +314,47 @@ export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_so
 // PERSONAL_DATA_ROW_LIMIT rows; `truncated` says when one had more.
 export const PERSONAL_DATA_ROW_LIMIT = 200;
 
-type Probe = { kind: 'email'; email: string } | { kind: 'digits'; digits: string };
+export type Probe = { kind: 'email'; email: string } | { kind: 'digits'; digits: string };
 
 export function personalDataProbe(value: string): Probe | null {
   const trimmed = value.trim();
   if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) return { kind: 'email', email: trimmed.toLowerCase() };
   // A phone number (spaces, dots, dashes, brackets and a leading + allowed, as in "(028) 3829 1234"), a tax code (10
-  // digits, or 13 with a branch suffix) or a national ID (12 digits).
-  if (/^[+(\d][\d\s().-]{7,24}$/.test(trimmed)) {
+  // digits, or 13 with a branch suffix), a national ID (12 digits) or a bank account number (8 to 20 digits; the 6 and 7 digit
+  // accounts are out of reach, as such a short value also matches amounts written with dots in free text).
+  if (/^[+(\d][\d\s().-]{7,40}$/.test(trimmed)) {
     const digits = trimmed.replace(/\D/g, '');
-    if (digits.length >= 8 && digits.length <= 15) return { kind: 'digits', digits };
+    if (digits.length >= 8 && digits.length <= 20) return { kind: 'digits', digits };
   }
   return null;
 }
 
-// The columns a probe is compared with, and how. Phone numbers match with or without Vietnam's +84.
+// Free text (#1678, shared with #1948): whether a text column mentions the probe's email address or digits among other
+// words, and the text with every mention replaced by a mark. Both go through crove_kernel.text_mentions and
+// text_redact (20261106200000), which hold the one pattern: a whole address, not part of a longer one; digits with the
+// spaces, dots, brackets or dashes people write between them, and a phone with or without +84. A column of another
+// type is read as text (an array or jsonb as its text form, where an address or a number reads as itself).
+export function freeTextMatch(probe: Probe, column: RawBuilder<unknown>): RawBuilder<boolean> {
+  return sql<boolean>`crove_kernel.text_mentions(${column}::text, ${probe.kind}, ${probeValue(probe)})`;
+}
+
+export function freeTextRedact(probe: Probe, column: RawBuilder<unknown>, mark: string): RawBuilder<string> {
+  return sql<string>`crove_kernel.text_redact(${column}::text, ${probe.kind}, ${probeValue(probe)}, ${mark})`;
+}
+
+const probeValue = (probe: Probe): string => (probe.kind === 'email' ? probe.email : probe.digits);
+
+// The columns a probe is compared with, and how. Phone numbers match with or without Vietnam's +84. Free text is
+// searched for the value anywhere inside it (#1678, #1948): freeTextMatch.
 function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<unknown>): RawBuilder<boolean> | null {
+  if (kind === 'free_text') return freeTextMatch(probe, column);
   if (probe.kind === 'email') {
     if (kind === 'email') return sql<boolean>`pg_catalog.lower(${column}) = ${probe.email}`;
     if (kind === 'email_list') return sql<boolean>`EXISTS (SELECT 1 FROM pg_catalog.unnest(${column}) AS r(v) WHERE pg_catalog.lower(r.v) = ${probe.email})`;
     return null;
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
-  if (kind === 'tax_code') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;
@@ -189,19 +376,25 @@ function requireProbe(value: string): Probe {
   return probe;
 }
 
-// Every row of the org that holds the value, column by column (the finder's answer).
-async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: Probe): Promise<PersonalDataResult> {
+// Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
+// how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
+async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: Probe, privateCounts: boolean): Promise<PersonalDataResult> {
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
   for (const [key, entry] of Object.entries(PERSONAL_DATA_COLUMNS) as Array<[string, PersonalDataColumn]>) {
     if (!searchable(entry.handling)) continue;
+    if (entry.privateRows === 'always') continue;
     const [schema, table, column] = key.split('.') as [string, string, string];
-    const match = columnMatch(entry.kind, probe, sql.ref(`t.${column}`));
+    const ref = sql.ref(`t.${column}`);
+    const match = columnMatch(entry.kind, probe, entry.list ? sql`pg_catalog.array_to_string(${ref}, ' ')` : ref);
     if (!match) continue;
+    // Row security already hides other members' private notes; the finder's own private ones are counted below too,
+    // not listed, so every author's are reported alike.
+    const shared = entry.privateRows === 'unless_shared' ? sql`AND t.visibility = 'org'` : sql``;
     const { rows } = await sql<{ row: Record<string, unknown> }>`
       SELECT pg_catalog.to_jsonb(t) - 'search' AS row
         FROM ${sql.table(`${schema}.${table}`)} AS t
-       WHERE t.org_id = ${orgId}::uuid AND ${match}
+       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
     for (const { row } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
@@ -210,14 +403,40 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       matches.push({ column: key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
     }
   }
-  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, truncated };
+  const privateItems = privateCounts
+    ? (
+        await sql<{ author_user_id: string; notes: string; todos: string }>`
+          SELECT author_user_id, notes, todos FROM crove_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+      ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }))
+    : null;
+  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, truncated };
 }
 
-export const personalDataFind = defineQuery({
+// The finder (#923), a command so that every search leaves an audit row (#1678 review): the counts of private items are
+// an oracle, since a probe of a guessed value (a salary, an ID number) tells whether some member's private note holds
+// it (ADR-0037 section 3). The row records who searched, the kind and the counts, never the value. Owners and admins
+// find rows; only owners, who send the notice and erase, get the private counts (privateItems null for an admin). It
+// changes nothing else.
+export const personalDataFind = defineCommand({
   name: 'kernel.personal_data.find',
   input: zPersonalDataQuery,
+  risk: 'R1',
+  sideEffect: 'internal',
   access: ADMINS,
-  handler: (ctx, input): Promise<PersonalDataResult> => findPersonalData(ctx.trx, ctx.orgId, requireProbe(input.value)),
+  handler: async (ctx, input): Promise<PersonalDataResult> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tìm được dữ liệu cá nhân');
+    const probe = requireProbe(input.value);
+    const result = await findPersonalData(ctx.trx, ctx.orgId, probe, ctx.role === 'owner');
+    ctx.audit({
+      kind: probe.kind,
+      matches: result.matches.length,
+      truncated: result.truncated,
+      private: result.privateItems === null
+        ? null
+        : { authors: result.privateItems.length, notes: result.privateItems.reduce((n, p) => n + p.notes, 0), todos: result.privateItems.reduce((n, p) => n + p.todos, 0) },
+    });
+    return result;
+  },
 });
 
 // Why an erasure keeps the original files of posted invoices (issue #1009), with the end of their retention hold.
@@ -226,8 +445,78 @@ export function heldFilesReason(until: Date | null): string {
   return `Original files behind posted entries that name this party: accounting evidence, ${kept} and never deleted by Crove (Accounting Law 88/2015, Art. 41)`;
 }
 
+// The fewest digits a value needs before the erasure replaces it inside activity lines and tasks (#1948, #1961): a
+// shorter number may be an amount or a voucher number there, so those rows are listed for the owner instead, with this
+// reason.
+export const ACTIVITY_REDACT_MIN_DIGITS = 10;
+// What a quoted value becomes in free text the erasure changes, as crove_kernel.personal_data_redact_activity writes it.
+export const REDACTED_MARK = '[đã xóa]';
+const SHORT_NUMBER_COLUMNS = new Set(['crove_kernel.activity.summary', 'crove_kernel.task.title', 'crove_kernel.task.description']);
+export const ACTIVITY_SHORT_NUMBER_REASON =
+  'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';
+
 // The name an erased party keeps: a party row cannot lose its name, and nothing in the books names it.
 export const ERASED_PARTY_NAME = 'Đã xóa theo yêu cầu';
+// What an erasure leaves in a shared note's text where the value was (#1678).
+export const ERASED_TEXT_MARK = '[đã xóa]';
+// Private items one notice names at most, and so authors (each has one at least); a request that matches more is
+// refused, never named in part.
+export const PERSONAL_DATA_NOTICE_ITEMS = 1000;
+// Why an erasure keeps a private item that mentions the value: no notice named it as it is now (written or changed since
+// the last one), or the notice's notification has not reached its author yet or did less than 24 hours ago, so the
+// author has not had the time to read it and take their items (crove_notes.private_erase).
+export const UNTOLD_PRIVATE_REASON =
+  'A private item whose author was not told at least 24 hours ago (written or changed since the last notice, its notification not sent yet, or sent less than 24 hours ago): send the notice if needed, wait 24 hours, then erase again';
+
+// The owner's notice before an erasure (#1678, ADR-0037 section 5): the authors of private notes and to-dos that mention
+// the value are told how many of theirs do, so they know before the erasure deletes them. Nobody but the author reads
+// a private item: crove_notes.private_notice_items answers their ids and authors only, the audit row records the ids
+// with the value's keyed notice key (which the erasure checks, crove_notes.private_erase: it deletes only what a notice
+// for the same value named, at its current revision, and only once its author got the notification), and the event
+// kernel.personal_data.notified carries the authors and counts, which kernel.notification.dispatch turns into one
+// notification each, sent even when the author turned that kind off. The value itself is in neither.
+export const personalDataNotify = defineCommand({
+  name: 'kernel.personal_data.notify',
+  input: zPersonalDataQuery,
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: OWNERS,
+  handler: async (ctx, input): Promise<PersonalDataNotice> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gửi được thông báo này');
+    const probe = requireProbe(input.value);
+    const { rows } = await sql<{ item_type: string; item_id: string; author_user_id: string; revision: number }>`
+      SELECT item_type, item_id, author_user_id, revision FROM crove_notes.private_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
+    if (rows.length > PERSONAL_DATA_NOTICE_ITEMS) {
+      throw new DomainError('PERSONAL_DATA_NOTICE_TOO_MANY', 422, `Có hơn ${PERSONAL_DATA_NOTICE_ITEMS} ghi chú riêng và việc nhắc đến giá trị này; hãy liên hệ hỗ trợ`);
+    }
+    const authors = new Map<string, { authorUserId: string; notes: number; todos: number }>();
+    for (const row of rows) {
+      const a = authors.get(row.author_user_id) ?? { authorUserId: row.author_user_id, notes: 0, todos: 0 };
+      if (row.item_type === 'note') a.notes += 1;
+      else a.todos += 1;
+      authors.set(row.author_user_id, a);
+    }
+    const named = [...authors.values()];
+    const { rows: keys } = await sql<{ key: string }>`SELECT crove_notes.private_notice_key(${probe.kind}, ${probeValue(probe)}) AS key`.execute(ctx.trx);
+    // The authors a notification reaches: members now, but the owner sending it (dispatch leaves out the actor).
+    const actor = ctx.actor.userId;
+    const members = named.length === 0 ? [] : await ctx.trx
+      .selectFrom('crove_kernel.tenant_member')
+      .select('user_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', 'in', named.map((a) => a.authorUserId))
+      .execute();
+    const told = members.filter((m) => m.user_id !== actor).length;
+    const event =
+      named.length > 0 ? await ctx.emit('kernel.personal_data.notified', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos })) }) : null;
+    // What the erasure checks: the value's notice key, each item as '<id>:<revision>' (one changed since is not covered),
+    // and the event whose notifications prove the authors were told. A keyed hash, ids and counts, never the value or
+    // the text.
+    const items = (type: string) => rows.filter((r) => r.item_type === type).map((r) => `${r.item_id}:${r.revision}`);
+    ctx.audit({ kind: probe.kind, key: keys[0]?.key ?? null, notes: items('note'), todos: items('todo'), authors: named.length, told, event });
+    return { authors: named, told };
+  },
+});
 
 // The erase command (#923): an owner erases a person's data on their request, identified by the same value the finder
 // takes. R3: it cannot be undone, so it needs a fresh second factor. In the command's transaction it clears
@@ -237,10 +526,16 @@ export const ERASED_PARTY_NAME = 'Đã xóa theo yêu cầu';
 // - the sender of forwarded mails and the recipient of mails Crove sent (the keyed hash stays, so a suppression holds);
 // - the org's contact email;
 // - the visitor's name, email, phone and note on bookings from a public booking page;
-// - the address in Social report schedules (a schedule left with nobody to mail is deleted).
+// - the address in Social report schedules (a schedule left with nobody to mail is deleted);
+// - every mention of the value in shared notes (edited out, the note stays), and the private notes and to-dos that
+//   mention it and that an earlier notice told their authors about (deleted whole, unread; #1678, ADR-0037 section 5);
+// - the value wherever an activity line (#1948) or a task's title or description (#1961) quotes it, replaced inside the
+//   text; a number under 10 digits is left there and listed (it may be an amount or a voucher number).
 // What the law or an append-only record keeps (the names and tax codes of parties in the books and of the legal entities
-// the org keeps books for, #1312, cash vouchers, the tax portal's lists, invites, review feedback, and the original files
-// of posted invoices naming the party, under their retention hold, #1009) is left as it is and listed with its reason.
+// the org keeps books for, #1312, cash vouchers, the tax portal's lists, invites, review feedback, task comments and the
+// descriptions of journal entries and vouchers that quote the value, #1948, bank statement lines and journal line
+// memos, #1961, and the original files of posted invoices naming the party, under their retention hold, #1009) is left
+// as it is and listed with its reason.
 // The audit row holds counts only, never the value or the rows.
 export const personalDataErase = defineCommand({
   name: 'kernel.personal_data.erase',
@@ -260,9 +555,9 @@ export const personalDataErase = defineCommand({
 
     // Parties the value identifies, and whether the books name them.
     const partyMatch = sql<boolean>`(${match('email', 'p.email') ?? never} OR ${match('phone', 'p.phone') ?? never} OR ${match('tax_code', 'p.tax_code') ?? never})`;
-    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; documented: boolean }>`
+    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; company: boolean; documented: boolean }>`
       SELECT p.id, p.email IS NOT NULL AS email, p.phone IS NOT NULL AS phone, p.address IS NOT NULL AS address,
-             p.tax_code IS NOT NULL AS tax_code,
+             p.tax_code IS NOT NULL AS tax_code, p.company_id IS NOT NULL AS company,
              (EXISTS (SELECT 1 FROM crove_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
@@ -278,6 +573,9 @@ export const personalDataErase = defineCommand({
           email: null,
           phone: null,
           address: null,
+          // The company a person works at (#2438) is a fact about the person, not a line of the books: it goes with the contact details, for a party the books name
+          // (which keeps its name and tax code) as for one they do not (which loses its name too).
+          company_id: null,
           ...(forget ? { tax_code: null, name: ERASED_PARTY_NAME } : {}),
           version: eb('version', '+', 1),
           updated_at: ctx.now,
@@ -285,15 +583,38 @@ export const personalDataErase = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', party.id)
         .execute();
+      // The people who worked at a forgotten company are not left pointing at the placeholder name.
+      if (forget) {
+        // The matched parties count their own link in the loop; the others are counted here.
+        const unlinked = await ctx.trx
+          .updateTable('crove_kernel.party')
+          .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
+          .where('org_id', '=', ctx.orgId)
+          .where('company_id', '=', party.id)
+          .$if(parties.length > 0, (qb) => qb.where('id', 'not in', parties.map((p) => p.id)))
+          .executeTakeFirst();
+        add('crove_kernel.party.company_id', Number(unlinked.numUpdatedRows));
+      }
       add('crove_kernel.party.email', Number(party.email));
       add('crove_kernel.party.phone', Number(party.phone));
       add('crove_kernel.party.address', Number(party.address));
+      add('crove_kernel.party.company_id', Number(party.company));
       if (forget) {
         add('crove_kernel.party.name', 1);
         add('crove_kernel.party.tax_code', Number(party.tax_code));
       } else {
         keptParties += 1;
       }
+    }
+    // The learned bank-line rules of those parties (#2402): the keyed hash of a payer's name in a statement line points at the
+    // person, and a party the books keep (a voucher names it) is never deleted, so the cascade never reaches them. They go,
+    // documented or not; the vouchers they were learned from stay as the books keep them.
+    if (parties.length > 0) {
+      const { rows: rules } = await sql<{ id: string }>`
+        DELETE FROM crove_finance.bank_party_rule
+         WHERE org_id = ${ctx.orgId}::uuid AND party_id = ANY(${parties.map((p) => p.id)}::uuid[])
+         RETURNING id`.execute(ctx.trx);
+      add('crove_finance.bank_party_rule.key_hash', rules.length);
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,
@@ -310,6 +631,35 @@ export const personalDataErase = defineCommand({
       add('crove_crm.booking.email', Number(b.email));
       add('crove_crm.booking.phone', Number(b.phone));
       add('crove_crm.booking.note', Number(b.note));
+    }
+
+    // Rows of a contact import not yet committed (#2229), matched by email, phone or tax code: deleted whole, for the row
+    // holds the person's name and details as read from the file. The batch keeps its counts.
+    const importMatch = sql<boolean>`(${match('email', 'r.email') ?? never} OR ${match('phone', 'r.phone') ?? never} OR ${match('tax_code', 'r.tax_code') ?? never})`;
+    const { rows: staged } = await sql<{ batch_id: string; email: boolean; phone: boolean; tax_code: boolean; address: boolean }>`
+      DELETE FROM crove_crm.import_row r
+       WHERE r.org_id = ${ctx.orgId}::uuid AND ${importMatch}
+       RETURNING r.batch_id, r.email IS NOT NULL AS email, r.phone IS NOT NULL AS phone, r.tax_code IS NOT NULL AS tax_code,
+                 r.address IS NOT NULL AS address`.execute(ctx.trx);
+    // The staged batches that lost rows count what is left, so the preview and the Import button do not promise rows that are gone.
+    const touched = [...new Set(staged.map((r) => r.batch_id))];
+    if (touched.length > 0) {
+      await sql`
+        UPDATE crove_crm.import_batch b SET
+          total_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id),
+          new_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
+          duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
+          conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
+          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
+          new_companies = (SELECT count(DISTINCT crove_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
+                           WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new' AND r.company_state = 'new')
+        WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
+    }
+    for (const r of staged) {
+      add('crove_crm.import_row.email', Number(r.email));
+      add('crove_crm.import_row.phone', Number(r.phone));
+      add('crove_crm.import_row.tax_code', Number(r.tax_code));
+      add('crove_crm.import_row.address', Number(r.address));
     }
 
     if (probe.kind === 'email') {
@@ -342,14 +692,76 @@ export const personalDataErase = defineCommand({
       add('crove_social.report_schedule.recipients', Number(schedules.numAffectedRows ?? 0) + Number(dropped.numAffectedRows ?? 0));
     }
 
+    // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
+    // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value
+    // was, cut to the column's limit should the mark be longer than the value, and a tag that mentions it goes (all of
+    // them, when the value only shows across tags). Its search words
+    // follow by trigger. A private note or to-do is its author's alone: crove_notes.private_erase deletes it whole,
+    // unread, once an earlier notice told the author (kernel.personal_data.notify); one never named stays, reported
+    // below as kept.
+    const mentions = (column: string) => freeTextMatch(probe, sql.ref(column));
+    const tagsOf = (alias: string) => sql`pg_catalog.array_to_string(${sql.ref(`${alias}.tags`)}, ' ')`;
+    const keptTags = sql`ARRAY(SELECT g.v FROM pg_catalog.unnest(t.tags) WITH ORDINALITY AS g(v, i) WHERE NOT ${freeTextMatch(probe, sql.ref('g.v'))} ORDER BY g.i)`;
+    const stillAcross = freeTextMatch(probe, sql`pg_catalog.array_to_string(${keptTags}, ' ')`);
+    const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
+      UPDATE crove_notes.note t
+         SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
+             body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
+             tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
+             revision = t.revision + 1, updated_at = ${ctx.now}
+        FROM crove_notes.note o
+       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
+         AND (${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
+       RETURNING ${mentions('o.title')} AS title, ${mentions('o.body')} AS body, ${freeTextMatch(probe, tagsOf('o'))} AS tags`.execute(ctx.trx);
+    add('crove_notes.note.title', notes.filter((n) => n.title).length);
+    add('crove_notes.note.body', notes.filter((n) => n.body).length);
+    add('crove_notes.note.tags', notes.filter((n) => n.tags).length);
+    const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
+      SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM crove_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
+    const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
+    const privateDeleted = { notes: sum('notes'), todos: sum('todos') };
+    const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };
+    add('crove_notes.note', privateDeleted.notes);
+    add('crove_notes.todo', privateDeleted.todos);
+    // Activity lines that quote the person (#1948): the mention is replaced inside the line, through the owner-only
+    // definer (tenant roles may not update activity rows). Comments and the books' descriptions are append-only and
+    // stay; the finder's answer below lists them with their reasons.
+    // A number of 8 or 9 digits may as well be an amount or a voucher number in a line, and a redaction cannot be
+    // undone: those lines are left as they are and listed with ACTIVITY_SHORT_NUMBER_REASON (the definer refuses them
+    // too).
+    const shortNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
+    if (!shortNumber) {
+      const { rows: redacted } = await sql<{ rows: number }>`
+        SELECT crove_kernel.personal_data_redact_activity(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+      add('crove_kernel.activity.summary', Number(redacted[0]?.rows ?? 0));
+
+      // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
+      // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and
+      // updated_at moves to now). Through the command's own transaction: the tenant role may update tasks, so no definer
+      // is needed. The lengths stay within the columns' limits, in case the mark is longer than a short address.
+      const title = freeTextMatch(probe, sql.ref('t.title'));
+      const description = freeTextMatch(probe, sql.ref('t.description'));
+      const { rows: tasks } = await sql<{ title: boolean; description: boolean }>`
+        UPDATE crove_kernel.task t
+           SET title = CASE WHEN ${title} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), REDACTED_MARK)}, 300) ELSE t.title END,
+               description = CASE WHEN ${description} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.description'), REDACTED_MARK)}, 10000)
+                                  ELSE t.description END
+          FROM crove_kernel.task o
+         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND (${title} OR coalesce(${description}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+      add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
+      add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
+    }
+
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
-    const after = await findPersonalData(ctx.trx, ctx.orgId, probe);
+    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false);
     // Grouped by column and reason: rows of one column may be kept for different reasons (the default legal entity and
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
     for (const m of after.matches) {
-      const group = `${m.column}\n${m.reason}`;
-      const k = kept.get(group) ?? { column: m.column, rows: 0, reason: m.reason };
+      const reason = shortNumber && SHORT_NUMBER_COLUMNS.has(m.column) ? ACTIVITY_SHORT_NUMBER_REASON : m.reason;
+      const group = `${m.column}\n${reason}`;
+      const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
       kept.set(group, k);
     }
@@ -368,17 +780,19 @@ export const personalDataErase = defineCommand({
       const files = Number(held[0]?.files ?? 0);
       if (files > 0) kept.set('crove_kernel.file', { column: 'crove_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }
+    // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
+    if (untold.notes > 0) kept.set('crove_notes.note', { column: 'crove_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
+    if (untold.todos > 0) kept.set('crove_notes.todo', { column: 'crove_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
     const keptRows = new Map<string, number>();
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {
       erased: [...erased].map(([column, rows]) => ({ column, rows })),
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
-    // Counts only: the value and the rows never reach the audit log.
-    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties });
+    // Counts and ids only: the value and the text never reach the audit log.
+    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
     return result;
   },
 });
 
-export const personalDataQueries = [personalDataFind];
-export const personalDataCommands = [personalDataErase];
+export const personalDataCommands = [personalDataFind, personalDataNotify, personalDataErase];

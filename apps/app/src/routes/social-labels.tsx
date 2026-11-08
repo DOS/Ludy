@@ -9,6 +9,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CampaignLine, ColorChoice, LabelChip, refreshLabels, useLabels, type SocialLabel } from '../components/social-labels.tsx';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
@@ -160,16 +161,17 @@ function Row({ label, canManage }: { label: SocialLabel; canManage: boolean }) {
             <Button size="sm" variant="ghost" onClick={() => setOpened(draftOf(label))}>
               {t('edit')}
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
+            <ConfirmDialog
+              render={<Button size="sm" variant="ghost" />}
               disabled={remove.isPending}
-              onClick={() => {
-                if (window.confirm(t('confirmDelete', { name: label.name, count: label.postCount }))) remove.mutate();
-              }}
+              title={t('deleteTitle')}
+              description={t('confirmDelete', { name: label.name, count: label.postCount })}
+              confirm={t('delete')}
+              destructive
+              onConfirm={() => remove.mutate()}
             >
               {t('delete')}
-            </Button>
+            </ConfirmDialog>
           </div>
         )}
       </div>

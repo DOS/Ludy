@@ -44,7 +44,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/media..." --filter "crove-monorepo"
 
       - name: Lint
         run: pnpm lint
@@ -158,6 +158,48 @@ jobs:
           # shellcheck disable=SC2086
           pnpm exec vitest run --project db $PART_ARGS
 
+  # The core invariants with CROVE_SHARED_DATABASE=true (#2284): the same migrations in shared-database mode, where PUBLIC keeps
+  # TEMPORARY. The cross-org RLS matrix, the EXECUTE matrix of the login roles and the definer search_path hijack test (all in
+  # these two files) must hold there too, with temporary objects available. The one test that asserts the login roles have no
+  # temporary schema is the owned database's property and is the one left out.
+  shared-mode-invariants:
+    name: Core invariants in shared-database mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
+      CROVE_SHARED_DATABASE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+
+      - name: RLS matrix, EXECUTE matrix and search_path hijack test, shared mode
+        run: >-
+          pnpm exec vitest run --project db
+          apps/kernel/test/invariant/rls-matrix.db.test.ts apps/kernel/test/invariant/kernel-invariants.db.test.ts
+          -t '^(?!.*gives the login roles no temporary schema)'
+
   # Unused files, exports and dependencies, and dependencies used but not listed (knip, G5, #1602), over every workspace
   # package, the marketing site included: its own job, with the whole workspace installed.
   knip:
@@ -247,7 +289,7 @@ jobs:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db]
+    needs: [static, knip, web, db, media-image]
     if: always()
     steps:
       - name: Every part passed
@@ -256,9 +298,10 @@ jobs:
           KNIP: ${{ needs.knip.result }}
           WEB: ${{ needs.web.result }}
           DB: ${{ needs.db.result }}
+          MEDIA: ${{ needs.media-image.result }}
         run: |
-          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB"
-          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success
+          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA"
+          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success
 
   # The migrations and the definer hardening guard (External-tenant gate T17) on the Supabase Postgres image that
   # hosted Supabase runs (issue #179): its extensions, its roles and the supautils hooks, with migrations run as
@@ -301,6 +344,14 @@ jobs:
           CROVE_REQUIRE_SUPABASE_TEST: "1"
         run: pnpm exec vitest run --project db packages/db/test/supabase.db.test.ts
 
+      # Shared-database mode (#2284): Ludy migrated beside another system's schema, role and default privileges, in a database
+      # of its own in the same container; the other system keeps its privileges and raises no DDL alert.
+      - name: Shared-database mode beside a foreign schema and role
+        env:
+          CROVE_TEST_SUPABASE_URL: ${{ env.SUPABASE_DB_URL }}
+          CROVE_REQUIRE_SUPABASE_TEST: "1"
+        run: pnpm exec vitest run --project db packages/db/test/shared-database.db.test.ts
+
       - name: The kernel migrate role, twice, so the guard also checks pg-boss's crove_jobs schema
         env:
           DATABASE_URL: ${{ env.SUPABASE_DB_URL }}
@@ -328,11 +379,19 @@ jobs:
           persist-credentials: false
 
       - name: Build the kernel image
-        run: docker build --build-arg "CROVE_BUILD=$GITHUB_SHA" -t "$IMAGE" .
+        run: |
+          built_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          test -n "$built_at"
+          docker build --build-arg "CROVE_BUILD=$GITHUB_SHA" --build-arg "CROVE_BUILD_TIME=$built_at" -t "$IMAGE" .
 
-      # GET /version reports CROVE_BUILD (#892): the build argument reaches the running image.
-      - name: The image carries its build id
-        run: test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD)" = "$GITHUB_SHA"
+      # GET /version reports CROVE_BUILD (#892), and CROVE_BUILD_TIME orders builds for /readyz (#1952): both build
+      # arguments reach the running image.
+      - name: The image carries its build id and time
+        run: |
+          test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD)" = "$GITHUB_SHA"
+          built_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          test -n "$built_at"
+          test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD_TIME)" = "$built_at"
 
       - name: Modules load and no parser package is in the image
         run: |
@@ -459,6 +518,70 @@ jobs:
           docker rm -f crove-extract || true
           docker network rm "$NET" || true
 
+  # The crove-media image as compose runs it (AI Meeting Notes M3, #2577, ADR-0047): audio and video are
+  # normalized, probed and split inside the container with ffmpeg, the service refuses an environment outside
+  # its allowlist, and nothing inside it reaches the outside.
+  media-image:
+    name: crove-media image (process in the container, no egress)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      IMAGE: crove-media:ci
+      NET: crove-media-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the crove-media image
+        run: docker build -f apps/media/Dockerfile -t "$IMAGE" .
+
+      - name: Refuses to start with a variable outside its allowlist, whatever NODE_ENV says
+        run: |
+          for node_env in production development test ''; do
+            if docker run --rm -e NODE_ENV="$node_env" -e EXTRA_SETTING=1 "$IMAGE" > refused.txt 2>&1; then
+              cat refused.txt; echo "::error::crove-media started with EXTRA_SETTING (NODE_ENV='$node_env')"; exit 1
+            fi
+            cat refused.txt
+            grep -q 'remove EXTRA_SETTING' refused.txt
+          done
+
+      - name: Start it as compose does, on an internal network
+        run: |
+          docker network create --internal "$NET"
+          docker run -d --name crove-media --network "$NET" --read-only --tmpfs /tmp:size=64m,noexec,nosuid \
+            --tmpfs /data/scratch:rw,noexec,nosuid,uid=1000,gid=1000,mode=0700,size=512m --cap-drop ALL \
+            --security-opt no-new-privileges:true --memory 2g --memory-swap 2g --cpus 1 --pids-limit 128 "$IMAGE"
+          for i in $(seq 1 60); do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' crove-media)" = healthy ]; then exit 0; fi
+            sleep 1
+          done
+          docker logs crove-media
+          echo "::error::crove-media did not become healthy"; exit 1
+
+      - name: Process media inside the real container
+        run: |
+          docker run --rm --network "$NET" --read-only --tmpfs /tmp:size=64m,noexec,nosuid \
+            --tmpfs /data/scratch:rw,noexec,nosuid,uid=1000,gid=1000,mode=0700,size=512m --cap-drop ALL -v "$PWD/apps/media/test:/t:ro" \
+            --entrypoint node "$IMAGE" /t/container/smoke.mjs http://crove-media:8095
+
+      - name: No egress from the container
+        run: |
+          # In the network namespace of the running service: every probe must fail.
+          docker run --rm --network container:crove-media -v "$PWD/apps/media/test:/t:ro" \
+            --entrypoint node "$IMAGE" /t/container/egress.mjs blocked
+          # Control on an ordinary network: the same probes succeed, so the check above is not vacuous.
+          docker run --rm -v "$PWD/apps/media/test:/t:ro" --entrypoint node "$IMAGE" /t/container/egress.mjs control
+
+      - name: Service log and cleanup
+        if: always()
+        run: |
+          docker logs crove-media || true
+          docker rm -f crove-media || true
+          docker network rm "$NET" || true
+
   # External-tenant gate T7 (#108): `api` and `worker` as separate containers of the same image, STORAGE=s3 against
   # MinIO and no shared files volume (docker-compose.split.yml). tools/e2e/split-stack.mjs drives the real HTTP API:
   # an uploaded e-invoice and an inbound email are both read by the worker into proposals, and every blob is in the
@@ -489,6 +612,16 @@ jobs:
 
       - name: Upload and inbound email through the API, filed by the worker, blobs in MinIO
         run: node tools/e2e/split-stack.mjs
+
+      # The pilot layout (#2133): docker-compose.yml with tools/deploy/compose.pilot.yml, laid out as on a deploy host and
+      # started from the images built above (the same Dockerfiles, tagged as the base file names them). The split stack
+      # goes first, so the two are never up together.
+      - name: Boot the pilot layout (compose.pilot.yml), check its topology, read an upload through it
+        run: |
+          $COMPOSE down -v
+          docker tag crove:split crove:local
+          docker tag crove-extract:split crove-extract:local
+          node tools/e2e/pilot-stack.mjs
 
       - name: Stack logs
         if: failure()

@@ -23,7 +23,7 @@ RUN pnpm install --frozen-lockfile --filter "@crove/app..." \
 # any XML reader is left (apps/kernel/test/container/image-check.mjs, #1719).
 FROM base AS kernel
 RUN pnpm install --frozen-lockfile --prod --filter-prod "@crove/kernel-server..." \
- && rm -rf apps/extract apps/app apps/web packages/ui \
+ && rm -rf apps/extract apps/media apps/app apps/web packages/ui \
  && rm -rf node_modules/.pnpm/saxes@* node_modules/.pnpm/xmlchars@* \
       node_modules/.pnpm/node_modules/saxes node_modules/.pnpm/node_modules/xmlchars \
       node_modules/.pnpm/exceljs@*/node_modules/saxes node_modules/.pnpm/exceljs@*/node_modules/exceljs/dist
@@ -39,10 +39,12 @@ WORKDIR /app
 COPY --from=kernel --chown=node:node /app /app
 COPY --from=web --chown=node:node /app/apps/app/dist /app/apps/app/dist
 RUN mkdir -p /data/files /data/keys /data/status /data/archive && chown node:node /data/files /data/keys /data/status /data/archive && chmod 700 /data/keys
-# The build id GET /version reports (#892): the release workflow passes the git SHA. Last, so a new SHA rebuilds no
-# layer above.
+# The build id GET /version reports (#892): the release workflow passes the git SHA, and its committer date as
+# CROVE_BUILD_TIME, which orders builds for the API's /readyz (worker build >= API build, #1952). Last, so a new SHA
+# rebuilds no layer above.
 ARG CROVE_BUILD=
-ENV CROVE_BUILD=$CROVE_BUILD
+ARG CROVE_BUILD_TIME=
+ENV CROVE_BUILD=$CROVE_BUILD CROVE_BUILD_TIME=$CROVE_BUILD_TIME
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=6 CMD node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

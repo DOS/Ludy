@@ -16,11 +16,14 @@ import { cn } from '@crove/ui/lib/utils';
 import { hashtagSuggestions, hashtagsOf, REPOST_HOURS_MAX, REPOST_PROVIDERS, AUTO_REPLY_LIKES_MAX, AUTO_REPLY_RULES, COMMENT_RULES, THREAD_PARTS_MAX, THREAD_RULES, threadPartsOf, COVER_RULES, GBP_CTAS, GBP_LANGUAGES, GBP_TOPICS, gbpOf, POLL_RULES, POST_TYPE_RULES, TOPIC_TAG_RULES, coverKind, coverOf, isProvider, pollDurationOf, pollFlagOf, pollOptionsOf, pollQuestionOf, postTypeOf, REMOVE_READY, sentLink, topicTagOf, utmOf, type Cover, type CoverKind, type Issue, YOUTUBE_CATEGORIES, YOUTUBE_DEFAULT_CATEGORY, YOUTUBE_TAGS_MAX, youtubeTagsLength, YOUTUBE_PLAYLISTS_MAX, youtubePlaylistIdFrom, youtubePlaylistsOf, SENT_TO_APP, TIKTOK_NO_POST_ID, tiktokModeOf, tiktokDisclosureOf, type TikTokDisclosure, TIKTOK_PRIVACY_LEVELS, tiktokCreatorOf, type TikTokInteraction, type TikTokPrivacyLevel, removeAtFit, removeAtOf, WORDPRESS_CATEGORIES_MAX, WORDPRESS_EXCERPT_MAX, WORDPRESS_STATUSES, WORDPRESS_TAGS_MAX, WORDPRESS_DRAFT, WORDPRESS_PENDING, TELEGRAM_PIN_SCOPE, telegramOptionsOf, localTime, REPLY_SETTINGS, replySettingOf, linkedinVisibilities, telegramButtonsOf, TELEGRAM_BUTTON_ROWS_MAX, TELEGRAM_BUTTONS_PER_ROW_MAX, TELEGRAM_BUTTON_TEXT_MAX, isButtonUrl, countText, type TelegramButton, IG_REEL_FEEDS, IG_TRIAL_GRADUATIONS, instagramReelOf, isInstagramReel, variantTexts, wordsForChannel, wordsForChannels, DISCORD_TAGS_MAX, DISCORD_THREAD_NAME_MAX, discordOptionsOf, discordThreadName, isDiscordId, BLUESKY_REPLY_RULES, blueskyQuotesOff, blueskyRepliesOf, type BlueskyReplyRule, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, documentTitleOf, mediaKindOf, pinterestSectionOf, DUPLICATE_CONTENT, POSSIBLE_DUPLICATE, duplicateText, type DuplicateOf, prefillUtm, signatureText, withChannelSignature, withSignature, editRefusal } from '@crove/mod-social/contract';
 import { LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, linkCardOf, linkCardSize, type Provider } from '@crove/mod-social/contract';
 import { SOCIAL_RECURRENCE_TIMES_MAX } from '@crove/kernel-contract';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { LeavePageDialog } from '../components/leave-page-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { DateTimeInput } from '../components/date-time-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { CoverImageField, MediaField, MediaReplace, type MediaItem } from '../components/social-media.tsx';
 import { replaceInChannels, replaceInEditable, replaceMedia } from '../lib/social-image-fix.ts';
+import { AiMeter } from '../components/ai-meter.tsx';
 import { AiPhotoPicker, aiDraftInput, useAiPhotos } from '../components/social-ai-photos.tsx';
 import { ChannelSetPicker } from '../components/social-channel-sets.tsx';
 import { PlatformPreview, useLinkPreview } from '../components/social-preview.tsx';
@@ -28,6 +31,7 @@ import { SnippetPicker } from '../components/social-snippets.tsx';
 import { ReviewLinks } from '../components/social-review-links.tsx';
 import { archiveBlock, mayArchive } from '../lib/social-archive.ts';
 import { PostActivity } from '../components/social-activity.tsx';
+import { ConversationInbox, SandboxCommentButton } from '../components/conversation-inbox.tsx';
 import { boardMedia } from '../components/social-comment-pins.tsx';
 import { ReviewChanges } from '../components/social-review-diff.tsx';
 import { PreReviewFindings } from '../components/social-pre-review.tsx';
@@ -2657,7 +2661,7 @@ export function SocialComposePage() {
     setAiUsed(d.data.aiUsed);
     setRestore(null);
   };
-  useBlocker({ shouldBlockFn: () => touched && !leaving.current && !window.confirm(t('leaveConfirm')), enableBeforeUnload: () => touched && !leaving.current });
+  const leave = useBlocker({ shouldBlockFn: () => touched && !leaving.current, enableBeforeUnload: () => touched && !leaving.current, withResolver: true });
 
   // One key per content: a retry of the same content after a lost answer returns the post the first request created;
   // content edited after a failed attempt is a new request (the server would refuse the old key with other content).
@@ -2792,6 +2796,7 @@ export function SocialComposePage() {
   if (channels.isLoading || signatureRows.isPending) return <Spinner />;
   return (
     <MediaReplace.Provider value={fixEverywhere}>
+    <LeavePageDialog blocker={leave} />
     <div onKeyDown={onKey}>
       <PageHeader
         title={t('composeTitle')}
@@ -2989,6 +2994,7 @@ export function SocialComposePage() {
                   if (aiDraft.error) aiDraft.reset();
                 }} />
                 <p className="text-xs text-subtle-foreground">{t('aiDraftHint')}</p>
+                <AiMeter module="social" />
                 <Button
                   variant="outline"
                   size="sm"
@@ -3899,7 +3905,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     const timer = setTimeout(() => (editing && base ? saveDraft<PostDraft>(slug, postId, origin.revision, { base, own }) : clearDraft(slug, postId)), 400);
     return () => clearTimeout(timer);
   }, [base, own, origin, editing, restorePost, slug, postId]);
-  useBlocker({ shouldBlockFn: () => editing && !window.confirm(t('leaveConfirm')), enableBeforeUnload: () => editing });
+  const leave = useBlocker({ shouldBlockFn: () => editing, enableBeforeUnload: () => editing, withResolver: true });
 
   const refresh = () => void queryClient.invalidateQueries();
   // After this page's own save: read the post once and take it as the new starting point here, rather than waiting
@@ -4023,11 +4029,17 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     const before = reviewRows.filter((r) => awaitsApprovalBy(r, userId));
     // The list as it is now: the post just approved has left it, or waits for another person.
     setMoveError(null);
-    const fresh = await queryClient.fetchQuery({ ...orpc.social.posts.list.queryOptions({ input: reviewInput }), staleTime: 0 }).catch((error: unknown) => {
+    // Read straight from the server, not through the query cache: the approval has just invalidated every query, and a
+    // cached fetch joined to that refetch is cancelled when another invalidation restarts it (CancelledError), which
+    // left the reviewer on the approved post with an error and no move.
+    const fresh = await client.social.posts.list(reviewInput).catch((error: unknown) => {
       if (live.current) setMoveError(errorMessage(error));
       return null;
     });
     if (!fresh || !live.current) return;
+    // The cached list is the list now, as the fetch through the cache left it, so the end-of-list check below never reads
+    // the list from before the approval.
+    queryClient.setQueryData(orpc.social.posts.list.queryKey({ input: reviewInput }), fresh);
     const target = nextAfterDecision(before, fresh.filter((r) => awaitsApprovalBy(r, userId)), postId);
     if (target) openPost(target);
     else setNoneLeft(true);
@@ -4099,6 +4111,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
 
   return (
     <MediaReplace.Provider value={fixEverywhere}>
+    <LeavePageDialog blocker={leave} />
     <div onKeyDown={onKey}>
       <p role="status" className="sr-only" data-testid="review-arrival">
         {arrival}
@@ -4136,18 +4149,18 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
               </Button>
             )}
             {archiver && !archived && (
-              <Button
-                variant="outline"
-                size="lg"
+              <ConfirmDialog
+                render={<Button variant="outline" size="lg" title={dirty ? t('saveFirst') : blocked ? t(`archive.blocked.${blocked}`) : t('archive.hint')} />}
                 disabled={dirty || blocked !== null || archive.isPending}
-                title={dirty ? t('saveFirst') : blocked ? t(`archive.blocked.${blocked}`) : t('archive.hint')}
-                onClick={() => {
-                  if (window.confirm(t('archive.confirm'))) archive.mutate();
-                }}
+                title={t('archive.title')}
+                description={t('archive.confirm')}
+                confirm={t('archive.action')}
+                destructive
+                onConfirm={() => archive.mutate()}
               >
                 {archive.isPending ? <Spinner className="text-current" /> : null}
                 {t('archive.action')}
-              </Button>
+              </ConfirmDialog>
             )}
           </>
         }
@@ -4240,6 +4253,8 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
           </Button>
         </div>
       )}
+      {/* The cards below title their parts with h3: this names the level between them and the page's h1 (#1572). */}
+      <h2 className="sr-only">{t('postDetails')}</h2>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <SharedFields
@@ -4458,6 +4473,22 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
             );
           })}
         </div>
+        {p.variants.some((v) => v.status === 'published' && v.externalPostId) && (
+          // The comments under the post on its published channels (#2303): the conversation core's threads, joined by channel and the platform's post id.
+          <section className="space-y-3 lg:col-span-2" aria-labelledby="post-comments-title" data-testid="post-comments">
+            <h2 id="post-comments-title" className="text-sm font-semibold text-foreground">
+              {t('commentsTitle')}
+            </h2>
+            {canDecide &&
+              p.variants
+                .filter((v) => v.provider === 'sandbox' && v.status === 'published' && v.externalPostId)
+                .map((v) => <SandboxCommentButton key={v.id} connectionId={v.connectionId} postId={v.externalPostId as string} />)}
+            <ConversationInbox
+              kind="comment_thread"
+              posts={p.variants.filter((v) => v.status === 'published' && v.externalPostId).map((v) => ({ connectionId: v.connectionId, externalPostId: v.externalPostId as string }))}
+            />
+          </section>
+        )}
         <PostActivity
           postId={p.id}
           channels={p.variants.map((v) => ({ variantId: v.id, name: names.get(v.connectionId) ?? providerName(v.provider) }))}

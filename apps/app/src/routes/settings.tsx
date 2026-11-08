@@ -2,30 +2,35 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
-import { PROFILE_OBLIGATIONS, type LegalEntity, type TaxProfile } from '@crove/kernel-contract';
+import { PROFILE_OBLIGATIONS, type LegalEntity, type MemberRoles, type TaxProfile } from '@crove/kernel-contract';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { StepUpPrompt, TwoFactorCard } from '../components/two-factor.tsx';
 import { ChartOfAccountsCard } from './accounts.tsx';
 import { MisaGoodsCodesCard } from './misa-goods-codes.tsx';
 import { AccountRulesCard } from './account-rules.tsx';
+import { BankPartyRulesCard } from './bank-party-rules.tsx';
 import { ApprovalPresetCard, MEMBERS_CARD_ID } from './approval-preset.tsx';
+import { BankAccountNumbersCard } from './bank-account-numbers.tsx';
+import { IntegrationsSection } from './integrations.tsx';
 import { LegalEntitiesCard } from './legal-entities.tsx';
 import { MemberRolesRow } from './member-roles.tsx';
 import { WorkingHoursCard } from './working-hours.tsx';
 import { EventTypesCard } from './event-types.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.tsx';
-import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, Spinner, useFieldErrors } from '../components/ui.tsx';
+import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
-import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, slugConfirmed } from '../lib/offboarding.ts';
+import { asRoleKey, inviteRoleChoices } from '../lib/member-roles.ts';
+import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, ownerRunFileComplete, slugConfirmed } from '../lib/offboarding.ts';
 
 interface MemberRow {
   userId: string;
@@ -257,7 +262,10 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
   const download = useMutation({
     mutationFn: async (part: string) => {
       const response = await apiFetch(`/api/org-export/${encodeURIComponent(part)}`);
-      const url = URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      // A staff or pay file is the owner's only copy: one that was cut short is refused, never saved as if it were whole.
+      if (state.data?.ownerRunTables.includes(part) && !ownerRunFileComplete(await blob.text())) throw new Error(t('errors.incomplete'));
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = exportFileName(slug, part);
@@ -267,7 +275,7 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
     },
   });
 
-  if (state.isLoading) return <Spinner />;
+  if (state.isLoading) return <CardSkeleton className="lg:col-span-2" />;
   if (state.error) return <ErrorText>{errorMessage(state.error)}</ErrorText>;
   const data = state.data;
   if (!data) return null;
@@ -321,6 +329,30 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
             ))}
           </ul>
           {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+        </div>
+      )}
+      {data.status === 'offboarding' && data.ownerRunTables.length > 0 && (
+        <div className="mt-3 space-y-2 text-sm">
+          <p className="text-foreground">{t('people')}</p>
+          <p className="text-subtle-foreground">{t('peopleNote')}</p>
+          <ul className="divide-y">
+            {data.ownerRunTables.map((table) => (
+              <li key={table} className="flex items-center justify-between gap-3 py-2">
+                <p className="min-w-0 truncate font-mono text-foreground">{table}</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={download.isPending}
+                  loading={download.isPending && download.variables === table}
+                  onClick={() => download.mutate(table)}
+                  aria-label={`${t('download')} ${table}`}
+                >
+                  {t('download')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {!(exported && downloadable) && download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
         </div>
       )}
       {data.status !== 'closed' && !confirming && (
@@ -425,15 +457,31 @@ function CreatedInvite({ invite, onDone }: { invite: { email: string; expiresAt:
 // `initialEmail`: the contact onboarding asked to invite (?invite=, issue #324). An owner of an org with more than one
 // legal entity may limit the invitee to some of them (#1447, the server's #1281): an outside accountant who keeps one
 // company's books. Such an invite is for a member or a viewer, never an admin.
-function InviteMember({ isOwner, initialEmail, entities }: { isOwner: boolean; initialEmail?: string | undefined; entities: LegalEntity[] }) {
+// An owner may also pick one department role (#2611): a preset of the role catalog, granted when the invite is accepted. It does
+// not go with the entity limit, which is its own preset (the outside accountant); an admin sees only that owners give it.
+function InviteMember({
+  isOwner,
+  initialEmail,
+  entities,
+  catalog,
+}: {
+  isOwner: boolean;
+  initialEmail?: string | undefined;
+  entities: LegalEntity[];
+  catalog: MemberRoles['roles'];
+}) {
   const root = useTranslations();
   const t = useTranslations('settings');
   const [email, setEmail] = useState(initialEmail ?? '');
   const [role, setRole] = useState<InviteRole>('member');
   const [scoped, setScoped] = useState(false);
+  const [departmentKey, setDepartmentKey] = useState('');
   const [entityIds, setEntityIds] = useState<string[]>([]);
   const [noEntity, setNoEntity] = useState(false);
   const canScope = isOwner && entities.length > 1;
+  const choices = inviteRoleChoices(catalog, role);
+  // A role that cannot go with the base role picked since (a viewer) is dropped.
+  const department = choices.find((r) => r.key === departmentKey);
   const scopeId = useId();
   // The email is checked on leaving the field and on submit, its error under the row (#1515); the server checks again.
   const emailId = `${scopeId}-email`;
@@ -443,6 +491,7 @@ function InviteMember({ isOwner, initialEmail, entities }: { isOwner: boolean; i
       onSuccess: () => {
         setEmail('');
         setScoped(false);
+        setDepartmentKey('');
         setEntityIds([]);
         void queryClient.invalidateQueries({ queryKey: orpc.org.listInvites.key() });
       },
@@ -458,7 +507,7 @@ function InviteMember({ isOwner, initialEmail, entities }: { isOwner: boolean; i
       focusFirstInvalid(event.currentTarget);
       return;
     }
-    invite.mutate(scoped ? { email, role, legalEntityIds: entityIds } : { email, role });
+    invite.mutate(scoped ? { email, role, legalEntityIds: entityIds } : department ? { email, role, roleKey: department.key } : { email, role });
   }
   const toggleEntity = (id: string, checked: boolean) => {
     setNoEntity(false);
@@ -495,11 +544,29 @@ function InviteMember({ isOwner, initialEmail, entities }: { isOwner: boolean; i
           </Button>
         </div>
         <FieldError id={emailId}>{fields.of('email')}</FieldError>
+        {catalog.length > 0 &&
+          (isOwner ? (
+            <div className="space-y-1">
+              <NativeSelect value={department?.key ?? ''} onChange={(e) => setDepartmentKey(e.target.value)} disabled={scoped} aria-label={t('inviteDepartment')}>
+                <NativeSelectOption value="">{t('inviteDepartmentNone')}</NativeSelectOption>
+                {choices.map((r) => (
+                  <NativeSelectOption key={r.key} value={r.key}>
+                    {root(`memberRoles.roles.${r.key}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${department.key}`)}</p>}
+              {scoped && <p className="text-xs text-subtle-foreground">{t('inviteDepartmentScoped')}</p>}
+            </div>
+          ) : (
+            <p className="text-xs text-subtle-foreground">{t('inviteDepartmentOwnerOnly')}</p>
+          ))}
         {canScope && (
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm text-foreground">
               <Checkbox
                 checked={scoped}
+                disabled={Boolean(department)}
                 onCheckedChange={(checked) => {
                   setScoped(checked);
                   setNoEntity(false);
@@ -540,7 +607,15 @@ function InviteMember({ isOwner, initialEmail, entities }: { isOwner: boolean; i
         <div className="mt-4">
           <StepUpPrompt
             enroll={false}
-            action={t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })}
+            action={
+              invite.variables?.roleKey
+                ? t('stepUpInviteRole', {
+                    email: invite.variables.email,
+                    role: root(`roles.${invite.variables.role}`),
+                    department: root(`memberRoles.roles.${invite.variables.roleKey}`),
+                  })
+                : t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })
+            }
             onVerified={() => invite.variables && invite.mutate(invite.variables)}
             onCancel={() => invite.reset()}
           />
@@ -566,7 +641,7 @@ function PendingInvites({ entities, entitiesLoading }: { entities: LegalEntity[]
       onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.org.listInvites.key() }),
     }),
   );
-  if (invites.isLoading) return <Spinner />;
+  if (invites.isLoading) return <RowsSkeleton rows={1} />;
   if (invites.error) return <ErrorText>{errorMessage(invites.error)}</ErrorText>;
   if (!invites.data?.length) return null;
   return (
@@ -581,6 +656,7 @@ function PendingInvites({ entities, entitiesLoading }: { entities: LegalEntity[]
                 {i.status === 'expired' ? t('expired') : t('expiresAt', { at: f.dateTime(i.expiresAt) })}
                 {i.invitedBy ? ` · ${t('invitedBy', { name: i.invitedBy })}` : ''}
               </p>
+              {i.roleKey && <p className="text-xs text-muted-foreground">{t('inviteDepartmentOf', { role: root(`memberRoles.roles.${asRoleKey(i.roleKey)}`) })}</p>}
               {i.legalEntityIds && i.legalEntityIds.length > 0 && (
                 <p className="text-xs text-muted-foreground">{t('inviteScopedTo', { entities: i.legalEntityIds.map(entityName).join(', ') })}</p>
               )}
@@ -631,8 +707,7 @@ function TaxCodeField({ taxCode, canManage }: { taxCode: string | null; canManag
       {editing ? (
         <form onSubmit={submit} aria-label={t('taxCode')} className="mt-1 flex flex-wrap items-center gap-2">
           <Input value={value} onChange={(e) => setValue(e.target.value)} maxLength={20} placeholder="0101234567" aria-label={t('taxCode')} className="w-48 font-mono" />
-          <Button type="submit" size="sm" disabled={save.isPending}>
-            {save.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={save.isPending} type="submit" size="sm">
             {t('taxCodeSave')}
           </Button>
           <Button type="button" size="sm" variant="outline" 
@@ -800,8 +875,7 @@ function TaxCalendarField({ canManage }: { canManage: boolean }) {
             </NativeSelect>
           </span>
           {canManage && draft && (
-            <Button size="sm" onClick={() => save.mutate(current)} disabled={save.isPending}>
-              {save.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={save.isPending} size="sm" onClick={() => save.mutate(current)}>
               {t('taxCalendarSave')}
             </Button>
           )}
@@ -933,8 +1007,7 @@ function AddressField({ address, canManage }: { address: string | null; canManag
       {editing ? (
         <form onSubmit={submit} aria-label={t('address')} className="mt-1 flex flex-wrap items-center gap-2">
           <Input value={value} onChange={(e) => setValue(e.target.value)} maxLength={500} aria-label={t('address')} className="min-w-64 flex-1" />
-          <Button type="submit" size="sm" disabled={save.isPending}>
-            {save.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={save.isPending} type="submit" size="sm">
             {t('addressSave')}
           </Button>
           <Button
@@ -991,8 +1064,7 @@ function ContactEmailField({ email, canManage }: { email: string | null; canMana
       {editing ? (
         <form onSubmit={submit} aria-label={t('contactEmail')} className="mt-1 flex flex-wrap items-center gap-2">
           <Input type="email" value={value} onChange={(e) => setValue(e.target.value)} maxLength={320} aria-label={t('contactEmail')} className="min-w-64 flex-1" />
-          <Button type="submit" size="sm" disabled={save.isPending}>
-            {save.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={save.isPending} type="submit" size="sm">
             {t('contactEmailSave')}
           </Button>
           <Button
@@ -1035,7 +1107,7 @@ export function SettingsPage() {
   const memberRoles = useQuery({ ...orpc.org.memberRoles.queryOptions(), enabled: managesMembers });
   const entities = useQuery({ ...orpc.legalEntities.list.queryOptions(), enabled: managesMembers });
 
-  if (org.isLoading) return <Spinner />;
+  if (org.isLoading) return <PageSkeleton body="cards" />;
   if (org.error) return <ErrorText>{errorMessage(org.error)}</ErrorText>;
   const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
   const isOwner = org.data?.role === 'owner';
@@ -1062,6 +1134,7 @@ export function SettingsPage() {
           )
         }
       />
+      {/* Sibling cards keyed by the org carry a key of their own: with one key shared, React loses a card when a slot before it renders nothing, and the old one stays in the page next to its new copy. */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="block p-4">
           <p className="text-sm font-medium text-muted-foreground">{t('org')}</p>
@@ -1076,15 +1149,15 @@ export function SettingsPage() {
             </div>
             {/* Keyed by org too: a value typed in one org must not stay in the form when the page shows another. */}
             {getConfig().modules.includes('finance') && (
-              <TaxCodeField key={`${org.data?.slug}:${org.data?.taxCode ?? ''}`} taxCode={org.data?.taxCode ?? null} canManage={canManage} />
+              <TaxCodeField key={`tax-code:${org.data?.slug}:${org.data?.taxCode ?? ''}`} taxCode={org.data?.taxCode ?? null} canManage={canManage} />
             )}
             {getConfig().modules.includes('finance') && <VatFilingPeriodField period={org.data?.vatFilingPeriod ?? null} canManage={canManage} />}
-            {getConfig().modules.includes('finance') && <TaxCalendarField key={org.data?.slug} canManage={canManage} />}
-            <AddressField key={`${org.data?.slug}:${org.data?.address ?? ''}`} address={org.data?.address ?? null} canManage={canManage} />
+            {getConfig().modules.includes('finance') && <TaxCalendarField key={`tax-calendar:${org.data?.slug}`} canManage={canManage} />}
+            <AddressField key={`address:${org.data?.slug}:${org.data?.address ?? ''}`} address={org.data?.address ?? null} canManage={canManage} />
             {getConfig().modules.includes('finance') && (
-              <ContactEmailField key={`${org.data?.slug}:${org.data?.contactEmail ?? ''}`} email={org.data?.contactEmail ?? null} canManage={canManage} />
+              <ContactEmailField key={`contact-email:${org.data?.slug}:${org.data?.contactEmail ?? ''}`} email={org.data?.contactEmail ?? null} canManage={canManage} />
             )}
-            {getConfig().modules.includes('finance') && <ProposalRemindersField key={org.data?.slug} canManage={canManage} />}
+            {getConfig().modules.includes('finance') && <ProposalRemindersField key={`proposal-reminders:${org.data?.slug}`} canManage={canManage} />}
             <div>
               <dt className="text-subtle-foreground">{t('inboundAddress')}</dt>
               <dd className="break-all font-mono text-foreground">{org.data?.inboundAddress ?? t('inboundOff')}</dd>
@@ -1145,31 +1218,37 @@ export function SettingsPage() {
           )}
           {canManage && (
             <>
-              <InviteMember isOwner={isOwner} initialEmail={search.invite} entities={entities.data ?? []} />
+              <InviteMember isOwner={isOwner} initialEmail={search.invite} entities={entities.data ?? []} catalog={memberRoles.data?.roles ?? []} />
               <PendingInvites entities={entities.data ?? []} entitiesLoading={entities.isLoading} />
             </>
           )}
         </Card>
         {/* Who approves the ledger's proposals (#1425), with the finance module; every member sees it, owners switch it. */}
         {getConfig().modules.includes('finance') && org.data && (
-          <ApprovalPresetCard key={`${org.data.slug}:${org.data.approvalPreset}`} preset={org.data.approvalPreset} isOwner={isOwner} />
+          <ApprovalPresetCard key={`approval-preset:${org.data.slug}:${org.data.approvalPreset}`} preset={org.data.approvalPreset} isOwner={isOwner} />
         )}
         {/* The member's own working hours and days off (#1313). */}
-        {org.data && <WorkingHoursCard key={org.data.slug} canEdit={org.data.role !== 'viewer'} />}
+        {org.data && <WorkingHoursCard key={`working-hours:${org.data.slug}`} canEdit={org.data.role !== 'viewer'} />}
         {/* The booking pages' event types (#1314), with the crm module. */}
         {getConfig().modules.includes('crm') && org.data && me.data && (
-          <EventTypesCard key={org.data.slug} members={org.data.members} me={me.data.userId} role={org.data.role} />
+          <EventTypesCard key={`event-types:${org.data.slug}`} members={org.data.members} me={me.data.userId} role={org.data.role} />
         )}
         {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
-        {getConfig().modules.includes('finance') && canManage && <LegalEntitiesCard key={org.data?.slug} />}
+        {getConfig().modules.includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
+        {/* The numbers of the bank accounts (#2183): how a statement file finds its account without a bank feed; owners and admins. */}
+        {getConfig().modules.includes('finance') && canManage && <BankAccountNumbersCard key={`bank-account-numbers:${org.data?.slug}`} canManage={canManage} />}
+        {/* Tích hợp (Integrations), with the finance module: the bank feed (ADR-0039, #2099) and the e-invoice provider (ADR-0044, #2501), each only where the deployment offers one or the org has one connected. */}
+        {getConfig().modules.includes('finance') && org.data && <IntegrationsSection key={`integrations:${org.data.slug}`} role={org.data.role} orgSlug={org.data.slug} />}
         {/* The chart of accounts belongs to the finance module (#319). */}
         {getConfig().modules.includes('finance') && <ChartOfAccountsCard canManage={canManage} />}
         {/* The MISA codes of stock purchases (#1398), for the goods purchase export. */}
-        {getConfig().modules.includes('finance') && <MisaGoodsCodesCard key={org.data?.slug} canManage={canManage} />}
+        {getConfig().modules.includes('finance') && <MisaGoodsCodesCard key={`misa-goods:${org.data?.slug}`} canManage={canManage} />}
         {/* The account rules learned from approvals, and keyword rules (#1399). */}
-        {getConfig().modules.includes('finance') && org.data && <AccountRulesCard key={org.data.slug} canManage={canManage} />}
+        {getConfig().modules.includes('finance') && org.data && <AccountRulesCard key={`account-rules:${org.data.slug}`} canManage={canManage} />}
+        {getConfig().modules.includes('finance') && org.data && <BankPartyRulesCard key={`bank-party-rules:${org.data.slug}`} canManage={canManage} />}
         <TwoFactorCard />
         {me.data && <MySessions userId={me.data.userId} />}
+        {getConfig().modules.includes('meetings') && <ExtensionDevices />}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}
       </div>
     </>

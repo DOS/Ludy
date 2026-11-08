@@ -3,6 +3,7 @@
 // is read: a proposal, a likely duplicate, or a failure. An archive becomes the documents it held, each followed the
 // same way. No React or API imports, so it is unit tested; the Inbox wires it up.
 import { MAX_BATCH_ENTRIES, MAX_BATCH_FILES, type ArchiveEntryReason, type BatchFile, type FileStatus } from '@crove/kernel-contract';
+import type { ProposalStatus } from './status.ts';
 
 // Files one batch may hold (files.batch answers for at most this many); a larger month goes in as ZIP archives.
 export const MAX_INTAKE_FILES = MAX_BATCH_FILES;
@@ -12,7 +13,8 @@ export const INTAKE_CONCURRENCY = 3;
 export const INTAKE_POLL_MS = 2000;
 
 const MAX_BYTES = 25 * 1024 * 1024;
-const EXTENSIONS = ['xml', 'pdf', 'jpg', 'jpeg', 'png', 'webp', 'zip'];
+// xlsx and csv: a bank statement (#2142); the server tells it from any other workbook or text by its content.
+const EXTENSIONS = ['xml', 'pdf', 'jpg', 'jpeg', 'png', 'webp', 'zip', 'xlsx', 'csv'];
 
 export type IntakeState =
   | 'queued'
@@ -25,6 +27,11 @@ export type IntakeState =
   | 'proposed'
   | 'duplicate'
   | 'failed'
+  // A bank statement read into bank lines (#2142).
+  | 'imported'
+  // A bank statement waiting for a member to import it, and one a member skipped.
+  | 'staged'
+  | 'dismissed'
   // An archive opened into its entries.
   | 'expanded'
   // An entry of an archive that was not filed; reason says why.
@@ -42,6 +49,10 @@ export interface IntakeItem {
   // Why the upload failed: an error the Inbox words when it renders (so a language switch rewords it).
   uploadError: unknown;
   reason: ArchiveEntryReason | null;
+  // A proposed file's proposal status (#2009): its chip shows a posted file apart from one still waiting.
+  proposalStatus: ProposalStatus | null;
+  // Its posting was voided by a reversal (#2032).
+  voided: boolean;
   archive: boolean;
   // The entries of an opened archive.
   entries: IntakeItem[];
@@ -59,7 +70,7 @@ export function precheck(file: { name: string; size: number }): 'ok' | 'too_larg
 }
 
 export function newItem(key: string, name: string): IntakeItem {
-  return { key, name, state: 'queued', fileId: null, existing: false, error: null, uploadError: null, reason: null, archive: isArchiveName(name), entries: [] };
+  return { key, name, state: 'queued', fileId: null, existing: false, error: null, uploadError: null, reason: null, proposalStatus: null, voided: false, archive: isArchiveName(name), entries: [] };
 }
 
 // The item once its upload answered: a new file is read next; a file the org already had is a duplicate.
@@ -79,6 +90,8 @@ function entryItem(parent: string, index: number, entry: NonNullable<BatchFile['
     error: entry.file?.error ?? null,
     uploadError: null,
     reason: entry.reason,
+    proposalStatus: entry.file?.proposalStatus ?? null,
+    voided: entry.file?.voided ?? false,
     archive: false,
     entries: [],
   };
@@ -102,13 +115,15 @@ export function applyBatch(items: readonly IntakeItem[], batch: readonly BatchFi
       ...item,
       state: fromStatus(file.status),
       error: file.error,
+      proposalStatus: file.proposalStatus,
+      voided: file.voided,
       archive: item.archive || file.status === 'expanded' || file.entries !== null,
       entries: (file.entries ?? []).map((entry, index) => entryItem(item.key, index, entry)),
     };
   });
 }
 
-const SETTLED: ReadonlySet<IntakeState> = new Set(['upload_failed', 'waiting', 'proposed', 'duplicate', 'failed', 'rejected']);
+const SETTLED: ReadonlySet<IntakeState> = new Set(['upload_failed', 'waiting', 'proposed', 'staged', 'imported', 'dismissed', 'duplicate', 'failed', 'rejected']);
 
 // The documents of the batch: an opened archive counts as the entries it held, anything else as itself.
 export function leaves(items: readonly IntakeItem[]): IntakeItem[] {
@@ -119,6 +134,7 @@ export interface IntakeSummary {
   total: number;
   settled: number;
   proposed: number;
+  imported: number;
   duplicate: number;
   failed: number;
 }
@@ -129,7 +145,9 @@ export function summarize(items: readonly IntakeItem[]): IntakeSummary {
   return {
     total: all.length,
     settled: all.filter((item) => SETTLED.has(item.state)).length,
-    proposed: count(['proposed']),
+    // A statement waiting for a member waits for a decision like a proposal does.
+    proposed: count(['proposed', 'staged']),
+    imported: count(['imported']),
     duplicate: count(['duplicate']),
     failed: count(['failed', 'upload_failed', 'rejected']),
   };
@@ -146,6 +164,30 @@ export function pendingIds(items: readonly IntakeItem[]): string[] {
     if (item.state === 'expanded') return leaves(item.entries).every((entry) => SETTLED.has(entry.state)) ? [] : [item.fileId];
     return item.state === 'processing' ? [item.fileId] : [];
   });
+}
+
+// Read files whose proposal is still to be decided (#2009): the intake list asks about them again, without polling, when
+// a proposal changes, so a chip that said "waiting" follows the approval or the rejection.
+const UNDECIDED: ReadonlySet<string> = new Set(['pending', 'approved']);
+
+export function undecidedIds(items: readonly IntakeItem[]): string[] {
+  return leaves(items).flatMap((item) => (item.fileId && item.state === 'proposed' && item.proposalStatus && UNDECIDED.has(item.proposalStatus) ? [item.fileId] : []));
+}
+
+const AFTER_READ: ReadonlySet<FileStatus['status']> = new Set(['proposed', 'duplicate', 'failed']);
+
+// What files.batch says now about the proposed items it answered for (an archive's entries included): the proposal's
+// status, and the file's own when a later read settled it otherwise (#2032), failed after the decision. An answer that
+// says the file is still being read never moves a settled item back: the item waits for the read's outcome.
+export function withProposalStatuses(items: readonly IntakeItem[], files: readonly FileStatus[]): IntakeItem[] {
+  const byId = new Map(files.map((file) => [file.id, file]));
+  const apply = (item: IntakeItem): IntakeItem => {
+    const file = item.fileId ? byId.get(item.fileId) : undefined;
+    const entries = item.entries.length > 0 ? item.entries.map(apply) : item.entries;
+    if (!file || item.state !== 'proposed' || !AFTER_READ.has(file.status)) return { ...item, entries };
+    return { ...item, state: fromStatus(file.status), error: file.error, proposalStatus: file.proposalStatus, voided: file.voided, entries };
+  };
+  return items.map(apply);
 }
 
 // Archives one files.batch call asks about: each holds at most 500 entries, so their entries always fit one answer.

@@ -53,11 +53,18 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   store: [],
   // The invoice reader of packages/agent.
   extractor: ['provider:ai'],
+  // The reply drafter of packages/agent (CV8, #2310): the model reads a conversation's text and writes a draft.
+  conversationWriter: ['provider:ai'],
+  // The campaign drafter of packages/agent (ads W1b, #2295): the model reads a Social post and the account's caps and writes
+  // a campaign plan, which the system context stores as a draft for a person to read, edit and submit.
+  adsCampaignWriter: ['provider:ai'],
   extract: [],
   inboundDomain: [],
   // Supabase Auth.
   revoker: [],
   instance: [],
+  // The build it records in its heartbeat (#1952): an id and a date, reaching nothing.
+  build: [],
   refusalTallyRetentionDays: [],
   agentPrograms: [],
   exportSealer: [],
@@ -67,7 +74,35 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   'channels.broker': [],
   'channels.publishers': ['publishers'],
   'channels.refreshers': ['provider:channel'],
+  // The bank feed adapters (ADR-0039, #2044): the offline sandbox reaches nothing; a real adapter is classified here,
+  // with its provider, before it is added.
+  'channels.bankFeeds': [],
+  // The ad platform adapters (ADR-0040, #2217, #2218): the offline sandbox reaches nothing, the Meta adapter reaches the
+  // Graph API host, and later adapters their own hosts, each bound to them by its allowlisted fetch, so the field is
+  // classified for what it can reach: the platforms of @crove/ad-platform.
+  'channels.adPlatforms': ['provider:ad_platform'],
+  // The revokers of the ad platforms (ADR-0043 point 4, #2296 W2-1): what the revoke worker may call, as a narrowed view of the writers of
+  // @crove/ad-platform that has `revokeToken` and nothing else (W2-4 adds the one call that pauses an object). Each is bound to its platform's host.
+  'channels.adRevokers': ['provider:ad_platform'],
+  // The writers of the ad platforms (#2296 W2-3): what the launch job may call to create and change campaigns, the writers of @crove/ad-platform
+  // (the sandbox's reaches nothing, the Meta one the Graph API host, to which its allowlisted fetch binds it). Only the launch job reaches the field.
+  'channels.adWriters': ['provider:ad_platform'],
+  // The pausers of the ad platforms (#2296 W2-4a): what the pause job may call to pause the objects of a stopped launch, a narrowed view of the writers of
+  // @crove/ad-platform that finds the objects that carry the launch's tag and pauses them, and nothing else (it cannot create, activate or revoke). Each is
+  // bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the pause job reaches the field.
+  'channels.adPausers': ['provider:ad_platform'],
+  // The activators of the ad platforms (#2296 W2-4b): what the activation job may call to set the objects of an approved launch to active, one object at a time, a
+  // frozen view of @crove/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
+  // cannot activate. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the activation job reaches the field.
+  'channels.adActivators': ['provider:ad_platform'],
+  // The e-invoice provider adapters (ADR-0044, #2502): the offline sandbox reaches nothing, and a real adapter its provider's own hosts, each bound to them by its
+  // allowlisted fetch, so the field is classified for what it can reach: the providers of @crove/einvoice. Only the issue job reaches the field.
+  'channels.einvoiceProviders': ['provider:einvoice'],
+  // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
+  'channels.calendars': ['provider:channel'],
   publicUrl: [],
+  // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
+  appUrl: [],
   brand: [],
   mail: ['provider:mail'],
   push: ['tenant_url'],

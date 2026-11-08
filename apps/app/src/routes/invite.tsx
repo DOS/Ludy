@@ -4,11 +4,12 @@ import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
-import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
+import { CardSkeleton, ErrorText, Logo, ScreenTitle } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { forgetInvite, pendingInvite } from '../lib/invite.ts';
+import { asRoleKey } from '../lib/member-roles.ts';
 import { LegalConsent } from '../components/legal-consent.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 
@@ -35,6 +36,7 @@ function Shell({ children }: { children: ReactNode }) {
 export function InvitePage() {
   const navigate = useNavigate();
   const t = useTranslations('invite');
+  const root = useTranslations();
   const tc = useTranslations('common');
   const f = useFormat();
   const token = pendingInvite();
@@ -58,6 +60,7 @@ export function InvitePage() {
   if (!token) {
     return (
       <Shell>
+        <ScreenTitle name={t('noInviteTitle')} />
         <h1 className="mt-6 text-lg font-semibold text-foreground">{t('noInviteTitle')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t('noInviteBody')}</p>
         <Button variant="outline" size="lg" className="mt-6" onClick={() => void navigate({ to: '/' })}>
@@ -70,7 +73,7 @@ export function InvitePage() {
   if (preview.isLoading) {
     return (
       <Shell>
-        <Spinner />
+        <CardSkeleton />
       </Shell>
     );
   }
@@ -79,6 +82,7 @@ export function InvitePage() {
     const mismatch = errorCode(preview.error) === 'INVITE_EMAIL_MISMATCH';
     return (
       <Shell>
+        <ScreenTitle name={t('openFailed')} />
         <h1 className="mt-6 text-lg font-semibold text-foreground">{t('openFailed')}</h1>
         <ErrorText>{errorMessage(preview.error)}</ErrorText>
         {mismatch && me.data && <p className="mt-2 text-sm text-muted-foreground">{t('signedInAs', { email: me.data.email })}</p>}
@@ -101,14 +105,23 @@ export function InvitePage() {
   if (!invite) return null;
   return (
     <Shell>
+      <ScreenTitle name={t('title', { org: invite.orgName })} />
       <h1 className="mt-6 text-lg font-semibold text-foreground">{t('title', { org: invite.orgName })}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        {t.rich('body', {
-          invitedBy: invite.invitedBy,
-          org: invite.orgName,
-          role: t(`role.${invite.role}`),
-          strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
-        })}
+        {invite.roleKey
+          ? t.rich('bodyWithDepartment', {
+              invitedBy: invite.invitedBy,
+              org: invite.orgName,
+              role: t(`role.${invite.role}`),
+              department: root(`memberRoles.roles.${asRoleKey(invite.roleKey)}`),
+              strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
+            })
+          : t.rich('body', {
+              invitedBy: invite.invitedBy,
+              org: invite.orgName,
+              role: t(`role.${invite.role}`),
+              strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
+            })}
       </p>
       <p className="mt-2 text-xs text-subtle-foreground">
         {t('expires', { at: f.dateTime(invite.expiresAt) })}{' '}

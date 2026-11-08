@@ -6,6 +6,11 @@ name: crove
 services:
   db:
     image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    # pg_stat_statements (#2175): the slowest queries, normalized (a SELECT or UPDATE keeps no value, only $1, $2), from
+    # `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` once per database; docs/runbooks/observability.md. Needs this
+    # preload and a restart to load. track_utility=off: a utility statement is kept as written, and `migrate` sets the
+    # role passwords with ALTER ROLE ... PASSWORD '<literal>', which would sit in the view and its stats file.
+    command: ['postgres', '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'pg_stat_statements.track_utility=off']
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-postgres-password}
@@ -46,8 +51,9 @@ services:
       API_EXTERNAL_URL: ${PUBLIC_URL:-http://localhost:8080}/auth/v1
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${AUTH_DB_PASSWORD:-local-auth-password}@db:5432/postgres?search_path=auth
-      GOTRUE_SITE_URL: ${PUBLIC_URL:-http://localhost:8080}
-      GOTRUE_URI_ALLOW_LIST: ${PUBLIC_URL:-http://localhost:8080}/**
+      # Where email links send people back: the web app (APP_URL, #2261), else the API's own origin.
+      GOTRUE_SITE_URL: ${APP_URL:-${PUBLIC_URL:-http://localhost:8080}}
+      GOTRUE_URI_ALLOW_LIST: ${APP_URL:-${PUBLIC_URL:-http://localhost:8080}}/**
       GOTRUE_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
       # 15 minutes, defense in depth (ADR-0028); revocation does not rely on it.
       GOTRUE_JWT_EXP: '900'
@@ -125,6 +131,10 @@ services:
       # Signs every user context the app enters (#1822, ADR-0028 section 9); the value migrate installed.
       CROVE_CONTEXT_TOKEN_KEY: ${CROVE_CONTEXT_TOKEN_KEY:-}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      # A web app served from another origin (#2261): where people open it, and the origins the API answers CORS for.
+      # Both empty (self-host): the app is served from PUBLIC_URL and no CORS header is sent.
+      APP_URL: ${APP_URL:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       AUTH_UPSTREAM_URL: http://auth:9999
       # Modules to run (ADR-0031); empty runs every module.
       CROVE_MODULES: ${CROVE_MODULES:-}
@@ -152,6 +162,10 @@ services:
       TAX_PORTAL_STEP_SECONDS: ${TAX_PORTAL_STEP_SECONDS:-90}
       INBOUND_DOMAIN: ${INBOUND_DOMAIN:-}
       INBOUND_SECRET: ${INBOUND_SECRET:-}
+      # During a rotation only: the value the mail worker may still send (docs/runbooks/secret-rotation.md, section 2).
+      INBOUND_SECRET_PREVIOUS: ${INBOUND_SECRET_PREVIOUS:-}
+      # Customer mail for the Inbox (see .env.example): the receiving server's name in Authentication-Results; empty verifies no sender.
+      INBOUND_AUTHSERV_ID: ${INBOUND_AUTHSERV_ID:-}
       # Invite mails go through the same SMTP server as Supabase Auth's (Mailpit at http://localhost:8025 locally).
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
@@ -197,12 +211,16 @@ services:
       ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
       # Per-org daily abuse limits (#675, see .env.example).
       ORG_LIMIT_INBOUND_EMAILS_PER_DAY: ${ORG_LIMIT_INBOUND_EMAILS_PER_DAY:-300}
+      ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY: ${ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY:-300}
       ORG_LIMIT_ATTACHMENT_MB_PER_DAY: ${ORG_LIMIT_ATTACHMENT_MB_PER_DAY:-1000}
       ORG_LIMIT_EXTRACTION_PAGES_PER_DAY: ${ORG_LIMIT_EXTRACTION_PAGES_PER_DAY:-1500}
       ORG_LIMIT_AI_COST_PER_DAY: ${ORG_LIMIT_AI_COST_PER_DAY:-20}
       AI_PRICE_INPUT_PER_MTOK: ${AI_PRICE_INPUT_PER_MTOK:-0}
       AI_PRICE_OUTPUT_PER_MTOK: ${AI_PRICE_OUTPUT_PER_MTOK:-0}
+      AI_DEFAULT_MONTHLY_BUDGET: ${AI_DEFAULT_MONTHLY_BUDGET:-}
       API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-600}
+      # The all-in-one role on a public PUBLIC_URL starts only with true (the pilot runs api and worker apart, #2118).
+      CROVE_ALLOW_ALL_IN_ONE: ${CROVE_ALLOW_ALL_IN_ONE:-}
       # Realtime invalidation over SSE (/api/stream): one LISTEN connection per API process (see .env.example).
       STREAM_MAX_CONNECTIONS: ${STREAM_MAX_CONNECTIONS:-500}
       STREAM_MAX_PER_USER: ${STREAM_MAX_PER_USER:-5}
@@ -230,21 +248,36 @@ services:
       ARCHIVE_LOCK_MODE: ${ARCHIVE_LOCK_MODE:-GOVERNANCE}
       ARCHIVE_RETENTION_DAYS: ${ARCHIVE_RETENTION_DAYS:-3650}
       ARCHIVE_LAG_SECONDS: ${ARCHIVE_LAG_SECONDS:-600}
+      ARCHIVE_RESTORE_ALERT_DAYS: ${ARCHIVE_RESTORE_ALERT_DAYS:-14}
       S3_VERSIONING: ${S3_VERSIONING:-required}
       # Retention holds on posted invoice files with STORAGE=s3 (#1009, docs/runbooks/evidence-holds.md); 0: none.
       EVIDENCE_LOCK_DAYS: ${EVIDENCE_LOCK_DAYS:-3650}
       S3_PRESIGNED_URLS: ${S3_PRESIGNED_URLS:-true}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       UPLOAD_COMPLETE_CONCURRENCY: ${UPLOAD_COMPLETE_CONCURRENCY:-4}
+      # JSON log lines with the request id and org id (#2175), and the database pool sizes of the API and the worker.
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      WORKER_DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-10}
+      EXPORT_CONCURRENCY: ${EXPORT_CONCURRENCY:-4}
       UPLOAD_BEGIN_LIMIT_PER_MINUTE: ${UPLOAD_BEGIN_LIMIT_PER_MINUTE:-20}
       # Every PDF, XML and MIME parse happens in crove-extract (External-tenant gate T12).
       EXTRACT_URL: http://crove-extract:8090
+      # Extract jobs the worker runs at once, and the sandbox's parser slots it never exceeds (#2119; set the same value on
+      # crove-extract below). Unset worker value: 4, or the slots if fewer. AI_MAX_RETRIES: times a failing AI call is sent again.
+      EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
+      EXTRACT_WORKER_CONCURRENCY: ${EXTRACT_WORKER_CONCURRENCY:-}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-1}
       # Seals channel tokens (ADR-0025). Set CREDENTIAL_KEY to bring your own; otherwise the container creates a key
       # file on the `keys` volume at first start. Back it up apart from the database (docs/runbooks/credential-key.md).
       CREDENTIAL_KEY: ${CREDENTIAL_KEY:-}
       CREDENTIAL_KEY_PREVIOUS: ${CREDENTIAL_KEY_PREVIOUS:-}
       CREDENTIAL_KEY_FILE: /data/keys/credential.key
       CHANNEL_SANDBOX: ${CHANNEL_SANDBOX:-true}
+      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-true}
+      BANK_FEED_SANDBOX: ${BANK_FEED_SANDBOX:-false}
+      ADS_SANDBOX: ${ADS_SANDBOX:-true}
+      BANK_FEED_SANDBOX_WEBHOOK_SECRET: ${BANK_FEED_SANDBOX_WEBHOOK_SECRET:-}
       CHANNEL_BLUESKY: ${CHANNEL_BLUESKY:-true}
       CHANNEL_TELEGRAM: ${CHANNEL_TELEGRAM:-true}
       CHANNEL_MASTODON: ${CHANNEL_MASTODON:-true}
@@ -252,8 +285,19 @@ services:
       CHANNEL_WORDPRESS: ${CHANNEL_WORDPRESS:-true}
       CHANNEL_META_APP_ID: ${CHANNEL_META_APP_ID:-}
       CHANNEL_META_APP_SECRET: ${CHANNEL_META_APP_SECRET:-}
+      CHANNEL_META_APP_SECRET_PREVIOUS: ${CHANNEL_META_APP_SECRET_PREVIOUS:-}
+      CHANNEL_META_WEBHOOK_VERIFY_TOKEN: ${CHANNEL_META_WEBHOOK_VERIFY_TOKEN:-}
+      CHANNEL_FACEBOOK_HISTORY: ${CHANNEL_FACEBOOK_HISTORY:-true}
+      CHANNEL_META_ADS_APP_ID: ${CHANNEL_META_ADS_APP_ID:-}
+      CHANNEL_META_ADS_APP_SECRET: ${CHANNEL_META_ADS_APP_SECRET:-}
+      CHANNEL_META_ADS_WRITE_APP_ID: ${CHANNEL_META_ADS_WRITE_APP_ID:-}
+      CHANNEL_META_ADS_WRITE_APP_SECRET: ${CHANNEL_META_ADS_WRITE_APP_SECRET:-}
       CHANNEL_ZALO_APP_ID: ${CHANNEL_ZALO_APP_ID:-}
       CHANNEL_ZALO_APP_SECRET: ${CHANNEL_ZALO_APP_SECRET:-}
+      CHANNEL_ZALO_OA_SECRET_KEY: ${CHANNEL_ZALO_OA_SECRET_KEY:-}
+      CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: ${CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS:-}
+      CHANNEL_ZALO_HISTORY: ${CHANNEL_ZALO_HISTORY:-false}
+      CHANNEL_ZALO_MEDIA_HOSTS: ${CHANNEL_ZALO_MEDIA_HOSTS:-}
       CHANNEL_THREADS_APP_ID: ${CHANNEL_THREADS_APP_ID:-}
       CHANNEL_THREADS_APP_SECRET: ${CHANNEL_THREADS_APP_SECRET:-}
       CHANNEL_LINKEDIN_CLIENT_ID: ${CHANNEL_LINKEDIN_CLIENT_ID:-}
@@ -264,6 +308,8 @@ services:
       CHANNEL_GOOGLE_CLIENT_ID: ${CHANNEL_GOOGLE_CLIENT_ID:-}
       CHANNEL_GOOGLE_CLIENT_SECRET: ${CHANNEL_GOOGLE_CLIENT_SECRET:-}
       CHANNEL_GOOGLE_BUSINESS: ${CHANNEL_GOOGLE_BUSINESS:-false}
+      CALENDAR_GOOGLE_CLIENT_ID: ${CALENDAR_GOOGLE_CLIENT_ID:-}
+      CALENDAR_GOOGLE_CLIENT_SECRET: ${CALENDAR_GOOGLE_CLIENT_SECRET:-}
       CHANNEL_TIKTOK_CLIENT_KEY: ${CHANNEL_TIKTOK_CLIENT_KEY:-}
       CHANNEL_TIKTOK_CLIENT_SECRET: ${CHANNEL_TIKTOK_CLIENT_SECRET:-}
       CHANNEL_TIKTOK_VIDEO_LIST: ${CHANNEL_TIKTOK_VIDEO_LIST:-false}
@@ -293,9 +339,12 @@ services:
       crove-extract:
         condition: service_healthy
 
-  # The parsing sandbox (plan §7.6). Bytes in, JSON out; only the worker calls it. No environment on purpose: it
-  # holds no credentials and refuses to start with any. Its only network is `extract`, which has no route out,
+  # The parsing sandbox (plan §7.6). Bytes in, JSON out; only the worker calls it. No credentials on purpose: it refuses
+  # to start with any variable but its own EXTRACT_* settings. Its only network is `extract`, which has no route out,
   # and no port is published. Each parse also runs in a short-lived process with no network permission.
+  # EXTRACT_CONCURRENCY parser slots (#2119, 1 to 8, default 4): the worker runs that many extract jobs at once. Memory,
+  # CPUs and processes are sized for four slots (a parser process is held to 768 MB resident, so 3 GB is the worst case; a
+  # PDF rarely uses a tenth of that); with more slots, raise them in compose.host.yml (docs/runbooks/extract-sizing.md).
   crove-extract:
     build:
       context: .
@@ -307,12 +356,44 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1g
-    memswap_limit: 1g
-    cpus: 1
-    pids_limit: 128
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: 2
+    pids_limit: 256
+    environment:
+      EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
     networks:
       - extract
+
+  # Media processing sandbox for AI Meeting Notes (plan §6, ADR-0047, #2577). Bytes in, normalized Opus and segments out;
+  # only the worker calls it. No credentials on purpose: it refuses to start with any variable outside its allowlist.
+  # Its only network is `media`, which has no route out, and no port is published.
+  # Profiles 'media': M4 wires the worker meetings job and the deploy image override; until then, deploy.sh ignores it.
+  crove-media:
+    profiles:
+      - media
+    build:
+      context: .
+      dockerfile: apps/media/Dockerfile
+    image: crove-media:local
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    volumes:
+      - media-scratch:/data/scratch
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 1
+    pids_limit: 128
+    environment:
+      MEDIA_CONCURRENCY: ${MEDIA_CONCURRENCY:-1}
+    networks:
+      - media
 
   # Health prober and alerts (plan §4.13), off by default: `docker compose --profile prober up -d`. Checks every
   # PROBER_INTERVAL_SECONDS and posts to ALERT_WEBHOOK_URL (stdout when unset). Test the path with
@@ -329,6 +410,8 @@ services:
     environment:
       PROBER_DATABASE_URL: postgres://crove_prober:${CROVE_PROBER_DB_PASSWORD:-local-prober-password}@db:5432/postgres
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      # JSON log lines, as for the API and the worker (#2175).
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ALERT_INSTANCE: ${ALERT_INSTANCE:-}
       ALERT_WEBHOOK_FORMAT: ${ALERT_WEBHOOK_FORMAT:-auto}
@@ -345,8 +428,41 @@ services:
       PROBER_MAX_DEAD_LETTERS: ${PROBER_MAX_DEAD_LETTERS:-0}
       # Unset: the probe interval plus 60 s, so each dead letter alerts once (twice at most).
       PROBER_DEAD_LETTER_WINDOW_SECONDS: ${PROBER_DEAD_LETTER_WINDOW_SECONDS:-}
+      # The modules the deployment runs, as for the API and the worker: their queued jobs count in job_age (#1894).
+      CROVE_MODULES: ${CROVE_MODULES:-}
+      # Supabase Auth through the kernel's /auth/v1 proxy, inside the Compose network (#1994). Auth hosted elsewhere:
+      # set PROBER_AUTH_URL to its /auth/v1 URL (and PUBLIC_AUTH_ANON_KEY for hosted Supabase). PROBER_AUTH_MISSES=0
+      # turns the check off.
+      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-http://crove:8080/auth/v1}
+      PUBLIC_AUTH_ANON_KEY: ${PUBLIC_AUTH_ANON_KEY:-}
+      PROBER_AUTH_MISSES: ${PROBER_AUTH_MISSES:-2}
+      PROBER_AUTH_TIMEOUT_SECONDS: ${PROBER_AUTH_TIMEOUT_SECONDS:-10}
+      # The WORM archive (#1997): its nightly verification and its lag; 0 turns either off.
+      PROBER_MAX_ARCHIVE_VERIFY_AGE_SECONDS: ${PROBER_MAX_ARCHIVE_VERIFY_AGE_SECONDS:-93600}
+      # Unset: the larger of 3600 and the archiver's ARCHIVE_LAG_SECONDS plus 900.
+      PROBER_MAX_ARCHIVE_LAG_SECONDS: ${PROBER_MAX_ARCHIVE_LAG_SECONDS:-}
+      # AI document readings that failed every attempt (#1998): more than this many in the window alert; 0 turns it off.
+      PROBER_MAX_EXTRACTION_FAILURES: ${PROBER_MAX_EXTRACTION_FAILURES:-2}
+      PROBER_EXTRACTION_WINDOW_SECONDS: ${PROBER_EXTRACTION_WINDOW_SECONDS:-3600}
+      ARCHIVE_LAG_SECONDS: ${ARCHIVE_LAG_SECONDS:-600}
+      # The verification heartbeat outside the database (#2082): the newest marker the nightly verification wrote to the
+      # worker's archive store, read from the store (the read-only `archive` volume, or the bucket); 0 turns it off.
+      PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS: ${PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS:-93600}
+      ARCHIVE_STORE: ${ARCHIVE_STORE:-local}
+      ARCHIVE_S3_BUCKET: ${ARCHIVE_S3_BUCKET:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      # A read-only key for the archive bucket (docs/runbooks/worm-archive.md), both or neither; with neither the check
+      # is refused unless PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true opts in to the SDK's default credential chain (an instance
+      # or task role that only reads). The prober is never given the worker's S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY:
+      # they read and write every tenant document.
+      PROBER_ARCHIVE_S3_ACCESS_KEY_ID: ${PROBER_ARCHIVE_S3_ACCESS_KEY_ID:-}
+      PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY: ${PROBER_ARCHIVE_S3_SECRET_ACCESS_KEY:-}
+      PROBER_ARCHIVE_S3_DEFAULT_CHAIN: ${PROBER_ARCHIVE_S3_DEFAULT_CHAIN:-}
     volumes:
       - status:/data/status
+      - archive:/data/archive:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -384,6 +500,8 @@ networks:
   # Internal: containers on it reach each other, never the internet.
   extract:
     internal: true
+  media:
+    internal: true
 
 volumes:
   db-data:
@@ -392,3 +510,4 @@ volumes:
   keys:
   # The prober's last result for the status page (#678): written by the prober, read by the API.
   status:
+  media-scratch:

@@ -9,7 +9,7 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { ConfirmDialog } from './confirm-dialog.tsx';
-import { ErrorText, fieldControl, fieldErrorId, Notice, Spinner } from './ui.tsx';
+import { CardSkeleton, ErrorText, fieldControl, fieldErrorId, Notice, Spinner } from './ui.tsx';
 
 interface Enrollment {
   factorId: string;
@@ -232,8 +232,7 @@ export function TwoFactorCard({ onEnabled }: { onEnabled?: () => void }) {
           ))
         ) : (
           factors.isSuccess && (
-            <Button disabled={busy} onClick={() => void start()}>
-              {busy ? <Spinner /> : null}
+            <Button loading={busy} onClick={() => void start()}>
               {t('enable')}
             </Button>
           )
@@ -263,7 +262,7 @@ export function StepUpPrompt({
   const root = useTranslations();
   const t = useTranslations('twoFactor.stepUp');
   const factors = useFactors();
-  if (factors.isLoading) return <Spinner />;
+  if (factors.isLoading) return <CardSkeleton className="max-w-sm" />;
   if (factors.error) return <ErrorText>{authErrorText(failureOf(factors.error), root)}</ErrorText>;
   const pending = <p className="text-sm text-muted-foreground">{t('pending', { action })}</p>;
   const cancel = onCancel && (

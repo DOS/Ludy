@@ -20,16 +20,15 @@ The queries in this runbook only read. The one write is the dead-letter retry in
 
 **Severity.** SEV1: users cannot sign in, or uploads and mail stop being processed, or data may have leaked. Tell the owner at once, whatever the hour. SEV2: one function is slow or degraded, or a few jobs failed. Tell the owner the same day. Every incident gets a short note in a GitHub issue afterwards: what broke, when, what fixed it.
 
-**The status page.** With `STATUS_FILE` set (README, "Monitoring and alerts"), users see `PUBLIC_URL/status`, which says for four functions whether they work. Each line comes from these prober checks, so a red line tells you which section to read:
+**The status page.** With `STATUS_FILE` set (README, "Monitoring and alerts"), users see `PUBLIC_URL/status`, which says for five functions whether they work. Each line comes from these prober checks, so a red line tells you which section to read:
 
 | Line on the page | Prober checks | Section |
 |---|---|---|
 | Cơ sở dữ liệu (database) | `probe` | 1, and [backup-and-restore.md](backup-and-restore.md) when the data is gone |
-| Xử lý chứng từ tải lên (uploaded documents) | `heartbeat`, `job_age`, `dead_letters`, `jobs_schema` | 1, 3 |
+| Xử lý chứng từ tải lên (uploaded documents) | `heartbeat`, `job_age`, `dead_letters`, `jobs_schema`, `extraction` | 1, 3, 6 |
 | Nhận hóa đơn qua email (invoices by email) | `inbound`, `heartbeat` | 2, 1 |
 | Cập nhật trực tiếp trên màn hình (live updates) | `outbox`, `notify_queue` | 2 |
-
-The page does not cover sign-in: when it loads, the API is up, and Supabase Auth has its own section (4).
+| Đăng nhập (signing in) | `auth` | 4 |
 
 ## 1. Stuck worker
 
@@ -38,7 +37,7 @@ The page does not cover sign-in: when it loads, the API is up, and Supabase Auth
 **Alert.** From the prober, one or both of:
 
 - `heartbeat`: `last worker heartbeat was N s ago (limit 120 s): the worker is down`, or `no worker heartbeat recorded: the worker has never started`. The worker records a heartbeat every 30 s (`crove_kernel.worker_heartbeat`); the limit is `PROBER_MAX_HEARTBEAT_AGE_SECONDS`.
-- `job_age`: `oldest queued job has waited N s (limit 900 s, M queued): workers are stuck or too few`. The limit is `PROBER_MAX_JOB_AGE_SECONDS`.
+- `job_age`: `oldest queued job has waited N s (limit 900 s, M queued): workers are stuck or too few`. The limit is `PROBER_MAX_JOB_AGE_SECONDS`. The queues of the modules the deployment runs always count: the prober's `CROVE_MODULES`, which must be the API's and the worker's value (compose passes the same one; unset means every module) (#1894). A module the deployment leaves out counts only while a worker of the last 7 days works it (#1877, #1887): it keeps its queued jobs for when it is installed again, and they do not raise this alert once the workers that ran it have stopped cleanly (a stopping worker records no modules). A worker that died without a clean stop keeps its modules counted for 7 days, so a dead replica's queues still raise this alert while other replicas keep beating. If such a worker is gone for good and its module was left out on purpose, the alert clears once its heartbeat row is 7 days old, or at once when the database owner deletes the row (`crove_kernel.worker_heartbeat`, by `instance`). So when the only replica that runs a module stops cleanly and its replacement never beats (it fails on start), that module's queued jobs still raise this alert, as long as the module is in the prober's `CROVE_MODULES`. While a worker of an older release is running, every queue counts.
 
 When the database cannot be read, the prober alerts `probe: the prober could not read crove_kernel.health(): ...` instead, and the heartbeat monitor pages once the pings stop: go to "The database" below.
 
@@ -127,7 +126,7 @@ Since #1720 a failed job of an org also shows in that org's Inbox, for its owner
 
 **Alert.** `dead_letters`: `N job(s) failed after their last retry in the last W s (limit 0): see the worker log`. The limit is `PROBER_MAX_DEAD_LETTERS` (default 0: every failed job alerts once); the window is `PROBER_DEAD_LETTER_WINDOW_SECONDS` (default: the probe interval plus 60 s).
 
-Some jobs never end up here, because they record their own failure instead: a document that could not be read is marked failed in the app with a message for the user (section 6), mail for an unknown address is dropped (`[inbound] ... dropped: <code>`), and a few jobs log an `ALERT` line only: `[signout] ALERT ... revoked in Crove only` and `[org-export] ALERT export of org ... failed after N attempts`. Search the log for `ALERT` too.
+Some jobs never end up here, because they record their own failure instead: a document that could not be read is marked failed in the app with a message for the user (section 6), mail for an unknown address is dropped (`[inbound] ... dropped: <code>`), and a few jobs end with an `ALERT` line instead: `[signout] ALERT ... revoked in Crove only`, `[org-export] ALERT export of org ... failed after N attempts`, `[year-archive] ALERT ...`. Since #1993 such a line also reaches the alert webhook (`ALERT_WEBHOOK_URL`), once an hour per kind and process, as do the retention, evidence-hold and integrity `ALERT` lines; without a webhook it is in the log only. Search the log for `ALERT` too.
 
 A failed `kernel-archive-write` or `kernel-archive-verify` job belongs to the WORM archive of audit events and journal entries. A `kernel-archive-verify` failure with `ARCHIVE_MISMATCH` in its error is a possible tampering, SEV1: follow [worm-archive.md](worm-archive.md), not the retry below.
 
@@ -161,7 +160,7 @@ The job's `name` says what failed and `output` holds the error.
 
 **Symptom.** Nobody can sign in, sign up or recover a password; the sign-in page answers "Dịch vụ đăng nhập không phản hồi" (the proxy's 503 `AUTH_UNAVAILABLE`). People already signed in keep working until their access token expires (at most 15 minutes in the compose stack, `GOTRUE_JWT_EXP=900`), because the token cannot be refreshed; then they are signed out. Approvals and other R3 actions need a fresh second factor, which needs Supabase Auth, so they fail too.
 
-**Alert.** No alert watches Supabase Auth directly yet. The deploy's smoke test checks it (`/auth/v1/health answers (Supabase Auth through the proxy)`), and the design partner usually notices first. A database outage also takes Auth down: check section 1, "The database".
+**Alert.** The prober asks Supabase Auth's `/health` on every probe, the way signing in reaches it (the kernel's `/auth/v1` proxy, or `PUBLIC_AUTH_URL` when Auth is hosted elsewhere), and pages after `PROBER_AUTH_MISSES` (default 2) failed answers in a row (one, on the first probe after the prober starts, so a restart during an outage keeps the alert open): `[Crove] ALERT ... Supabase Auth did not answer its health check 2 time(s) in a row (HTTP 503): nobody can sign in`, then `RESOLVED` once it answers again (#1994). The status page shows "Đăng nhập" as down. Under Compose the check goes through the API's `/auth/v1` proxy, so an `auth` alert with `connection failed` may also mean the API itself is down: look at the outside uptime check on `/healthz` (alerts.md, section 2). The deploy's smoke test checks it too (`/auth/v1/health answers (Supabase Auth through the proxy)`). A database outage also takes Auth down: check section 1, "The database".
 
 **Checks.**
 
@@ -221,7 +220,7 @@ Do it right after the key was revoked at the provider; until then a revoked key 
 
 **Symptom.** PDFs and photos are no longer read: after a few minutes the file shows "Không đọc được chứng từ sau nhiều lần thử; hãy kiểm tra cấu hình AI hoặc gửi tệp XML". E-invoice XML files keep working: they need no AI.
 
-**Alert.** None from the prober: the extraction job records the failure on the file and completes, so it is not a dead letter. The AI provider may email the account holder when credits run out.
+**Alert.** The prober counts the readings whose every attempt failed (the AI provider refused or did not answer, or the parser sandbox was down) and pages when more than `PROBER_MAX_EXTRACTION_FAILURES` (default 2) happen within `PROBER_EXTRACTION_WINDOW_SECONDS` (default 3600 s): `[Crove] ALERT ... 3 document reading(s) failed every attempt in the last 3600 s ...`, then `RESOLVED` once the failures in the window drop back to the limit (#1998). `RESOLVED` therefore means the old failures aged out of the window, not that the provider is back: with no uploads since, check the provider before closing the incident. With few uploads (no more than the limit in a window) an outage never pages: the uploaders are told on each failed file. A document that cannot be read (not an invoice, a scanned PDF, an unsupported format, AI switched off) or that the AI refuses itself (a request it rejects, such as an image over its size limit, or an answer that never fits the invoice) never pages: its uploader is told. The AI provider may also email the account holder when credits run out.
 
 **Checks.**
 
@@ -284,7 +283,7 @@ Every deployment switch is released after each test and after the file, pass or 
 | To stop | Setting |
 |---|---|
 | All AI calls | empty `AI_BASE_URL` and `AI_API_KEY` |
-| A module (for example Social) | `CROVE_MODULES` without it (the same value for the API and the worker) |
+| A module (for example Social) | `CROVE_MODULES` without it (the same value for the API, the worker and the prober) |
 | New accounts | `AUTH_DISABLE_SIGNUP=true` |
 | Posting to one platform | empty its `CHANNEL_*` credentials |
 | All background work | `docker compose stop crove` stops the whole app; in the split layout `docker compose stop worker` stops background work only |

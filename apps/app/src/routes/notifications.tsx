@@ -9,6 +9,7 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { TodayMailSetting } from '../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
@@ -32,12 +33,22 @@ function useLine() {
     return t(parts.kind === 'month' ? 'month' : 'quarter', { label: parts.label });
   };
   const f = useFormat();
+  // An owner's notice before a personal-data erasure (#1678): how many of my private items, in the finder's words.
+  const p = useTranslations('personalData');
+  const privateItems = (notes: number, todos: number) =>
+    [notes > 0 ? p('privateNotes', { count: notes }) : null, todos > 0 ? p('privateTodos', { count: todos }) : null].filter(Boolean).join(` ${p('and')} `);
   return (n: WorkNotification): string => {
     switch (n.kind) {
       case 'kernel.approval_waiting':
         return t('text.approval_waiting', { title: n.detail.title ?? '' });
+      case 'kernel.original_flagged':
+        return t(n.detail.differs === 'true' ? 'text.original_differs' : 'text.original_unverified', { title: n.detail.title ?? '' });
       case 'kernel.file_unreadable':
         return t('text.file_unreadable', { filename: n.detail.filename ?? '' });
+      case 'kernel.conversation_new':
+        return t('text.conversation_new');
+      case 'kernel.task_assigned':
+        return t('text.task_assigned', { title: n.detail.title ?? '' });
       case 'kernel.task_rerouted':
         return n.detail.count ? t('text.tasks_rerouted', { count: Number(n.detail.count) }) : t('text.task_rerouted', { title: n.detail.title ?? '' });
       case 'finance.bank_attention':
@@ -45,11 +56,17 @@ function useLine() {
       case 'finance.portal_attention':
         return n.detail.failed === 'true'
           ? t('text.portal_failed', { period: period(n.detail.period) })
-          : t('text.portal_attention', { period: period(n.detail.period), missing: Number(n.detail.missing ?? 0), mismatch: Number(n.detail.amountMismatch ?? 0) });
+          : t(n.detail.direction === 'sale' ? 'text.portal_attention_sale' : 'text.portal_attention', { period: period(n.detail.period), missing: Number(n.detail.missing ?? 0), mismatch: Number(n.detail.amountMismatch ?? 0) });
       case 'finance.period_closing':
         return t('text.period_closing', { period: period(n.detail.period), due: n.detail.dueDate ? f.date(n.detail.dueDate) : '' });
       case 'notes.todo_due':
         return t('text.todo_due');
+      case 'kernel.channel_expired':
+        return t('text.channel_expired');
+      case 'kernel.ai_budget':
+        return n.detail.level === 'stop' ? t('text.ai_budget_stop') : t('text.ai_budget_warn', { percent: n.detail.percent ?? '' });
+      case 'kernel.personal_data_notice':
+        return t('text.personal_data_notice', { items: privateItems(Number(n.detail.notes ?? 0), Number(n.detail.todos ?? 0)) });
       default:
         return t('text.other');
     }
@@ -102,11 +119,15 @@ export function NotificationsPage() {
     if (target?.to === 'proposal') void navigate({ to: '/o/$slug/inbox/$id', params: { slug, id: target.id } });
     else if (target?.to === 'inbox') void navigate({ to: '/o/$slug/inbox', params: { slug } });
     else if (target?.to === 'bank') void navigate({ to: '/o/$slug/bank', params: { slug }, search: target.account ? { account: target.account } : {} });
-    else if (target?.to === 'portal') void navigate({ to: '/o/$slug/portal-invoices', params: { slug } });
+    else if (target?.to === 'portal') void navigate({ to: '/o/$slug/portal-invoices', params: { slug }, search: { ...(target.sale ? { direction: 'sale' as const } : {}), ...(typeof n.detail.period === 'string' && n.detail.period ? { period: n.detail.period } : {}) } });
     else if (target?.to === 'ledger') void navigate({ to: '/o/$slug/ledger', params: { slug } });
     else if (target?.to === 'myWork') void navigate({ to: '/o/$slug/my-work', params: { slug } });
     else if (target?.to === 'task') void navigate({ to: '/o/$slug/tasks/$id', params: { slug, id: target.id } });
     else if (target?.to === 'tasks') void navigate({ to: '/o/$slug/tasks', params: { slug } });
+    else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
+    else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
+    else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
+    else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };
   // A kind this version of the app does not know (a newer module) is left out rather than shown blank.
   const items = (list.data?.items ?? []).filter((n) => isKnownKind(n.kind));
@@ -150,6 +171,8 @@ export function NotificationsPage() {
       )}
       {read.error && <ErrorText>{errorMessage(read.error)}</ErrorText>}
       {list.data && <Settings muted={list.data.muted} />}
+      {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). */}
+      <TodayMailSetting />
     </div>
   );
 }

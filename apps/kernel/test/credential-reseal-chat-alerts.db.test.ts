@@ -11,7 +11,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { CHAT_ALERT_PROVIDER, socialCommands, socialQueries, type SealedChatAlert } from '@crove/mod-social';
-import { resealCredentials } from '../src/credential-reseal.ts';
+import { resealCredentials, unopenableKeysLog } from '../src/credential-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -130,6 +130,69 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toMatchObject({ alert_id: usable, from_key_id: keyA.id, key_id: keyB.id });
     expect(JSON.stringify(audits)).not.toContain(BOT_TOKEN.split(':')[1]);
+  });
+
+  it('counts the targets under the old key with the Social module left out, apart, and reseals them once it is on (#1878)', async () => {
+    // A worker of a deployment that leaves Social out: the tables stay (ADR-0031), its commands do not.
+    const kernelOnly = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
+    expect(kernelOnly.installed('social')).toBe(false);
+    const c = await org();
+    const waiting = await save(c.orgId, c.owner, '-4012345680');
+    expect(await keyOf(waiting)).toBe(keyA.id);
+    // Not resealed, not lost from the counts and not counted twice: it keeps the previous key from being retired. (The
+    // case above left nothing under the old key.)
+    expect(await resealCredentials({ runtime: kernelOnly, broker: rotated, workerDb })).toEqual({
+      resealed: 0,
+      failed: 0,
+      leftActive: 0,
+      leftInactive: 0,
+      leftWaiting: 1,
+      unopenable: [],
+      skipped: false,
+    });
+    expect(await keyOf(waiting)).toBe(keyA.id);
+    // The previous key retired too early (#1888): the waiting target is reported under its key id, as waiting, and logs
+    // a warning (nothing clears it before Social is on again); with Social on it is in use, and logs an error.
+    const waitingOnly = (await resealCredentials({ runtime: kernelOnly, broker: onlyB, workerDb })).unopenable;
+    expect(waitingOnly).toEqual([{ keyId: keyA.id, active: 0, waiting: 1 }]);
+    expect(unopenableKeysLog(waitingOnly)).toEqual([
+      {
+        level: 'warn',
+        line:
+          `[credential-reseal] team chat alerts waiting for the Social module are sealed under a key this worker cannot open: ${keyA.id} (1). ` +
+          'Set that key again as CREDENTIAL_KEY_PREVIOUS, or save each team chat again once Social is on (docs/runbooks/credential-key.md)',
+      },
+    ]);
+    const inUse = await resealCredentials({ runtime: worker, broker: onlyB, workerDb });
+    expect(inUse).toMatchObject({ resealed: 0, failed: 1, unopenable: [{ keyId: keyA.id, active: 1, waiting: 0 }] });
+    expect(unopenableKeysLog(inUse.unopenable).map((l) => l.level)).toEqual(['error']);
+    expect(await keyOf(waiting)).toBe(keyA.id);
+    // Social on again: the next pass reseals it, and nothing is left.
+    expect(await resealCredentials({ runtime: worker, broker: rotated, workerDb })).toEqual({
+      resealed: 1,
+      failed: 0,
+      leftActive: 0,
+      leftInactive: 0,
+      leftWaiting: 0,
+      unopenable: [],
+      skipped: false,
+    });
+    expect(await keyOf(waiting)).toBe(keyB.id);
+  });
+
+  it('reseals the targets of an org being offboarded too, as it counts them (#1889)', async () => {
+    const d = await org();
+    const target = await save(d.orgId, d.owner, '-4012345681');
+    // Moved as staff, without the triggers (the move's own audit check is kernel.org.offboard's).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [d.orgId]);
+      await c.query('COMMIT');
+    });
+    const done = await resealCredentials({ runtime: worker, broker: rotated, workerDb });
+    expect(await keyOf(target)).toBe(keyB.id);
+    expect(done).toMatchObject({ failed: 0, leftActive: 0, leftWaiting: 0 });
   });
 
   it('changes nothing when the envelope moved on since it was read, and is the worker alone', async () => {

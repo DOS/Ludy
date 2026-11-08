@@ -12,6 +12,14 @@ import { dirname, join, resolve, sep } from 'node:path';
 // created or found, and every file row keeps the triple (key, generation, sha256). Reads go through readVerified,
 // which asks the store for that exact generation and refuses bytes whose sha256 differs, so an object swapped
 // after approval is never served or read as the original.
+// A byte range [start, end] is two non-negative safe integers in order; anything else is a programming error, refused before
+// the store is touched (a negative start would read from the file position, not the start).
+export function assertRange(start: number, end: number): void {
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+    throw new RangeError('invalid byte range');
+  }
+}
+
 export interface BlobStore {
   // An org key must end in the sha256 of the bytes (a content address); any other key is refused.
   // Writes are create-only: a key that already holds the same bytes is accepted (a re-upload dedupes), and a key
@@ -21,13 +29,20 @@ export interface BlobStore {
   // Throws BlobNotFoundError when nothing is stored under the key. With a versioned generation (s3:, gcs:) the store
   // reads that exact version; content: and null read the current object. Callers that hold a file reference use
   // readVerified, which also checks the sha256. With maxBytes the store refuses a larger object (BlobTooLargeError)
-  // without reading more than that; a store that ignores it is checked by readVerified after the read.
+  // without reading more than that; a store that ignores it is checked by readVerified after the read. A maxBytes that
+  // is not a whole number of bytes (assertReadCap) is refused with a RangeError before anything is read (#1189).
   get(key: string, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
+  // Reads a byte slice [start, end] (inclusive) of the blob.
+  getRange?(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
   // Removes the blob; a missing key is not an error.
   delete(key: string): Promise<void>;
   // Present when browsers transfer bytes to and from the store directly (S3 presigned URLs); absent for local
   // disk, where uploads and downloads stream through the kernel.
   direct?: DirectTransfers | undefined;
+  // Present when the store can sign a download for a platform that takes media by URL (Zalo OA, Instagram, Threads;
+  // issue #2192). Independent of `direct`: it exists with S3_PRESIGNED_URLS=false too (Cloudflare R2), because it signs
+  // reads only and never lets a browser write. Absent for local disk and for GCS.
+  fetchUrls?: FetchUrls | undefined;
   // Deletes staging/ objects last modified before `before` (abandoned presigned uploads), looking at no more than
   // `limit` keys per call. For stores without a lifecycle rule on staging/; the worker's daily retention job calls
   // it. Absent where no staging objects exist (local disk).
@@ -104,6 +119,17 @@ export interface DirectTransfers {
   readStaged(stagingKey: string, maxBytes: number): Promise<{ bytes: Uint8Array; sha256: string }>;
 }
 
+// A short-lived read-only URL that a platform fetches an org file from, right after the call that names it.
+export interface FetchUrls {
+  // A GET for the exact bytes the reference records, valid DOWNLOAD_TTL_SECONDS, as an attachment. Only org/ files. A
+  // reference pinned to an object version is signed for that version. One that cannot be pinned (S3_VERSIONING=off, a
+  // content: generation, a row from before ADR-0013) is first read through sha256 and signed only when the bytes are
+  // the recorded ones (BlobIntegrityError otherwise), so an object swapped after approval is never handed out; what
+  // remains is the signing window itself. `signal` ends the check early (the caller's own deadline); the store has one
+  // of its own as well.
+  presign(ref: BlobRef, file: { filename: string; contentType: string }, signal?: AbortSignal): Promise<string>;
+}
+
 // Presigned uploads live 5 minutes (plan §7.6); presigned downloads 60 seconds.
 export const UPLOAD_TTL_SECONDS = 300;
 export const DOWNLOAD_TTL_SECONDS = 60;
@@ -161,11 +187,18 @@ export async function putFile(store: BlobStore, key: string, bytes: Uint8Array, 
 // maxBytes (#1126): the size the row records, or a caller's cap. A swapped object larger than that is refused
 // (BlobTooLargeError) before it is read whole, rather than read in full and then refused by its hash.
 export async function readVerified(store: BlobStore, ref: BlobRef, maxBytes?: number): Promise<Uint8Array> {
-  if (maxBytes !== undefined && !(Number.isSafeInteger(maxBytes) && maxBytes >= 0)) throw new Error('invalid read cap');
+  assertReadCap(maxBytes);
   const bytes = await store.get(ref.key, ref.generation, maxBytes);
   if (maxBytes !== undefined && bytes.byteLength > maxBytes) throw new BlobTooLargeError(ref.key, maxBytes);
   if (sha256Hex(bytes) !== ref.sha256) throw new BlobIntegrityError(ref);
   return bytes;
+}
+
+// A read cap is a whole number of bytes, 0 or more; undefined reads uncapped. Each store checks it as well as
+// readVerified (#1189): a NaN, negative, fractional or infinite cap compares false against every size, so a store
+// that took it would read the object whole. Fails closed, before anything is read.
+export function assertReadCap(maxBytes: number | undefined): void {
+  if (maxBytes !== undefined && !(Number.isSafeInteger(maxBytes) && maxBytes >= 0)) throw new RangeError('invalid read cap');
 }
 
 export function sha256Hex(bytes: Uint8Array | string): string {
@@ -186,6 +219,17 @@ export function exportKey(orgId: string, sha256: string): string {
 // prefix per org and year. Never listed and never deleted by Crove: the package is kept for the legal retention period.
 export function archiveKey(orgId: string, year: number, sha256: string): string {
   return `archive/${orgId}/${year}/${sha256}`;
+}
+
+// A customer's image in a conversation (issue #2357): bound to one message, so under a random id of its own and never a content
+// address (the same bytes sent by two customers are two blobs, and deleting one message's image never touches another's). The row
+// that names it is crove_kernel.conversation_attachment; its blob is deleted by the worker when that row goes.
+export function conversationKey(orgId: string, blobId: string): string {
+  return `conversation/${orgId}/${blobId}`;
+}
+
+export function newConversationBlobId(): string {
+  return randomBytes(32).toString('hex');
 }
 
 // Raw inbound email, stored by the API before any org is known, under a random id per delivery so the
@@ -212,7 +256,7 @@ export function isStagingKey(key: string): boolean {
   return /^staging\/[0-9a-f]{64}$/.test(key);
 }
 
-const KEY_PATTERN = /^(?:(?:org|export)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
+const KEY_PATTERN = /^(?:(?:org|export|conversation)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
 // The keys a listing of each sweepable prefix returns.
 const LISTED_KEY: Record<ListPrefix, RegExp> = {
   'inbound/': /^inbound\/[0-9a-f]{64}$/,
@@ -220,7 +264,7 @@ const LISTED_KEY: Record<ListPrefix, RegExp> = {
 };
 
 // Every store accepts the same keys: org/<org_id>/<sha256> (plan §7.6), export/<org_id>/<sha256>,
-// archive/<org_id>/<year>/<sha256>, inbound/<random id> and staging/<random id>.
+// archive/<org_id>/<year>/<sha256>, conversation/<org_id>/<random id>, inbound/<random id> and staging/<random id>.
 export function assertStorageKey(key: string): void {
   if (!KEY_PATTERN.test(key)) throw new Error('invalid storage key');
 }
@@ -408,12 +452,12 @@ export class LocalDiskStore implements BlobStore {
   }
 
   // Removes temporary files that a crashed put left behind, once they are older than maxAgeMs. It looks only where
-  // put writes (inbound/, org/<org_id>/ and export/<org_id>/) and only at the names put gives its temporary files,
+  // put writes (inbound/, org/<org_id>/, export/<org_id>/ and conversation/<org_id>/) and only at the names put gives its temporary files,
   // so it never touches a blob. Returns how many it removed. Called once at startup.
   async sweepTempFiles(maxAgeMs: number = STALE_TEMP_AGE_MS): Promise<number> {
     const cutoff = Date.now() - maxAgeMs;
     const dirs = [join(this.root, 'inbound')];
-    for (const top of ['org', 'export']) {
+    for (const top of ['org', 'export', 'conversation']) {
       for (const org of await entries(join(this.root, top))) {
         if (org.isDirectory() && UUID_DIR.test(org.name)) dirs.push(join(this.root, top, org.name));
       }
@@ -438,6 +482,7 @@ export class LocalDiskStore implements BlobStore {
   // One copy per key (see put), so the generation selects nothing; readVerified checks the bytes. With maxBytes, a
   // larger file is refused by its size before it is read (a blob is never rewritten in place, see put).
   async get(key: string, _generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
+    assertReadCap(maxBytes);
     const target = this.path(key);
     try {
       if (maxBytes === undefined) return new Uint8Array(await readFile(target));
@@ -449,6 +494,31 @@ export class LocalDiskStore implements BlobStore {
         await handle.close();
       }
     } catch (error) {
+      if (errorCode(error) === 'ENOENT') throw new BlobNotFoundError(key);
+      throw error;
+    }
+  }
+
+  async getRange(key: string, start: number, end: number, _generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
+    assertStorageKey(key);
+    assertReadCap(maxBytes);
+    assertRange(start, end);
+    const length = end - start + 1;
+    if (maxBytes !== undefined && length > maxBytes) {
+      throw new BlobTooLargeError(key, maxBytes);
+    }
+    const target = this.path(key);
+    try {
+      const handle = await open(target, 'r');
+      try {
+        const buf = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buf, 0, length, start);
+        return new Uint8Array(buf.subarray(0, bytesRead));
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      if (error instanceof BlobTooLargeError) throw error;
       if (errorCode(error) === 'ENOENT') throw new BlobNotFoundError(key);
       throw error;
     }

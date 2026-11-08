@@ -487,8 +487,19 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     const check = await runtime.query<{ warnings: string[] }>('finance.statements.htkk_check', { year: 2025, legalEntityId: hue }, as(member));
     expect(check.warnings).not.toContain('YEAR_NOT_CLOSED');
     expect((await runtime.query<{ warnings: string[] }>('finance.statements.htkk_check', { year: 2025 }, as(member))).warnings).toContain('YEAR_NOT_CLOSED');
-    const statements = await runtime.query<{ b02: { lines: unknown[] } }>('finance.statements.period', { period: '2025', legalEntityId: hue }, as(member));
+    const statements = await runtime.query<{ b02: { lines: Array<{ code: string; amount: string }> } }>('finance.statements.period', { period: '2025', legalEntityId: hue }, as(member));
     expect(statements.b02.lines.length).toBeGreaterThan(0);
+    // The comparison columns read the entity named (#2090): Huế's 2025 is its previous year and its start of year, and the
+    // default entity, which booked nothing in 2025, compares against zeros.
+    type Compared = { comparison: { startOfYear: { amounts: Record<string, string> } | null; lastYear: { amounts: Record<string, string> } | null } };
+    const next = await runtime.query<Compared>('finance.statements.period', { period: '2026', legalEntityId: hue }, as(member));
+    expect(next.comparison.lastYear?.amounts).toEqual(Object.fromEntries(statements.b02.lines.map((l) => [l.code, l.amount])));
+    expect(Object.values(next.comparison.lastYear?.amounts ?? {}).some((amount) => amount !== '0')).toBe(true);
+    // Cash B01 reads: the 900,000 the voucher debited on 1111 is still there at the end of 2025.
+    expect(next.comparison.startOfYear?.amounts['110']).toBe('900000');
+    const other = await runtime.query<Compared>('finance.statements.period', { period: '2026' }, as(member));
+    expect(Object.keys(other.comparison.lastYear?.amounts ?? {}).length).toBeGreaterThan(0);
+    expect(Object.values(other.comparison.lastYear?.amounts ?? {}).every((amount) => amount === '0')).toBe(true);
   });
 
   it('exports the books of the entity named, and records it', async () => {
@@ -505,5 +516,84 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     expect(audit).toMatchObject({ legal_entity_id: branch, entries: 6 });
     expect((await download(`/api/export/ledger.xlsx?period=2026-10&legalEntityId=${randomUUID()}`)).status).toBe(403);
     expect((await download('/api/export/fixed-assets.xlsx')).status).toBe(200);
+  });
+
+  it('shows a proposal under the same legal entity in the Inbox list and on its own screen, read from the same kinds (#1625)', async () => {
+    // Proposals written by the database owner, each kept in the default entity, whose payloads name another entity.
+    const insert = (kind: string, command: string, named: unknown) =>
+      admin(async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, legal_entity_id)
+             VALUES ($1, $2, $3, 'Đề xuất', $4::jsonb, ARRAY[$5::uuid], '[]', $6) RETURNING id`,
+            [org.orgId, kind, command, JSON.stringify({ legalEntityId: named }), owner.userId, defaultEntity],
+          )
+        ).rows[0]?.id as string,
+      );
+    const shown = async (id: string) => ({
+      list: await listedEntityOf(id),
+      get: (await runtime.query<{ legalEntityId: string | null }>('kernel.inbox.get', { id }, as(owner))).legalEntityId,
+    });
+    // A kind whose revision names no entity: its payload's key is not read, by either.
+    const reversal = await insert('finance.journal_reversal', 'finance.journal.reverse', branch);
+    expect(await shown(reversal)).toEqual({ list: defaultEntity, get: defaultEntity });
+    // A kind that names one: the revision's entity, by both; a value that is no id falls back to the proposal's own.
+    const voucher = await insert('finance.cash_voucher', 'finance.voucher.record', hue.toUpperCase());
+    expect(await shown(voucher)).toEqual({ list: hue, get: hue });
+    const malformed = await insert('finance.cash_voucher', 'finance.voucher.record', 'không phải mã');
+    expect(await shown(malformed)).toEqual({ list: defaultEntity, get: defaultEntity });
+  });
+
+  it("lists a customer's receivable on 131 per legal entity, and a scoped member only in its own (#1534)", async () => {
+    const customer = await admin(
+      async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách Hai Sổ') RETURNING id`, [org.orgId])).rows[0]?.id as string,
+    );
+    // A sale on credit in each entity's books, posted and committed as the owner.
+    const owe = async (entity: string, amount: string) => {
+      const c = new pg.Client({ connectionString: appUrl });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query(`SELECT crove_finance.post_journal_entry('2026-10-15'::date, 'bán chịu', 'test.sale', $1::uuid, $2::jsonb, NULL, 1, $3::uuid)`, [
+          randomUUID(),
+          JSON.stringify([
+            { line_no: 1, account_code: '131', debit: amount, credit: '0', party_id: customer },
+            { line_no: 2, account_code: '5111', debit: '0', credit: amount },
+          ]),
+          entity,
+        ]);
+        await c.query('COMMIT');
+      } finally {
+        await c.end();
+      }
+    };
+    await owe(defaultEntity, '500000');
+    await owe(branch, '200000');
+    type Page = { items: Array<{ id: string; receivable: string }> };
+    const receivable = async (who: { actor: ReturnType<typeof asUser>; orgId: string }, legalEntityId?: string) =>
+      (await runtime.query<Page>('finance.customers.list', { q: 'khách hai sổ', ...(legalEntityId ? { legalEntityId } : {}) }, who)).items.find((i) => i.id === customer)?.receivable ?? null;
+    // The owner: the default entity's books unless another is named; the third entity has none of it.
+    expect(await receivable(as(owner))).toBe('500000');
+    expect(await receivable(as(owner), defaultEntity)).toBe('500000');
+    expect(await receivable(as(owner), branch)).toBe('200000');
+    expect(await receivable(as(owner), hue)).toBeNull();
+    // A member limited to the branch: its books by default, never the default entity's, whatever it names.
+    const branchOnly = await upsertIdentity(createDb(pool), { issuer: 'le-areas', subject: randomUUID(), email: 'branch-only@le-areas.test', name: null });
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [org.orgId, branchOnly]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        org.orgId,
+        branchOnly,
+        branch,
+        owner.userId,
+      ]);
+    });
+    const limited = { actor: asUser(branchOnly), orgId: org.orgId };
+    expect(await receivable(limited)).toBe('200000');
+    expect(await receivable(limited, branch)).toBe('200000');
+    for (const other of [defaultEntity, hue, randomUUID()]) {
+      await expect(runtime.query('finance.customers.list', { legalEntityId: other }, limited)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED', status: 403 });
+    }
   });
 });

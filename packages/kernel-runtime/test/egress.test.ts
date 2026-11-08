@@ -119,6 +119,24 @@ describe('guardedFetch', () => {
     expect(await code(guardedFetch('http://[::1]/', { timeoutMs: 2000, maxBytes: 1024, overLimit: 'truncate' }))).toBe('blocked');
   });
 
+  it('asks the host allowlist for the first host and for every redirect, before anything is resolved or sent', async () => {
+    const asked: string[] = [];
+    // Allowed: the page and its redirect to the same host.
+    expect((await guardedFetch(`${base}/redirect`, opts({ hostAllowed: (h) => (asked.push(h), h === '127.0.0.1') }))).status).toBe(200);
+    expect(asked).toEqual(['127.0.0.1', '127.0.0.1']);
+    // Not allowed: refused as blocked, by name too, with no resolver call.
+    let resolved = 0;
+    const resolve = async () => (resolved++, [{ address: '127.0.0.1', family: 4 }]);
+    expect(await code(guardedFetch(`${base}/page`, opts({ hostAllowed: () => false })))).toBe('blocked');
+    expect(await code(guardedFetch('http://elsewhere.example/', opts({ hostAllowed: (h) => h === '127.0.0.1', resolve })))).toBe('blocked');
+    expect(resolved).toBe(0);
+  });
+
+  it('refuses plain http when only https is allowed, on the first request and on a redirect', async () => {
+    expect(await code(guardedFetch(`${base}/page`, opts({ httpsOnly: true })))).toBe('invalid_url');
+    expect((await guardedFetch(`${base}/page`, opts({ httpsOnly: false }))).status).toBe(200);
+  });
+
   it('checks every redirect: inside addresses, metadata and other schemes are refused', async () => {
     expect(await code(guardedFetch(`${base}/inside`, opts()))).toBe('blocked');
     expect(await code(guardedFetch(`${base}/metadata`, opts()))).toBe('blocked');

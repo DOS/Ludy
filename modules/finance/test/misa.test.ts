@@ -2,6 +2,8 @@ import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { money, sum } from '@crove/l10n-vn';
 import {
+  MISA_SME_BANK_CREDIT,
+  MISA_SME_BANK_DEBIT,
   MISA_SME_CASH_PAYMENT,
   MISA_SME_CASH_RECEIPT,
   MISA_SME_PURCHASE_GOODS,
@@ -10,6 +12,7 @@ import {
   allocateVat,
   buildMisaWorkbook,
   cashRows,
+  cashVoucherNo,
   goodsPurchaseRows,
   misaVatRate,
   misaVoucherNo,
@@ -703,6 +706,7 @@ function cashVoucher(overrides: Partial<CashVoucher> = {}): CashVoucher {
   return {
     type: 'cash_payment',
     code: 'PC00012',
+    numberPeriod: '2026',
     date: '2026-10-07',
     cashAccount: '1111',
     party: { name: 'Công ty TNHH ABC', taxCode: '0101234564', address: '1 Láng Hạ, Hà Nội' },
@@ -730,14 +734,14 @@ describe('MISA SME cash vouchers (#657)', () => {
 
   it('writes a phiếu chi as one row per line: Dr the line, Cr the cash account, under one voucher number', async () => {
     const rows = cashRows(cashVoucher());
-    expect(rows.map((r) => r.voucherNo)).toEqual(['CRPC00012', 'CRPC00012']);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRPC202600012', 'CRPC202600012']);
     const sheet = await readBack(MISA_SME_CASH_PAYMENT, rows);
     expect(sheet.rowCount).toBe(3);
     expect(rowValues(sheet, 2, PAYMENT_HEADERS)).toMatchObject({
       'Hiển thị trên sổ': null,
       'Ngày hạch toán (*)': new Date(Date.UTC(2026, 9, 7)),
       'Ngày chứng từ (*)': new Date(Date.UTC(2026, 9, 7)),
-      'Số chứng từ (*)': 'CRPC00012',
+      'Số chứng từ (*)': 'CRPC202600012',
       'Mã đối tượng': null,
       'Tên đối tượng': 'Công ty TNHH ABC',
       'Địa chỉ': '1 Láng Hạ, Hà Nội',
@@ -754,7 +758,7 @@ describe('MISA SME cash vouchers (#657)', () => {
       'Mã số thuế nhà cung cấp': null,
     });
     // A line without its own memo takes the voucher's reason; fractional amounts stay exact.
-    expect(rowValues(sheet, 3, PAYMENT_HEADERS)).toMatchObject({ 'Số chứng từ (*)': 'CRPC00012', 'Diễn giải': 'Trả tiền hóa đơn tháng 9', 'TK Nợ (*)': '6422', 'TK Có (*)': '1111', 'Số tiền': 35000.5 });
+    expect(rowValues(sheet, 3, PAYMENT_HEADERS)).toMatchObject({ 'Số chứng từ (*)': 'CRPC202600012', 'Diễn giải': 'Trả tiền hóa đơn tháng 9', 'TK Nợ (*)': '6422', 'TK Có (*)': '1111', 'Số tiền': 35000.5 });
   });
 
   it('writes a phiếu thu with the cash account debited, and a voucher with no party or person', async () => {
@@ -762,7 +766,7 @@ describe('MISA SME cash vouchers (#657)', () => {
     const sheet = await readBack(MISA_SME_CASH_RECEIPT, cashRows(receipt));
     expect(sheet.rowCount).toBe(2);
     expect(rowValues(sheet, 2, RECEIPT_HEADERS)).toMatchObject({
-      'Số chứng từ (*)': 'CRPT00003',
+      'Số chứng từ (*)': 'CRPT202600003',
       'Tên đối tượng': null,
       'Địa chỉ': null,
       'Lý do nộp': null,
@@ -775,12 +779,220 @@ describe('MISA SME cash vouchers (#657)', () => {
     });
   });
 
+  // #2346: a series restarts at 1 in every period, and MISA groups rows by voucher number.
+  it('numbers the same code of two years differently, and the same voucher alike on every export', async () => {
+    for (const [type, code] of [
+      ['cash_receipt', 'PT00001'],
+      ['cash_payment', 'PC00001'],
+      ['bank_credit', 'BC00001'],
+      ['bank_debit', 'BN00001'],
+    ] as const) {
+      const y2026 = cashVoucher({ type, code, numberPeriod: '2026', date: '2026-12-31' });
+      const y2027 = cashVoucher({ type, code, numberPeriod: '2027', date: '2027-01-02' });
+      const prefix = code.slice(0, 2);
+      expect(cashRows(y2026).map((r) => r.voucherNo)).toEqual([`CR${prefix}202600001`, `CR${prefix}202600001`]);
+      expect(cashRows(y2027).map((r) => r.voucherNo)).toEqual([`CR${prefix}202700001`, `CR${prefix}202700001`]);
+      // The number does not depend on what else the export holds.
+      expect(cashRows(y2027)[0]?.voucherNo).toBe(cashVoucherNo(y2027));
+    }
+    // A monthly series carries the month, a series that never resets keeps the bare number.
+    expect(cashVoucherNo({ code: 'BN00007', numberPeriod: '2027-03' })).toBe('CRBN20270300007');
+    expect(cashVoucherNo({ code: 'BN00007', numberPeriod: '-' })).toBe('CRBN00007');
+    expect(cashVoucherNo({ code: 'BN123456789012', numberPeriod: '2027' }).length).toBeLessThanOrEqual(20);
+    // Over MISA's 20 characters the number is refused, not cut: a cut one would repeat for vouchers that differ at the end.
+    expect(() => cashVoucherNo({ code: 'BN1234567890123', numberPeriod: '2027' })).toThrow(expect.objectContaining({ code: 'EXPORT_VOUCHER_NUMBER_TOO_LONG', status: 422 }));
+    expect(() => cashVoucherNo({ code: 'BN12345678901', numberPeriod: '2027-03' })).toThrow(expect.objectContaining({ code: 'EXPORT_VOUCHER_NUMBER_TOO_LONG' }));
+  });
+
+  it.each([
+    ['cash_receipt', 'PT', MISA_SME_CASH_RECEIPT, RECEIPT_HEADERS],
+    ['cash_payment', 'PC', MISA_SME_CASH_PAYMENT, PAYMENT_HEADERS],
+    ['bank_credit', 'BC', MISA_SME_BANK_CREDIT, BANK_CREDIT_HEADERS],
+    ['bank_debit', 'BN', MISA_SME_BANK_DEBIT, BANK_DEBIT_HEADERS],
+  ] as const)('keeps the vouchers of two years apart in one %s file, each grouped under its own number', async (type, prefix, template, headers) => {
+    const rows = [
+      ...cashRows(cashVoucher({ type, code: `${prefix}00001`, numberPeriod: '2026', date: '2026-12-30' })),
+      ...cashRows(cashVoucher({ type, code: `${prefix}00001`, numberPeriod: '2027', date: '2027-01-04' })),
+    ];
+    const sheet = await readBack(template, rows);
+    expect(sheet.rowCount).toBe(5);
+    const numbers = [2, 3, 4, 5].map((row) => rowValues(sheet, row, headers)['Số chứng từ (*)']);
+    expect(numbers).toEqual([`CR${prefix}202600001`, `CR${prefix}202600001`, `CR${prefix}202700001`, `CR${prefix}202700001`]);
+    expect(new Set(numbers).size).toBe(2);
+  });
+
   it('keeps voucher numbers within 20 characters and formula-like text inert', async () => {
-    const rows = cashRows(cashVoucher({ code: 'PC1234567890123', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
+    const rows = cashRows(cashVoucher({ code: 'PC123456789012', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
     expect(rows[0]?.voucherNo.length).toBeLessThanOrEqual(20);
     const sheet = await readBack(MISA_SME_CASH_PAYMENT, rows);
     const values = rowValues(sheet, 2, PAYMENT_HEADERS);
     expect(values['Diễn giải lý do chi']).toBe('=HYPERLINK("http://x")');
     expect(String(values['Người nhận']).length).toBe(255);
+  });
+});
+
+// The bank templates (#657), verbatim from the header rows of `Phieu_thu_tien_gui_VND.xls` (giấy báo Có, sheet
+// `Chứng từ thu tiền`, 25 columns) and `Phieu_chi_tien_gui_VND.xls` (giấy báo Nợ, sheet `Chứng từ Chi tiền gửi`, 47 columns),
+// the MISA SME 2026 files of source S9 in docs/integrations/misa-sme-import.md. "Diễn giải lý do thu " ends with a space in
+// MISA's file, and so does the header here.
+const BANK_CREDIT_HEADERS = [
+  'Hiển thị trên sổ',
+  'Ngày hạch toán (*)',
+  'Ngày chứng từ (*)',
+  'Số chứng từ (*)',
+  'Mã đối tượng',
+  'Tên đối tượng',
+  'Địa chỉ',
+  'Nộp vào TK',
+  'Mở tại NH',
+  'Lý do thu',
+  'Diễn giải lý do thu ',
+  'Nhân viên thu',
+  'Diễn giải',
+  'TK Nợ (*)',
+  'TK Có (*)',
+  'Số tiền',
+  'Đối tượng',
+  'Khoản mục CP',
+  'Đơn vị',
+  'Đối tượng THCP',
+  'Công trình',
+  'Đơn đặt hàng',
+  'Hợp đồng mua',
+  'Hợp đồng bán',
+  'Mã thống kê',
+];
+const BANK_DEBIT_HEADERS = [
+  'Hiển thị trên sổ',
+  'Phương thức thanh toán',
+  'Ngày hạch toán (*)',
+  'Ngày chứng từ (*)',
+  'Số chứng từ (*)',
+  'Tài khoản chi',
+  'Mở tại NH',
+  'Nội dung thanh toán',
+  'Diễn giải nội dung thanh toán',
+  'Mã đối tượng',
+  'Tên đối tượng',
+  'Địa chỉ',
+  'Tài khoản nhận',
+  'Tên NH nhận',
+  'Người lĩnh tiền',
+  'Số CMND',
+  'Ngày cấp CMND',
+  'Nơi cấp CMND',
+  'Nhân viên',
+  'Diễn giải',
+  'TK Nợ (*)',
+  'TK Có (*)',
+  'Số tiền',
+  'Mã đối tượng (Chi tiết)',
+  'Khoản mục chi phí',
+  'Đơn vị',
+  'ĐT tập hợp chi phí',
+  'Công trình',
+  'Đơn đặt hàng',
+  'Hợp đồng mua',
+  'Hợp đồng bán',
+  'Chi phí không hợp lý',
+  'Mã thống kê',
+  'Diễn giải (Thuế)',
+  'TK thuế GTGT',
+  'Tiền thuế GTGT',
+  '% thuế GTGT',
+  'Tỷ lệ tính thuế (Thuế suất KHAC)',
+  'Giá trị HHDV chưa thuế',
+  'Mẫu số hóa đơn',
+  'Ký hiệu hóa đơn',
+  'Số hóa đơn',
+  'Ngày hóa đơn',
+  'Nhóm HHDV mua vào',
+  'Mã NCC',
+  'Tên NCC',
+  'Mã số thuế NCC',
+];
+
+describe('MISA SME bank vouchers (#657)', () => {
+  it('uses the 25 columns of Chứng từ thu tiền and the 47 of Chứng từ Chi tiền gửi, in order, without duplicates', async () => {
+    expect(MISA_SME_BANK_CREDIT.columns.map((c) => c.header)).toEqual(BANK_CREDIT_HEADERS);
+    expect(MISA_SME_BANK_DEBIT.columns.map((c) => c.header)).toEqual(BANK_DEBIT_HEADERS);
+    for (const template of [MISA_SME_BANK_CREDIT, MISA_SME_BANK_DEBIT]) {
+      expect(new Set(template.columns.map((c) => c.header)).size).toBe(template.columns.length);
+      const sheet = await readBack(template, []);
+      expect(sheet.name).toBe(template === MISA_SME_BANK_CREDIT ? 'Chứng từ thu tiền' : 'Chứng từ Chi tiền gửi');
+      // The header row as written in the file, the trailing space of "Diễn giải lý do thu " included.
+      expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(template === MISA_SME_BANK_CREDIT ? BANK_CREDIT_HEADERS : BANK_DEBIT_HEADERS);
+      expect(sheet.rowCount).toBe(1);
+    }
+  });
+
+  it('writes a báo Có as one row per line: Dr the bank account, Cr the line, under one voucher number', async () => {
+    const credit = cashVoucher({
+      type: 'bank_credit',
+      code: 'BC00004',
+      cashAccount: '1121',
+      description: 'Khách trả tiền hàng tháng 9',
+      lines: [
+        { lineNo: 1, account: '131', amount: '5500000', memo: 'HĐ C26TAA/200' },
+        { lineNo: 2, account: '711', amount: '1000.25', memo: null },
+      ],
+    });
+    const rows = cashRows(credit);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBC202600004', 'CRBC202600004']);
+    const sheet = await readBack(MISA_SME_BANK_CREDIT, rows);
+    expect(sheet.rowCount).toBe(3);
+    expect(rowValues(sheet, 2, BANK_CREDIT_HEADERS)).toMatchObject({
+      'Hiển thị trên sổ': null,
+      'Ngày hạch toán (*)': new Date(Date.UTC(2026, 9, 7)),
+      'Ngày chứng từ (*)': new Date(Date.UTC(2026, 9, 7)),
+      'Số chứng từ (*)': 'CRBC202600004',
+      'Tên đối tượng': 'Công ty TNHH ABC',
+      'Địa chỉ': '1 Láng Hạ, Hà Nội',
+      'Nộp vào TK': null,
+      'Lý do thu': null,
+      'Diễn giải lý do thu ': 'Khách trả tiền hàng tháng 9',
+      'Diễn giải': 'HĐ C26TAA/200',
+      'TK Nợ (*)': '1121',
+      'TK Có (*)': '131',
+      'Số tiền': 5500000,
+      'Mã thống kê': null,
+    });
+    // A line without its own memo takes the voucher's reason; fractional amounts stay exact.
+    expect(rowValues(sheet, 3, BANK_CREDIT_HEADERS)).toMatchObject({ 'Diễn giải': 'Khách trả tiền hàng tháng 9', 'TK Nợ (*)': '1121', 'TK Có (*)': '711', 'Số tiền': 1000.25 });
+  });
+
+  it('writes a báo Nợ with the bank account credited, the payee as Người lĩnh tiền and the VAT and invoice columns blank', async () => {
+    const debit = cashVoucher({ type: 'bank_debit', code: 'BN00009', cashAccount: '1121.VCB' });
+    const rows = cashRows(debit);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBN202600009', 'CRBN202600009']);
+    const sheet = await readBack(MISA_SME_BANK_DEBIT, rows);
+    expect(sheet.rowCount).toBe(3);
+    const first = rowValues(sheet, 2, BANK_DEBIT_HEADERS);
+    expect(first).toMatchObject({
+      'Số chứng từ (*)': 'CRBN202600009',
+      'Tên đối tượng': 'Công ty TNHH ABC',
+      'Diễn giải nội dung thanh toán': 'Trả tiền hóa đơn tháng 9',
+      'Người lĩnh tiền': 'Nguyễn Văn An',
+      'Diễn giải': 'HĐ C26TAA/123',
+      'TK Nợ (*)': '331',
+      'TK Có (*)': '1121.VCB',
+      'Số tiền': 1650000,
+    });
+    // Everything MISA reads as a catalog entry or a code, and every VAT and invoice column, is left blank.
+    for (const header of ['Phương thức thanh toán', 'Tài khoản chi', 'Nội dung thanh toán', 'Tài khoản nhận', 'Tên NH nhận', 'Số CMND', 'TK thuế GTGT', 'Tiền thuế GTGT', '% thuế GTGT', 'Số hóa đơn', 'Mã số thuế NCC']) {
+      expect(first[header], header).toBeNull();
+    }
+    expect(rowValues(sheet, 3, BANK_DEBIT_HEADERS)).toMatchObject({ 'TK Nợ (*)': '6422', 'TK Có (*)': '1121.VCB', 'Số tiền': 35000.5 });
+  });
+
+  it('keeps voucher numbers within 20 characters, long text cut at the template limit, and formula-like text inert', async () => {
+    const rows = cashRows(cashVoucher({ type: 'bank_debit', code: 'BN123456789012', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
+    expect(rows[0]?.voucherNo.length).toBeLessThanOrEqual(20);
+    const sheet = await readBack(MISA_SME_BANK_DEBIT, rows);
+    const values = rowValues(sheet, 2, BANK_DEBIT_HEADERS);
+    expect(values['Diễn giải nội dung thanh toán']).toBe('=HYPERLINK("http://x")');
+    expect(String(values['Người lĩnh tiền']).length).toBe(255);
+    const credit = await readBack(MISA_SME_BANK_CREDIT, cashRows(cashVoucher({ type: 'bank_credit', description: '=1+1' })));
+    expect(rowValues(credit, 2, BANK_CREDIT_HEADERS)['Diễn giải lý do thu ']).toBe('=1+1');
   });
 });

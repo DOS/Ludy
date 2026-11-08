@@ -18,7 +18,8 @@ import { z } from 'zod';
 import { zJournalReversal, type DocumentDirection, type JournalReversal } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
-import { postJournalEntry } from './ledger.ts';
+import { postNewEntry } from './ledger.ts';
+import { reverseDocumentStock } from './stock-lines.ts';
 
 export { zJournalReversal, type JournalReversal };
 
@@ -50,6 +51,19 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   if (!entry) throw NOT_FOUND();
   if (entry.reverses_entry_id !== null) {
     throw new DomainError('ENTRY_IS_REVERSAL', 422, 'Đây là bút toán đảo nên không đảo lại được; hãy ghi một bút toán mới');
+  }
+  // The entry that posted the cost of a month of stock that was closed (#2513) stays: the month's figures were stored with it and a closed month is not reopened, so a mistake is put
+  // right with a move of a later month.
+  if (entry.source_type === 'finance.journal_voucher') {
+    const posted = await ctx.trx
+      .selectFrom('crove_finance.journal_voucher')
+      .select(['stock_closing_month', 'stock_count_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', entry.source_id)
+      .executeTakeFirst();
+    if (posted?.stock_closing_month) throw new DomainError('STOCK_CLOSE_ENTRY', 409, 'Bút toán này ghi giá vốn của một tháng đã đóng sổ kho nên không đảo được; hãy sửa bằng phát sinh kho của tháng sau');
+    // The same for the entry that posted the difference of a count (#2513 part b): its adjustment moves are never reversed, so reversing the entry would leave the books apart from the stock.
+    if (posted?.stock_count_id) throw new DomainError('STOCK_COUNT_ENTRY', 409, 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại');
   }
   const reversed = await ctx.trx
     .selectFrom('crove_finance.journal_entry')
@@ -174,7 +188,7 @@ export async function postReversal(
     .where('entry_id', '=', entry.id)
     .orderBy('line_no')
     .execute();
-  const journalEntryId = await postJournalEntry(ctx, {
+  const journalEntryId = await postNewEntry(ctx, {
     entryDate,
     description: `Đảo bút toán ngày ${entry.entry_date}: ${entry.description} (lý do: ${reason})`,
     // The approval that ordered it; the original is reverses_entry_id.
@@ -190,8 +204,10 @@ export async function postReversal(
       memo: l.memo,
     })),
   }).catch((error: { code?: string; constraint?: string; message?: string }) => {
-    // A concurrent reversal of the same entry committed first: its insert held the unique index.
+    // A concurrent reversal of the same entry committed first: its insert held the unique index. Or this approval's
+    // reversal is already posted (ALREADY_POSTED, a replay of it, #1925).
     if (error?.code === '23505' && error.constraint === 'journal_entry_reverses_uq') throw ALREADY_REVERSED();
+    if (error?.code === 'ALREADY_POSTED') throw ALREADY_REVERSED();
     // The original is posted, so it balances and has at least 2 lines, and the date and reversal rules were checked
     // above: a mirror the database still refuses (not a mirror, unbalanced, too few lines) was built from fewer lines
     // than the entry has, because the approver cannot see them all.
@@ -202,6 +218,7 @@ export async function postReversal(
   });
   // A purchase entry: void Crove's record of its document, naming this reversal (the database checks the link).
   const voidedDocumentId = entry.source_type === PURCHASE_SOURCE ? entry.source_id : null;
+  let stockReversed = 0;
   if (voidedDocumentId) {
     await ctx.trx
       .insertInto('crove_finance.purchase_document_void')
@@ -218,8 +235,10 @@ export async function postReversal(
     const voided = direction === 'sale' ? 'Hủy chứng từ bán do đảo bút toán' : 'Hủy chứng từ mua do đảo bút toán';
     await ctx.activity('finance.purchase_document', voidedDocumentId, direction === 'sale' ? 'sale.voided' : 'purchase.voided', voided);
     await ctx.emit('finance.purchase.voided', { documentId: voidedDocumentId, reversalEntryId: journalEntryId, direction });
+    // The stock the document made goes back on the same date (#2512).
+    stockReversed = await reverseDocumentStock(ctx, voidedDocumentId, entryDate);
   }
-  ctx.audit({ reversed_entry_id: entry.id, reversal_entry_id: journalEntryId, voided_document_id: voidedDocumentId });
+  ctx.audit({ reversed_entry_id: entry.id, reversal_entry_id: journalEntryId, voided_document_id: voidedDocumentId, ...(stockReversed > 0 ? { stock_moves_reversed: stockReversed } : {}) });
   await ctx.activity('finance.journal_entry', entry.id, 'journal_entry.reversed', 'Đảo bút toán');
   await ctx.emit('finance.journal_entry.reversed', { entryId: entry.id, reversalEntryId: journalEntryId });
   return { journalEntryId, reversedEntryId: entry.id, ...(voidedDocumentId ? { voidedDocumentId } : {}) };

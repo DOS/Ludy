@@ -29,16 +29,22 @@ const NOT_SHOWN: Record<string, string> = {
   KILL_SWITCH_ON: 'agents',
   BUDGET_EXHAUSTED: 'agents',
   LEASE_LOST: 'agents',
-  TASK_CHECKED_OUT: 'agents',
   TASK_CLOSED: 'agents',
   OUTSIDE_SUBTREE: 'agents',
-  OUTSIDE_LEGAL_ENTITY: 'agents',
   DEPTH_LIMIT: 'agents',
   // The operator's org-purge command (#1024) runs in the worker's container, never from a browser.
   ORG_PURGE_REFUSED: 'operator',
   ORG_PURGE_BLOB_FAILED: 'operator',
   // The worker's bring-in of posts published outside Crove (#1054): its system commands alone raise it.
   EXTERNAL_POST_NOT_FOUND: 'worker',
+  // The revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's system commands alone raise these.
+  ADS_REVOKE_NOT_FOUND: 'worker',
+  ADS_REVOKE_STALE: 'worker',
+  CHANNEL_NOT_ORPHAN: 'worker',
+  // A bank feed's batch (ADR-0039, #2044): finance.bank.ingest is a system command the feed job runs.
+  BANK_FEED_INVALID: 'worker',
+  // A late sync's page (#2044 part 2b): only the worker's record_pull raises it.
+  BANK_FEED_CURSOR_MOVED: 'worker',
   // The tax portal sync (#325): a download already made for the synced list; fetchXml skips it, the SPA never gets it.
   PORTAL_CALL_DONE: 'portal sync',
   // The inbound mail endpoint answers the mail relay, not a browser.
@@ -60,13 +66,25 @@ const NOT_SHOWN: Record<string, string> = {
   COMMAND_NOT_FOUND: 'bug',
   QUERY_NOT_FOUND: 'bug',
   STREAM_ONLY: 'bug',
+  SENSITIVE_ONLY: 'bug',
   NOT_STREAMED: 'bug',
   INVALID_STORAGE_KEY: 'bug',
   INVALID_GENERATION: 'bug',
   // A restore re-recording an export that is not the org's newest one (#1726): only the worker's restore receives it.
   EXPORT_REBIND_MISMATCH: 'bug',
+  // An export record racing another of the org (#1867): the worker records again.
+  EXPORT_RECORD_STALE: 'bug',
   // Bulk intake (#314): only the worker records an opened archive.
   NOT_ARCHIVE: 'bug',
+  // AI Meeting Notes (#2576): media playback, shredding and upload internals.
+  AUDIO_NOT_FOUND: 'meetings',
+  VIDEO_NOT_FOUND: 'meetings',
+  MEDIA_KEY_SHREDDED: 'meetings',
+  MEDIA_KEY_UNAVAILABLE: 'meetings',
+  INVALID_PURPOSE: 'meetings',
+  STAGED_UPLOAD_REQUIRED: 'meetings',
+  // A playback stream whose file changed under it (#2579): the player's request fails and the page reloads the meeting.
+  MEDIA_REPLACED: 'meetings',
 };
 
 function sources(dir: string): string[] {

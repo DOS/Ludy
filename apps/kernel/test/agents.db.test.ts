@@ -294,4 +294,177 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     expect(status).toEqual({ status: 'cancelled' });
     await expect(worker.execute('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId })).resolves.toEqual({ runId: null, reason: 'not_runnable' });
   });
+  // The chart answers each position's legal entities (#1763), for the agents screen's picker: ['*'], or the ids the
+  // reader may see, so a member limited to some entities learns no other entity's id. The owner sets them on create and
+  // changes them on update.
+  it("answers each position's legal entities, only those the reader sees", async () => {
+    const [defaultEntity, branch] = await admin(async (c) => [
+      (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string,
+      (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 1763', 'branch', $2) RETURNING id`, [orgId, owner]))
+        .rows[0]?.id as string,
+    ]);
+    const limited = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'agents', subject: 'limited-1763', email: 'limited@agents.test', name: null });
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, limited]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        orgId,
+        limited,
+        defaultEntity,
+        owner,
+      ]);
+    });
+    const { positionId } = await app.execute<{ positionId: string }>(
+      'kernel.position.create',
+      { title: 'Kế toán hai pháp nhân', module: 'finance', roleKey: 'finance.accountant', leScope: [defaultEntity, branch] },
+      { actor: asMfa(owner), orgId },
+    );
+    const scopeOf = async (userId: string) => {
+      const chart = await app.query<{ positions: Array<{ id: string; leScope: string[] }> }>('kernel.chart.get', {}, { actor: asUser(userId), orgId });
+      return chart.positions.find((p) => p.id === positionId)?.leScope;
+    };
+    expect(new Set(await scopeOf(owner))).toEqual(new Set([defaultEntity, branch]));
+    expect(await scopeOf(limited)).toEqual([defaultEntity]);
+    await app.execute('kernel.position.update', { id: positionId, leScope: ['*'] }, { actor: asMfa(owner), orgId });
+    expect(await scopeOf(owner)).toEqual(['*']);
+    expect(await scopeOf(limited)).toEqual(['*']);
+  });
+
+  // Step P1 (#2588): a person edits a task's title, description, due date or seat, notifies the person holding the
+  // seat on create and on seat change, and is refused while an agent's run holds a live lease, when the seat is
+  // archived or when the new seat cannot read the task's legal entity.
+  it('edits a task, notifies the seat holder on create and seat change, and refuses checked-out, archived or out-of-entity seats (#2588)', async () => {
+    const [defaultEntity, branch] = await admin(async (c) => [
+      (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string,
+      (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh 2588', 'branch', $2) RETURNING id`, [orgId, owner]))
+        .rows[0]?.id as string,
+    ]);
+    const db = createDb(pools[0] as pg.Pool);
+    const firstHolder = await upsertIdentity(db, { issuer: 'agents', subject: 'holder1-2588', email: 'holder1@agents.test', name: null });
+    const secondHolder = await upsertIdentity(db, { issuer: 'agents', subject: 'holder2-2588', email: 'holder2@agents.test', name: null });
+    const branchOnly = await upsertIdentity(db, { issuer: 'agents', subject: 'branch-2588', email: 'branch@agents.test', name: null });
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [
+        orgId,
+        firstHolder,
+        secondHolder,
+        branchOnly,
+      ]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        orgId,
+        branchOnly,
+        branch,
+        owner,
+      ]);
+    });
+    const makeSeat = async (title: string, holder: string) => {
+      const { positionId } = await app.execute<{ positionId: string }>(
+        'kernel.position.create',
+        { title, module: 'finance', roleKey: 'finance.accountant', leScope: ['*'] },
+        { actor: asMfa(owner), orgId },
+      );
+      await app.execute('kernel.position.assign', { id: positionId, holder: { type: 'user', userId: holder } }, { actor: asMfa(owner), orgId });
+      return positionId;
+    };
+    const seatA = await makeSeat('Kế toán A 2588', firstHolder);
+    const seatB = await makeSeat('Kế toán B 2588', secondHolder);
+    const seatBranch = await makeSeat('Kế toán chi nhánh 2588', branchOnly);
+    const { positionId: archivedSeat } = await app.execute<{ positionId: string }>(
+      'kernel.position.create',
+      { title: 'Vị trí đã đóng 2588', module: 'finance', roleKey: 'finance.accountant' },
+      { actor: asMfa(owner), orgId },
+    );
+    await app.execute('kernel.position.update', { id: archivedSeat, status: 'archived' }, { actor: asMfa(owner), orgId });
+
+    // Creating a task on seatA notifies firstHolder (and not the owner who created it).
+    const { taskId } = await app.execute<{ taskId: string }>(
+      'kernel.task.create',
+      { title: 'Kiểm tra sổ quỹ', description: 'Tháng 10', assigneePositionId: seatA, due: '2026-11-15T16:59:00.000Z' },
+      { actor: asUser(owner), orgId },
+    );
+    const createEvents = await admin((c) =>
+      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, taskId]),
+    );
+    for (const e of createEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
+    const firstNotices = await app.query<{ items: Array<{ kind: string; subjectId: string | null; detail: Record<string, string> }> }>(
+      'kernel.notification.list',
+      {},
+      { actor: asUser(firstHolder), orgId },
+    );
+    expect(firstNotices.items).toEqual([expect.objectContaining({ kind: 'kernel.task_assigned', subjectId: taskId, detail: { title: 'Kiểm tra sổ quỹ' } })]);
+
+    // An owner who creates a root task is an owner recipient; the actor filter keeps the owner from being notified.
+    const { taskId: rootTaskId } = await app.execute<{ taskId: string }>(
+      'kernel.task.create',
+      { title: 'Việc gốc 2588', assigneePositionId: null },
+      { actor: asUser(owner), orgId },
+    );
+    const rootEvents = await admin((c) =>
+      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, rootTaskId]),
+    );
+    for (const e of rootEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
+    const ownerNotices = await app.query<{ items: Array<{ subjectId: string | null }> }>('kernel.notification.list', {}, { actor: asUser(owner), orgId });
+    expect(ownerNotices.items.filter((n) => n.subjectId === rootTaskId)).toEqual([]);
+
+    // Updating title, description, due date and moving to seatB notifies secondHolder.
+    await app.execute(
+      'kernel.task.update',
+      { id: taskId, title: 'Kiểm tra sổ quỹ tháng 11', description: 'Đã cập nhật', assigneePositionId: seatB, due: '2026-11-25T16:59:00.000Z' },
+      { actor: asUser(firstHolder), orgId },
+    );
+    const updated = await app.query<{ task: { title: string; description: string | null; assigneePositionId: string | null; due: string | null } }>(
+      'kernel.task.get',
+      { id: taskId },
+      { actor: asUser(secondHolder), orgId },
+    );
+    expect(updated.task).toMatchObject({
+      title: 'Kiểm tra sổ quỹ tháng 11',
+      description: 'Đã cập nhật',
+      assigneePositionId: seatB,
+      due: '2026-11-25T16:59:00.000Z',
+    });
+    const assignEvents = await admin((c) =>
+      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.assigned' AND payload ->> 'taskId' = $2`, [orgId, taskId]),
+    );
+    for (const e of assignEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
+    const secondNotices = await app.query<{ items: Array<{ kind: string; subjectId: string | null; detail: Record<string, string> }> }>(
+      'kernel.notification.list',
+      {},
+      { actor: asUser(secondHolder), orgId },
+    );
+    expect(secondNotices.items).toEqual([expect.objectContaining({ kind: 'kernel.task_assigned', subjectId: taskId, detail: { title: 'Kiểm tra sổ quỹ tháng 11' } })]);
+
+    // Refuses an archived seat.
+    await expect(
+      app.execute('kernel.task.update', { id: taskId, assigneePositionId: archivedSeat }, { actor: asUser(owner), orgId }),
+    ).rejects.toMatchObject({ code: 'POSITION_ARCHIVED', status: 409 });
+
+    // A task tied to defaultEntity refuses a seat whose holder only reads branch (OUTSIDE_LEGAL_ENTITY).
+    const entityTask = await admin(
+      async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, source, source_ref, created_by_type)
+             VALUES ($1, 'Việc pháp nhân chính', $2, 'human', $3, 'user') RETURNING id`,
+            [orgId, seatA, JSON.stringify({ type: 'kernel.legal_entity', id: defaultEntity })],
+          )
+        ).rows[0]?.id as string,
+    );
+    await expect(
+      app.execute('kernel.task.update', { id: entityTask, assigneePositionId: seatBranch }, { actor: asUser(owner), orgId }),
+    ).rejects.toMatchObject({ code: 'OUTSIDE_LEGAL_ENTITY', status: 422 });
+
+    // Refuses editing while an agent run holds a live lease on the task (TASK_CHECKED_OUT).
+    const { agentId, positionId: agentSeat } = await app.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant', displayName: 'Kế toán trưởng 2588' },
+      { actor: asMfa(owner), orgId },
+    );
+    await app.execute('kernel.task.update', { id: taskId, assigneePositionId: agentSeat }, { actor: asUser(owner), orgId });
+    const started = await worker.execute<{ runId: string }>('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId });
+    await worker.execute('kernel.task.checkout', { id: taskId }, { actor: { type: 'agent', agentId, runId: started.runId }, orgId });
+    await expect(
+      app.execute('kernel.task.update', { id: taskId, title: 'Đổi khi đang giữ' }, { actor: asUser(owner), orgId }),
+    ).rejects.toMatchObject({ code: 'TASK_CHECKED_OUT', status: 409 });
+    await worker.execute('kernel.agent.run.finish', { runId: started.runId, outcome: 'succeeded' }, { actor: SYSTEM, orgId });
+  });
 });

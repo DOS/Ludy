@@ -8,6 +8,7 @@ import { chartAccounts, type OrgChartAccount } from './accounts.ts';
 import { OPEN_REVERSAL_STATUSES, REVERSAL_KIND } from './reversal.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { latestRevision } from './source-entry.ts';
 import type { PurchaseVoucher, SalesVoucher } from './misa.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -124,7 +125,7 @@ async function loadDocuments(ctx: QueryContext, filter: { legalEntityId: string;
     .selectFrom('crove_finance.purchase_document as d')
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .leftJoin('crove_finance.journal_entry as j', (join) =>
-      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document'),
+      join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select([
@@ -396,9 +397,10 @@ export const journalList = defineQuery({
 // The MISA SME voucher exports (GET /api/export/misa/purchases.xlsx, #317, and /api/export/misa/sales.xlsx, #313)
 // record themselves here too, with `format`, so the usage report counts every export to the accountant; `entries` is
 // then the number of vouchers. So do the cash receipts and payments (/api/export/misa/receipts.xlsx and
-// payments.xlsx, #657), and the goods purchases (/api/export/misa/goods-purchases.xlsx, #1398). Since #1398 the services
-// file leaves out lines on a stock account, which go to the goods file; its audit row carries `stockLines: 'excluded'`,
-// so a document's history (#878) tells it from an older services file, which held every line.
+// payments.xlsx, #657), the bank receipts and payments (bank-receipts.xlsx and bank-payments.xlsx, #657), and the goods
+// purchases (/api/export/misa/goods-purchases.xlsx, #1398). Since #1398 the services file leaves out lines on a stock
+// account, which go to the goods file; its audit row carries `stockLines: 'excluded'`, so a document's history (#878)
+// tells it from an older services file, which held every line.
 export const EXPORT_FORMATS = [
   'journal',
   'misa_sme_purchases',
@@ -406,6 +408,8 @@ export const EXPORT_FORMATS = [
   'misa_sme_sales',
   'misa_sme_cash_receipts',
   'misa_sme_cash_payments',
+  'misa_sme_bank_credits',
+  'misa_sme_bank_debits',
 ] as const;
 export const journalExport = defineCommand({
   name: 'finance.journal.export',
@@ -458,7 +462,7 @@ async function loadVouchers(
   let documents = ctx.trx
     .selectFrom('crove_finance.journal_entry as j')
     .innerJoin('crove_finance.purchase_document as d', (join) =>
-      join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document'),
+      join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))

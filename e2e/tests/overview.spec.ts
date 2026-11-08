@@ -25,7 +25,7 @@ test('the overview counts what waits and opens the screen that clears it', async
     const apps = page.getByRole('region', { name: 'Ứng dụng' });
     await expect(apps.getByText('Chưa chọn kỳ khai GTGT')).toBeVisible();
     await apps.getByRole('link', { name: 'Mở Ludy Kế toán' }).click();
-    await expect(page).toHaveURL(/\/vat$/);
+    await expect(page).toHaveURL(/\/accounting$/);
     // Home opens on the overview.
     await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
     await expect(page).toHaveURL(/\/overview$/);
@@ -33,7 +33,7 @@ test('the overview counts what waits and opens the screen that clears it', async
 
   await test.step('an invoice in the Inbox shows as one proposal to approve', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await overview.click();

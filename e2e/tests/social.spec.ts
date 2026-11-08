@@ -13,7 +13,8 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   await signInNewUser(page, newEmail('social'));
   await createOrg(page, 'Công ty Social');
 
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await expect(page.getByText('Chưa kết nối kênh nào')).toBeVisible();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
 
@@ -63,7 +64,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 test('attaches images to a post, shows them in the preview and keeps them out of the Inbox', async ({ page }) => {
   await signInNewUser(page, newEmail('social-media'));
   await createOrg(page, 'Công ty Ảnh');
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill('Trang Ảnh');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
@@ -85,14 +87,15 @@ test('attaches images to a post, shows them in the preview and keeps them out of
 
   // An image for a post is not a document: the Inbox stays empty.
   await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Hộp thư' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
   await expect(page.getByText('mat-tien.png')).toHaveCount(0);
 });
 
 test('keeps unsaved edits when another tab approves the post', async ({ page, context }) => {
   await signInNewUser(page, newEmail('social-edit'));
   await createOrg(page, 'Công ty Hai Tab');
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill('Trang Hai Tab');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
