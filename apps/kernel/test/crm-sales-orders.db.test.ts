@@ -182,14 +182,14 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const party = await o.party('Công ty ABC');
     const deal = await o.newDeal(party);
     const draft = await o.exec<Quote>(o.member, 'crm.quote.save', { dealId: deal.id, lines: [] });
-    await expect(o.accept(o.member, draft)).rejects.toMatchObject({ code: 'QUOTE_NOT_SENT' });
-    await expect(o.exec(o.member, 'crm.quote.decline', { quoteId: draft.id, version: draft.version })).rejects.toMatchObject({ code: 'QUOTE_NOT_SENT' });
+    await expect(o.accept(o.member, draft)).rejects.toMatchObject({ code: 'QUOTE_NOT_DECIDABLE' });
+    await expect(o.exec(o.member, 'crm.quote.decline', { quoteId: draft.id, version: draft.version })).rejects.toMatchObject({ code: 'QUOTE_NOT_DECIDABLE' });
     await expect(o.accept(o.member, { ...draft, id: randomUUID() })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND', status: 404 });
 
     const { quote } = await o.sentQuote(party);
     await expect(o.accept(o.member, { ...quote, version: quote.version + 1 })).rejects.toMatchObject({ code: 'STALE_VERSION', status: 409 });
-    await expect(o.accept(o.member, quote, { acceptedOn: '2099-01-01' })).rejects.toMatchObject({ code: 'QUOTE_DATE_INVALID' });
-    await expect(o.accept(o.member, quote, { acceptedOn: '2026-02-30' })).rejects.toMatchObject({ code: 'QUOTE_DATE_INVALID' });
+    await expect(o.accept(o.member, quote, { acceptedOn: '2099-01-01' })).rejects.toMatchObject({ code: 'ORDER_DATE_INVALID' });
+    await expect(o.accept(o.member, quote, { acceptedOn: '2026-02-30' })).rejects.toMatchObject({ code: 'ORDER_DATE_INVALID' });
     await expect(rt.execute('crm.quote.accept', { quoteId: quote.id, version: quote.version }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId })).rejects.toBeDefined();
 
     // Totals that are not the sums of the lines (changed behind the command's back, as the database owner may) are refused, not repaired.

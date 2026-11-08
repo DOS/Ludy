@@ -91,7 +91,7 @@ async function checkDecidable(ctx: Pick<CommandContext, 'trx' | 'orgId' | 'now'>
     throw new DomainError('QUOTE_ALREADY_ACCEPTED', 409, order ? `Báo giá này đã được ghi nhận chấp nhận (đơn ${order.number})` : 'Báo giá này đã được ghi nhận chấp nhận');
   }
   if (quote.status === 'declined') throw new DomainError('QUOTE_ALREADY_DECLINED', 409, 'Báo giá này đã được ghi nhận từ chối');
-  if (quote.status !== 'sent') throw new DomainError('QUOTE_NOT_SENT', 409, 'Chỉ ghi nhận được cho báo giá đã gửi');
+  if (quote.status !== 'sent') throw new DomainError('QUOTE_NOT_DECIDABLE', 409, 'Chỉ ghi nhận được cho báo giá đã gửi');
   if (quote.version !== version) throw stale();
   // Expiry is derived, never stored: a sent quote whose validity date is before today in Vietnam is expired and is revised, never accepted late.
   if (day(quote.valid_until) < vietnamToday(ctx.now)) throw new DomainError('QUOTE_EXPIRED', 409, 'Báo giá đã hết hạn; hãy tạo bản sửa đổi và gửi lại');
@@ -108,7 +108,7 @@ export const quoteAccept = defineCommand({
     const userId = userOf(ctx.actor);
     const today = vietnamToday(ctx.now);
     const acceptedOn = input.acceptedOn ?? today;
-    if (!validDate(acceptedOn) || acceptedOn > today) throw new DomainError('QUOTE_DATE_INVALID', 422, 'Ngày khách đồng ý không hợp lệ');
+    if (!validDate(acceptedOn) || acceptedOn > today) throw new DomainError('ORDER_DATE_INVALID', 422, 'Ngày khách đồng ý không hợp lệ');
     const quote = await loadQuoteForDecision(ctx, input.quoteId);
     await checkDecidable(ctx, quote, input.version);
     if (!quote.issuer_entity_id || !quote.buyer_name) throw new DomainError('QUOTE_INCOMPLETE', 422, 'Báo giá chưa đủ thông tin người bán và người mua');
