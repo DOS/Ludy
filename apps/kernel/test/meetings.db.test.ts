@@ -672,6 +672,8 @@ suite('meetings module database integration tests (#2576)', () => {
       body: JSON.stringify({ purpose: 'meeting_audio', filename: 'audio.ogg' }),
     });
     expect(rejectDirectMeeting.status).toBe(400);
+    // Refused before the claim: the grant is unused, so its staged object stays for POST /api/meetings/:id/media.
+    expect(store.staged.has(stagingKey)).toBe(true);
 
     // 2. Calling /complete with purpose 'document' to bypass encryption is rejected due to purpose mismatch
     const bypassAttempt = await app.request(`/api/files/uploads/${meetingUploadId}/complete`, {
@@ -684,6 +686,8 @@ suite('meetings module database integration tests (#2576)', () => {
       body: JSON.stringify({ purpose: 'document', filename: 'sneaky.ogg' }),
     });
     expect(bypassAttempt.status).toBe(400);
+    // The claim used the grant up, so the refusal must not leave the staged object behind (#2780).
+    expect(store.staged.has(stagingKey)).toBe(false);
   });
 
   it('9. POST /api/meetings/:id/media handles direct upload (STORAGE=local) and Range continuation chunks', async () => {

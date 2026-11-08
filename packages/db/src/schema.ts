@@ -778,6 +778,15 @@ export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
 export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+// A quote of a deal (#2693): a draft until a person sends it (Q2); the status and how it was sent are written by those steps, not by the editor's commands.
+export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
+export const QUOTE_SENT_VIA = ['link', 'email'] as const;
+export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
+export type CrmQuoteTable = Refine<
+  G.CrmQuoteTable,
+  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: ColumnType<(typeof QUOTE_SENT_VIA)[number] | null, (typeof QUOTE_SENT_VIA)[number] | null, G.NotGranted> }
+>;
+export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
 // The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
 // closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
 export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
@@ -1038,6 +1047,8 @@ type Refined = Tables<{
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_crm.quote': CrmQuoteTable;
+  'crove_crm.quote_line': CrmQuoteLineTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
