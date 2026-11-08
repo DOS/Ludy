@@ -209,8 +209,8 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       if (f.fn.startsWith('crove_kernel.member_has_permission(') && f.tenant_exec) expect(f.definer, `${f.fn} is executable by the tenant role, so it is not a SECURITY DEFINER`).toBe(false);
       expect(f.config, `${f.fn} sets search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(f.public_exec, `${f.fn} is not executable by PUBLIC`).toBe(false);
-      // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the permission reader and the counts (an owner or admin's removal warning: ids and numbers, never text).
-      if (f.definer && !/member_vy_private_counts/.test(f.fn)) expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
+      // A definer that touches member text is never callable by the tenant role (the worker login reaches it in the system context), except the one counts function below (an owner or admin's removal warning: ids and numbers, never text).
+      if (f.definer && f.fn !== 'crove_kernel.member_vy_private_counts()') expect(f.tenant_exec, `${f.fn} is not executable by the tenant role`).toBe(false);
     }
   });
 
@@ -307,9 +307,9 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
     it('is never cleared by the member, and false to true is allowed', async () => {
       if (!has.results) return;
       const rid = randomUUID();
+      const runId = randomUUID();
       await admin(async (c) => {
         await c.query('SET session_replication_role = replica');
-        const runId = randomUUID();
         const agentId = randomUUID();
         if (has.kind) {
           await c.query(
@@ -331,7 +331,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       });
       const limited = member('a member limited to a branch', () => users.limited);
       const raise = await outcome(run(limited, (c) => c.query('UPDATE crove_kernel.member_vy_result SET private_read = true WHERE id = $1', [rid])));
-      expect(raise.ok, 'the member raising the flag (positive control)').toBe(true);
+      expect(raise.ok && raise.value.rowCount, 'the member raising the flag (positive control)').toBe(1);
       const result = await outcome(
         inContext(limited.url(), limited.enter, async (c) => {
           await c.query('UPDATE crove_kernel.member_vy_result SET private_read = true WHERE id = $1', [rid]);
@@ -339,17 +339,39 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
           return clear;
         }),
       );
-      expect(result.ok && result.value.ok, 'the member clearing the flag').toBe(false);
+      expect(result.ok && result.value, 'the member clearing the flag').toMatchObject({ ok: false, code: '42501' });
       // The run's own flag, when the column exists: the trigger holds for any writer.
       const column = await admin((c) => c.query(`SELECT 1 FROM pg_attribute WHERE attrelid = 'crove_kernel.ai_run'::regclass AND attname = 'private_read' AND NOT attisdropped`));
       if (column.rowCount) {
         const cleared = await admin(async (c) => {
-          await c.query('UPDATE crove_kernel.ai_run SET private_read = true WHERE org_id = $1 AND id = $2', [orgId, agent.runId]);
-          return outcome(c.query('UPDATE crove_kernel.ai_run SET private_read = false WHERE org_id = $1 AND id = $2', [orgId, agent.runId]));
+          const raised = await c.query('UPDATE crove_kernel.ai_run SET private_read = true WHERE org_id = $1 AND id = $2', [orgId, runId]);
+          expect(raised.rowCount, 'raising the flag of the run seeded for this case (positive control)').toBe(1);
+          return outcome(c.query('UPDATE crove_kernel.ai_run SET private_read = false WHERE org_id = $1 AND id = $2', [orgId, runId]));
         });
-        expect(cleared.ok, 'anyone clearing the flag of a run').toBe(false);
+        expect(cleared, 'anyone clearing the flag of a run').toMatchObject({ ok: false, code: '42501' });
       }
     });
+  });
+
+  // The one member-Vy definer a tenant login may call: counts for an owner or admin, never text.
+  it('answers member_vy_private_counts to owners and admins only, with ids and numbers', async () => {
+    const found = await admin((c) =>
+      c.query<{ fn: string; result: string }>(
+        `SELECT p.oid::regprocedure::text AS fn, pg_get_function_result(p.oid) AS result FROM pg_proc p WHERE p.pronamespace = 'crove_kernel'::regnamespace AND p.proname = 'member_vy_private_counts'`,
+      ),
+    );
+    expect(found.rows.map((r) => r.fn), 'one counts function, with no arguments').toEqual(has.results ? ['crove_kernel.member_vy_private_counts()'] : []);
+    if (!found.rows[0]) return;
+    const columns = [...found.rows[0].result.matchAll(/\b(?:\w+)\s+(uuid|bigint|text|integer|boolean|[a-z ]+)(?:,|\)|$)/g)].map((m) => m[1]);
+    expect(columns.every((t) => t === 'uuid' || t === 'bigint'), `the counts return only uuid and bigint columns: ${found.rows[0].result}`).toBe(true);
+    for (const actor of [member('an owner', () => users.owner), member('an admin', () => users.admin)]) {
+      const ok = await outcome(run(actor, (c) => c.query('SELECT * FROM crove_kernel.member_vy_private_counts()')));
+      expect(ok.ok, `${actor.name} asking for the counts (positive control)`).toBe(true);
+    }
+    for (const actor of [member('another member', () => users.member), member('a viewer', () => users.viewer), agentActor]) {
+      const refused = await outcome(run(actor, (c) => c.query('SELECT * FROM crove_kernel.member_vy_private_counts()')));
+      expect(refused, `${actor.name} asking for the counts`).toMatchObject({ ok: false, code: '42501' });
+    }
   });
 
   describe('the member_vy agent and its runs', () => {
@@ -492,7 +514,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
         expect(await permitted(user, 'vy.use'), `default for ${user === users.viewer ? 'a viewer' : 'a member'}`).toBe(expected);
       }
       if (!has.override) return;
-      await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, id, user_id, permission, allowed, set_by) VALUES ($1, $2, $3, 'vy.use', false, $4)`, [orgId, randomUUID(), users.member, users.owner]));
+      await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', false, $3)`, [orgId, users.member, users.owner]));
       try {
         expect(await permitted(users.member, 'vy.use'), 'a member with a deny').toBe(false);
         // A deny beats a role that grants it too, and an entity-scoped role still counts for vy.use (the permission has no entity meaning).
@@ -530,7 +552,7 @@ suite('Vy working for one member, stage A invariants (ADR-0049, #2754)', () => {
       expect(await viewerRoles([...VY_ROLES, 'finance.viewer'])).toEqual({ ...Object.fromEntries(VY_ROLES.map((r) => [r, true])), 'finance.viewer': false });
       // A viewer holds no other permission, whatever a grant says.
       if (has.override) {
-        await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, id, user_id, permission, allowed, set_by) VALUES ($1, $2, $3, 'vy.use', true, $4)`, [orgId, randomUUID(), users.viewer, users.owner]));
+        await admin((c) => c.query(`INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', true, $3)`, [orgId, users.viewer, users.owner]));
         try {
           expect(await permitted(users.viewer, 'vy.use'), 'a viewer with a grant of vy.use').toBe(true);
           expect(await permitted(users.viewer, 'finance.period.unlock'), 'the same viewer, a permission no grant of vy.use gives').toBe(false);

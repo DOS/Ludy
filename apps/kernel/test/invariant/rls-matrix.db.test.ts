@@ -1696,7 +1696,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // A permission one member holds or lacks beyond their role presets (ADR-0049 decision 10): written only by the audited command kernel.member.permission.set, so tenant roles write it through that command, not directly.
   'crove_kernel.member_permission_override': {
-    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, permission: 'vy.use', allowed: 'false', set_by: o.owner } }),
+    make: (o) => ({ row: { org_id: o.id, user_id: o.owner, permission: 'vy.use', allowed: 'false', set_by: o.owner } }),
   },
   // What Vy keeps about one member (ADR-0049 decision 3): an entry the member made or confirmed, sealed to that member by a restrictive policy.
   'crove_kernel.member_vy_memory': {
