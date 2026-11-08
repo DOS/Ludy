@@ -6,6 +6,7 @@ import {
   buildAnnual,
   buildCertificates,
   buildD02Lt,
+  buildD02LtListing,
   buildQuarterly,
   quarterMonths,
   type DeclarationBreakdown,
@@ -205,6 +206,13 @@ describe('the D02-LT of the month', () => {
     expect(rows[0]).toMatchObject({ wageRetirement: '8000000.00', wageUnemployment: '8000000.00', wageHealth: '8000000.00' });
     expect(rows[1]?.wageSickness).toBe('12000000.00');
     expect(doc.notes.join(' ')).toContain('1 người không đóng bảo hiểm');
+  });
+
+  it('names the people it lists (a change that month), so only their identifiers need opening', () => {
+    const { listed, document } = buildD02LtListing({ month: '2026-09', employer, persons: [newHire, raised, same, leaver, probation], lines: current, previousLines: previous });
+    expect(document.sheets[0]?.rows).toEqual(rows);
+    // The unchanged person and the one not insured are not listed.
+    expect([...listed].sort()).toEqual([newHire.employeeId, raised.employeeId, leaver.employeeId].sort());
   });
 
   it('does not guess a change of wage without the previous month', () => {
