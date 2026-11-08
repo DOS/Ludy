@@ -214,10 +214,12 @@ export const zHrCoworkerAsk = z.strictObject({ runId: zId, lang: z.enum(['vi', '
 export type HrCoworkerAsk = z.infer<typeof zHrCoworkerAsk>;
 export const zHrCoworkerPayslipAsk = z.strictObject({ lineId: zId, lang: z.enum(['vi', 'en']).optional() });
 export type HrCoworkerPayslipAsk = z.infer<typeof zHrCoworkerPayslipAsk>;
-const zCoworkerItem = z.object({ id: z.string(), kind: z.string(), employeeId: zId.nullable(), text: z.string() });
+// A finding is what code found (the facts, written by code with the people's names put back), with the model's sentence only when it passed the checks. The findings come back in every state
+// of `ai`, so with AI off, busy, out of budget or refused the owner still sees every anomaly and every signal.
+const zCoworkerItem = z.object({ id: z.string(), kind: z.string(), employeeId: zId.nullable(), facts: z.string(), text: z.string().nullable() });
 export const zHrCoworkerPrepared = z.object({
   ai: z.enum(HR_COWORKER_STATES),
-  items: z.array(zCoworkerItem.extend({ field: z.enum(['overtime', 'unpaid_days', 'bonus', 'allowances', 'insured', 'contract', 'none']) })),
+  items: z.array(zCoworkerItem.extend({ field: z.enum(['overtime', 'unpaid_days', 'bonus', 'allowances', 'insured', 'contract', 'none']).nullable() })),
 });
 export type HrCoworkerPrepared = z.infer<typeof zHrCoworkerPrepared>;
 export const zHrCoworkerFlagged = z.object({ ai: z.enum(HR_COWORKER_STATES), items: z.array(zCoworkerItem) });

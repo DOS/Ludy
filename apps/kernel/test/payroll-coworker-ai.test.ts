@@ -89,63 +89,122 @@ describe('payrollSource', () => {
   });
 });
 
+// A stand-in model that answers every finding of the prompt with its own facts as the sentence (what a faithful model would write), so what comes back is decided by the checks and the aliases.
+const FINDING = /^- ([AS]\d+) \(([a-z_]+)\): (.+)$/gmu;
+const echoFlag = (requests: string[]) => async ({ system, prompt }: { system: string; prompt: string }) => {
+  requests.push(`${system}\n${prompt}`);
+  return { output: { items: [...prompt.matchAll(FINDING)].map((m) => ({ id: m[1] as string, sentence: m[3] as string })) } };
+};
+const echoPrepare = (requests: string[]) => async ({ system, prompt }: { system: string; prompt: string }) => {
+  requests.push(`${system}\n${prompt}`);
+  return { output: { items: [...prompt.matchAll(FINDING)].map((m) => ({ id: m[1] as string, field: 'none' as const, note: m[3] as string })) } };
+};
+
 describe('prepareMonth and flagMonth', () => {
-  it('no request to the model holds a name, the employer or a planted identifier, and the names are put back by code', async () => {
+  it('no request to the model holds a name, the employer or a planted identifier, and the names are put back by code in every finding', async () => {
     const requests: string[] = [];
-    const r = record(requests);
-    const { ai } = setup({
-      prepare: r({ items: [{ id: 'S1', field: 'none', note: 'E1 bắt đầu làm việc trong tháng này.' }] }),
-      flag: r({ items: [{ id: 'A1', sentence: 'E1 nhận 12.000.000 đồng, tăng 50% so với 8.000.000 đồng.' }] }),
-    });
+    const { ai } = setup({ prepare: echoPrepare(requests), flag: echoFlag(requests) });
     const prepared = await prepareMonth(ai, reads(), ORG, USER, 'nov', 'vi');
     const flagged = await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi');
     expect(prepared.ai).toBe('used');
-    expect(prepared.items[0]).toMatchObject({ employeeId: expect.any(String), field: 'none' });
-    expect(prepared.items[0]?.text).toContain(prepared.items[0]?.employeeId === EMP_A ? NAME_A : NAME_B);
     expect(flagged.ai).toBe('used');
-    expect(flagged.items[0]?.text).toContain(NAME_A);
+    const moved = flagged.items.find((i) => i.kind === 'pay_moved');
+    expect(moved).toMatchObject({ employeeId: EMP_A });
+    expect(moved?.facts).toContain(`${NAME_A}: thực nhận 12.000.000 đồng, tháng trước 8.000.000 đồng; tăng 50%`);
+    expect(moved?.text).toContain(NAME_A);
+    expect(flagged.items.find((i) => i.kind === 'rule_blocks')).toMatchObject({ employeeId: null, text: expect.any(String) });
+    expect(prepared.items.map((i) => i.kind).sort()).toEqual(['new_hire', 'recurring_overtime']);
     expect(requests.length).toBe(2);
     for (const sent of requests) for (const secret of SECRETS) expect(sent).not.toContain(secret);
+    // The model never saw a real id either: the aliases are drawn per request.
+    for (const sent of requests) expect(sent).not.toContain(EMP_A);
   });
 
-  it('a model that states a figure it was not given, or an alias that does not exist, gives no text', async () => {
-    const requests: string[] = [];
-    const r = record(requests);
+  it('with AI off every finding of code is listed with its facts and no sentence', async () => {
+    const flagged = await flagMonth({ reader: null, budget: new DraftBudget() }, reads(), ORG, USER, 'nov', 'vi');
+    expect(flagged.ai).toBe('off');
+    expect(flagged.items.map((i) => i.kind)).toEqual(['pay_moved', 'rule_blocks']);
+    expect(flagged.items.every((i) => i.text === null)).toBe(true);
+    expect(flagged.items[0]?.facts).toContain(NAME_A);
+    const prepared = await prepareMonth({ reader: null, budget: new DraftBudget() }, reads(), ORG, USER, 'nov', 'vi');
+    expect(prepared.ai).toBe('off');
+    expect(prepared.items.map((i) => i.kind)).toEqual(['new_hire', 'recurring_overtime']);
+    expect(prepared.items.every((i) => i.text === null && i.field === null && i.employeeId === EMP_A)).toBe(true);
+  });
+
+  it('a model that states a figure it was not given, or an alias that does not exist, adds no sentence, and the findings stay', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const { ai } = setup({
-      prepare: r({ items: [{ id: 'S1', field: 'none', note: 'E9 bắt đầu làm việc.' }] }),
-      flag: r({ items: [{ id: 'A1', sentence: 'E1 nhận 99.000.000 đồng.' }] }),
+      prepare: async () => ({ output: { items: [{ id: 'S1', field: 'none', note: 'E9 bắt đầu làm việc.' }] } }),
+      flag: async () => ({ output: { items: [{ id: 'A1', sentence: 'E1 nhận 99.000.000 đồng.' }] } }),
     });
-    expect((await prepareMonth(ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('failed');
-    expect(await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi')).toEqual({ ai: 'failed', items: [] });
+    const prepared = await prepareMonth(ai, reads(), ORG, USER, 'nov', 'vi');
+    const flagged = await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi');
+    expect(prepared.ai).toBe('failed');
+    expect(flagged.ai).toBe('failed');
+    expect(prepared.items).toHaveLength(2);
+    expect(flagged.items).toHaveLength(2);
+    expect([...prepared.items, ...flagged.items].every((i) => i.text === null)).toBe(true);
   });
 
-  it('names its state when there is no model, the member is too fast or the AI budget is spent, and never throws', async () => {
-    expect(await flagMonth({ reader: null, budget: new DraftBudget() }, reads(), ORG, USER, 'nov', 'vi')).toEqual({ ai: 'off', items: [] });
+  it('when only one sentence passes, that finding has its text and the others still appear', async () => {
+    const { ai } = setup({
+      flag: async ({ prompt }) => {
+        const first = [...prompt.matchAll(FINDING)].find((m) => m[2] === 'rule_blocks');
+        return { output: { items: [{ id: first?.[1] as string, sentence: first?.[3] as string }, { id: 'A99', sentence: 'không có' }] } };
+      },
+    });
+    const flagged = await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi');
+    expect(flagged.ai).toBe('used');
+    expect(flagged.items.map((i) => [i.kind, i.text !== null])).toEqual([['pay_moved', false], ['rule_blocks', true]]);
+  });
+
+  it('names its state when the member is too fast or the AI budget is spent or the call fails, never throws, and lists the findings in each', async () => {
     const budget = new DraftBudget({ perUserPerMinute: 1 });
-    const { ai } = setup({ flag: async () => ({ output: { items: [{ id: 'A1', sentence: 'E1 nhận 12.000.000 đồng, tăng 50%.' }] } }) }, budget);
+    const requests: string[] = [];
+    const { ai } = setup({ flag: echoFlag(requests) }, budget);
     expect((await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('used');
-    expect((await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('busy');
+    const busy = await flagMonth(ai, reads(), ORG, USER, 'nov', 'vi');
+    expect(busy.ai).toBe('busy');
+    expect(busy.items).toHaveLength(2);
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const spent = setup({
       flag: async () => {
         throw new AiBudgetExhaustedError('org', null);
       },
     });
-    expect((await flagMonth(spent.ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('budget');
+    const noBudget = await flagMonth(spent.ai, reads(), ORG, USER, 'nov', 'vi');
+    expect(noBudget.ai).toBe('budget');
+    expect(noBudget.items).toHaveLength(2);
     const broken = setup({
       flag: async () => {
         throw new Error('boom');
       },
     });
-    expect((await flagMonth(broken.ai, reads(), ORG, USER, 'nov', 'vi')).ai).toBe('failed');
+    const failed = await flagMonth(broken.ai, reads(), ORG, USER, 'nov', 'vi');
+    expect(failed.ai).toBe('failed');
+    expect(failed.items).toHaveLength(2);
   });
 
   it('does not ask the model when nothing was found by code', async () => {
     const requests: string[] = [];
-    const { ai } = setup({ flag: record(requests)({ items: [] }) });
+    const { ai } = setup({ flag: echoFlag(requests) });
     const calm: HrRunSheet = sheetOf('calm', '2026-08', [line(EMP_B, NAME_B, '8950000')]);
     const r: PayrollReads = { ...reads(), sheet: async () => calm, runs: async () => [summary('calm', '2026-08')] };
     expect(await flagMonth(ai, r, ORG, USER, 'calm', 'vi')).toEqual({ ai: 'quiet', items: [] });
+    expect(requests).toEqual([]);
+  });
+
+  it('still lists the findings when the run has more people than one prompt holds, with no model call', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const requests: string[] = [];
+    const { ai } = setup({ flag: echoFlag(requests) });
+    const many = Array.from({ length: 201 }, (_, i) => line(`00000000-0000-7000-8000-${String(i).padStart(12, '0')}`, `Người ${i}`, '8950000', i === 0 ? ['ends_this_month', 'net_below_minimum'] : []));
+    const big: HrRunSheet = sheetOf('big', '2026-08', many);
+    const r: PayrollReads = { ...reads(), sheet: async () => big, runs: async () => [summary('big', '2026-08')] };
+    const flagged = await flagMonth(ai, r, ORG, USER, 'big', 'vi');
+    expect(flagged.ai).toBe('failed');
+    expect(flagged.items.map((i) => i.kind)).toEqual(['net_below_minimum']);
     expect(requests).toEqual([]);
   });
 });

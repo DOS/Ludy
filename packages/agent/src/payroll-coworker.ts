@@ -2,7 +2,7 @@
 // The finance coworker's part of payroll (#2534; plan docs/plan/payroll.md 6.7, ADR-0046): prepare the month, flag what looks wrong, explain one payslip. All three are proposals
 // and every one is checked by code afterwards; a person decides, and nothing here computes pay, stores a thing or presses approve.
 //
-// What the model is told is the pseudonymized sheet and nothing else: an alias per employee ("E1", "E2": the order of the random ids, so it says nothing), the pay components by a fixed
+// What the model is told is the pseudonymized sheet and nothing else: an alias per employee ("E1", "E2": drawn in a random order for every request, so an alias says nothing about the person, their hire order, and is not the same twice), the pay components by a fixed
 // label (a free label a person typed on an allowance could hold a name, so labels never leave the server), amounts as decimal strings, counts and yes/no facts that code worked out from
 // the dates (the dates themselves are not sent). A name, an identity number, a tax code, a bank account or an address is not a field of any type here, so it cannot be put in a prompt by
 // accident; `promptLeaks` is the second wall: the caller names the values it must never send and the call is refused when one is found in the prompt. The alias is mapped back to the person
@@ -13,6 +13,7 @@
 // - an alias the model names that is not the one of the item it writes about (a made-up "E9", or another person's): no text;
 // - an id that is not one of the items offered, or one answered twice: dropped.
 // The anomalies and the signals are found by code from the stored facts; the model only puts each in a sentence.
+import { randomInt } from 'node:crypto';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { Decimal, type DecimalValue } from '@crove/l10n-vn';
@@ -118,9 +119,14 @@ const FIGURE_KEYS: readonly PayrollComponent[] = PAYROLL_COMPONENTS;
 const pickFigures = (f: PayrollFigures): PayrollFigures => Object.fromEntries(FIGURE_KEYS.map((k) => [k, new Decimal(f[k] ?? '0').toFixed()])) as PayrollFigures;
 
 /** The sheet with an alias per person. Only the named fields are copied, so a field a caller adds to a line is not carried over. */
-export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: { language: Language; blockingRules: number }): PseudonymSheet {
-  if (lines.length > PAYROLL_SHEET_LINES_MAX) throw new RangeError('Payroll sheet exceeds the employee limit');
-  const ordered = [...lines].sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0));
+export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: { language: Language; blockingRules: number; /** Replaces the random draw, for tests only. */ random?: (below: number) => number }): PseudonymSheet {
+  // A fresh random order for every request (Fisher-Yates on a copy), so the alias of a person is not the same in two calls and does not follow the order the ids were made in.
+  const draw = options.random ?? ((below: number) => randomInt(below));
+  const ordered = [...lines];
+  for (let i = ordered.length - 1; i > 0; i -= 1) {
+    const j = draw(i + 1);
+    [ordered[i], ordered[j]] = [ordered[j] as PayrollSheetLine, ordered[i] as PayrollSheetLine];
+  }
   const aliases = new Map<string, string>();
   const out: AliasedLine[] = ordered.map((line, i) => {
     const alias = `E${i + 1}`;
@@ -311,7 +317,18 @@ export interface PayrollSignal {
   kind: PayrollSignalKind;
   alias: string;
   facts: string;
+  /** Words that say the opposite of what the facts say (the direction of a change): a note holding one is refused. */
+  contradicts?: RegExp;
 }
+
+// The input of the month a proposal may point at, by the kind of signal it answers: a proposal for another input than the signal can concern is refused.
+export const PAYROLL_FIELDS_OF_SIGNAL: Record<PayrollSignalKind, readonly PayrollInputField[]> = {
+  new_hire: ['unpaid_days', 'insured', 'contract', 'none'],
+  probation_ends: ['allowances', 'insured', 'contract', 'none'],
+  contract_ends: ['unpaid_days', 'insured', 'contract', 'none'],
+  recurring_overtime: ['overtime', 'none'],
+  component_changed: ['allowances', 'none'],
+};
 
 // Components that a person's regular terms set: a change of one against last month is a thing to look at (the others move with the month's inputs).
 const RECURRING_COMPONENTS: readonly PayrollComponent[] = ['base_wage', 'allowances', 'other_regular_pay'];
@@ -322,7 +339,7 @@ export function findSignals(sheet: PayrollSheet): PayrollSignal[] {
   const { language } = sheet;
   const vi = language === 'vi';
   const out: PayrollSignal[] = [];
-  const add = (kind: PayrollSignalKind, alias: string, facts: string) => out.push({ id: `S${out.length + 1}`, kind, alias, facts });
+  const add = (kind: PayrollSignalKind, alias: string, facts: string, contradicts?: RegExp) => out.push({ id: `S${out.length + 1}`, kind, alias, facts, ...(contradicts ? { contradicts } : {}) });
   for (const line of sheet.lines) {
     const who = line.alias;
     if (line.contract.startsInMonth) add('new_hire', who, vi ? `${who}: bắt đầu làm việc trong tháng này, số ngày chưa làm của đầu tháng cần nhập` : `${who}: starts work this month, the days not employed at the start of the month need typing`);
@@ -335,7 +352,9 @@ export function findSignals(sheet: PayrollSheet): PayrollSignal[] {
         const before = new Decimal(line.previous[key]);
         if (!now.equals(before)) {
           const label = COMPONENT_LABEL[language][key];
-          add('component_changed', who, vi ? `${who}: ${label} ${amountOf(line.figures[key], language)}, tháng trước ${amountOf(line.previous[key], language)}` : `${who}: ${label} ${amountOf(line.figures[key], language)}, last month ${amountOf(line.previous[key], language)}`);
+          const rose = now.greaterThan(before);
+          const dir = DIRECTION[language][rose ? 'up' : 'down'];
+          add('component_changed', who, vi ? `${who}: ${label} ${amountOf(line.figures[key], language)}, tháng trước ${amountOf(line.previous[key], language)}; ${dir}` : `${who}: ${label} ${amountOf(line.figures[key], language)}, last month ${amountOf(line.previous[key], language)}; ${dir}`, OPPOSITE[language][rose ? 'up' : 'down']);
         }
       }
     }
@@ -391,7 +410,14 @@ export function checkPrepareProposals(signals: readonly PayrollSignal[], output:
     }
     seen.add(item.id);
     const note = oneLine(item.note);
-    const bad = note === '' || Array.from(note).length > PAYROLL_SENTENCE_MAX || sentencesIn(note) > 2 || aliasesIn(note).some((a) => a !== signal.alias) || statedFiguresProblem(note, [signal.facts]) !== null;
+    const bad =
+      note === '' ||
+      Array.from(note).length > PAYROLL_SENTENCE_MAX ||
+      sentencesIn(note) > 2 ||
+      aliasesIn(note).some((a) => a !== signal.alias) ||
+      !PAYROLL_FIELDS_OF_SIGNAL[signal.kind].includes(item.field) ||
+      (signal.contradicts?.test(note.normalize('NFKC')) ?? false) ||
+      statedFiguresProblem(note, [signal.facts]) !== null;
     if (bad) {
       refused += 1;
       continue;
@@ -548,8 +574,10 @@ export class PayrollCoworker {
       });
   }
 
+  // A sheet with more people than one prompt holds is not sent in part (a partial sheet would say "nothing unusual" about the people left out); the findings of code do not depend on this.
   // An alias that is not the generated "E<number>" (a name put there by a careless caller) never reaches a prompt.
   private guardSheet(sheet: PayrollSheet): void {
+    if (sheet.lines.length > PAYROLL_SHEET_LINES_MAX) throw new RangeError('Payroll sheet exceeds the employee limit');
     if (sheet.lines.some((l) => !/^E\d+$/.test(l.alias))) throw new PayrollPromptLeakError();
   }
 

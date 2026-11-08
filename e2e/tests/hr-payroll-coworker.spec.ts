@@ -26,8 +26,9 @@ test('with AI off the pay run and the payslip are complete, and the coworker ans
     await expect(page.getByTestId('hr-sheet-title')).toBeVisible();
     await expect(page.getByTestId('hr-employer-total')).not.toHaveText('');
     await page.getByTestId('hr-coworker-ask').click();
-    await expect(page.getByTestId('hr-coworker-state').first()).toContainText('AI');
-    await expect(page.getByTestId('hr-coworker-prepare')).toHaveCount(0);
+    // The state is a line, never an error; what code found (if anything this month) is listed with its facts and no sentence of the model.
+    await expect(page.getByTestId('hr-coworker-state').first()).toBeVisible();
+    await expect(page.getByTestId('hr-coworker-sentence')).toHaveCount(0);
     await expect(page.getByTestId('hr-employer-total')).not.toHaveText('');
   });
 

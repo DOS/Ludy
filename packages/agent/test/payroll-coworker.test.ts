@@ -46,11 +46,29 @@ function line(id: string, over: Partial<PayrollSheetLine> = {}): PayrollSheetLin
 const tainted = (id: string, over: Partial<PayrollSheetLine> = {}): PayrollSheetLine =>
   ({ ...line(id, over), name: PLANTED[0], displayName: PLANTED[1], nationalId: PLANTED[2], taxCode: PLANTED[3], bankAccount: PLANTED[4], address: PLANTED[5], note: PLANTED[6] }) as PayrollSheetLine;
 
+// The aliases are drawn at random for every request; the tests that name an alias keep the order the lines come in.
+const keepOrder = (below: number) => below - 1;
+const pseudo = (lines: Parameters<typeof pseudonymizeSheet>[0], options: { language: 'vi' | 'en'; blockingRules: number }) => pseudonymizeSheet(lines, { ...options, random: keepOrder });
+
 describe('pseudonymizeSheet', () => {
-  it('gives an alias per person in the order of the ids, keeps the mapping aside and copies only the named fields', () => {
-    const { sheet, aliases } = pseudonymizeSheet([tainted('b-2'), tainted('a-1')], { language: 'vi', blockingRules: 0 });
+  it('draws the aliases at random for every request, so they do not follow the id order and differ between calls', () => {
+    const lines = Array.from({ length: 12 }, (_, i) => line(`id-${String(i).padStart(2, '0')}`));
+    const orders = new Set<string>();
+    for (let k = 0; k < 6; k += 1) {
+      const { aliases } = pseudonymizeSheet(lines, { language: 'vi', blockingRules: 0 });
+      expect(new Set(aliases.values()).size).toBe(12);
+      orders.add([...aliases.values()].join(','));
+    }
+    expect(orders.size).toBeGreaterThan(1);
+    const fixed = pseudonymizeSheet(lines, { language: 'vi', blockingRules: 0, random: () => 0 });
+    expect([...fixed.aliases.values()][0]).not.toBe('id-00');
+  });
+
+  it('gives an alias per person, keeps the mapping aside and copies only the named fields', () => {
+    const { sheet, aliases } = pseudo([tainted('b-2'), tainted('a-1')], { language: 'vi', blockingRules: 0 });
     expect(sheet.lines.map((l) => l.alias)).toEqual(['E1', 'E2']);
-    expect([...aliases]).toEqual([['E1', 'a-1'], ['E2', 'b-2']]);
+    expect([...aliases.keys()]).toEqual(['E1', 'E2']);
+    expect(new Set(aliases.values())).toEqual(new Set(['a-1', 'b-2']));
     const json = JSON.stringify(sheet);
     for (const secret of PLANTED) expect(json).not.toContain(secret);
     expect(json).not.toContain('a-1');
@@ -68,7 +86,7 @@ describe('promptLeaks', () => {
 
 describe('findAnomalies', () => {
   it('finds each anomaly of the plan from stored facts, in a fixed order, with the figures as the sentence must write them', () => {
-    const { sheet } = pseudonymizeSheet(
+    const { sheet } = pseudo(
       [
         line('1', { figures: figures({ net: '12000000', gross: '13000000' }), previous: figures({ net: '8000000' }) }),
         line('2', { previous: null, checks: { ...quiet, netBelowMinimum: true }, figures: figures({ net: '3000000' }) }),
@@ -87,14 +105,14 @@ describe('findAnomalies', () => {
   });
 
   it('finds nothing in a month that did not move by more than the threshold', () => {
-    const { sheet } = pseudonymizeSheet([line('1', { figures: figures({ net: '9000000' }), previous: figures({ net: '8000000' }) })], { language: 'en', blockingRules: 0 });
+    const { sheet } = pseudo([line('1', { figures: figures({ net: '9000000' }), previous: figures({ net: '8000000' }) })], { language: 'en', blockingRules: 0 });
     expect(findAnomalies(sheet)).toEqual([]);
   });
 });
 
 describe('findSignals', () => {
   it('finds a hire, a probation and a contract ending, recurring overtime and a changed regular component', () => {
-    const { sheet } = pseudonymizeSheet(
+    const { sheet } = pseudo(
       [
         line('1', { previous: null, contract: { startsInMonth: true, probationEndsInMonth: false, endsInMonth: false } }),
         line('2', { previous: null, contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: true } }),
@@ -105,12 +123,12 @@ describe('findSignals', () => {
     );
     const signals = findSignals(sheet);
     expect(signals.map((s) => [s.alias, s.kind])).toEqual([['E1', 'new_hire'], ['E2', 'probation_ends'], ['E2', 'contract_ends'], ['E3', 'recurring_overtime'], ['E4', 'component_changed']]);
-    expect(signals[4]?.facts).toBe('E4: Allowances 700,000 dong, last month 500,000 dong');
+    expect(signals[4]?.facts).toBe('E4: Allowances 700,000 dong, last month 500,000 dong; up');
   });
 });
 
 describe('checkFlagSentences', () => {
-  const { sheet } = pseudonymizeSheet([line('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }) }), line('2', { dependentsWithoutRegistration: 2 })], { language: 'vi', blockingRules: 0 });
+  const { sheet } = pseudo([line('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }) }), line('2', { dependentsWithoutRegistration: 2 })], { language: 'vi', blockingRules: 0 });
   const anomalies = findAnomalies(sheet);
 
   it('keeps a sentence that uses only the given figures and its own alias', () => {
@@ -138,27 +156,32 @@ describe('checkFlagSentences', () => {
   });
 
   it('does not count the digits of an alias as a figure the model was given', () => {
-    const sheet25 = pseudonymizeSheet(Array.from({ length: 25 }, (_, i) => line(String(i + 100).padStart(3, '0'), i === 24 ? { dependentsWithoutRegistration: 1 } : {})), { language: 'vi', blockingRules: 0 }).sheet;
+    const sheet25 = pseudo(Array.from({ length: 25 }, (_, i) => line(String(i + 100).padStart(3, '0'), i === 24 ? { dependentsWithoutRegistration: 1 } : {})), { language: 'vi', blockingRules: 0 }).sheet;
     const a = findAnomalies(sheet25);
     expect(a).toHaveLength(1);
     expect(a[0]?.alias).toBe('E25');
     expect(checkFlagSentences(a, { items: [{ id: 'A1', sentence: 'E25 có 25 người phụ thuộc chưa đăng ký.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkFlagSentences(a, { items: [{ id: 'A1', sentence: 'e25 có 1 người phụ thuộc chưa đăng ký.' }] }).kind).toBe('flags');
     expect(checkFlagSentences(a, { items: [{ id: 'A1', sentence: 'E25 có 1 người phụ thuộc, còn e2 thì không.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
-    const e1 = findAnomalies(pseudonymizeSheet([line('1', { figures: figures({ net: '500000' }), previous: figures({ net: '2000000' }) })], { language: 'vi', blockingRules: 0 }).sheet);
+    const e1 = findAnomalies(pseudo([line('1', { figures: figures({ net: '500000' }), previous: figures({ net: '2000000' }) })], { language: 'vi', blockingRules: 0 }).sheet);
     expect(checkFlagSentences(e1, { items: [{ id: 'A1', sentence: 'E1 thực nhận 1 đồng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 
   it('refuses a sentence that says the opposite direction, in either language', () => {
     expect(checkFlagSentences(anomalies, { items: [{ id: 'A1', sentence: 'E1 nhận 12.000.000 đồng, giảm 50% so với 8.000.000 đồng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
-    const down = findAnomalies(pseudonymizeSheet([line('1', { figures: figures({ net: '4000000' }), previous: figures({ net: '8000000' }) })], { language: 'en', blockingRules: 0 }).sheet);
+    const down = findAnomalies(pseudo([line('1', { figures: figures({ net: '4000000' }), previous: figures({ net: '8000000' }) })], { language: 'en', blockingRules: 0 }).sheet);
     expect(checkFlagSentences(down, { items: [{ id: 'A1', sentence: 'E1 net pay rose to 4,000,000 dong, down from 8,000,000 dong.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkFlagSentences(down, { items: [{ id: 'A1', sentence: 'E1 net pay is 4,000,000 dong, down 50% from 8,000,000 dong.' }] }).kind).toBe('flags');
   });
 
   it('refuses an oversized sheet and a sheet whose alias is not generated, before any model call', async () => {
-    expect(() => pseudonymizeSheet(Array.from({ length: 201 }, (_, i) => line(String(i))), { language: 'vi', blockingRules: 0 })).toThrow(RangeError);
-    const bad = pseudonymizeSheet([line('1', { dependentsWithoutRegistration: 1 })], { language: 'vi', blockingRules: 0 }).sheet;
+    const big = pseudo(Array.from({ length: 201 }, (_, i) => line(String(i), i === 0 ? { dependentsWithoutRegistration: 1 } : {})), { language: 'vi', blockingRules: 0 }).sheet;
+    expect(findAnomalies(big)).toHaveLength(1); // the findings of code do not depend on the model's limit
+    let called = 0;
+    const counting = new PayrollCoworker(CONFIG, { flag: async () => { called += 1; return { output: { items: [] } }; } });
+    await expect(counting.flag(big)).rejects.toBeInstanceOf(RangeError);
+    expect(called).toBe(0);
+    const bad = pseudo([line('1', { dependentsWithoutRegistration: 1 })], { language: 'vi', blockingRules: 0 }).sheet;
     bad.lines[0]!.alias = 'Nguyễn Văn A';
     let asked = 0;
     const c = new PayrollCoworker(CONFIG, { flag: async () => { asked += 1; return { output: { items: [] } }; } });
@@ -174,7 +197,7 @@ describe('checkFlagSentences', () => {
 });
 
 describe('checkPrepareProposals', () => {
-  const { sheet } = pseudonymizeSheet([line('1', { contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } })], { language: 'en', blockingRules: 0 });
+  const { sheet } = pseudo([line('1', { contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } })], { language: 'en', blockingRules: 0 });
   const signals = findSignals(sheet);
 
   it('keeps a proposal with its field and drops one that names another alias, an unknown id or a made-up figure', () => {
@@ -182,6 +205,24 @@ describe('checkPrepareProposals', () => {
     expect(checkPrepareProposals(signals, { items: [{ id: 'S1', field: 'none', note: 'E2 leaves probation.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkPrepareProposals(signals, { items: [{ id: 'S9', field: 'none', note: 'E1 leaves probation.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkPrepareProposals(signals, { items: [{ id: 'S1', field: 'bonus', note: 'E1 gets a bonus of 500000 dong.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+  });
+});
+
+describe('prepare: direction and the input a proposal may name', () => {
+  const { sheet } = pseudo([line('1', { figures: figures({ allowances: '700000' }), previous: figures({ allowances: '500000' }) }), line('2', { overtimeMonthsInRow: 3, figures: figures({ overtime: '900000' }) })], { language: 'en', blockingRules: 0 });
+  const signals = findSignals(sheet);
+
+  it('refuses a note that says the opposite direction of a changed component', () => {
+    const changed = signals.find((x) => x.kind === 'component_changed');
+    expect(changed?.facts).toContain('up');
+    expect(checkPrepareProposals(signals, { items: [{ id: changed?.id ?? '', field: 'allowances', note: 'E1 allowances fell to 700,000 dong from 500,000 dong.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+    expect(checkPrepareProposals(signals, { items: [{ id: changed?.id ?? '', field: 'allowances', note: 'E1 allowances rose to 700,000 dong from 500,000 dong: check them.' }] }).kind).toBe('proposals');
+  });
+
+  it('refuses a field that the kind of signal cannot concern', () => {
+    const overtime = signals.find((x) => x.kind === 'recurring_overtime');
+    expect(checkPrepareProposals(signals, { items: [{ id: overtime?.id ?? '', field: 'bonus', note: 'E2 has overtime again: check the bonus.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+    expect(checkPrepareProposals(signals, { items: [{ id: overtime?.id ?? '', field: 'overtime', note: 'E2 has overtime again: check the hours.' }] }).kind).toBe('proposals');
   });
 });
 
@@ -228,7 +269,7 @@ describe('PayrollCoworker', () => {
     prompts.push(`${system}\n${prompt}`);
     return { output, usage: { inputTokens: 10, outputTokens: 5 } };
   };
-  const { sheet } = pseudonymizeSheet(
+  const { sheet } = pseudo(
     [
       tainted('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }), contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } }),
       tainted('2', { dependentsWithoutRegistration: 1 }),
@@ -265,7 +306,7 @@ describe('PayrollCoworker', () => {
 
   it('does not ask the model when code found nothing to say, and reports the tokens of a call', async () => {
     prompts.length = 0;
-    const calm_ = pseudonymizeSheet([line('1')], { language: 'vi', blockingRules: 0 }).sheet;
+    const calm_ = pseudo([line('1')], { language: 'vi', blockingRules: 0 }).sheet;
     const coworker = new PayrollCoworker(CONFIG, { flag: spy({ items: [] }), prepare: spy({ items: [] }) });
     expect(await coworker.flag(calm_)).toEqual({ kind: 'none', code: 'QUIET' });
     expect(await coworker.prepare(calm_)).toEqual({ kind: 'none', code: 'QUIET' });

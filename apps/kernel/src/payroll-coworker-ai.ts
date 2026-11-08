@@ -8,9 +8,22 @@
 //
 // What is not stored yet is not guessed: a probation end date, the payment method of a person and the registration of a dependent are not in the stored run, so those findings are not
 // raised (the sheet says nothing the data does not show). Everything is read, never written: nothing here stores a text, changes a run or approves. When there is no model, the AI
-// budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no text and the screen shows the sheet alone.
+// budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`), and every finding code made is still in it (its facts, with the
+// names put back by code); the model's sentence is attached to a finding only when it passed the checks.
 // A failure is named, never quoted: neither the sheet nor the model's answer is logged.
-import { AiBudgetExhaustedError, dependentsCountedOf, payrollFiguresOf, pseudonymizeSheet, restoreAliases, type InboxReader, type PayrollSheetLine } from '@crove/agent';
+import {
+  AiBudgetExhaustedError,
+  PAYROLL_ANOMALY_KINDS,
+  PAYROLL_SIGNAL_KINDS,
+  dependentsCountedOf,
+  findAnomalies,
+  findSignals,
+  payrollFiguresOf,
+  pseudonymizeSheet,
+  restoreAliases,
+  type InboxReader,
+  type PayrollSheetLine,
+} from '@crove/agent';
 import { Decimal } from '@crove/l10n-vn';
 import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -110,56 +123,60 @@ async function guarded<T>(ai: PayrollAi, orgId: string, userId: string, label: s
   }
 }
 
-// A run with more people than one sheet holds is not sent in part (a partial sheet would say "nothing unusual" about the people left out): the answer is `failed` and the sheet stays whole.
-function pseudonymizedOrNull(source: PayrollSource, language: 'vi' | 'en') {
-  try {
-    return pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
-  } catch (error: unknown) {
-    console.error('[payroll-coworker-ai] sheet not sent', error instanceof Error ? error.name : typeof error);
-    return null;
-  }
-}
-
 const forbiddenOf = (source: PayrollSource): string[] => [...source.names.values(), source.employerName].filter((v) => v.trim() !== '');
 
+// The findings are what CODE found in the stored run (plan 6.7: "code finds the anomalies"), written by code with the people's names put back. They come back in every state of `ai`: with
+// AI off, busy, out of budget, failed or a sentence refused, the owner still sees each one. The model's sentence is attached to a finding only when it passed the checks.
+const KIND_ORDER: readonly string[] = [...PAYROLL_ANOMALY_KINDS, ...PAYROLL_SIGNAL_KINDS];
+const byKindThenFacts = <T extends { kind: string; facts: string }>(a: T, b: T) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.facts < b.facts ? -1 : a.facts > b.facts ? 1 : 0);
+
+function namesOf(source: PayrollSource, aliases: ReadonlyMap<string, string>): Map<string, string> {
+  return new Map([...aliases].map(([alias, id]) => [alias, source.names.get(id) ?? alias]));
+}
+
 export async function prepareMonth(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, runId: string, language: 'vi' | 'en'): Promise<HrCoworkerPrepared> {
-  const none = (state: State): HrCoworkerPrepared => ({ ai: state, items: [] });
-  if (!ai.reader) return none('off');
-  const reader = ai.reader;
   const source = await payrollSource(reads, runId);
-  const pseudo = pseudonymizedOrNull(source, language);
-  if (!pseudo) return none('failed');
-  const { sheet, aliases } = pseudo;
+  const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+  const signals = findSignals(sheet);
+  if (signals.length === 0) return { ai: 'quiet', items: [] };
+  const named = namesOf(source, aliases);
+  const itemsOf = (proposals: ReadonlyMap<string, { field: HrCoworkerPrepared['items'][number]['field']; note: string }>): HrCoworkerPrepared['items'] =>
+    signals
+      .map((s) => {
+        const p = proposals.get(s.id);
+        return { id: s.id, kind: s.kind, employeeId: aliases.get(s.alias) ?? null, facts: restoreAliases(s.facts, named), field: p?.field ?? null, text: p ? restoreAliases(p.note, named) : null };
+      })
+      .sort(byKindThenFacts);
+  if (!ai.reader) return { ai: 'off', items: itemsOf(new Map()) };
+  const reader = ai.reader;
   const answer = await guarded(ai, orgId, userId, 'prepare', () => reader.payrollPrepare(sheet, { forbidden: forbiddenOf(source) }));
-  if ('state' in answer) return none(answer.state);
-  const result = answer.value;
-  if (result.kind === 'none') {
-    if (result.code === 'QUIET') return none('quiet');
-    console.error(`[payroll-coworker-ai] prepare refused: ${result.code}`);
-    return none('failed');
+  if ('state' in answer) return { ai: answer.state, items: itemsOf(new Map()) };
+  if (answer.value.kind === 'none') {
+    console.error(`[payroll-coworker-ai] prepare refused: ${answer.value.code}`);
+    return { ai: 'failed', items: itemsOf(new Map()) };
   }
-  const named = new Map([...aliases].map(([alias, id]) => [alias, source.names.get(id) ?? alias]));
-  return { ai: 'used', items: result.items.map((i) => ({ id: i.id, kind: i.kind, employeeId: aliases.get(i.alias) ?? null, field: i.field, text: restoreAliases(i.note, named) })) };
+  return { ai: 'used', items: itemsOf(new Map(answer.value.items.map((i) => [i.id, { field: i.field, note: i.note }]))) };
 }
 
 export async function flagMonth(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, runId: string, language: 'vi' | 'en'): Promise<HrCoworkerFlagged> {
-  const none = (state: State): HrCoworkerFlagged => ({ ai: state, items: [] });
-  if (!ai.reader) return none('off');
-  const reader = ai.reader;
   const source = await payrollSource(reads, runId);
-  const pseudo = pseudonymizedOrNull(source, language);
-  if (!pseudo) return none('failed');
-  const { sheet, aliases } = pseudo;
+  const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+  const anomalies = findAnomalies(sheet);
+  if (anomalies.length === 0) return { ai: 'quiet', items: [] };
+  const named = namesOf(source, aliases);
+  const itemsOf = (sentences: ReadonlyMap<string, string>): HrCoworkerFlagged['items'] =>
+    anomalies
+      .map((a) => ({ id: a.id, kind: a.kind, employeeId: a.alias === null ? null : (aliases.get(a.alias) ?? null), facts: restoreAliases(a.facts, named), text: sentences.has(a.id) ? restoreAliases(sentences.get(a.id) as string, named) : null }))
+      .sort(byKindThenFacts);
+  if (!ai.reader) return { ai: 'off', items: itemsOf(new Map()) };
+  const reader = ai.reader;
   const answer = await guarded(ai, orgId, userId, 'flag', () => reader.payrollFlag(sheet, { forbidden: forbiddenOf(source) }));
-  if ('state' in answer) return none(answer.state);
-  const result = answer.value;
-  if (result.kind === 'none') {
-    if (result.code === 'QUIET') return none('quiet');
-    console.error(`[payroll-coworker-ai] flag refused: ${result.code}`);
-    return none('failed');
+  if ('state' in answer) return { ai: answer.state, items: itemsOf(new Map()) };
+  if (answer.value.kind === 'none') {
+    console.error(`[payroll-coworker-ai] flag refused: ${answer.value.code}`);
+    return { ai: 'failed', items: itemsOf(new Map()) };
   }
-  const named = new Map([...aliases].map(([alias, id]) => [alias, source.names.get(id) ?? alias]));
-  return { ai: 'used', items: result.items.map((i) => ({ id: i.id, kind: i.kind, employeeId: i.alias === null ? null : (aliases.get(i.alias) ?? null), text: restoreAliases(i.text, named) })) };
+  return { ai: 'used', items: itemsOf(new Map(answer.value.items.map((i) => [i.id, i.text]))) };
 }
 
 export async function explainPayslip(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, lineId: string, language: 'vi' | 'en'): Promise<HrCoworkerExplained> {

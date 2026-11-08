@@ -284,25 +284,38 @@ function MonthCoworker({ runId }: { runId: string }) {
         </Button>
       </div>
       {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {/* What code found is listed in every state: with AI off, busy, out of budget or refused it is the facts alone; the coworker's sentence is added only when it passed the checks. */}
       {prepared && prepared.ai !== 'used' && <CoworkerNotice state={prepared.ai} />}
-      {prepared?.ai === 'used' && (
+      {prepared && prepared.items.length > 0 && (
         <div className="mt-3" data-testid="hr-coworker-prepare">
           <p className="text-xs font-medium text-muted-foreground">{t('coworker.prepareTitle')}</p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
             {prepared.items.map((i) => (
-              <li key={i.id}>
-                {i.text} <span className="text-xs text-subtle-foreground">({t(`coworker.field.${i.field}`)})</span>
+              <li key={i.id} data-testid="hr-coworker-finding">
+                {i.facts}
+                {i.text && (
+                  <span className="block text-muted-foreground" data-testid="hr-coworker-sentence">
+                    {i.text} {i.field && <span className="text-xs text-subtle-foreground">({t(`coworker.field.${i.field}`)})</span>}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
         </div>
       )}
-      {flagged?.ai === 'used' && (
+      {flagged && flagged.items.length > 0 && (
         <div className="mt-3" data-testid="hr-coworker-flag">
           <p className="text-xs font-medium text-muted-foreground">{t('coworker.flagTitle')}</p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
             {flagged.items.map((i) => (
-              <li key={i.id}>{i.text}</li>
+              <li key={i.id} data-testid="hr-coworker-finding">
+                {i.facts}
+                {i.text && (
+                  <span className="block text-muted-foreground" data-testid="hr-coworker-sentence">
+                    {i.text}
+                  </span>
+                )}
+              </li>
             ))}
           </ul>
         </div>
