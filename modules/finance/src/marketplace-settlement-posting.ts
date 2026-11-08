@@ -3,8 +3,8 @@
 // ONE entry per settlement: Dr 131 (the platform) / Cr 511 for the sum of the lines' sales minus the sum of their seller discounts. The commission, service, payment and shipping fees and the
 // withheld tax stay in the settlement record and are not posted here (they are cleared at the payout, a later slice).
 // Refunds (PO decision 2026-11-08): an order the platform refunded within the settlement was not paid for, so Cr 511 = sales - seller discounts - refunds, and Dr 131 the same (TT133 has no 521,
-// the return reduces 511 directly). The refund total stays visible on the proposal. The rule is commentary until the accountant confirms it (#2520). The income line cannot say whether a refund
-// belongs to this period's sale or an earlier one's (the row has the order's paid date and amounts, not the original sale's period), so a refund of an earlier sale is netted the same way here.
+// the return reduces 511 directly). A refund of an earlier period's sale reduces 511 in the period the refund occurs (PO decision 2026-11-08, the usual practice; only a material prior-year error is restated). When refunds and discounts exceed the sales the entry runs the other way, Dr 511 / Cr 131 for the excess. The refund total stays visible on the proposal. The rule is commentary until the accountant confirms it (#2520). The income line cannot say whether a refund
+// belongs to this period's sale or an earlier one's (the row has the order's paid date and amounts, not the original sale's period), so a refund of an earlier sale is netted the same way here, by that decision.
 // Nothing posts until the accountant has confirmed the account map (requireConfirmedMarketplaceMap). The platform's party link is a later slice: the caller fills `partyId`.
 import { DomainError } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
@@ -57,16 +57,18 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
     }
   }
   const net = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount))))).minus(money(toMoney(sum(input.lines.map((l) => l.refund)))));
-  const amount = toMoney(net);
-  if (net.lessThanOrEqualTo(0) || money(amount).lessThanOrEqualTo(0)) throw bad('Kỳ đối soát không có doanh thu ròng dương; không lập được bút toán', { net: amount });
+  // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
+  const amount = toMoney(net.abs());
+  if (money(amount).isZero()) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
   const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}`;
+  const owed = net.greaterThan(0);
   return [
-    { account: map.receivable.code, debit: amount, credit: '0', partyId: input.partyId, memo },
-    { account: map.revenue.code, debit: '0', credit: amount, partyId: null, memo },
+    { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
+    { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
   ];
 }
 
-// The gated proposal: the map of the regime must be confirmed, the net positive, and the entry must pass the journal voucher's own shape checks. The party of the 131 line may still be null
+// The gated proposal: the map of the regime must be confirmed, the net not zero, and the entry must pass the journal voucher's own shape checks. The party of the 131 line may still be null
 // (the later slice fills it), so that one problem is not raised for it here; the party link is checked when the entry is recorded.
 export function settlementProposal(input: SettlementProposalInput, maps?: Readonly<Record<string, MarketplacePostingMap>>): SettlementProposal {
   const map = requireConfirmedMarketplaceMap(input.regime, maps);

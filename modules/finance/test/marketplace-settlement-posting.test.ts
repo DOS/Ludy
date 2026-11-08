@@ -70,8 +70,15 @@ describe('settlement proposal', () => {
   it('marks the refund rule commentary beside the map', () => {
     expect(MARKETPLACE_POSTING_MAPS.tt133!.salesReturn).toMatchObject({ code: '511', status: 'commentary' });
   });
-  it('refuses a zero, negative or empty net', () => {
-    for (const lines of [[{ sales: '5000', sellerDiscount: '5000', refund: '0' }], [{ sales: '1000', sellerDiscount: '5000', refund: '0' }], [{ sales: '5000', sellerDiscount: '0', refund: '5000' }], []]) {
+  it('posts the other way when refunds and discounts exceed the sales', () => {
+    const p = settlementProposal(input([{ sales: '1000', sellerDiscount: '500', refund: '8500' }], { partyId: 'party-1' }), maps);
+    expect(p.lines[0]).toMatchObject({ account: '511', debit: '8000', credit: '0', partyId: null });
+    expect(p.lines[1]).toMatchObject({ account: '131', debit: '0', credit: '8000', partyId: 'party-1' });
+    expect(p.total).toBe('8000');
+    expect(p.refund).toBe('8500');
+  });
+  it('refuses a zero or empty net', () => {
+    for (const lines of [[{ sales: '5000', sellerDiscount: '5000', refund: '0' }], [{ sales: '5000', sellerDiscount: '0', refund: '5000' }], [{ sales: '0.00004', sellerDiscount: '0', refund: '0' }], []]) {
       expect(code(() => settlementProposal(input(lines), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
     }
   });

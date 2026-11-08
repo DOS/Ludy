@@ -45,7 +45,7 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
     status: 'commentary',
     receivable: row('131', 'Plan 8.4 Income reports: Dr 131, the platform as a party of kind marketplace.'),
     revenue: row('511', 'Plan 8.4 Income reports: Cr 511 for the sales it paid for net of the seller discounts; the recognition point is for the accountant (section 11).'),
-    salesReturn: row('511', 'PO rule: an order the platform refunded was not paid for, so Cr 511 is reduced by the refund (no 521 under TT133); a refund of an earlier period sale needs the accountant.'),
+    salesReturn: row('511', 'PO rule: an order the platform refunded was not paid for, so Cr 511 is reduced by the refund (no 521 under TT133); a refund of an earlier period sale reduces 511 in the period the refund occurs (usual practice; only a material prior-year error is restated); refunds and discounts above the sales post the other way, Dr 511 / Cr 131. For the accountant to confirm (#2520).'),
     cash: row('112', 'Plan 8.4 The payout: Dr 112 for the money received.'),
     feePayable: row('331', 'Plan 8.4 The payout: Dr 331 (the platform) for fees already invoiced.'),
     feeAwaitingInvoice: row('1388', 'Plan 8.4 The payout: Dr 1388 for fees whose invoice has not come; the platform fee e-invoice clears it.'),
