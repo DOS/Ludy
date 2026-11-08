@@ -47,10 +47,10 @@ class MemoryStore implements BlobStore {
 
 // Names that a spreadsheet program would read as a formula, and the account numbers (planted so they can be searched for).
 const TEAM = [
-  { name: '=HYPERLINK("http://evil.test","Nguyễn")', wage: '15000000', account: '0011223344551' },
-  { name: '+84 Trần Văn Hai', wage: '9000000', account: '0011223344552' },
-  { name: '-Lê Thu Cúc', wage: '30000000', account: '0011223344553' },
-  { name: '@Phạm Văn Đức', wage: '12000000', account: '0011223344554' },
+  { name: '=HYPERLINK("http://evil.test","Nguyễn")', wage: '15000000', account: 'ACCT-KERNEL-1' },
+  { name: '+84 Trần Văn Hai', wage: '9000000', account: 'ACCT-KERNEL-2' },
+  { name: '-Lê Thu Cúc', wage: '30000000', account: 'ACCT-KERNEL-3' },
+  { name: '@Phạm Văn Đức', wage: '12000000', account: 'ACCT-KERNEL-4' },
 ];
 const ACCOUNTS = TEAM.map((t) => t.account);
 

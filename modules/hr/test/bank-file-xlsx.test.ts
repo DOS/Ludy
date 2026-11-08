@@ -11,7 +11,7 @@ const FILE: HrBankFile = {
   runId: '11111111-1111-4111-8111-111111111111',
   month: '2026-03',
   columns: ['seq', 'name', 'account', 'bank', 'amount', 'content'],
-  rows: DANGEROUS.map((name, i) => ({ seq: String(i + 1), name, account: `00112233445${i}`, bank: '=Vietcombank', amount: `${9_000_000 + i}`, content: '-Luong thang 03/2026' })),
+  rows: DANGEROUS.map((name, i) => ({ seq: String(i + 1), name, account: `ACCT-700${i}`, bank: '=Vietcombank', amount: `${9_000_000 + i}`, content: '-Luong thang 03/2026' })),
   total: '63000021',
 };
 
@@ -54,6 +54,6 @@ describe('the bank salary workbook', () => {
   it('writes the columns in the order asked for, with their headers', async () => {
     const sheet = await sheetOf({ ...FILE, columns: ['account', 'amount', 'name'] });
     expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(['Số tài khoản', 'Số tiền', 'Tên người nhận']);
-    expect((sheet.getRow(2).values as unknown[]).slice(1)).toEqual(['001122334450', '9000000', '=HYPERLINK("http://evil.test","x")']);
+    expect((sheet.getRow(2).values as unknown[]).slice(1)).toEqual(['ACCT-7000', '9000000', '=HYPERLINK("http://evil.test","x")']);
   });
 });
