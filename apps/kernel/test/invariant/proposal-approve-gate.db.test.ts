@@ -273,7 +273,7 @@ suite('the approval gate in the database (#1793)', () => {
         for (const actor of actors) {
           const ts = await db.transaction().execute(async (trx) => {
             await sql`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${contextToken(actor, orgId)}::text)`.execute(trx);
-            return decideApproval(trx, orgId, asUser(actor), { command: c.command, status: c.status, eligible_approvers: c.snapshot, authors: c.authors }, { lock: false });
+            return decideApproval(trx, orgId, asUser(actor), { command: c.command, status: c.status, eligible_approvers: c.snapshot, authors: c.authors, co_authors: null }, { lock: false });
           });
           const inDb = (
             await a.query<{ d: { reason: string; eligibleCount: number; selfApproved: boolean; fourEyes: string; preset: string; version: number } }>(

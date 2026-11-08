@@ -479,6 +479,7 @@ export const inboxGet = defineQuery({
       voided,
       canApprove: approval.reason === 'ok' && !reading,
       approveReason: approval.reason,
+      coAuthor: ctx.actor.type === 'user' && (row.co_authors ?? []).includes(ctx.actor.userId),
       // The same checks kernel.proposal.edit makes before it edits (NOT_EDITABLE otherwise).
       canEdit: canChange && proposalEditable(ctx, row),
       canReject: canChange,

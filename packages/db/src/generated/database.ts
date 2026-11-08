@@ -2224,6 +2224,7 @@ export interface KernelProposalTable {
   request_input: ColumnType<unknown, string | null | undefined, string | null>;
   resubmitted_from: string | null;
   legal_entity_id: string;
+  co_authors: string[] | null;
 }
 
 /** crove_kernel.record_le */
