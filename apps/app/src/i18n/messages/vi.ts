@@ -3191,13 +3191,13 @@ export const vi = {
     hints: {
       finance: {
         chief_accountant: 'Duyệt các đề xuất ghi sổ, mở khóa tháng đã khóa sổ và đánh dấu đã nộp tờ khai GTGT, như chủ sở hữu.',
-        accountant: 'Cho biết thành viên làm kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.',
+        accountant: 'Cho biết thành viên làm kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.',
         viewer: 'Cho biết thành viên chỉ theo dõi số liệu kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.',
         entity_chief_accountant: 'Mở khóa các tháng đã khóa sổ và đánh dấu đã nộp tờ khai GTGT, chỉ của các pháp nhân được giao. Mỗi lần giao là một pháp nhân; có thể giao thêm. Duyệt đề xuất ghi sổ vẫn cần kế toán trưởng của cả tổ chức. Nếu đây là vai trò duy nhất của người này, hãy giao cho họ vai trò Kế toán thuê ngoài cho pháp nhân đó trước khi thu hồi.',
       },
-      crm: { sales: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
-      desk: { agent: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
-      hr: { manager: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
+      crm: { sales: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
+      desk: { agent: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
+      hr: { manager: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
       external_accountant: 'Người này chỉ xem được sổ sách, chứng từ, thu chi và tờ khai của các pháp nhân được giao. Đề xuất trong Chứng từ chờ duyệt và thông báo của pháp nhân khác có thể vẫn hiện, cho đến khi phần này cũng được tách theo pháp nhân. Mỗi lần giao là một pháp nhân; có thể giao thêm.',
     },
     rolesOf: 'Vai trò nghiệp vụ của {name}',
@@ -8258,6 +8258,7 @@ export const vi = {
       ROLE_SCOPE_NOT_FOR_ADMINS: 'Chủ sở hữu và quản trị viên luôn xem được mọi pháp nhân, nên không giới hạn theo pháp nhân được',
       ROLE_ASSIGNMENT_NOT_FOUND: 'Không tìm thấy vai trò này của thành viên',
       ROLE_PRIVILEGED_FOR_VIEWER: 'Người có vai trò Chỉ xem không được giao vai trò có quyền duyệt hay mở khóa sổ; hãy đổi họ thành Thành viên trước',
+      PERMISSION_MANAGE_FORBIDDEN: 'Bạn không đổi được quyền làm việc với Vy của người này',
       ROLE_GRANT_WIDENS_SCOPE: 'Thành viên này đang chỉ được xem một số pháp nhân. Giao vai trò cho cả tổ chức sẽ cho họ xem mọi pháp nhân, nên không giao được. Nếu muốn họ làm việc với cả tổ chức, hãy thu hồi các vai trò theo pháp nhân trước; pháp nhân cuối cùng chỉ gỡ được khi đổi họ thành Quản trị hoặc xóa họ khỏi tổ chức rồi mời lại',
       ROLE_DEMOTION_MIXES_SCOPE: 'Thành viên này đang có cả vai trò cho cả tổ chức lẫn vai trò theo pháp nhân, nên chưa đổi được thành Thành viên hoặc Chỉ xem. Hãy thu hồi các vai trò cho cả tổ chức để họ chỉ xem các pháp nhân đó, hoặc thu hồi các vai trò theo pháp nhân để họ xem mọi pháp nhân, rồi đổi lại',
       ROLE_REVOKE_WIDENS_SCOPE: 'Đây là pháp nhân cuối cùng mà thành viên này được xem. Thu hồi thì họ sẽ xem được mọi pháp nhân; nếu họ không còn làm việc cho tổ chức, hãy xóa họ khỏi tổ chức',
@@ -9707,6 +9708,9 @@ export const vi = {
         },
         invites: {
           list: 'Xem danh sách lời mời',
+        },
+        permission: {
+          set: 'Cho phép hoặc không cho phép một thành viên làm việc với Vy',
         },
         remove: 'Xóa thành viên khỏi tổ chức',
         role: {

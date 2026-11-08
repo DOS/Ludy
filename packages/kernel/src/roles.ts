@@ -73,22 +73,17 @@ export const memberRolesQuery = defineQuery({
   },
 });
 
-// The sorted permissions the signed-in user holds in the org in context through org-wide assignments (org.get).
+// The sorted permissions the signed-in user holds in the org in context (org.get): every permission a role grants or the catalog
+// names, asked of the one resolution (crove_kernel.member_has_permission), so a default, a grant and a deny count as they do for
+// ctx_has_permission.
 export async function myPermissions(ctx: QueryContext): Promise<string[]> {
   if (ctx.actor.type !== 'user') return [];
-  const rows = await ctx.trx
-    .selectFrom('crove_kernel.role_assignment as a')
-    .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
-    // A viewer holds no permission (crove_kernel.ctx_has_permission says the same).
-    .innerJoin('crove_kernel.tenant_member as m', (join) => join.onRef('m.org_id', '=', 'a.org_id').onRef('m.user_id', '=', 'a.user_id'))
-    .select('p.permission')
-    .distinct()
-    .where('a.org_id', '=', ctx.orgId)
-    .where('a.user_id', '=', ctx.actor.userId)
-    .where('a.legal_entity_id', 'is', null)
-    .where('m.role', '<>', 'viewer')
-    .orderBy('p.permission')
-    .execute();
+  const { rows } = await sql<{ permission: string }>`
+    SELECT k.permission FROM (
+      SELECT permission FROM crove_kernel.role_permission
+      UNION SELECT permission FROM crove_kernel.permission_catalog) k
+    WHERE crove_kernel.member_has_permission(${ctx.orgId}::uuid, ${ctx.actor.userId}::uuid, k.permission)
+    ORDER BY k.permission`.execute(ctx.trx);
   return rows.map((r) => r.permission);
 }
 
@@ -246,5 +241,34 @@ export const revokeRole = defineCommand({
   },
 });
 
-export const roleCommands = [assignRole, revokeRole];
+// Sets or clears one person's exception to who works with Vy (ADR-0049 decision 10). An owner may change it for anyone; an admin
+// for admins, members and viewers, never for an owner; the definer checks again, and a member never changes their own. null
+// removes the exception, so the person falls back to their base role and their roles.
+export const setMemberPermission = defineCommand({
+  name: 'kernel.member.permission.set',
+  input: z.object({ userId: zId, permission: z.literal('vy.use'), allowed: z.boolean().nullable() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin'],
+  target: (input) => ({ type: 'kernel.user', id: input.userId }),
+  handler: async (ctx, input): Promise<{ userId: string; changed: boolean }> => {
+    // The definer takes the member's row FOR SHARE itself, as an approval reading their roles does.
+    ctx.audit({ target_user: input.userId, permission: input.permission, allowed: input.allowed });
+    let changed = false;
+    try {
+      const { rows } = await sql<{ changed: boolean }>`
+        SELECT crove_kernel.member_permission_set(${input.userId}::uuid, ${input.permission}::text, ${input.allowed}::boolean) AS changed`.execute(ctx.trx);
+      changed = rows[0]?.changed === true;
+    } catch (error) {
+      const pg = error as { code?: string; message?: string };
+      if (pg?.message === 'PERMISSION_MEMBER_NOT_FOUND') throw new DomainError('MEMBER_NOT_FOUND', 404, 'Không tìm thấy thành viên này trong tổ chức');
+      if (pg?.message === 'PERMISSION_MANAGE_FORBIDDEN') throw new DomainError('PERMISSION_MANAGE_FORBIDDEN', 403, 'Bạn không đổi được quyền làm việc với Vy của người này');
+      throw error;
+    }
+    ctx.audit({ changed });
+    return { userId: input.userId, changed };
+  },
+});
+
+export const roleCommands = [assignRole, revokeRole, setMemberPermission];
 export const roleQueries = [memberRolesQuery];
