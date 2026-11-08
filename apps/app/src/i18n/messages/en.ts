@@ -1194,6 +1194,12 @@ export const en = {
       hint: '{finance} reads only this text and the customer names in the books. You read and edit the whole draft before you save and issue it.',
       badge: 'Suggested by {finance}',
       buyerNote: 'The buyer comes from the customer record in the books. Check it before you save.',
+      crm: {
+        deal: 'Open deal (from the CRM)',
+        booking: 'Past booking (from the CRM)',
+        choose: 'Choose to add to the text below',
+        hint: 'Choosing adds one sentence about the deal or booking to the text below, so you can read and edit it before asking {finance} to draft. The lists show only what you may see in the CRM.',
+      },
       previous: {
         label: 'Start from the previous invoice to the same customer',
         customer: 'Customer',

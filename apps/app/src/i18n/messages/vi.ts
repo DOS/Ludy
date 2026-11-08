@@ -1192,6 +1192,12 @@ export const vi = {
       hint: '{finance} chỉ đọc đoạn chữ này và tên khách hàng trong sổ. Bạn xem và sửa cả bản nháp rồi mới lưu và phát hành.',
       badge: 'Gợi ý của {finance}',
       buyerNote: 'Người mua lấy từ hồ sơ khách hàng trong sổ. Bạn kiểm tra lại trước khi lưu.',
+      crm: {
+        deal: 'Cơ hội đang mở (từ CRM)',
+        booking: 'Lịch hẹn đã diễn ra (từ CRM)',
+        choose: 'Chọn để thêm vào đoạn chữ bên dưới',
+        hint: 'Chọn xong, một câu về cơ hội hoặc lịch hẹn được thêm vào đoạn chữ bên dưới để bạn đọc và sửa trước khi nhờ {finance} soạn. Danh sách chỉ hiện những gì bạn được xem trong CRM.',
+      },
       previous: {
         label: 'Lấy từ hóa đơn trước gửi cùng khách',
         customer: 'Khách hàng',
