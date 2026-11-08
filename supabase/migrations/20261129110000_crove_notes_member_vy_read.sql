@@ -2,7 +2,7 @@
 -- Crove notes (issue #2756, ADR-0049 stage B): a member-scoped context reads its member's notes. Idempotent; applied files stay untouched.
 --   crove_notes.note_read   reads ctx_acting_user_id() where it read ctx_user_id(): the member-scoped background context of Vy reads its
 --                           member's notes and the shared ones the member may read, and writes none (note_insert and note_update are
---                           untouched). The catalog row of this opt-in is member_vy_table in 20261128190000.
+--                           untouched). The catalog row of this opt-in is member_vy_table in 20261129100000.
 SET LOCAL lock_timeout = '2s';
 
 DROP POLICY IF EXISTS note_read ON crove_notes.note;
