@@ -393,7 +393,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
       { out: '1.234.567', description: 'Chuyen khoan' },
       { in: vn(totals.net), description: 'Hoan tien' },
     ]) as [string, string, string, string, string];
-    expect(await matchOf(o, net)).toEqual({ bankLineId: net, candidates: [{ runId, month: MONTH, kind: 'net_pay', amount: money(totals.net).toFixed(0), reason: 'amount_note' }] });
+    expect(await matchOf(o, net)).toEqual({ bankLineId: net, date: '2026-03-31', candidates: [{ runId, month: MONTH, kind: 'net_pay', amount: money(totals.net).toFixed(0), reason: 'amount_note' }] });
     expect((await matchOf(o, wording)).candidates).toEqual([{ runId, month: MONTH, kind: 'insurance', amount: insurance, reason: 'amount_note' }]);
     // No words that name the payment: the amount alone is the reason.
     expect((await matchOf(o, plain)).candidates).toEqual([{ runId, month: MONTH, kind: 'tax', amount: money(totals.pit).toFixed(0), reason: 'amount' }]);

@@ -382,5 +382,13 @@ export const zBankPayrollCandidate = z.strictObject({
   reason: z.enum(BANK_PAYROLL_REASONS),
 });
 export type BankPayrollCandidate = z.infer<typeof zBankPayrollCandidate>;
-export const zBankPayrollMatch = z.strictObject({ bankLineId: zId, candidates: z.array(zBankPayrollCandidate) });
+export const zBankPayrollMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankPayrollCandidate) });
 export type BankPayrollMatch = z.infer<typeof zBankPayrollMatch>;
+
+// The coworker's one line on why the line may be that payment (finance.bank.payroll_match gives the candidates, this words one of them): the facts are read again on the server from the line and
+// the candidate named, never taken from the caller. `ai` names the state when there is no text (off: no model; busy: too many calls; budget: the AI budget is spent; failed: the call failed or its
+// text was refused), and the screen then shows the reason code alone.
+export const zBankPayrollExplainAsk = z.strictObject({ bankLineId: zId, runId: zId, kind: z.enum(PAYROLL_PAYMENT_KINDS), lang: z.enum(['vi', 'en']).optional() });
+export type BankPayrollExplainAsk = z.infer<typeof zBankPayrollExplainAsk>;
+export const zBankPayrollExplanation = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
+export type BankPayrollExplanation = z.infer<typeof zBankPayrollExplanation>;

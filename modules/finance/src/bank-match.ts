@@ -403,7 +403,7 @@ export const bankPayrollMatch = defineQuery({
   handler: async (ctx, input): Promise<BankPayrollMatch> => {
     const line = await findBankLine(ctx, input.bankLineId);
     if (!line) throw new DomainError('BANK_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng sao kê; hãy tải lại trang ngân hàng');
-    const none: BankPayrollMatch = { bankLineId: line.id, candidates: [] };
+    const none: BankPayrollMatch = { bankLineId: line.id, date: line.date, candidates: [] };
     // Only money out of the bank, and only a line nothing settles or waits on.
     const out = new Decimal(line.amount);
     if (!out.isNegative() || out.isZero()) return none;
@@ -450,6 +450,6 @@ export const bankPayrollMatch = defineQuery({
     }
     // The description's words first, then the newest month.
     candidates.sort((a, b) => Number(b.reason === 'amount_note') - Number(a.reason === 'amount_note') || (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
-    return { bankLineId: line.id, candidates };
+    return { bankLineId: line.id, date: line.date, candidates };
   },
 });
