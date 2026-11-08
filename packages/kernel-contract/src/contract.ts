@@ -254,6 +254,7 @@ import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSet
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
+import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteSuggestInput, zQuoteSuggested, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSetting, zQuoteSettingSet, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
@@ -318,6 +319,11 @@ import {
   zMeetingSettingsGet,
   zMeetingSettingsSet,
   zMeetingSummary,
+  zTranscript,
+  zTranscriptCorrect,
+  zTranscriptCorrected,
+  zTranscriptDraftStore,
+  zTranscriptDraftStored,
 } from './meetings.ts';
 import { zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -629,6 +635,20 @@ export const contract = {
       get: oc.input(z.strictObject({})).output(zDealSetting),
       set: oc.input(zDealSettingSet).output(zDealSetting),
     },
+    // Quotes of a deal (#2693, docs/plan/crm-quotes.md): everyone reads; owners, admins and members write a draft, delete it, or revise a quote that has left
+    // `draft`; owners and admins set the org's defaults. Nothing here sends a quote (a later step).
+    quotes: {
+      list: oc.input(zQuoteListQuery).output(zQuotePage),
+      get: oc.input(zQuoteRef).output(zQuote),
+      byDeal: oc.input(zDealQuotesQuery).output(z.array(zQuoteSummary)),
+      defaults: oc.input(zQuoteDefaultsQuery).output(zQuoteDefaults),
+      // Dy's proposal for the lines (#2698): a read that never stores; a person applies or drops each line, and saves with `save`.
+      suggest: oc.input(zQuoteSuggestInput).output(zQuoteSuggested),
+      save: oc.input(zQuoteSave).output(zQuote),
+      deleteDraft: oc.input(zQuoteRef).output(zQuoteDeleted),
+      revise: oc.input(zQuoteRef).output(zQuote),
+      setSetting: oc.input(zQuoteSettingSet).output(zQuoteSetting),
+    },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.
     bookingFeed: {
@@ -722,6 +742,12 @@ export const contract = {
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
+    // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
+    transcript: {
+      get: oc.input(zMeetingRef).output(zTranscript),
+      draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
+      correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
     },
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),

@@ -22,6 +22,8 @@ export interface MetaDeletionApps {
   adsWrite?: string | undefined;
   // The Pages app's secret (the conversations of Facebook Pages and Instagram), when configured.
   conversations?: string | undefined;
+  // The Instagram app's secret when Instagram has an app of its own (#2212): a person who granted Instagram through it is hashed with it.
+  instagram?: string | undefined;
 }
 
 // A person's request, verified against every configured app and queued on each side the app serves. With none configured nothing is
@@ -36,6 +38,7 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
     { side: 'ads', secret: apps.ads },
     { side: 'ads', secret: apps.adsWrite },
     { side: 'conversations', secret: apps.conversations },
+    { side: 'conversations', secret: apps.instagram },
   ];
   for (const { side, secret } of candidates) {
     if (!secret || targets.some((t) => t.side === side && t.secret === secret)) continue;
