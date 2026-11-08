@@ -270,6 +270,8 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET status = 'accepted' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(', remarks = \'x\''), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
+    // The seller's letterhead frozen at the send (#2826) does not change on the way either.
+    await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(", seller_bank_note = 'STK moi'"), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     // A viewer changes nothing.
     expect(await as(o.orgId, o.viewer, async (c) => (await c.query(toAccepted(), [o.orgId, quote.id])).rowCount)).toBe(0);
 
@@ -289,6 +291,8 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     // A viewer inserts no order and changes none.
     expect(await as(o.orgId, o.viewer, async (c) => (await c.query("UPDATE crove_crm.sales_order SET cancel_reason = cancel_reason WHERE org_id = $1 AND id = $2", [o.orgId, order.id])).rowCount)).toBe(0);
     // The accepted quote is frozen: no one changes its status back or its decision.
+    // Nor its seller's letterhead (#2826): the payment details the customer accepted stay.
+    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET seller_bank_note = 'STK moi' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET status = 'sent' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     // A cancelled order stays cancelled.
     await o.exec(o.member, 'crm.sales_order.cancel', { orderId: order.id, version: order.version, reason: REASON });

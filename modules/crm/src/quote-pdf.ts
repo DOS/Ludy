@@ -11,13 +11,16 @@ import type { QuoteDocument, QuoteParty } from './pdf/quote-document.ts';
 
 const ALL = ['owner', 'admin', 'member', 'viewer'] as const;
 
-type Frozen = { sent: boolean; issuerEntityId: string | null };
+type Frozen = { sent: boolean; issuerEntityId: string | null; snapshot: QuoteDocument['seller'] | null };
 type Org = { name: string; tax_code: string | null; address: string | null; contact_email: string | null };
 
-// The one place the seller is decided (issue #2826 will freeze the letterhead into the quote when it is sent, and then only this function changes). Today a draft
-// is read live: the org's own record, with the contact email as the email when no letterhead email is set. A quote that has been sent reads what the customer's
-// public page shows: the issuing legal entity's name and tax code, the org's address, and the phone, email and bank note of the quote settings (no fallback).
+// The one place the seller is decided. A quote that has been sent shows the seller frozen into it when it was sent (#2826: the issuing entity's name and tax code, the
+// org's address, and the phone, email and bank note of the settings as they were), the same as the customer's public page, so a later change of the letterhead
+// changes no quote that was sent. A draft is read live: the org's own record, with the contact email as the email when no letterhead email is set. A quote sent
+// before the snapshot existed (no seller_name) reads the live letterhead as the customer's page does: the issuing legal entity's name and tax code, the org's address,
+// and the phone, email and bank note of the quote settings (no fallback).
 async function sellerOf(ctx: Reader, org: Org, frozen: Frozen): Promise<QuoteDocument['seller']> {
+  if (frozen.sent && frozen.snapshot) return frozen.snapshot;
   const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
   if (!frozen.sent) {
     return { name: org.name, taxCode: org.tax_code, address: org.address, phone: letterhead?.phone ?? null, email: letterhead?.email ?? org.contact_email, bankNote: letterhead?.bank_note ?? null };
@@ -35,14 +38,18 @@ export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<Q
   const quote = await loadQuote(ctx, quoteId);
   const row = await ctx.trx
     .selectFrom('crove_crm.quote')
-    .select(['sent_at', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email'])
+    .select(['sent_at', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email', 'seller_name', 'seller_tax_code', 'seller_address', 'seller_phone', 'seller_email', 'seller_bank_note'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', quoteId)
     .executeTakeFirstOrThrow();
   const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   const sentAt = row.sent_at;
   const sent = sentAt !== null && row.buyer_name !== null;
-  const seller = await sellerOf(ctx, org, { sent, issuerEntityId: row.issuer_entity_id });
+  const snapshot =
+    row.seller_name === null
+      ? null
+      : { name: row.seller_name, taxCode: row.seller_tax_code, address: row.seller_address, phone: row.seller_phone, email: row.seller_email, bankNote: row.seller_bank_note };
+  const seller = await sellerOf(ctx, org, { sent, issuerEntityId: row.issuer_entity_id, snapshot });
   if (!sent) {
     const party = await ctx.trx
       .selectFrom('crove_kernel.party')
