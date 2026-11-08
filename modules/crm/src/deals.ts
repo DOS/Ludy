@@ -42,6 +42,7 @@ import { z } from 'zod';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealSortText, dealsAfter } from './deal-filter.ts';
 import { closeNextSteps } from './next-steps.ts';
+import { dealHasQuotes } from './quotes.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -400,6 +401,8 @@ export const dealDelete = defineCommand({
     if (!deal) throw notFound();
     // A member deletes the deals they created; owners and admins any.
     if (ctx.role === 'member' && deal.created_by !== userId) throw new DomainError('DEAL_DELETE_FORBIDDEN', 403, 'Bạn chỉ xóa được cơ hội do chính mình tạo');
+    // A quote the customer holds is a document: a deal with one is kept (plan docs/plan/crm-quotes.md 4.1).
+    if (await dealHasQuotes(ctx, input.dealId)) throw new DomainError('DEAL_HAS_QUOTES', 409, 'Cơ hội này đã có báo giá nên không xóa được');
     await ctx.trx.deleteFrom('crove_crm.deal').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).execute();
     ctx.audit({ dealId: input.dealId, partyId: deal.party_id });
     await ctx.activity('kernel.party', deal.party_id, 'deal.deleted', 'Xóa một cơ hội bán hàng');

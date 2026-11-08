@@ -36,6 +36,9 @@ export interface CroveCrmSchema {
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_crm.quote': CrmQuoteTable;
+  'crove_crm.quote_line': CrmQuoteLineTable;
+  'crove_crm.quote_setting': CrmQuoteSettingTable;
 }
 
 export interface CroveFinanceSchema {
@@ -173,6 +176,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
+  'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
 }
 
 export interface CroveNotesSchema {
@@ -624,6 +628,64 @@ export interface CrmPipelineStageTable {
   kind: string;
   position: number;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_crm.quote_line */
+export interface CrmQuoteLineTable {
+  org_id: string;
+  id: Generated<string>;
+  quote_id: string;
+  line_no: number;
+  kind: string;
+  description: string;
+  unit: string | null;
+  quantity: string | null;
+  unit_price: string | null;
+  discount_percent: Generated<string>;
+  vat_rate: string | null;
+  amount: Generated<string>;
+  vat_amount: Generated<string>;
+  stock_item_id: string | null;
+}
+
+/** crove_crm.quote_setting */
+export interface CrmQuoteSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  valid_days: Generated<number>;
+  default_vat: Generated<string>;
+  default_terms: string | null;
+  set_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_crm.quote */
+export interface CrmQuoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  deal_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  number: ColumnType<string | null, string | null, NotGranted>;
+  revision: ColumnType<number, number | undefined, NotGranted>;
+  revises_id: ColumnType<string | null, string | null, NotGranted>;
+  status: ColumnType<string, string | undefined, NotGranted>;
+  valid_until: string;
+  remarks: string | null;
+  terms: string | null;
+  subtotal: Generated<string>;
+  vat_amount: Generated<string>;
+  total: Generated<string>;
+  sent_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  sent_via: ColumnType<string | null, string | null, NotGranted>;
+  first_viewed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  decided_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  decline_reason: ColumnType<string | null, string | null, NotGranted>;
+  version: Generated<number>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
@@ -2526,6 +2588,21 @@ export interface MeetingsMeetingVideoTable {
   length_seconds: ColumnType<number, number, NotGranted>;
   video_retention_date: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.transcript_segment */
+export interface MeetingsTranscriptSegmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  start_seconds: ColumnType<string, string, NotGranted>;
+  end_seconds: ColumnType<string, string, NotGranted>;
+  speaker_label: Generated<string>;
+  text: string;
+  stage: ColumnType<string, string | undefined, NotGranted>;
+  corrected: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_notes.link */

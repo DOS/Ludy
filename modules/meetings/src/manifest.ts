@@ -54,6 +54,11 @@ export const meetingsManifest = defineModule({
         'video_retention_date',
         'created_at',
       ]),
+      // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
+      transcript_segment: columns(
+        ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'created_at', 'updated_at'],
+        { speaker_label: 'pii', text: 'pii' },
+      ),
     },
   },
   permissions: [],
