@@ -101,7 +101,9 @@ export const transcriptCorrect = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.segmentId)
       .execute();
-    ctx.audit({ segmentId: input.segmentId, meetingId: segment.meeting_id, text: input.text !== undefined, speakerLabel: input.speakerLabel !== undefined });
+    const textChanged = input.text !== undefined;
+    const labelChanged = input.speakerLabel !== undefined;
+    ctx.audit({ segmentId: input.segmentId, meetingId: segment.meeting_id, textChanged, labelChanged });
     return { segmentId: input.segmentId, corrected: true as const };
   },
 });

@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -48,6 +49,10 @@ export function MeetingDetailPage() {
       input: { meetingId: id },
     }),
   );
+
+  // The same query the transcript panel runs (one request): the AI-off notice gives way once there is a transcript.
+  const transcriptQuery = useQuery(orpc.meetings.transcript.get.queryOptions({ input: { meetingId: id } }));
+  const hasTranscript = (transcriptQuery.data?.segments.length ?? 0) > 0;
 
   const orgQuery = useQuery(orpc.org.get.queryOptions());
   const isOwner = orgQuery.data?.role === 'owner';
@@ -244,17 +249,19 @@ export function MeetingDetailPage() {
         }
       />
 
-      {/* AI Off Status Card */}
-      <Card className="border-primary/20 bg-primary/5">
-        <CardHeader>
-          <CardTitle className="text-sm font-semibold text-primary">
-            {t('detail.aiOffCardTitle')}
-          </CardTitle>
-          <CardDescription className="text-xs text-muted-foreground">
-            {t('detail.aiOffCardDesc')}
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      {/* AI Off Status Card: gone once the meeting has a transcript */}
+      {!hasTranscript && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="text-sm font-semibold text-primary">
+              {t('detail.aiOffCardTitle')}
+            </CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">
+              {t('detail.aiOffCardDesc')}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
 
       {/* Playback section */}
       <div className="space-y-6">
@@ -290,6 +297,9 @@ export function MeetingDetailPage() {
           <Empty title={t('detail.noMedia')} />
         )}
       </div>
+
+      {/* The transcript: the recorder's draft, or what was shared with the meeting */}
+      <MeetingTranscript meetingId={id} />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Consent Record Card */}

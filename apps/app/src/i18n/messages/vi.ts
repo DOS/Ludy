@@ -1568,6 +1568,20 @@ export const vi = {
       saved: 'Đã lưu thời gian lưu cuộc họp.',
       adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được các thời hạn này.',
     },
+    transcript: {
+      title: 'Bản ghi lời',
+      draftTitle: 'Bản ghi lời (nháp)',
+      draftNote: 'Chỉ bạn thấy bản nháp này. Hãy đọc lại và sửa dòng nào nghe sai; từ đây chưa chia sẻ gì cho người dự họp.',
+      publishedNote: 'Bản ghi lời mà người ghi đã chia sẻ cho cuộc họp.',
+      emptyRecorder: 'Chưa có bản ghi lời. Ghi âm và nghe lại vẫn dùng được khi không có.',
+      speaker: 'Người nói',
+      text: 'Nội dung nói',
+      edit: 'Sửa',
+      editLine: 'Sửa dòng lúc {time}',
+      save: 'Lưu',
+      cancel: 'Hủy',
+      corrected: 'Đã sửa',
+    },
     detail: {
       back: 'Quay lại danh sách',
       delete: 'Xóa cuộc họp',
@@ -8212,6 +8226,7 @@ export const vi = {
       NOTE_LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
       NOTE_LINK_TARGET_NOT_FOUND: 'Không tìm thấy bản ghi để gắn ghi chú',
       MEETING_NOT_FOUND: 'Không tìm thấy cuộc họp này',
+      TRANSCRIPT_SEGMENT_NOT_FOUND: 'Không tìm thấy đoạn bản ghi này',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
@@ -9719,6 +9734,11 @@ export const vi = {
       reader: {
         add: 'Thêm người đọc cuộc họp',
         remove: 'Xóa người đọc cuộc họp',
+      },
+      transcript: {
+        correct: 'Sửa một dòng của bản ghi nháp',
+        draft_store: 'Lưu bản ghi nháp của cuộc họp',
+        get: 'Xem bản ghi của cuộc họp',
       },
     },
     notes: {
