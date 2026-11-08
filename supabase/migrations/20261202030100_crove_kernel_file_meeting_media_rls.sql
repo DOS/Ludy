@@ -15,9 +15,9 @@ DROP POLICY IF EXISTS file_meeting_media_read ON crove_kernel.file;
 CREATE POLICY file_meeting_media_read ON crove_kernel.file AS RESTRICTIVE FOR SELECT TO crove_tenant
   USING (
     source NOT IN ('meeting_audio', 'meeting_video')
-    OR crove_kernel.ctx_actor_type() = 'system'
+    OR (SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR (
-      crove_kernel.ctx_actor_type() = 'user'
+      (SELECT crove_kernel.ctx_actor_type()) = 'user'
       AND created_by = (SELECT crove_kernel.ctx_user_id())
       AND EXISTS (
         SELECT 1 FROM crove_kernel.tenant_member m
@@ -25,7 +25,7 @@ CREATE POLICY file_meeting_media_read ON crove_kernel.file AS RESTRICTIVE FOR SE
       )
     )
     OR (
-      crove_kernel.ctx_actor_type() = 'user'
+      (SELECT crove_kernel.ctx_actor_type()) = 'user'
       AND (
         EXISTS (
           SELECT 1 FROM crove_meetings.audio_segment s
@@ -37,5 +37,5 @@ CREATE POLICY file_meeting_media_read ON crove_kernel.file AS RESTRICTIVE FOR SE
         )
       )
     )
-    OR (crove_kernel.ctx_actor_type() = 'agent' AND crove_meetings.member_vy_reads_media_file(org_id, id))
+    OR ((SELECT crove_kernel.ctx_actor_type()) = 'agent' AND crove_meetings.member_vy_reads_media_file(org_id, id))
   );

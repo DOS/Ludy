@@ -12,6 +12,13 @@ BEGIN
   IF crove_kernel.ctx_actor_type() IS DISTINCT FROM 'agent' OR p_org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
     RETURN false;
   END IF;
+  -- Only an active member Vy asks the rest: any other agent is refused here, before audio_for_member_vy is tried.
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_kernel.agent a
+    WHERE a.org_id = p_org_id AND a.id = crove_kernel.ctx_agent_id() AND a.kind = 'member_vy' AND a.status = 'active'
+  ) THEN
+    RETURN false;
+  END IF;
   SELECT s.meeting_id INTO v_meeting
   FROM crove_meetings.audio_segment s
   WHERE s.org_id = p_org_id AND s.file_id = p_file_id
