@@ -2,7 +2,7 @@
 -- Crove kernel (issue #2755, ADR-0049 stage A, slice 1 of 4): the database side of Vy working for one member. Idempotent;
 -- applied files stay untouched.
 --   agent.kind, agent.member_user_id   a member's own Vy is an agent row of kind 'member_vy', one per member, made only by
---                                      that member in their own user context with the fixed 'member_vy' template, never
+--                                      that member in their own user context with the fixed 'kernel.member_vy' template, never
 --                                      changed after insert, and never the holder of a position.
 --   ai_run.private_read                 true once a run read something private (set by the store command of slice 3, false
 --                                      to true only); a run of a member_vy agent is inserted only in its member's context
@@ -17,11 +17,8 @@ SET LOCAL lock_timeout = '2s';
 
 -- The fixed template of a member's Vy: no position, so no seat and no role (permissions come from the member). Its role
 -- key is a placeholder no role carries; max_risk R1 is the ceiling of ADR-0049 decision 1.
-ALTER TABLE crove_kernel.agent_template DROP CONSTRAINT IF EXISTS agent_template_key_check;
-ALTER TABLE crove_kernel.agent_template ADD CONSTRAINT agent_template_key_check
-  CHECK (key ~ '^[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*$' OR key = 'member_vy');
 INSERT INTO crove_kernel.agent_template (key, module, title, role_key, max_risk, job_description, subscribes, daily_run_cap)
-VALUES ('member_vy', 'kernel', 'Vy làm việc cho một thành viên', 'member_vy', 'R1',
+VALUES ('kernel.member_vy', 'kernel', 'Vy làm việc cho một thành viên', 'member_vy', 'R1',
   '{"responsibilities": ["Làm việc theo yêu cầu của đúng một thành viên, với quyền của người đó"], "kpis": [], "workingHours": "always", "limits": ["Không ghi vào sổ, không duyệt, không gửi gì ra ngoài: chỉ lưu kết quả riêng cho thành viên"]}'::jsonb,
   '{}', 50)
 ON CONFLICT (key) DO NOTHING;
@@ -32,7 +29,7 @@ ALTER TABLE crove_kernel.agent DROP CONSTRAINT IF EXISTS agent_kind_check;
 ALTER TABLE crove_kernel.agent ADD CONSTRAINT agent_kind_check CHECK (kind IN ('org_chart', 'member_vy'));
 ALTER TABLE crove_kernel.agent DROP CONSTRAINT IF EXISTS agent_member_vy_shape_check;
 ALTER TABLE crove_kernel.agent ADD CONSTRAINT agent_member_vy_shape_check
-  CHECK ((kind = 'member_vy') = (member_user_id IS NOT NULL) AND (kind = 'member_vy') = (template_key = 'member_vy'));
+  CHECK ((kind = 'member_vy') = (member_user_id IS NOT NULL) AND (kind = 'member_vy') = (template_key = 'kernel.member_vy'));
 CREATE UNIQUE INDEX IF NOT EXISTS agent_member_vy_uq ON crove_kernel.agent (org_id, member_user_id) WHERE kind = 'member_vy';
 
 -- The binding between member and agent, held by the database (ADR-0049 decision 1).
