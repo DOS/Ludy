@@ -278,6 +278,9 @@ export interface QueryDef<I = unknown, O = unknown> {
   // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
   // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
   target?: (input: I) => { type: string; id: string } | null;
+  // Facts of the read to keep in its audit row's detail, from its parsed input: names of what is read (a table), never a value or personal data. The
+  // keys of the runtime's own detail (read, stage, the actor's) are kept as they are. Ignored without `sensitive`.
+  auditDetail?: (input: I) => Record<string, string>; // keys and values are names (AUDIT_DETAIL_KEY, TARGET_TYPE), checked before the row is written
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -939,6 +942,8 @@ function refuseStreamed(def: QueryDef<unknown, unknown>): void {
 
 // The type a sensitive read's audit row names its record by (QueryDef.target): a name, never free text.
 const TARGET_TYPE = /^[a-z][a-z0-9_.]{0,63}$/;
+// The key of a fact a query adds to its audit row (QueryDef.auditDetail).
+const AUDIT_DETAIL_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 
 // A sensitive query is audited before it reads, which only Runtime.query() and Runtime.stream() do.
 function refuseSensitiveLookup(def: QueryDef<unknown, unknown>): void {
@@ -2671,6 +2676,11 @@ export class Runtime {
     // The record the read is about, named by a type of a fixed shape: a query's declaration cannot carry free text into the audit row.
     const target = def.target?.(input) ?? null;
     if (target !== null && !TARGET_TYPE.test(target.type)) throw new Error(`query ${def.name}: ${target.type} is not a target type`);
+    // The facts a query adds to its audit row are names of fixed shape, never free text: audit rows reach the WORM archive and the org's export.
+    const extra = def.auditDetail?.(input) ?? {};
+    for (const [key, value] of Object.entries(extra)) {
+      if (!AUDIT_DETAIL_KEY.test(key) || !TARGET_TYPE.test(value)) throw new Error(`query ${def.name}: audit detail ${key} is not a name`);
+    }
     const db = await this.#cells.resolveTenant(options.orgId);
     const refused: { by: DomainError | null } = { by: null };
     try {
@@ -2695,7 +2705,7 @@ export class Runtime {
           target,
           proposalId: null,
           // The row says a read was started: the handler may still fail after it.
-          detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+          detail: { ...extra, ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
           inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
         });
       });

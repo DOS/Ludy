@@ -55,7 +55,7 @@ import {
   type UserActor,
 } from '@crove/kernel-runtime';
 import { detectMediaContainer } from '@crove/mod-meetings';
-import type { OrgExportView } from '@crove/kernel';
+import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
   MISA_SME_BANK_CREDIT,
@@ -116,6 +116,7 @@ import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
 import { corsMiddleware } from './cors.ts';
 import { exportAad, exportSealer } from './export-seal.ts';
+import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
@@ -2207,6 +2208,13 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
+  // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
+  // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
+  // is held until the handler is done, the audit row included.
+  const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
+  // The org export's owner-run tables (#2676) take a slot too, held until their response has ended.
+
   // Finance routes exist only when the finance module is installed (CROVE_MODULES); otherwise they are 404 below.
   if (runtime.installed('finance')) {
     // The legal entity whose books an export is of (#1280): ?legalEntityId=<uuid>, as in zLegalEntityChoice; omitted,
@@ -2216,11 +2224,6 @@ export function createHttpApp(deps: HttpDeps) {
       const id = c.req.query('legalEntityId');
       return id ? { legalEntityId: id } : {};
     };
-    // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
-    // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
-    // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
-    // is held until the handler is done, the audit row included.
-    const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
     app.use('/api/export/*', async (c, next) => {
       const release = exportSlots.tryAcquire(c.get('user').userId);
       if (!release) {
@@ -2666,8 +2669,33 @@ export function createHttpApp(deps: HttpDeps) {
       const user = c.get('user');
       const orgSlug = c.req.header(ORG_HEADER) ?? null;
       const orgId = await resolveOrg(runtime, user, orgSlug);
-      const view = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
       const part = c.req.param('part');
+      // The tables of the owner-run path (#2676, payroll people and pay runs) are read live by the owner's own session, never by the export job: a
+      // sensitive stream, audited before it reads (it names the table), served only while the org is closing, which carries the fresh second factor
+      // of kernel.org.offboard. The sealed identity and account numbers are not in it. The response streams, under a slot of the export limiter.
+      if (Object.hasOwn(OWNER_RUN_EXPORT_TABLES, part)) {
+        // A HEAD request would run the whole audited read and throw the body away.
+        if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
+        const table = part as OwnerRunExportTable;
+        const state = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
+        if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất dữ liệu; hãy thử lại sau vài giây');
+        }
+        // streamedBody lets go of the slot on every path (the query settling, a pre-aborted request), so no catch releases it here.
+        const body = await streamedBody((sink) => runtime.stream('kernel.org.export.people', { table }, { actor: actorOf(user), orgId }, sink), release, c.req.raw.signal);
+        return new Response(body, {
+          headers: {
+            'content-type': 'application/x-ndjson; charset=utf-8',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), ORG_SLUG, part], 'ndjson'),
+            'x-content-type-options': 'nosniff',
+            'cache-control': 'private, no-store',
+          },
+        });
+      }
+      const view = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
       const exported = view.export;
       const missing = () => new DomainError('NOT_FOUND', 404, 'Chưa có bản xuất dữ liệu này');
       if (!exported) throw missing();

@@ -29,7 +29,7 @@ import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
 import { asRoleKey, inviteRoleChoices } from '../lib/member-roles.ts';
-import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, slugConfirmed } from '../lib/offboarding.ts';
+import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, ownerRunFileComplete, slugConfirmed } from '../lib/offboarding.ts';
 
 interface MemberRow {
   userId: string;
@@ -261,7 +261,10 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
   const download = useMutation({
     mutationFn: async (part: string) => {
       const response = await apiFetch(`/api/org-export/${encodeURIComponent(part)}`);
-      const url = URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      // A staff or pay file is the owner's only copy: one that was cut short is refused, never saved as if it were whole.
+      if (state.data?.ownerRunTables.includes(part) && !ownerRunFileComplete(await blob.text())) throw new Error(t('errors.incomplete'));
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = exportFileName(slug, part);
@@ -325,6 +328,30 @@ function Offboarding({ name, slug }: { name: string; slug: string }) {
             ))}
           </ul>
           {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+        </div>
+      )}
+      {data.status === 'offboarding' && data.ownerRunTables.length > 0 && (
+        <div className="mt-3 space-y-2 text-sm">
+          <p className="text-foreground">{t('people')}</p>
+          <p className="text-subtle-foreground">{t('peopleNote')}</p>
+          <ul className="divide-y">
+            {data.ownerRunTables.map((table) => (
+              <li key={table} className="flex items-center justify-between gap-3 py-2">
+                <p className="min-w-0 truncate font-mono text-foreground">{table}</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={download.isPending}
+                  loading={download.isPending && download.variables === table}
+                  onClick={() => download.mutate(table)}
+                  aria-label={`${t('download')} ${table}`}
+                >
+                  {t('download')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {!(exported && downloadable) && download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
         </div>
       )}
       {data.status !== 'closed' && !confirming && (
