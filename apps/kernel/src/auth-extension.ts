@@ -117,7 +117,7 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
 }
 
 // Revokes the token row an exchange just made when the exchange cannot be completed (its audit row failed), so no usable
-// row is left that the client never received. By the token's hash, within two minutes of its creation; the definer audits
+// row is left that the client never received. By the token's hash, while it has never been used (last_used_at is null); the definer audits
 // it as a system revoke. true when a row was revoked. Never throws: the caller is already handling a failure.
 export async function voidUndeliveredExtensionToken(db: Db, token: string): Promise<boolean> {
   try {

@@ -19,6 +19,11 @@
 --    disable that runs at the same time cannot slip between the check and the new token: either the exchange sees the
 --    demotion and refuses, or the demotion's trigger sees the new token and voids it.
 -- 5. Removing a member voids their tokens too (an AFTER DELETE trigger), so removed members' devices show as revoked.
+-- 6. One-time backfill (ext_device_backfill_suspended, run at the end of this file): until now a demotion or a disable only
+--    suspended a member's tokens (revoked_at stayed null and verify read the role and the account live). The triggers fire
+--    only on changes made from now on, so a token whose member is already a viewer or already disabled when this migration
+--    runs is voided here, with its audit row, and does not come back when the role or the account is restored. Idempotent:
+--    a second run finds nothing live to void. Removed members are not affected (a token older than the membership stays dead).
 -- ext_device_system_revoke is the one routine that revokes and audits on the system's own behalf; the two triggers
 -- call it. The ext_device_* routines and the trigger functions are callable by nobody (their names avoid
 -- extension_token, which the invariant suite reads as "a function the API's login runs").
@@ -51,6 +56,9 @@ BEGIN
       UPDATE crove_kernel.extension_token x SET revoked_at = pg_catalog.clock_timestamp()
       WHERE (p_org IS NULL OR x.org_id = p_org) AND x.user_id = p_user
         AND x.revoked_at IS NULL AND x.expires_at > pg_catalog.clock_timestamp()
+        -- Only the tokens of an active org: those of an org that is offboarding or closed are refused already and the purge deletes
+        -- them, and an audit row of such an org has no place to stand (the removal trigger skips it the same way).
+        AND EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = x.org_id AND t.status = 'active')
       RETURNING x.org_id, x.id
     )
     SELECT u.org_id, u.id FROM u
@@ -247,6 +255,32 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
+-- Backfill: tokens already suspended when this migration runs
+-- ---------------------------------------------------------------------------
+-- Voids, with its audit row, every live token of a member who is already disabled or already below member in an active org
+-- (see 6. above). Returns how many it voided. Callable by nobody but the owner of the schema (the migration runs it once).
+CREATE OR REPLACE FUNCTION crove_kernel.ext_device_backfill_suspended()
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  r record;
+  v_n integer := 0;
+BEGIN
+  FOR r IN
+    SELECT DISTINCT x.org_id, x.user_id,
+           CASE WHEN u.disabled_at IS NOT NULL THEN 'user_disabled' ELSE 'role_change' END AS reason
+    FROM crove_kernel.extension_token x
+    JOIN crove_kernel.tenant t ON t.org_id = x.org_id AND t.status = 'active'
+    JOIN crove_kernel.user_account u ON u.id = x.user_id
+    LEFT JOIN crove_kernel.tenant_member m ON m.org_id = x.org_id AND m.user_id = x.user_id
+    WHERE x.revoked_at IS NULL AND x.expires_at > pg_catalog.clock_timestamp()
+      AND (u.disabled_at IS NOT NULL OR m.role NOT IN ('owner', 'admin', 'member'))
+  LOOP
+    v_n := v_n + crove_kernel.ext_device_system_revoke(r.org_id, r.user_id, r.reason);
+  END LOOP;
+  RETURN v_n;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Grants: the internal routines and the trigger functions are callable by nobody; the API's login alone runs the rest.
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION
@@ -256,6 +290,7 @@ REVOKE ALL ON FUNCTION
   crove_kernel.ext_device_user_disabled(),
   crove_kernel.ext_device_member_removed(),
   crove_kernel.ext_device_caller_role(),
+  crove_kernel.ext_device_backfill_suspended(),
   crove_kernel.list_extension_tokens_for_org(),
   crove_kernel.revoke_extension_token_as_admin(uuid),
   crove_kernel.void_undelivered_extension_token(bytea)
@@ -268,7 +303,7 @@ BEGIN
     EXECUTE pg_catalog.format(
       'REVOKE ALL ON FUNCTION crove_kernel.ext_device_audit_revoke(uuid, uuid, uuid, text), '
       'crove_kernel.ext_device_system_revoke(uuid, uuid, text), crove_kernel.ext_device_member_demoted(), '
-      'crove_kernel.ext_device_user_disabled(), crove_kernel.ext_device_member_removed(), crove_kernel.ext_device_caller_role(), '
+      'crove_kernel.ext_device_user_disabled(), crove_kernel.ext_device_member_removed(), crove_kernel.ext_device_caller_role(), crove_kernel.ext_device_backfill_suspended(), '
       'crove_kernel.list_extension_tokens_for_org(), crove_kernel.revoke_extension_token_as_admin(uuid), '
       'crove_kernel.void_undelivered_extension_token(bytea) FROM %I',
       r.rolname);
@@ -279,3 +314,6 @@ GRANT EXECUTE ON FUNCTION
   crove_kernel.revoke_extension_token_as_admin(uuid),
   crove_kernel.void_undelivered_extension_token(bytea)
 TO crove_app;
+
+-- Run the backfill once, now that the triggers and the routines exist.
+SELECT crove_kernel.ext_device_backfill_suspended();

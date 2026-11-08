@@ -1364,8 +1364,9 @@ export function createHttpApp(deps: HttpDeps) {
         );
       } catch (error) {
         const voided = await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
-        // A live row nobody holds is left behind (it expires on its own); say so, with ids only.
-        if (!voided) logEvent('error', 'extension exchange failed and its token row was not voided', { tokenId: done.exchange.tokenId, orgId: done.exchange.orgId });
+        // The clean-up did not void the row: it was already revoked (a demotion raced the exchange) or the clean-up itself failed, in which
+        // case a live row nobody holds is left behind and expires on its own. Ids only.
+        if (!voided) logEvent('error', 'extension exchange failed and its clean-up did not void the token row', { tokenId: done.exchange.tokenId, orgId: done.exchange.orgId });
         throw error;
       }
       return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });
