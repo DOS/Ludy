@@ -71,6 +71,7 @@ export const kernelManifest = defineModule({
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
+      member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_at']),
       member_vy_memory: columns(['org_id', 'id', 'member_user_id', 'created_at', 'updated_at'], { body: 'pii' }),
       member_vy_result: columns(['org_id', 'id', 'member_user_id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'tainted', 'private_read', 'created_at', 'expires_at'], { body: 'pii' }),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
@@ -85,6 +86,8 @@ export const kernelManifest = defineModule({
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
       party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
+      permission_catalog: columns(['permission', 'grantable_to_viewer']),
+      permission_default: columns(['base_role', 'permission']),
       position: columns(['org_id', 'id', 'title', 'module', 'role_key', 'reports_to', 'holder_user_id', 'holder_agent_id', 'le_scope', 'flags', 'job_description', 'status', 'created_at', 'updated_at']),
       prober_alert_state: columns(['id', 'problem', 'started_at', 'notified_at', 'updated_at']),
       proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
