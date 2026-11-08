@@ -165,7 +165,8 @@ BEGIN
     RETURN NEW;
   END IF;
   -- A line stays on its quote: moving one would write to a quote whose status was never looked at.
-  IF TG_OP = 'UPDATE' AND (NEW.org_id, NEW.quote_id) IS DISTINCT FROM (OLD.org_id, OLD.quote_id) THEN
+  -- (A move to another org is left to the row policies, whose refusal the cross-org matrix expects.)
+  IF TG_OP = 'UPDATE' AND NEW.org_id = OLD.org_id AND NEW.quote_id IS DISTINCT FROM OLD.quote_id THEN
     RAISE EXCEPTION 'QUOTE_FROZEN' USING ERRCODE = '42501', DETAIL = 'a line does not move to another quote';
   END IF;
   IF TG_OP = 'DELETE' THEN
