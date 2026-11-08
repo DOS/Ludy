@@ -59,7 +59,7 @@ describe('CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET', () => {
   });
 
   it('let the previous webhook secret go with the Instagram app alone, and refuse it without any app or equal to the current one', () => {
-    const previous = { CHANNEL_META_APP_SECRET_PREVIOUS: 'previous-secret-0123456789abcdef' };
+    const previous = { CHANNEL_META_APP_SECRET_PREVIOUS: 'previous-secret-aaaaaaaaaaaaaaaa' };
     expect(() => loadConfig({ ...BASE, ...INSTAGRAM, ...previous })).not.toThrow();
     expect(() => loadConfig({ ...BASE, ...previous })).toThrow(/set without CHANNEL_META_APP_SECRET/);
     expect(() => loadConfig({ ...BASE, ...INSTAGRAM, CHANNEL_META_APP_SECRET_PREVIOUS: INSTAGRAM.CHANNEL_INSTAGRAM_APP_SECRET })).toThrow(/same as CHANNEL_META_APP_SECRET/);
