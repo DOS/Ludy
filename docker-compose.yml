@@ -257,6 +257,7 @@ services:
       S3_PRESIGNED_URLS: ${S3_PRESIGNED_URLS:-true}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       UPLOAD_COMPLETE_CONCURRENCY: ${UPLOAD_COMPLETE_CONCURRENCY:-4}
+      MEDIA_UPLOAD_REQUEST_TIMEOUT_S: ${MEDIA_UPLOAD_REQUEST_TIMEOUT_S:-2700}
       # JSON log lines with the request id and org id (#2175), and the database pool sizes of the API and the worker.
       LOG_FORMAT: ${LOG_FORMAT:-text}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}

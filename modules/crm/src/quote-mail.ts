@@ -48,8 +48,8 @@ function dateVi(value: string): string {
   return `${d}/${m}/${y}`;
 }
 
-// The mail from its stored merge data. publicUrl: where the app is served (no trailing slash needed). replyTo: the org's inbound address when the deployment receives
-// mail. brand: the product name users see (BRAND_NAME). token: the link's token, made when the mail is sent.
+// The mail from its stored merge data. publicUrl: where the app is served (no trailing slash needed). replyTo: the org's conversation address when the deployment receives
+// mail and the org has one (never the document intake address). brand: the product name users see (BRAND_NAME). token: the link's token, made when the mail is sent.
 export function renderQuoteMail(raw: unknown, context: { publicUrl: string; replyTo: string | null; brand?: string; token: string }): RenderedQuoteMail {
   const mail = zQuoteMail.parse(raw);
   if (!QUOTE_TOKEN_PATTERN.test(context.token)) throw new Error('quote mail: the link token is malformed');

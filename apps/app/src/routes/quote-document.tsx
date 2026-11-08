@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_TOKEN_PATTERN, type QuoteDocument } from '@crove/kernel-contract';
+import { QUOTE_TOKEN_PATTERN, vietnamToday, type QuoteDocument } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -64,7 +64,7 @@ export function QuoteDocumentPage() {
             <div className="space-y-0.5 text-right">
               <h2 className="text-xl font-semibold uppercase tracking-wide text-foreground">{t('heading')}</h2>
               <p className="tabular-nums text-muted-foreground">{t('number', { number: doc.revision > 1 ? `${doc.number}-R${doc.revision}` : doc.number })}</p>
-              <p className="text-muted-foreground">{t('sentOn', { date: f.date(doc.sentAt.slice(0, 10)) })}</p>
+              <p className="text-muted-foreground">{t('sentOn', { date: f.date(vietnamToday(new Date(doc.sentAt))) })}</p>
               <p className={doc.expired ? 'font-medium text-destructive' : 'text-muted-foreground'}>
                 {doc.expired ? t('expired', { date: f.date(doc.validUntil) }) : t('validUntil', { date: f.date(doc.validUntil) })}
               </p>
