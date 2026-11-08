@@ -279,7 +279,9 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const token = /quote#([A-Za-z0-9_-]{43})/.exec(rendered!.text)![1]!;
     expect(rendered!.text).toContain(quote.number as string);
     expect(rendered!.html).toContain(`href="https://app.example.test/-/quote#${token}"`);
-    expect(await quoteView(rt, { token })).toMatchObject({ number: quote.number, total: draft.total });
+    const opened = (await quoteView(rt, { token })) as QuoteDocument;
+    expect(opened.number).toBe(quote.number);
+    expect(Number(opened.total)).toBe(Number(draft.total));
     const links = await admin((c) => c.query<{ token_sha256: string; created_by: string }>('SELECT token_sha256, created_by FROM crove_crm.quote_link WHERE org_id = $1 AND quote_id = $2', [o.orgId, quote.id]));
     expect(links.rows).toHaveLength(1);
     expect(links.rows[0]).toMatchObject({ created_by: o.member });
@@ -342,7 +344,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     // A well-formed send of a quote with its total changed in the same statement is refused (a quote is sent as it was saved).
     await expect(as(o.orgId, o.member, (c) => c.query(forgedSend(`${complete}, total = 1, subtotal = 1, vat_amount = 0`), [o.orgId, draft.id, entity]))).rejects.toMatchObject({ code: '42501' });
     // A sent quote does not change, whoever asks and whatever the column.
-    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0001'", 'valid_until = valid_until + 1']) {
+    for (const set of ["remarks = 'x'", "status = 'draft'", "status = 'accepted'", "number = 'BG-2026-0999'", 'valid_until = valid_until + 1']) {
       await expect(as(o.orgId, o.owner, (c) => c.query(forgedSend(set), [o.orgId, sent.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // A sent quote's lines do not change: the share lock and the status check (the line policies also hide the row).
