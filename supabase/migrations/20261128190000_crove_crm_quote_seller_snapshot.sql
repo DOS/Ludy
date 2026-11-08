@@ -9,7 +9,7 @@
 -- and still shows the live letterhead.
 --
 -- crove_crm.quote        gains the six seller_* columns; the tenant roles may set them only in the draft to sent step the guard allows (and a new row has none).
--- crove_crm.quote_guard  is the body of 20261128120000 with the six columns held like the buyer's: none on a new row, unchanged by an edit of a draft, and a sent quote
+-- crove_crm.quote_guard  is the body of 20261128170000 (Q4, with the accepted and declined step) with the six columns held like the buyer's: none on a new row, unchanged by an edit of a draft, and a sent quote
 --                        has a seller_name.
 -- crove_crm.quote_link_view  is the body of 20261128120000 with the seller block read from the snapshot when there is one. Signature, owner and grants as they were.
 SET LOCAL lock_timeout = '2s';
@@ -110,6 +110,22 @@ BEGIN
       END IF;
     ELSE
       RAISE EXCEPTION 'QUOTE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a draft is sent and nothing else';
+    END IF;
+  ELSIF OLD.status = 'sent' AND NEW.status IN ('accepted', 'declined') THEN
+    -- A person records the customer's decision (Q4, ADR-0050): only the status, the decision time and, for a decline, its reason change; the quote was not expired; an
+    -- acceptance has its sales order, made earlier in the same transaction.
+    IF (pg_catalog.to_jsonb(NEW) - v_keep - 'status' - 'decided_at' - 'decline_reason') IS DISTINCT FROM (pg_catalog.to_jsonb(OLD) - v_keep - 'status' - 'decided_at' - 'decline_reason') THEN
+      RAISE EXCEPTION 'QUOTE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a decision changes the status, its time and its reason only';
+    END IF;
+    IF NEW.decided_at IS NULL OR (NEW.status = 'accepted' AND NEW.decline_reason IS NOT NULL) OR NEW.decided_at < pg_catalog.now() - pg_catalog.make_interval(days => 1)
+       OR NEW.decided_at > pg_catalog.now() + pg_catalog.make_interval(days => 1) THEN
+      RAISE EXCEPTION 'QUOTE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a decision has the time of now, and an acceptance has no decline reason';
+    END IF;
+    IF OLD.valid_until < (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date THEN
+      RAISE EXCEPTION 'QUOTE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a quote past its validity is revised, not decided';
+    END IF;
+    IF NEW.status = 'accepted' AND NOT EXISTS (SELECT 1 FROM crove_crm.sales_order o WHERE o.org_id = NEW.org_id AND o.quote_id = NEW.id) THEN
+      RAISE EXCEPTION 'QUOTE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'an accepted quote has its sales order';
     END IF;
   ELSIF OLD.status IN ('sent', 'declined') AND NEW.status = 'superseded' THEN
     -- Replaced by the revision that was sent in this transaction (a declined quote is revised too): nothing but the status changes.
