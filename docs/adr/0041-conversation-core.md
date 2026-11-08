@@ -1,6 +1,6 @@
 # 0041. A conversation core in the kernel: comments, private messages and email in one inbox
 
-- Status: Proposed (2026-11-01), amended 2026-11-03 (#2437) for the owner's decision on the inbox (Decisions 6, 7 and 10). Nothing here is built. The layout, the retention default and the build order are **owner** decisions ([conversations plan](../plan/conversations.md), section 16).
+- Status: Proposed (2026-11-01), amended 2026-11-03 (#2437) for the owner's decision on the inbox (Decisions 6, 7 and 10). Built since: the conversation core, Hộp thư and the Engage groups ship (#2435), and the Công ty screen (#2438). The layout, the retention default and the build order are **owner** decisions ([conversations plan](../plan/conversations.md), section 16).
 - Date: 2026-11-01
 - Deciders: owner (JOY), on the Marketing PO's recommendation
 - Builds on:
