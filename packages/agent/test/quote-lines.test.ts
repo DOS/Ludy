@@ -76,6 +76,17 @@ describe('checkQuoteLines', () => {
     expect(checkQuoteLines(REQUEST, { lines: [line({ vatRate: '8' })] })).toMatchObject({ kind: 'proposal', lines: [{ vatRate: '8%' }] });
   });
 
+  it('does not read a small figure of the customer\'s words as a price, nor a phone number as a description', () => {
+    const asked = { ...REQUEST, messages: ['Giao số 12 Nguyễn Huệ, lấy 10 hộp bánh A giá 120k, gọi 0912345678'] };
+    expect(checkQuoteLines(asked, { lines: [line({ unitPrice: '12' })] })).toMatchObject({ lines: [{ unitPrice: null, priceFrom: null }] });
+    expect(checkQuoteLines(asked, { lines: [line({ description: 'Áo 0912345678' })] })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('keeps the newest of two earlier lines that differ only in spacing', () => {
+    const asked = { ...REQUEST, messages: ['lấy 3 hộp trà b'], earlier: [{ description: 'Trà  B', unit: 'hộp', unitPrice: '250000', vatRate: '8%' }, { description: 'trà b', unit: 'hộp', unitPrice: '200000', vatRate: '8%' }] };
+    expect(checkQuoteLines(asked, { lines: [line({ description: 'Trà B', quantity: '3', unitPrice: null })] })).toMatchObject({ lines: [{ unitPrice: '250000' }] });
+  });
+
   it('refuses an empty line, too many lines, no answer and no customer words', () => {
     expect(checkQuoteLines(REQUEST, { lines: [line({ description: '  ' })] })).toEqual({ kind: 'none', code: 'LINE' });
     expect(checkQuoteLines(REQUEST, { lines: [line({ quantity: 'mười' })] })).toEqual({ kind: 'none', code: 'LINE' });

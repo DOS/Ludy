@@ -126,16 +126,22 @@ export function checkQuoteLines(request: QuoteSuggestRequest, output: QuoteModel
   // The sources of a figure: the customer's words and the deal's title for a quantity; those, the deal's amount and the earlier prices for a price.
   const sourceText = [written, request.dealTitle];
   const quantities = figuresOfText(sourceText.join('\n'));
-  const messagePrices = figuresOfText(written);
+  // A price of the customer's words is a figure of at least 1000 dong: a smaller figure is a quantity, a house number or a date, never read as a price. The check is a bag of figures, not a binding
+  // of a figure to its line, so the editor shows where each price came from and a person reads it.
+  const messagePrices = new Set([...figuresOfText(written)].filter((f) => money(f).greaterThanOrEqualTo(1000)));
   const earlierPrices = new Set(earlier.map((l) => plainDecimal(l.unitPrice)).filter((p): p is string => p !== null));
   const dealAmount = request.dealAmount === null ? null : plainDecimal(request.dealAmount);
-  const byDescription = new Map(earlier.map((l) => [key(l.description), l]));
+  // The latest line of a description wins: `earlier` is newest first, so a later entry never replaces one already there.
+  const byDescription = new Map<string, QuoteEarlierLine>();
+  for (const l of earlier) if (!byDescription.has(key(l.description))) byDescription.set(key(l.description), l);
   const trusted = [...sourceText, ...earlier.map((l) => l.description), ...earlier.map((l) => l.unit ?? ''), dealAmount ?? ''];
   const lines: QuoteProposedLine[] = [];
   const check = (line: QuoteModelLine): QuoteProposedLine | LineProblem => {
     const description = oneLine(line.description, DESCRIPTION_MAX).replace(/<<<|>>>/g, '');
     if (description === '') return 'LINE';
     const unitText = line.unit === null ? null : oneLine(line.unit, UNIT_MAX) || null;
+    // A description is words: a run of seven digits or more (a phone number, a tax code) is refused even when the customer wrote it.
+    if (/\d{7,}/u.test(description.normalize('NFKC').replace(/[\s.,-]/gu, ''))) return 'FIGURES';
     for (const text of [description, unitText ?? '']) {
       if (hasAddress(text) || draftLinksOutside(text, trusted).length > 0) return 'LINK';
       if (draftFiguresOutside(text, trusted).length > 0) return 'FIGURES';
