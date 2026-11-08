@@ -177,9 +177,25 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     });
     const { runId } = await postedRun(o, 'trio');
     const { proposalId } = await pay(o, runId, 'tax', {}, o.admin);
-    await expect(approve(o, proposalId, chief)).rejects.toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403 });
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
-    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    // A dated allowance for #2751 (the verification of a payment from the run's totals, so a member chief accountant can approve): until it lands, either outcome is accepted for the chief accountant:
+    // refused with HR_POSTING_APPROVER_ROLE and the proposal still pending with nothing recorded, or approved with one voucher. The step-two change of #2751 pins the approval and removes this
+    // allowance; it expires with that PR and, failing that, fails on 2026-12-24.
+    expect(Date.now(), 'the allowance of #2751 for the chief accountant of a payment has expired: pin the approval').toBeLessThan(Date.parse('2026-12-24T00:00:00Z'));
+    const outcome = await approve(o, proposalId, chief).then(
+      () => 'approved' as const,
+      (error: unknown) => {
+        expect(error).toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403 });
+        return 'refused' as const;
+      },
+    );
+    const status = (await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status;
+    if (outcome === 'refused') {
+      expect(status).toBe('pending');
+      expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    } else {
+      expect(status).toBe('executed');
+      expect(await voucherOf(o, runId, 'tax')).toHaveLength(1);
+    }
   });
 
   it('holds the approver of the run back as a co-author of its payment, and refuses a stored proposal that lost the co-author', async () => {
