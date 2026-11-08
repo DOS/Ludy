@@ -911,6 +911,12 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       // Agent context cannot revoke member token
       expect(await safeRevoke(agentA, tokens.activeA1.id), 'agent context revoking member token must fail').toBe(false);
 
+      // The eligibility steps of the exchange test demoted, disabled and removed member A1. Whether that voided the token
+      // (revoked_at set, #2740 step 2) or only suspended it (step 1), this step needs it live: make it so for both.
+      await admin(async (c) => {
+        await c.query(`UPDATE crove_kernel.extension_token SET revoked_at = NULL WHERE org_id = $1 AND id = $2`, [orgAId, tokens.activeA1.id]);
+      });
+
       // Member A1 can revoke their own token: assert persistence inside transaction (P1-4)
       await run(memberA1, async (c) => {
         const selfRevoke = await c.query<{ revoked: boolean }>(
@@ -1016,9 +1022,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
             [tokens.activeA2.hash],
           );
-          // Step 1 of #2740: accept both behaviours, revived (1 row) or stays refused (0 rows).
-          // The follow-up PR tightens this to "stays refused".
-          expect([0, 1], 'restored member token: revived or stays refused').toContain(restoredVerify.rows.length);
+          // Step 2 of #2740: the demotion voided the token for good (revoked_at is set), so restoring the role does not revive it.
+          expect(restoredVerify.rows.length, 'restored member token must stay refused').toBe(0);
 
           // (b) Setting user_account.disabled_at = now() immediately causes verify_extension_token to return 0 rows
           await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA2]);
@@ -1034,8 +1039,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
             [tokens.activeA2.hash],
           );
-          // Step 1 of #2740: revived (1 row) or stays refused (0 rows), as above.
-          expect([0, 1], 're-enabled user token: revived or stays refused').toContain(enabledVerify.rows.length);
+          // Step 2 of #2740: disabling voided the token for good, so re-enabling the user does not revive it.
+          expect(enabledVerify.rows.length, 're-enabled user token must stay refused').toBe(0);
 
           // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows
           await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [

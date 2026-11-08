@@ -319,7 +319,7 @@ import {
   zMeetingSettingsSet,
   zMeetingSummary,
 } from './meetings.ts';
-import { zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked } from './extension.ts';
+import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -502,6 +502,9 @@ export const contract = {
     tokens: {
       list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
       revoke: oc.input(zExtensionTokenRevoke).output(zExtensionTokenRevoked),
+      // Owners and admins: every member's devices in the org, and a revoke of one (issue #2740).
+      listOrg: oc.input(z.strictObject({})).output(z.array(zExtensionOrgToken)),
+      revokeMember: oc.input(zExtensionTokenRevoke).output(zExtensionTokenRevokedMember),
     },
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.

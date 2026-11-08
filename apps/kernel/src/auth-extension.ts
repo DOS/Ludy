@@ -115,6 +115,18 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
   };
 }
 
+// Revokes the token row an exchange just made when the exchange cannot be completed (its audit row failed), so no usable
+// row is left that the client never received. By the token's hash, within two minutes of its creation; the definer audits
+// it as a system revoke. true when a row was revoked. Never throws: the caller is already handling a failure.
+export async function voidUndeliveredExtensionToken(db: Db, token: string): Promise<boolean> {
+  try {
+    const { rows } = await sql<{ voided: boolean }>`SELECT crove_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
+    return rows[0]?.voided === true;
+  } catch {
+    return false;
+  }
+}
+
 // One HTTP route a token may reach. `scope` null: any token (the route opens no feature). Everything a route runs
 // still declares its own scope on the command or query (the runtime refuses the token otherwise), so this list and the
 // declarations must agree for a route to work, and either one alone keeps a token out.

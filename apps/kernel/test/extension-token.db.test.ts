@@ -46,6 +46,8 @@ class MemoryStore implements BlobStore {
   }
 }
 
+const EXT_ID = 'a'.repeat(32); // the placeholder store id (DEFAULT_EXTENSION_IDS)
+const OTHER_EXT_ID = 'b'.repeat(32);
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
 const webm = () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...Array.from({ length: 64 }, (_, i) => i)]);
 
@@ -58,6 +60,10 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
   const accounts = new Map<string, { subject: string; email: string; session: string }>();
   let slug = '';
   let orgId = '';
+  let appUrlText = '';
+  let sharedDb: ReturnType<typeof createDb>;
+  let sharedConfig: ReturnType<typeof loadConfig>;
+  let sharedBroker: CredentialBroker;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -97,12 +103,12 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
   }
 
   // The whole sign-in: the member approves in the app (PKCE challenge in), the extension trades the code and verifier.
-  async function connect(name: string, org = slug, scopes: string[] = ['meetings']) {
+  async function connect(name: string, org = slug, scopes: string[] = ['meetings'], extensionId = EXT_ID) {
     const verifier = randomBytes(32).toString('base64url');
     const authorize = await app.request('/api/extension/authorize', {
       method: 'POST',
       headers: await asBrowser(name, org),
-      body: JSON.stringify({ codeChallenge: challengeOf(verifier), codeChallengeMethod: 'S256', scopes, deviceName: 'Chrome trên máy bàn' }),
+      body: JSON.stringify({ extensionId, codeChallenge: challengeOf(verifier), codeChallengeMethod: 'S256', scopes, deviceName: 'Chrome trên máy bàn' }),
     });
     const issued = (await authorize.json()) as { code?: string };
     return { verifier, status: authorize.status, code: issued.code ?? '' };
@@ -121,7 +127,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     return done.body as { token: string; tokenId: string; orgId: string; scopes: string[]; expiresAt: string };
   }
 
-  async function join(name: string, role: 'member' | 'viewer') {
+  async function join(name: string, role: 'admin' | 'member' | 'viewer') {
     await jwt(name);
     const email = accounts.get(name)?.email;
     const invited = await rpc('org/invite', await asBrowser('owner', slug, true), { email, role });
@@ -144,9 +150,12 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const appUrl = new URL(adminUrl);
     appUrl.username = 'crove_app';
     appUrl.password = 'test-app-pw';
+    appUrlText = appUrl.toString();
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
+    sharedDb = db;
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    sharedConfig = config;
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries],
@@ -157,6 +166,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       derive: (purpose: string) => createHash('sha256').update(`test-secret:${purpose}`).digest(),
       deriveKey: (keyId: string, purpose: string) => createHash('sha256').update(`test-secret:${keyId}:${purpose}`).digest(),
     } as unknown as CredentialBroker;
+    sharedBroker = broker;
     app = createHttpApp({
       config,
       runtime,
@@ -339,6 +349,152 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const email = accounts.get('leaver')?.email;
     await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = (SELECT id FROM crove_kernel.user_account WHERE email = $2)', [orgId, email]));
     expect((await app.request('/api/extension/me', { headers: asToken(token) })).status).toBe(401);
+  });
+
+  // ---- Token lifecycle (#2740) ----------------------------------------------------------------------------------------
+  const live = (tokenId: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.extension_token WHERE id = $1 AND revoked_at IS NULL', [tokenId])).rowCount === 1);
+  const me = async (token: string) => (await app.request('/api/extension/me', { headers: asToken(token) })).status;
+  const userIdOf = (name: string) => admin(async (c) => (await c.query('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get(name)?.email])).rows[0].id as string);
+  const autoRevokeRows = (tokenId: string) =>
+    admin(async (c) => (await c.query(`SELECT actor_type, actor_id, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.auto_revoked' AND target_id = $1`, [tokenId])).rows as Array<{ actor_type: string; actor_id: string | null; outcome: string; target_type: string; target_id: string; detail: Record<string, unknown> }>);
+
+  it('refuses a code for an extension id outside the allow-list, and one without an id', async () => {
+    const outside = await connect('recorder', slug, ['meetings'], OTHER_EXT_ID);
+    expect(outside.status).toBe(403);
+    expect(outside.code).not.toMatch(/^crc_/);
+    const missing = await app.request('/api/extension/authorize', { method: 'POST', headers: await asBrowser('recorder'), body: JSON.stringify({ codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }) });
+    expect(missing.status).toBe(422);
+    const malformed = await connect('recorder', slug, ['meetings'], 'A'.repeat(32));
+    expect(malformed.status).toBe(422);
+    // A deployment lists its own extension ids (EXTENSION_IDS): the store's id is then not one of them.
+    const own = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: `${OTHER_EXT_ID}, ${'c'.repeat(32)}` });
+    expect(own.EXTENSION_IDS).toEqual([OTHER_EXT_ID, 'c'.repeat(32)]);
+    expect(() => loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: 'not-an-id' })).toThrow(/EXTENSION_IDS/);
+    const configured = (await app.request('/api/config')).json() as Promise<{ extensionIds: string[] }>;
+    expect((await configured).extensionIds).toEqual([EXT_ID]);
+  });
+
+  it('voids a member\'s tokens for good when their role drops below member, with one audit row of ids only', async () => {
+    await join('demoted', 'member');
+    const { token, tokenId } = await signedIn('demoted');
+    const userId = await userIdOf('demoted');
+    expect(await me(token)).toBe(200);
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    expect(await me(token)).toBe(401);
+    expect(await live(tokenId)).toBe(false);
+    // Restoring the role does not bring the device back.
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    expect(await me(token)).toBe(401);
+    const rows = await autoRevokeRows(tokenId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_type: 'system', actor_id: null, outcome: 'ok', target_type: 'extension_token', target_id: tokenId });
+    expect(rows[0]!.detail).toEqual({ tokenId, userId, reason: 'role_change' });
+    // A change between roles that all hold the feature voids nothing.
+    const second = await signedIn('demoted');
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+    expect(await me(second.token)).toBe(200);
+    expect(await autoRevokeRows(second.tokenId)).toHaveLength(0);
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, userId]));
+  });
+
+  it('voids a user\'s tokens for good when the account is disabled, also through the operator\'s no-context path', async () => {
+    await join('disabled', 'member');
+    const { token, tokenId } = await signedIn('disabled');
+    const userId = await userIdOf('disabled');
+    // The user-disable role: the worker login, no org context. Its session is not staff, so the audit row is written under
+    // the plain rules of the table.
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'crove_worker';
+    workerUrl.password = 'test-worker-pw';
+    const worker = new pg.Client({ connectionString: workerUrl.toString() });
+    await worker.connect();
+    try {
+      await worker.query(`SELECT * FROM crove_kernel.user_set_disabled($1, true, 'test')`, [accounts.get('disabled')?.email]);
+    } finally {
+      await worker.end();
+    }
+    expect(await me(token)).toBe(401);
+    await admin((c) => c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [userId]));
+    expect(await me(token)).toBe(401);
+    expect(await live(tokenId)).toBe(false);
+    const rows = await autoRevokeRows(tokenId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_type).toBe('system');
+    expect(rows[0]!.detail).toEqual({ tokenId, userId, reason: 'user_disabled' });
+    // A token made after the account is back works.
+    const again = await signedIn('disabled');
+    expect(await me(again.token)).toBe(200);
+  });
+
+  it('lets an owner or admin revoke a member\'s device, and no member revoke another member\'s', async () => {
+    await join('boss', 'admin');
+    await join('peer', 'member');
+    const device = await signedIn('recorder');
+    const peerDevice = await signedIn('peer');
+    const ownerDevice = await signedIn('owner');
+    // A member (and a viewer) can neither list the org's devices nor revoke another member's.
+    for (const name of ['recorder', 'viewer']) {
+      expect((await rpc('extension/tokens/listOrg', await asBrowser(name), {})).status).toBe(403);
+      expect((await rpc('extension/tokens/revokeMember', await asBrowser(name), { tokenId: peerDevice.tokenId })).status).toBe(403);
+    }
+    expect((await rpc('extension/tokens/revoke', await asBrowser('recorder'), { tokenId: peerDevice.tokenId })).status).toBe(404);
+    expect(await me(peerDevice.token)).toBe(200);
+    // An admin lists every member's devices, never a hash, and revokes one; the audit row names the token and its member.
+    const listed = await rpc('extension/tokens/listOrg', await asBrowser('boss'), {});
+    expect(listed.status).toBe(200);
+    expect(JSON.stringify(listed.body)).not.toMatch(/hash/i);
+    const ids = (Object.values(listed.body).flat() as Array<{ id: string }>).map((t) => t.id);
+    expect(ids).toEqual(expect.arrayContaining([device.tokenId, peerDevice.tokenId, ownerDevice.tokenId]));
+    const revoked = await rpc('extension/tokens/revokeMember', await asBrowser('boss'), { tokenId: device.tokenId });
+    expect(revoked.status).toBe(200);
+    expect(revoked.body).toMatchObject({ tokenId: device.tokenId, userId: await userIdOf('recorder'), revoked: true });
+    expect(await me(device.token)).toBe(401);
+    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.extension.token.revoke_member' AND target_id IS NOT DISTINCT FROM $1 OR (command = 'kernel.extension.token.revoke_member' AND detail @> $2::jsonb)`, [device.tokenId, JSON.stringify({ tokenId: device.tokenId })])).rows);
+    expect(audit.length).toBeGreaterThan(0);
+    // Again, unknown ids and another org's ids read alike; an admin may not cut off an owner's device, the owner may.
+    expect((await rpc('extension/tokens/revokeMember', await asBrowser('boss'), { tokenId: device.tokenId })).status).toBe(404);
+    expect((await rpc('extension/tokens/revokeMember', await asBrowser('boss'), { tokenId: randomUUID() })).status).toBe(404);
+    expect((await rpc('extension/tokens/revokeMember', await asBrowser('boss'), { tokenId: ownerDevice.tokenId })).status).toBe(404);
+    expect(await me(ownerDevice.token)).toBe(200);
+    expect((await rpc('extension/tokens/revokeMember', await asBrowser('owner'), { tokenId: peerDevice.tokenId })).status).toBe(200);
+    expect(await me(peerDevice.token)).toBe(401);
+    // The extension's own token reaches none of this.
+    expect((await rpc('extension/tokens/revokeMember', asToken(ownerDevice.token), { tokenId: ownerDevice.tokenId })).status).toBe(403);
+  });
+
+  it('leaves no usable token row when the exchange\'s audit write fails', async () => {
+    const failing = new Runtime(sharedDb, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
+      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands].filter((c) => c.name !== 'kernel.extension.token.exchanged'),
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries],
+    });
+    const broken = createHttpApp({
+      config: sharedConfig,
+      runtime: failing,
+      store,
+      broker: sharedBroker,
+      authenticate: createAuthenticator(sharedConfig, sharedDb),
+      pool,
+      aiEnabled: false,
+      extensionTokenLimit: new RateLimiter({ perMinute: 40 }),
+    });
+    await join('unlucky', 'member');
+    const userId = await userIdOf('unlucky');
+    const verifier = randomBytes(32).toString('base64url');
+    const authorize = await app.request('/api/extension/authorize', {
+      method: 'POST',
+      headers: await asBrowser('unlucky'),
+      body: JSON.stringify({ extensionId: EXT_ID, codeChallenge: challengeOf(verifier), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'Chrome' }),
+    });
+    const { code } = (await authorize.json()) as { code: string };
+    const response = await broken.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, codeVerifier: verifier }) });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(await response.json())).not.toMatch(/crx_/);
+    const rows = await admin(async (c) => (await c.query('SELECT id, revoked_at FROM crove_kernel.extension_token WHERE user_id = $1', [userId])).rows as Array<{ id: string; revoked_at: Date | null }>);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.revoked_at).not.toBeNull();
+    const audit = await autoRevokeRows(rows[0]!.id);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.detail).toEqual({ tokenId: rows[0]!.id, userId, reason: 'exchange_failed' });
   });
 
   it('limits the code exchange per client and caps its body', async () => {

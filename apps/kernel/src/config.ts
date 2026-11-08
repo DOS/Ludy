@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
+import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
@@ -513,6 +514,17 @@ const schema = z.object({
       .refine((value) => !value.toLowerCase().startsWith('mailto:') || new URL(value).pathname.trim() !== '', {
         message: 'a mailto: link needs an address',
       })
+      .optional(),
+  ),
+  // The Ludy browser extension ids that may receive a sign-in code (#2740): the host of the extension's redirect address
+  // (https://<id>.chromiumapp.org/), 32 letters a to p, separated by commas or spaces. Unset: the store's id
+  // (DEFAULT_EXTENSION_IDS). A self-hosted or development install lists its own unpacked extension's id here. The app and
+  // /api/extension/authorize both refuse any other. Browsers read the list from /api/config; it holds nothing secret.
+  EXTENSION_IDS: optional.pipe(
+    z
+      .string()
+      .transform((value) => value.split(/[\s,]+/).filter(Boolean))
+      .pipe(z.array(zExtensionId, { error: 'EXTENSION_IDS lists extension ids: 32 letters a to p each, separated by commas or spaces' }).min(1).max(20))
       .optional(),
   ),
   // The product name users see (#1040): in the app, the page title and the product's own mails (sender name and texts). Code,
