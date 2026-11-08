@@ -296,6 +296,33 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'The name a transcript line is attributed to (a speaker label, which the recorder may set to a real name): deleted with the meeting',
   },
+  // The summary, the decisions and the action items (issue #2580): what was said, drafted by the recorder or copied from the result of their own Vy. Like the
+  // transcript, neither has a value a finder could match (kind other); a person's request is answered by deleting the meeting, and the rows go with it (cascade).
+  'crove_meetings.meeting_result.summary': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "A meeting's summary, which may name or describe a person: deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job at the text date)",
+  },
+  'crove_meetings.meeting_result.decisions': {
+    kind: 'other',
+    handling: 'erase',
+    reason: "A meeting's decisions, which may name or describe a person: deleted with the meeting",
+  },
+  'crove_meetings.action_item.title': {
+    kind: 'other',
+    handling: 'erase',
+    reason: 'What somebody said they would do, which may name a person: deleted with the meeting (a task made from it keeps the title its confirmer saw, as the org\'s own work record)',
+  },
+  'crove_meetings.action_item.who_drafted': {
+    kind: 'other',
+    handling: 'erase',
+    reason: 'Who, as said in the meeting, an action item was for (a name or a first name): deleted with the meeting',
+  },
+  'crove_meetings.action_item.when_drafted': {
+    kind: 'other',
+    handling: 'erase',
+    reason: 'When, as said in the meeting, an action item was due (free words): deleted with the meeting',
+  },
   'crove_meetings.media_key.wrapped_key': {
     kind: 'other',
     handling: 'erase',

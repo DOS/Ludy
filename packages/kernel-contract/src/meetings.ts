@@ -266,3 +266,105 @@ export const zTranscriptResult = z.strictObject({
   p: z.array(z.string()).max(200),
   s: z.array(z.tuple([z.number(), z.number(), z.number().int().min(0), z.string()])).max(TRANSCRIPT_SEGMENTS_MAX),
 });
+
+// The summary, the decisions and the action items of a meeting (#2580, M6 part A). The recorder types them or copies them from the result of their own Vy;
+// they are drafts only the recorder reads until the recorder's one click publishes them to the meeting's readers.
+export const RESULT_SUMMARY_MAX = 8000;
+export const RESULT_DECISION_MAX = 500;
+export const RESULT_DECISIONS_MAX = 50;
+export const ITEM_TITLE_MAX = 300;
+export const ITEM_TEXT_MAX = 200;
+export const ITEMS_PER_MEETING_MAX = 100;
+export const ITEM_FLAGS = ['contact_in_title'] as const;
+export type ItemFlag = (typeof ITEM_FLAGS)[number];
+
+const zDay = z.iso.date();
+
+// Saves the recorder's own summary and decisions as the draft (replacing the earlier draft).
+export const zMeetingResultSave = z.strictObject({
+  meetingId: zId,
+  summary: z.string().trim().min(1).max(RESULT_SUMMARY_MAX),
+  decisions: z.array(z.string().trim().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
+});
+export const zMeetingResultSaved = z.strictObject({ meetingId: zId, decisions: z.number().int().min(0) });
+
+const zItemFields = {
+  title: z.string().trim().min(1).max(ITEM_TITLE_MAX),
+  // Who and when as said, free words; and as the person (or code) matched them: an attendee of the meeting, a date.
+  who: z.string().trim().max(ITEM_TEXT_MAX),
+  whoUserId: zId.nullable(),
+  when: z.string().trim().max(ITEM_TEXT_MAX),
+  whenDate: zDay.nullable(),
+  transcriptSeconds: z.number().int().min(0).max(86_400).nullable(),
+};
+export const zActionItemCreate = z.strictObject({ meetingId: zId, ...zItemFields });
+export const zActionItemEdit = z
+  .strictObject({
+    itemId: zId,
+    title: zItemFields.title.optional(),
+    who: zItemFields.who.optional(),
+    whoUserId: zItemFields.whoUserId.optional(),
+    when: zItemFields.when.optional(),
+    whenDate: zItemFields.whenDate.optional(),
+    transcriptSeconds: zItemFields.transcriptSeconds.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 1, { message: 'name something to change' });
+export const zActionItemRef = z.strictObject({ itemId: zId });
+export const zActionItemCreated = z.strictObject({ itemId: zId });
+export const zActionItemDeleted = z.strictObject({ itemId: zId, deleted: z.literal(true) });
+
+// The one click that shows the drafts to the meeting's readers: `confirmed: true` is the person's own click, never defaulted.
+export const zResultPublish = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
+export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0) });
+
+// Accepting an item makes a team task from it. The person confirms the title, picks the date and the seat (never picked for them when the attendee holds
+// none or several); a task is read by every member, and the transcript is never copied into it.
+export const zActionItemAccept = z.strictObject({
+  itemId: zId,
+  confirmed: z.literal(true),
+  title: z.string().trim().min(1).max(ITEM_TITLE_MAX),
+  due: zDay.nullable(),
+  positionId: zId,
+});
+export const zActionItemAccepted = z.strictObject({ itemId: zId, taskId: zId });
+// Every clean item at once: its attendee holds exactly one seat, its date is parsed, its title carries no link, email or phone, and it has no flag.
+export const zActionItemAcceptClean = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
+export const zActionItemsAccepted = z.strictObject({ meetingId: zId, accepted: z.number().int().min(0), taskIds: z.array(zId) });
+
+export const zMeetingResultView = z.strictObject({
+  id: zId,
+  feature: z.enum(['manual', 'meetings.summary']),
+  stage: z.enum(TRANSCRIPT_STAGES),
+  summary: z.string(),
+  decisions: z.array(z.string()),
+  tainted: z.boolean(),
+});
+export const zActionItemView = z.strictObject({
+  id: zId,
+  stage: z.enum(TRANSCRIPT_STAGES),
+  status: z.enum(['suggested', 'accepted']),
+  title: z.string(),
+  who: z.string(),
+  whoUserId: zId.nullable(),
+  when: z.string(),
+  whenDate: zDay.nullable(),
+  transcriptSeconds: z.number().int().nullable(),
+  flags: z.array(z.enum(ITEM_FLAGS)),
+  tainted: z.boolean(),
+  taskId: zId.nullable(),
+  // The seats the attendee holds now (a person picks one at accept); clean only with exactly one, a parsed date and no flag.
+  positions: z.array(z.strictObject({ id: zId, title: z.string() })),
+  clean: z.boolean(),
+});
+export const zMeetingResults = z.strictObject({
+  meetingId: zId,
+  isRecorder: z.boolean(),
+  // The recorder reads a draft beside the published one; a reader reads the published one only.
+  draft: zMeetingResultView.nullable(),
+  published: zMeetingResultView.nullable(),
+  items: z.array(zActionItemView),
+});
+export type MeetingResults = z.infer<typeof zMeetingResults>;
+export type ActionItemView = z.infer<typeof zActionItemView>;
+// Where a task made from an item came from, for the link on the task: the meeting when the caller may read it, else a refusal the screen words.
+export const zActionItemSource = z.strictObject({ meetingId: zId });
