@@ -328,7 +328,7 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const o = await org();
     const party = await o.party('Công ty ABC');
     const deal = await o.newDeal(party);
-    const otherDeal = await o.newDeal(await o.party('Công ty khác', null, '0399999999'));
+    const otherDeal = await o.newDeal(await o.party('Công ty khác', null, '0399999990'));
     const draft = await o.readyDraft(deal.id);
     const { quote: sent } = await o.send(o.member, await o.readyDraft(deal.id), 'link');
     const entity = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 LIMIT 1', [o.orgId]))).rows[0]!.id;
