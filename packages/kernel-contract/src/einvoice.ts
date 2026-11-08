@@ -263,6 +263,9 @@ export const zEInvoiceSuggestInput = z.strictObject({
   text: z.string().trim().min(1).max(EINVOICE_SUGGEST_TEXT_MAX),
   // The date of the invoice on the form: it decides which VAT rates are allowed.
   date: zLocalDate,
+  // An issued invoice of the org that is part of the source (#2721, the previous invoice to the buyer): its lines go to the model with the text, so a figure it holds is a figure the
+  // source holds. A draft that is not issued, or another org's, is refused (EINVOICE_DRAFT_NOT_FOUND).
+  invoiceDraftId: zId.optional(),
 });
 export type EInvoiceSuggestInput = z.infer<typeof zEInvoiceSuggestInput>;
 
@@ -279,3 +282,20 @@ export const zEInvoiceSuggested = z.object({
   buyer: zEInvoiceBuyerInput.nullable(),
 });
 export type EInvoiceSuggested = z.infer<typeof zEInvoiceSuggested>;
+
+// The previous issued invoice to the same buyer (#2721), for a copy by code with no model: the buyer as that invoice held it and its lines, with whether each line's VAT rate is still one the
+// date of the new invoice allows (`vatAllowed`; a rate that is not is the person's to choose, never carried silently). Only an invoice that was issued, in the books of an entity the caller may
+// see; none gives `invoice: null`.
+export const zEInvoicePreviousInput = z.strictObject({ buyerPartyId: zId, date: zLocalDate });
+export const zEInvoicePrevious = z.strictObject({
+  invoice: z
+    .strictObject({
+      draftId: zId,
+      date: z.string(),
+      number: z.string().nullable(),
+      buyer: zEInvoiceBuyerInput,
+      lines: z.array(zEInvoiceLineInput.extend({ vatAllowed: z.boolean() })),
+    })
+    .nullable(),
+});
+export type EInvoicePrevious = z.infer<typeof zEInvoicePrevious>;

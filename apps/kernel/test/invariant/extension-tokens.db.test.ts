@@ -781,6 +781,36 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
     }
   });
 
+  it('refuses the owner and admin device routines once the org is no longer active (#2868)', async () => {
+    if (!tables.extension_token) {
+      expect(tables.extension_token).toBe(false);
+      return;
+    }
+    // The context is entered while the org is active, then the org is closed inside the same rolled-back transaction: what is left
+    // to refuse is the routine itself, as it is for issuing a code. Entered as the owner of org A, from the admin connection. The close
+    // is run outside the refusal path and must change exactly one row, so a refused or empty UPDATE cannot make the test pass; only the
+    // routine's own error is caught, and it must be EXTENSION_FORBIDDEN.
+    const afterClose = (statement: string, params: unknown[] = []) =>
+      inContext(adminUrl, ownerA.enter, async (c) => {
+        const before = await c.query('SELECT * FROM crove_kernel.list_extension_tokens_for_org()');
+        expect(before.rows.length, 'the owner of an active org reads the list').toBeGreaterThan(0);
+        const close = await c.query(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [orgAId]);
+        const error = await c.query(statement, params).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        return { closedRows: close.rowCount, error };
+      });
+    for (const [what, statement, params] of [
+      ['list_extension_tokens_for_org', 'SELECT * FROM crove_kernel.list_extension_tokens_for_org()', []],
+      ['revoke_extension_token_as_admin', 'SELECT crove_kernel.revoke_extension_token_as_admin($1::uuid)', [randomUUID()]],
+    ] as const) {
+      const { closedRows, error } = await afterClose(statement, [...params]);
+      expect(closedRows, `closing the org changes exactly one tenant row before ${what} runs`).toBe(1);
+      expect(error, `${what} must refuse a closed org`).toMatchObject({ code: '42501', message: expect.stringContaining('EXTENSION_FORBIDDEN') });
+    }
+  });
+
   it('enforces cross-org and cross-member isolation on listing and revoking extension tokens', async () => {
     if (!tables.extension_token) {
       expect(tables.extension_token).toBe(false);

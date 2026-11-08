@@ -169,3 +169,28 @@ describe('InboxReader.einvoiceDraft', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('checkEInvoiceDraft with the previous invoice in the source (#2721)', () => {
+  // The text the model reads is what the person typed and the lines of the invoice they picked (the API composes it); the checks read the same text.
+  const INVOICE = 'Hóa đơn trước gửi cùng khách:\n- Bánh A, đơn vị hộp, số lượng 10, đơn giá 120000, VAT 10%\n- Trà B, đơn vị hộp, số lượng 2, đơn giá 1200000';
+  const request = (typed: string, date = '2026-11-05'): EInvoiceDraftRequest => ({ text: `${typed}\n\n${INVOICE}`, date, parties: [{ name: 'Công ty Hoa Mai' }] });
+
+  it('accepts a quantity, a price and a rate that only the invoice holds', () => {
+    const result = checkEInvoiceDraft(request('giống lần trước'), answer([line({ vatRate: '10%' }), line({ description: 'Trà B', quantity: '2', unitPrice: '1200000', vatRate: null })]));
+    expect(result.kind).toBe('proposal');
+  });
+
+  it('gives no line for a figure that neither the typed text nor the invoice holds', () => {
+    expect(checkEInvoiceDraft(request('giống lần trước'), answer([line({ quantity: '11', vatRate: null })]))).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkEInvoiceDraft(request('giống lần trước'), answer([line({ unitPrice: '130000', vatRate: null })]))).toEqual({ kind: 'none', code: 'FIGURES' });
+    // One bad line refuses all of them, the sound one included.
+    expect(checkEInvoiceDraft(request('giống lần trước'), answer([line({ vatRate: null }), line({ description: 'Trà B', quantity: '3', unitPrice: '1200000', vatRate: null })]))).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('refuses a rate the invoice text does not state, so a rate the date no longer allows cannot be carried over', () => {
+    // The API leaves a rate out of the invoice text once the date does not allow it; then no rate is stated and a stated one is refused.
+    const bare = { text: 'giống lần trước\n\nHóa đơn trước gửi cùng khách:\n- Bánh A, đơn vị hộp, số lượng 10, đơn giá 120000', date: '2027-02-01', parties: [] };
+    expect(checkEInvoiceDraft(bare, answer([line({ vatRate: '8%' })], null))).toEqual({ kind: 'none', code: 'RATE' });
+    expect(checkEInvoiceDraft(bare, answer([line({ vatRate: null })], null)).kind).toBe('proposal');
+  });
+});
