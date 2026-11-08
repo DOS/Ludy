@@ -39,6 +39,7 @@ import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
 import { runMarketplaceRetention } from './marketplace-retention.ts';
+import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
@@ -459,7 +460,9 @@ export interface WorkerDeps {
   // The AI model's price per million input and output tokens, in the unit of the ai_cost limit. Unset: AI costs 0. Its
   // defaultMonthlyBudget (AI_DEFAULT_MONTHLY_BUDGET, #2382) is the monthly AI budget an org with none of its own gets;
   // unset: none.
-  aiPrice?: { inputPerMTok: string; outputPerMTok: string; defaultMonthlyBudget?: string | null };
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string; audioPerMinute?: string; defaultMonthlyBudget?: string | null };
+  // Transcription of a meeting as the recorder's own Vy (#2578, M4b): the provider's endpoint. Unset: no job is queued or worked (the module works with it off).
+  meetingsTranscribe?: { provider: MeetingsTranscribeDeps['provider'] };
   // Back-pressure (#894): above this outbox lag the agent, bulk mail, archive and retention queues stop fetching
   // (default DEFAULT_OUTBOX_LAG_PAUSE_SECONDS).
   outboxLagPauseSeconds?: number;
@@ -1103,6 +1106,20 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   } else {
     await dropCron(QUEUES.crmImportExpire);
     await dropCron(QUEUES.crmDealStale);
+  }
+
+  // Meetings transcription (#2578, M4b): one job per run the recorder started, never retried by the queue (a retry would send the audio again).
+  if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker) {
+    const transcribeDeps: MeetingsTranscribeDeps = {
+      runtime: deps.runtime,
+      store: deps.store,
+      broker: deps.channels.broker,
+      provider: deps.meetingsTranscribe.provider,
+      price: { inputPerMTok: deps.aiPrice?.inputPerMTok ?? '0', outputPerMTok: deps.aiPrice?.outputPerMTok ?? '0', audioPerMinute: deps.aiPrice?.audioPerMinute ?? '0' },
+    };
+    await boss.work<MeetingsTranscribeJob>(QUEUES.meetingsTranscribe, { batchSize: 1 }, async ([job]) => {
+      if (job) await runMeetingsTranscribe(transcribeDeps, job.data);
+    });
   }
 
   // Notes (#1671): a former member's private notes 30 days after they left, the daily trash and the to-do reminders
@@ -2218,6 +2235,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryDelay: 2,
                   retryBackoff: true,
                 });
+              }
+              // The recorder asked for a meeting to be transcribed (#2578, M4b): ids only in the job. With no provider here the run stays running until it expires
+              // (the command refuses to start one when transcription is off, so this only happens when a deployment turned it off after the click).
+              if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.transcript.requested') {
+                const transcribeJob: MeetingsTranscribeJob = { orgId: row.org_id, meetingId: String(row.payload.meetingId), runId: String(row.payload.runId), agentId: String(row.payload.agentId) };
+                await boss.send(QUEUES.meetingsTranscribe, transcribeJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranscribe, transcribeJob.runId), retryLimit: 0, expireInSeconds: 4 * 3600 });
               }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);

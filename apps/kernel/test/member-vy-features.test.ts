@@ -10,6 +10,7 @@ describe('member-Vy features (kernel side)', () => {
     expect(MEMBER_VY_FEATURES).toEqual({
       'notes.summary': { module: 'notes', expiryMinutes: 30 },
       'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+      'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
     });
   });
 });

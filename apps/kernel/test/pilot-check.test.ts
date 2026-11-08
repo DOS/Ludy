@@ -302,6 +302,16 @@ describe('pilot-check settings', () => {
       expect(failing({ ...env, BACKUP_ENCRYPTION_KEY: ' ' })).toHaveLength(1);
     });
 
+    it('fails transcription turned on with no price per minute of audio, so the hard stop never refuses one (#2578)', () => {
+      const on = { ...READY, MEETINGS_TRANSCRIBE: 'on' };
+      expect(failing(on)).toEqual([expect.stringMatching(/^Transcription price: MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0/)]);
+      expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '0.0' })).toHaveLength(1);
+      expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '0.006' })).toEqual([]);
+      expect(failing({ ...READY, MEETINGS_TRANSCRIBE: 'off' })).toEqual([]);
+      // A shipped sample value of the provider's key is wrong too.
+      expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '1', TRANSCRIBE_API_KEY: 'change-me' })).toEqual([expect.stringMatching(/TRANSCRIBE_API_KEY still has a sample value/)]);
+    });
+
     it('fails an AI key with every AI_PRICE_* at 0, so the cost cap does nothing', () => {
       const ai = { ...READY, AI_API_KEY: fake('ai') };
       const expected = [expect.stringMatching(/^AI cost cap: AI_API_KEY is set while AI_PRICE_INPUT_PER_MTOK and AI_PRICE_OUTPUT_PER_MTOK are both 0/)];

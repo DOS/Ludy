@@ -271,7 +271,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET status = 'accepted' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(', remarks = \'x\''), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     // The seller's letterhead frozen at the send (#2826) does not change on the way either.
-    await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(", seller_bank_note = 'STK moi'"), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(", seller_bank_note = 'STK moi'"), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501', detail: 'a decision changes the status, its time and its reason only' });
     // A viewer changes nothing.
     expect(await as(o.orgId, o.viewer, async (c) => (await c.query(toAccepted(), [o.orgId, quote.id])).rowCount)).toBe(0);
 

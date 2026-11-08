@@ -9,6 +9,7 @@ describe('member-Vy features (agent side)', () => {
     expect(MEMBER_VY_FEATURE_TABLE).toEqual({
       'notes.summary': { module: 'notes', expiryMinutes: 30 },
       'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+      'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
     });
   });
 });

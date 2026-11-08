@@ -3,6 +3,7 @@
 // request, and that every call sits behind the AI budget meter, with nothing of the audio or the text in an error.
 import { describe, expect, it } from 'vitest';
 import {
+  aiCost,
   AiBudgetExhaustedError,
   AiMeterMissingError,
   DEFAULT_SPEAKER,
@@ -18,6 +19,7 @@ import {
   withAiScope,
   type AiCall,
   type AiMeter,
+  type AiUsage,
   type TranscribeConfig,
   type TranscribeInput,
 } from '../src/index.ts';
@@ -246,6 +248,19 @@ describe('transcription behind the AI budget meter', () => {
     expect(transcript.map((s) => [s.startSeconds, s.text])).toEqual([[0, 'một'], [600, 'hai']]);
     expect(events).toEqual(['admit', 'record', 'admit', 'record']);
     expect(calls[0]).toEqual({ feature: 'meetings.transcribe', module: 'meetings', orgId: 'org-1', agentId: null, memberRunId: null });
+  });
+
+  it('tells the meter the chunk\'s measured audio seconds, and the cost is priced by the audio minute', async () => {
+    const provider = fakeProvider([{ body: { text: 'một' } }, { body: { text: 'hai' } }]);
+    const usage: AiUsage[] = [];
+    const meter: AiMeter = { admit: async () => {}, record: async (_call, used) => void usage.push(used) };
+    await withAiScope({ orgId: 'org-1', meter }, () => transcribeChunks(provider.config, [chunk(0), { ...chunk(600), lengthSeconds: 90 }]));
+    expect(usage).toEqual([{ inputTokens: 0, outputTokens: 0, audioSeconds: 600 }, { inputTokens: 0, outputTokens: 0, audioSeconds: 90 }]);
+    // 600 s at 0.5 a minute is 5, 90 s is 0.75; the token prices add nothing here.
+    const price = { inputPerMTok: '3', outputPerMTok: '15', audioPerMinute: '0.5' };
+    expect(aiCost(usage, price)).toBe('5.750000');
+    expect(aiCost(usage, { inputPerMTok: '3', outputPerMTok: '15' })).toBe('0.000000');
+    expect(aiCost(usage, undefined)).toBe('0');
   });
 
   it('refuses before the call when the budget is spent, and sends no later chunk', async () => {
