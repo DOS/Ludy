@@ -9,7 +9,7 @@
 --                                        come first, so the unrecorded never crowd them out of the limit. Ids and a flag only.
 --   queue kernel-member-vy-sweep               the worker's daily queue (apps/kernel/src/member-vy-worker.ts): the expiry sweep, then the
 --                                        former members, each org in its own system context through the commands
---                                        kernel.member_vy.results.expire and kernel.member_vy.member_data.purge.
+--                                        kernel.vy_data.results.expire and kernel.vy_data.member_data.purge.
 -- The comment of the core migration that names 20261126160000 as the org_purge base is wrong: the base was 20261127310000.
 SET LOCAL lock_timeout = '2s';
 

@@ -194,14 +194,14 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     expect(await rowsOf(users.member), 'a member: kept').toBe(before.member);
     expect(await sweepMemberVyFormerMembers({ runtime: workerRuntime, workerDb }), 'a second pass has nothing to do').toBe(0);
     // The purge itself, asked for a member, answers nothing: the definer refuses it.
-    const memberPurge = await workerRuntime.execute<{ removed: number }>('kernel.member_vy.member_data.purge', { userId: users.member }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId });
+    const memberPurge = await workerRuntime.execute<{ removed: number }>('kernel.vy_data.member_data.purge', { userId: users.member }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId });
     expect(memberPurge.removed, 'a member is never purged').toBe(0);
     expect(await rowsOf(users.member), 'the member still holds their rows').toBe(before.member);
   });
 
   it('refuses the sweep commands to a user and to an input with extra keys', async () => {
-    await expect(apiRuntime.execute('kernel.member_vy.results.expire', {}, { actor: asMfa(users.owner), orgId })).rejects.toBeDefined();
-    await expect(apiRuntime.execute('kernel.member_vy.member_data.purge', { userId: users.old }, { actor: asMfa(users.owner), orgId })).rejects.toBeDefined();
-    await expect(workerRuntime.execute('kernel.member_vy.results.expire', { orgId }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId })).rejects.toBeDefined();
+    await expect(apiRuntime.execute('kernel.vy_data.results.expire', {}, { actor: asMfa(users.owner), orgId })).rejects.toBeDefined();
+    await expect(apiRuntime.execute('kernel.vy_data.member_data.purge', { userId: users.old }, { actor: asMfa(users.owner), orgId })).rejects.toBeDefined();
+    await expect(workerRuntime.execute('kernel.vy_data.results.expire', { orgId }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId })).rejects.toBeDefined();
   });
 });

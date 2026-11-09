@@ -499,7 +499,7 @@ const EXPIRE_BATCH = 1000;
 const EXPIRE_MAX_BATCHES = 50;
 
 export const memberVyResultsExpire = defineCommand({
-  name: 'kernel.member_vy.results.expire',
+  name: 'kernel.vy_data.results.expire',
   input: z.strictObject({}),
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -518,7 +518,7 @@ export const memberVyResultsExpire = defineCommand({
 });
 
 export const memberVyMemberDataPurge = defineCommand({
-  name: 'kernel.member_vy.member_data.purge',
+  name: 'kernel.vy_data.member_data.purge',
   input: z.strictObject({ userId: zId }),
   risk: 'R3',
   sideEffect: 'irreversible',

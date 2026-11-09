@@ -10209,16 +10209,18 @@ export const en = {
         meeting_audio: {
           open: "Let Vy read your own recording of a meeting to transcribe it (you started the run)",
         },
+        run: {
+          check: 'Check that a run of Vy working for you may go on',
+          finish: 'Close a run of Vy working for you',
+          start: 'Start a run of Vy working for you',
+        },
+      },
+      vy_data: {
         member_data: {
           purge: "Remove a former member's Vy results and memory after 30 days (daily sweep)",
         },
         results: {
           expire: 'Remove expired results Vy made for members (daily sweep)',
-        },
-        run: {
-          check: 'Check that a run of Vy working for you may go on',
-          finish: 'Close a run of Vy working for you',
-          start: 'Start a run of Vy working for you',
         },
       },
       member: {

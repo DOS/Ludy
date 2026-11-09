@@ -10206,16 +10206,18 @@ export const vi = {
         meeting_audio: {
           open: 'Cho Vy đọc bản ghi âm cuộc họp của chính bạn để ghi lời (bạn đã bắt đầu lượt này)',
         },
+        run: {
+          check: 'Kiểm tra lượt Vy làm việc cho bạn có được tiếp tục không',
+          finish: 'Đóng một lượt Vy làm việc cho bạn',
+          start: 'Bắt đầu một lượt Vy làm việc cho bạn',
+        },
+      },
+      vy_data: {
         member_data: {
           purge: 'Xóa kết quả và ghi nhớ Vy của thành viên đã rời sau 30 ngày (dọn hằng ngày)',
         },
         results: {
           expire: 'Xóa các kết quả Vy đã hết hạn của thành viên (dọn hằng ngày)',
-        },
-        run: {
-          check: 'Kiểm tra lượt Vy làm việc cho bạn có được tiếp tục không',
-          finish: 'Đóng một lượt Vy làm việc cho bạn',
-          start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
       },
       member: {

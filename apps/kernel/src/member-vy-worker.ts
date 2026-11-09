@@ -2,7 +2,7 @@
 // The worker's part of Vy working for one member (ADR-0049 decision 3, #2822), independent of the Notes module: once a day, the results past their
 // expires_at are removed, then the results and memory of the people who left more than 30 days ago (the definer itself refuses a member or a removal
 // younger than that, so this sweep cannot purge early). Each org is handled in its own system context through the commands
-// kernel.member_vy.results.expire and kernel.member_vy.member_data.purge; the lists come from definers that answer ids, never text. Logs carry org
+// kernel.vy_data.results.expire and kernel.vy_data.member_data.purge; the lists come from definers that answer ids, never text. Logs carry org
 // prefixes and codes only.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
@@ -26,7 +26,7 @@ export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: D
   let removed = 0;
   for (const row of rows) {
     try {
-      removed += (await deps.runtime.execute<{ removed: number }>('kernel.member_vy.results.expire', {}, { actor: ACTOR, orgId: row.org_id })).removed;
+      removed += (await deps.runtime.execute<{ removed: number }>('kernel.vy_data.results.expire', {}, { actor: ACTOR, orgId: row.org_id })).removed;
     } catch (error) {
       console.warn(`[member-vy-sweep] results, org ${row.org_id.slice(0, 8)}`, codeOf(error));
     }
@@ -47,7 +47,7 @@ export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; worke
       continue;
     }
     try {
-      removed += (await deps.runtime.execute<{ removed: number }>('kernel.member_vy.member_data.purge', { userId: row.user_id }, { actor: ACTOR, orgId: row.org_id })).removed;
+      removed += (await deps.runtime.execute<{ removed: number }>('kernel.vy_data.member_data.purge', { userId: row.user_id }, { actor: ACTOR, orgId: row.org_id })).removed;
     } catch (error) {
       console.warn(`[member-vy-sweep] former member, org ${row.org_id.slice(0, 8)}`, codeOf(error));
     }
