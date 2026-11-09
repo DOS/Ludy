@@ -18,9 +18,9 @@ import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts
 
 const HANDLING_BADGE = { erase: 'warning', keep_legal: 'secondary', keep_org: 'secondary', keep_record: 'secondary' } as const;
 
-// The file goes to the person who asked: their rows only, never how many private items members keep (#1678).
+// The file goes to the person who asked: their rows only, never how many private items members keep (#1678) or how much text of meetings nobody here may read names them (#2594).
 function download(value: string, result: PersonalDataResult) {
-  const { privateItems: _counts, ...rows } = result;
+  const { privateItems: _counts, meetingText: _meetings, ...rows } = result;
   const url = URL.createObjectURL(new Blob([JSON.stringify({ value, ...rows }, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a');
   a.href = url;
@@ -65,8 +65,10 @@ export function PersonalDataPage() {
   const notify = useMutation(orpc.org.personalDataNotify.mutationOptions());
   const privateItems = found.data?.privateItems ?? [];
   const hasPrivate = privateItems.length > 0;
-  const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase') ?? false) || hasPrivate;
-  const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate;
+  // Meeting text is not erased by this step (the recorder or an owner deletes the meeting; #2594 part 2 redacts it): it does not enable the Erase button alone.
+  const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase' && !m.column.startsWith('crove_meetings.')) ?? false) || hasPrivate;
+  const meetingText = found.data?.meetingText ?? [];
+  const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate || meetingText.length > 0;
   const nameOf = (userId: string) => {
     const member = org.data?.members.find((m) => m.userId === userId);
     return member ? (member.displayName ?? member.email) : t('formerMember');
@@ -187,6 +189,18 @@ export function PersonalDataPage() {
               {isOwner && <p className="text-xs text-muted-foreground">{t('notifyHint')}</p>}
             </div>
           )}
+          {meetingText.length > 0 && (
+            <div className="mb-4 max-w-3xl space-y-1 rounded-lg border p-3 text-sm" data-testid="meeting-text">
+              <p className="font-medium text-foreground">{t('meetingTextSummary', { meetings: meetingText.reduce((sum, m) => sum + m.meetings, 0), recorders: meetingText.length })}</p>
+              {meetingText.map((m) => (
+                <p key={m.recorderUserId} className="text-xs text-muted-foreground">
+                  {t('meetingTextRecorder', { name: nameOf(m.recorderUserId), meetings: m.meetings, lines: m.lines, results: m.results, items: m.items, titles: m.titles })}
+                </p>
+              ))}
+              <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>
+            </div>
+          )}
+          {found.data.meetingTextSkipped && <p className="mb-2 text-sm text-warning">{t('meetingTextSkipped')}</p>}
           {found.data.truncated && <p className="mb-2 text-sm text-warning">{t('truncated')}</p>}
           {found.data.matches.length > 0 && (
             <DataTable head={[t('columns.where'), t('columns.handling'), t('columns.reason'), t('columns.row')]}>
