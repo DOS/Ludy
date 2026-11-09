@@ -7,7 +7,7 @@
 //   (its accounts in the entity's chart, the bank line it settles) and raises the flag of a cash payment at the 5 million limit. It writes nothing. Owners and admins only, like the proposal it serves.
 // - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context, owners and admins) and
 //   refuses a stored proposal that differs from it (the entity, the month, the chart, the lines, the total); then it records the voucher with the run and the kind on it (one live voucher per run and kind: a
-//   trigger holds it, 20261205124500) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   trigger holds it, 20261211004500) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
 // No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -24,7 +24,7 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
 
 // A source (a voucher) whose entries have all been reversed: it has an original entry (source `source`, reverses nothing) and every original entry of it has a reversal pointing at it. The same
-// rule as the database's own (20261205124500, the trigger that holds one live payment voucher per run and kind), read here as the caller sees the books. Kysely `sql` for the correlated
+// rule as the database's own (20261211004500, the trigger that holds one live payment voucher per run and kind), read here as the caller sees the books. Kysely `sql` for the correlated
 // subqueries; `voucher` is the alias of the voucher row, `source` the journal entry source type of its kind.
 const reversedSource = (voucher: string, source: string) => sql<boolean>`(
   EXISTS (SELECT 1 FROM crove_finance.journal_entry o WHERE o.org_id = ${sql.ref(`${voucher}.org_id`)} AND o.source_type = ${source} AND o.source_id = ${sql.ref(`${voucher}.id`)} AND o.reverses_entry_id IS NULL)
