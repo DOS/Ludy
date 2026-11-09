@@ -3,6 +3,7 @@
 // job that shreds audio and video keys and deletes text, the sweep of ciphertext objects and file rows, the shred references in the archive store and their
 // replay after a restore, and the org purge and export.
 import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -289,7 +290,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(store.storage.has(audioKey)).toBe(true);
 
     // Not due: nothing happens.
-    expect((await retention()).shredded).toEqual({ audio: 0, video: 0, text: 0 });
+    expect((await retention()).shredded).toEqual({ audio: 0, video: 0, text: 0, draft: 0 });
     expect(await count('SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).toBe(2);
 
     await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [meetingId]);
@@ -333,6 +334,161 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await sweep();
     expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND filename LIKE $2", [orgId, `meeting-${meetingId}.%`])).toBe(0);
     expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [meetingId])).toBe(1);
+  });
+
+  describe('drafts the recorder never published (#2580, M6 part C)', () => {
+    const DAYS = (n: number) => `now() - interval '${n} days'`;
+    async function seedDrafts(meetingId: string, age: number, text: string, org = orgId) {
+      await rows(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature, stage, created_at, updated_at) VALUES ($1, $2, $3, 'manual', 'draft', ${DAYS(age)}, now())`, [org, meetingId, text]);
+      await rows(`INSERT INTO crove_meetings.action_item (org_id, meeting_id, title, stage, created_at, updated_at) VALUES ($1, $2, $3, 'draft', ${DAYS(age)}, now())`, [org, meetingId, text]);
+      await rows(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, stage, created_at, updated_at) VALUES ($1, $2, 0, 5, $3, 'draft', ${DAYS(age)}, now())`, [org, meetingId, text]);
+    }
+    const left = async (meetingId: string, stage: string) =>
+      (await Promise.all(['meeting_result', 'action_item', 'transcript_segment'].map((t) => count(`SELECT 1 FROM crove_meetings.${t} WHERE meeting_id = $1 AND stage = '${stage}'`, [meetingId])))).reduce((a, b) => a + b, 0);
+
+    it('deletes a draft past 30 days, counted from its creation whatever its updated_at says, and keeps one at 29 days, a published row and another meeting', async () => {
+      const old = await createMeeting('recorder', { title: 'Nháp cũ' });
+      const young = await createMeeting('recorder', { title: 'Nháp mới' });
+      const mixed = await createMeeting('recorder', { title: 'Đã chia sẻ' });
+      await seedDrafts(old, 31, 'BẢN NHÁP BÍ MẬT');
+      await seedDrafts(young, 29, 'bản nháp mới');
+      await seedDrafts(mixed, 31, 'bản nháp cũ của họp đã chia sẻ');
+      await rows(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature, stage, created_at) VALUES ($1, $2, 'đã chia sẻ', 'manual', 'published', ${DAYS(60)})`, [orgId, mixed]);
+      await rows(`INSERT INTO crove_meetings.action_item (org_id, meeting_id, title, stage, created_at) VALUES ($1, $2, 'việc đã chia sẻ', 'published', ${DAYS(60)})`, [orgId, mixed]);
+      await rows(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, stage, created_at) VALUES ($1, $2, 0, 5, 'dòng đã chia sẻ', 'published', ${DAYS(60)})`, [orgId, mixed]);
+
+      const run = await retention();
+      expect(run.shredded.draft).toBeGreaterThanOrEqual(2);
+      expect(await left(old, 'draft')).toBe(0);
+      expect(await left(young, 'draft')).toBe(3);
+      expect(await left(mixed, 'draft')).toBe(0);
+      expect(await left(mixed, 'published')).toBe(3);
+      expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = ANY($1)', [[old, young, mixed]])).toBe(3);
+      // The audit row names the meeting by id with a kind and a count, never the text.
+      const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, old]);
+      expect(audit).toHaveLength(1);
+      expect(JSON.stringify(audit)).toContain('draft');
+      expect(JSON.stringify(audit)).not.toContain('BÍ MẬT');
+      // A second run finds nothing more.
+      expect((await retention()).shredded.draft).toBe(0);
+    });
+
+    it('does not delete a draft the recorder published after the scan and before the purge', async () => {
+      const meetingId = await createMeeting('recorder', { title: 'Chia sẻ đúng lúc' });
+      await seedDrafts(meetingId, 40, 'sắp chia sẻ');
+      const due = await sql<{ meeting_id: string }>`SELECT meeting_id FROM crove_meetings.meeting_drafts_due(1000::int)`.execute(workerDb);
+      expect(due.rows.map((r) => r.meeting_id)).toContain(meetingId);
+      for (const t of ['meeting_result', 'action_item', 'transcript_segment']) await rows(`UPDATE crove_meetings.${t} SET stage = 'published' WHERE meeting_id = $1`, [meetingId]);
+      const out = await worker.execute<{ applied: boolean }>('meetings.retention.shred', { meetingId, kind: 'draft' }, { actor: SYSTEM, orgId });
+      expect(out.applied).toBe(false);
+      expect(await left(meetingId, 'published')).toBe(3);
+    });
+
+    it('does not delete a draft whose publish commits while the purge waits for it', async () => {
+      const meetingId = await createMeeting('recorder', { title: 'Chia sẻ trong lúc xóa' });
+      await seedDrafts(meetingId, 40, 'đang chia sẻ');
+      const publisher = new pg.Client({ connectionString: adminUrl });
+      await publisher.connect();
+      try {
+        await publisher.query('BEGIN');
+        for (const t of ['meeting_result', 'action_item', 'transcript_segment']) await publisher.query(`UPDATE crove_meetings.${t} SET stage = 'published' WHERE meeting_id = $1`, [meetingId]);
+        // The purge starts while the publish holds the rows, so it waits on them; the publish then commits.
+        const purge = worker.execute<{ applied: boolean }>('meetings.retention.shred', { meetingId, kind: 'draft' }, { actor: SYSTEM, orgId });
+        // The purge is waiting on the publish's row lock (seen in pg_stat_activity), not merely slow.
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i += 1) {
+          waiting = (await count("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%meeting_draft_purge%'")) > 0;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(waiting).toBe(true);
+        await publisher.query('COMMIT');
+        expect((await purge).applied).toBe(false);
+      } finally {
+        await publisher.end();
+      }
+      expect(await left(meetingId, 'published')).toBe(3);
+      expect(await left(meetingId, 'draft')).toBe(0);
+    });
+
+    it('is the worker\'s alone: refused to the API login, to the worker with no context, and to a context of another org', async () => {
+      const meetingId = await createMeeting('recorder', { title: 'Chỉ worker' });
+      for (const call of ['SELECT * FROM crove_meetings.meeting_drafts_due(10)', 'SELECT crove_meetings.meeting_draft_purge(gen_random_uuid(), gen_random_uuid())']) {
+        const asApp = await admin(async (c) => {
+          await c.query('SET ROLE crove_app');
+          return c.query(call).then(() => 'ran').catch((e: Error) => e.message);
+        });
+        expect(asApp, call).toMatch(/permission denied/);
+      }
+      expect(await withWorker((c) => c.query('SELECT crove_meetings.meeting_draft_purge($1, $2)', [orgId, meetingId]).then(() => 'ran').catch((e: Error) => e.message))).toMatch(/MEETINGS_WORKER_ONLY/);
+      // A system context of another org than the one named is refused, and the scan refuses any context.
+      const mismatched = await withWorker(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+          return await c.query('SELECT crove_meetings.meeting_draft_purge(gen_random_uuid(), $1)', [meetingId]).then(() => 'ran').catch((e: Error) => e.message);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+      expect(mismatched).toMatch(/MEETINGS_WORKER_ONLY/);
+      const scan = await withWorker(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+          return await c.query('SELECT * FROM crove_meetings.meeting_drafts_due(10)').then(() => 'ran').catch((e: Error) => e.message);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+      expect(scan).toMatch(/MEETINGS_WORKER_ONLY/);
+    });
+
+    it('purges each org in its own context and never reaches across: the other org\'s expired draft is deleted by its own run, and a purge in one org leaves the other\'s rows', async () => {
+      const created = await rpc('org/create', 'purgeOwner2', { name: `Draft Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);
+      expect(created.status).toBe(200);
+      const otherSlug = String(created.body.slug);
+      const otherOrg = String(created.body.orgId);
+      userIds.set('purgeOwner2', (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('purgeOwner2')?.email]))[0]!.id);
+      const mine = await createMeeting('recorder', { title: 'Của tôi' });
+      const theirs = await createMeeting('purgeOwner2', { title: 'Của họ' }, otherSlug);
+      await seedDrafts(mine, 40, 'nháp của tôi');
+      await seedDrafts(theirs, 40, 'nháp của họ', otherOrg);
+      // This org's context with the other org's meeting id deletes nothing.
+      const crossed = await worker.execute<{ applied: boolean }>('meetings.retention.shred', { meetingId: theirs, kind: 'draft' }, { actor: SYSTEM, orgId });
+      expect(crossed.applied).toBe(false);
+      expect(await left(theirs, 'draft')).toBe(3);
+      // The run purges both, each in its own org.
+      await retention();
+      expect(await left(mine, 'draft')).toBe(0);
+      expect(await left(theirs, 'draft')).toBe(0);
+    });
+
+    it('does not replace the shared summary with nothing when the draft is purged while a publish is waiting: the old summary stays and nothing is claimed shared', async () => {
+      const meetingId = await createMeeting('recorder', { title: 'Chia sẻ lúc nháp hết hạn' });
+      await rows(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature, stage, created_at) VALUES ($1, $2, 'bản đã chia sẻ trước', 'manual', 'published', ${DAYS(50)})`, [orgId, meetingId]);
+      await rows(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature, stage, created_at) VALUES ($1, $2, 'bản nháp hết hạn', 'manual', 'draft', ${DAYS(40)})`, [orgId, meetingId]);
+      const purger = new pg.Client({ connectionString: adminUrl });
+      await purger.connect();
+      try {
+        // The purge has deleted the draft but not yet committed: the publish's lock on it waits for that.
+        await purger.query('BEGIN');
+        await purger.query("DELETE FROM crove_meetings.meeting_result WHERE meeting_id = $1 AND stage = 'draft'", [meetingId]);
+        const publishing = rpc('meetings/results/publish', 'recorder', { meetingId, confirmed: true });
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i += 1) {
+          waiting = (await count("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%meeting_result%' AND query ILIKE '%for update%'")) > 0;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(waiting).toBe(true);
+        await purger.query('COMMIT');
+        const res = await publishing;
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('NOTHING_TO_PUBLISH');
+      } finally {
+        await purger.end();
+      }
+      expect(await count("SELECT 1 FROM crove_meetings.meeting_result WHERE meeting_id = $1 AND stage = 'published' AND summary = 'bản đã chia sẻ trước'", [meetingId])).toBe(1);
+    });
   });
 
   it('deletes the meeting at its text date: no row, no key, no object, no file row of it is left', async () => {

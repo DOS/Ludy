@@ -33,6 +33,7 @@ import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
 import { postDocumentStock } from './stock-lines.ts';
+import { orderSourcesOfInvoice, type OrderSource } from './order-handoff.ts';
 import { invoiceLabel, journalMemo } from './memo.ts';
 import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { databaseToday, dateLabel, liveOpeningDate } from './period-lock.ts';
@@ -543,10 +544,18 @@ export const recordPurchase = defineCommand({
       });
     if (!document) throw new DomainError('INTERNAL', 500, 'Không ghi được chứng từ');
 
+    // A sale invoice that came from a CRM order carries the order line of each of its lines (ADR-0050 A4): the delivery owns that line's stock.
+    const orderSources = sale ? await orderSourcesOfInvoice(ctx, legalEntityId, invoice.series, invoice.number) : new Map<number, OrderSource & { amount: string }>();
+    const carried = (l: { lineNo: number; amount: string }): OrderSource | null => {
+      const source = orderSources.get(l.lineNo);
+      return source && money(source.amount).equals(money(l.amount)) ? { kind: source.kind, id: source.id, lineNo: source.lineNo } : null;
+    };
     await ctx.trx
       .insertInto('crove_finance.purchase_line')
       .values(
-        lines.map((l) => ({
+        lines.map((l) => {
+          const from = carried(l);
+          return {
           org_id: ctx.orgId,
           document_id: document.id,
           line_no: l.lineNo,
@@ -559,7 +568,11 @@ export const recordPurchase = defineCommand({
           // A purchase line is debited to its account, a sale line credited to it.
           debit_account: sale ? null : l.debitAccount,
           credit_account: sale ? l.debitAccount : null,
-        })),
+          source_kind: from?.kind ?? null,
+          source_id: from?.id ?? null,
+          source_line_no: from?.lineNo ?? null,
+          };
+        }),
       )
       .execute();
     // The invoice's own VAT table (#685), written before the entry is posted: once a document has its entry, the
@@ -603,7 +616,7 @@ export const recordPurchase = defineCommand({
     const stock = await postDocumentStock(
       ctx,
       { documentId: document.id, legalEntityId, direction, date: entryDate, adjustment: related?.kind === 'adjustment' },
-      lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, amount: l.amount, account: l.debitAccount })),
+      lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, amount: l.amount, account: l.debitAccount, source: carried(l) })),
     );
 
     // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing.

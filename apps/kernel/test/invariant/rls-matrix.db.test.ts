@@ -67,6 +67,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_connection',
+  'crove_finance.marketplace_party',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -77,8 +78,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  'crove_meetings.action_item',
-  'crove_meetings.meeting_result',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -136,6 +135,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.conversation_message', () => 'false'], // Reads through its conversation.
   ['crove_kernel.conversation_note', () => 'false'], // Reads through its conversation.
   ['crove_kernel.conversation_read', () => 'false'], // Per member.
+  ['crove_kernel.file', () => `t.source OPERATOR(pg_catalog.<>) ALL (ARRAY['meeting_audio', 'meeting_video'])`], // Meeting media rows are the meeting's readers' alone (#2874); a member Vy reads one only through its own run's meeting, which the matrix's Vy has none of.
   ['crove_kernel.inbox_item', () => 'false'], // Per member.
   ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
   ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
@@ -144,9 +144,11 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.notification_mute', () => 'false'], // Per member.
   ['crove_kernel.saved_view', () => 'false'], // Per member.
   ['crove_kernel.today_mail', () => 'false'], // Per member.
+  ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
+  ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
@@ -290,6 +292,8 @@ const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
 // A marketplace connection is unique per entity, provider and platform, so each seeded one names a provider of its own.
 let marketplaceSeq = 0;
+// A platform has one organization party per entity (marketplace_party), so each seeded link names a platform of its own.
+let marketplacePartySeq = 0;
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
@@ -443,6 +447,13 @@ let stagePosition = 1;
 let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
+// #2878: a media file row of a meeting the way the upload command writes it: the matching meeting source, created by the member who links it. The segment and video
+// factories point at one, so the matrix controls hold if the insert policies later ask that the linked file is the caller's own.
+const meetingMediaFileRow = (o: { id: string; owner: string }, source: 'meeting_audio' | 'meeting_video') => {
+  const sha256 = hex64();
+  return { org_id: o.id, id: randomUUID(), sha256, storage_key: `org/${o.id}/${sha256}`, filename: 'rls-matrix-media.bin', content_type: 'application/octet-stream', size_bytes: 1, source, created_by: o.owner };
+};
+
 const portalListRow = (o: { id: string; file: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -1222,6 +1233,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider, platform: 'shopee' },
+      };
+    },
+  },
+  // #2516: the organization party that stands for a marketplace as the counterparty of the entity's 131 (ADR-0045 point 6, plan section 8.4): one per entity and platform, the party is an
+  // ordinary organization of the org. It takes the org's default entity by its trigger. Tenant roles read and insert; nothing updates or deletes it. Each seeded link names a platform
+  // of its own and a party of its own, since a platform is unique per entity and a party is linked once.
+  'crove_finance.marketplace_party': {
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
       };
     },
   },
@@ -2110,13 +2133,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.audio_segment': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
+      const media = meetingMediaFileRow(o, 'meeting_audio');
       return {
-        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_kernel.file', values: media },
+        ],
         row: {
           org_id: o.id,
           id: randomUUID(),
           meeting_id: meeting.id,
-          file_id: o.file,
+          file_id: media.id,
           segment_order: 0,
           start_offset_seconds: 0,
           length_seconds: 600,
@@ -2186,13 +2213,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.meeting_video': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
+      const media = meetingMediaFileRow(o, 'meeting_video');
       return {
-        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_kernel.file', values: media },
+        ],
         row: {
           org_id: o.id,
           id: randomUUID(),
           meeting_id: meeting.id,
-          file_id: o.file,
+          file_id: media.id,
           length_seconds: 1800,
           video_retention_date: '2026-11-11',
         },

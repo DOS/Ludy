@@ -3,6 +3,7 @@ import { Link, useSearch } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
+import { OrgExtensionDevices } from '../components/org-extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -1249,6 +1250,10 @@ export function SettingsPage() {
         <TwoFactorCard />
         {me.data && <MySessions userId={me.data.userId} />}
         {getConfig().modules.includes('meetings') && <ExtensionDevices />}
+        {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
+        {getConfig().modules.includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
+          <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />
+        )}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}
       </div>
     </>

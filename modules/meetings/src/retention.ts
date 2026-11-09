@@ -32,6 +32,11 @@ export function vnDay(at: Date): string {
   return new Date(at.getTime() + VN_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** The instant a Vietnam calendar day (YYYY-MM-DD) begins, as an ISO 8601 UTC timestamp: the due moment of a date said in a meeting. */
+export function vnDayStart(day: string): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) - VN_OFFSET_MS).toISOString();
+}
+
 /** The Vietnam calendar day `days` days after an instant. */
 export function dayAfter(at: Date, days: number): string {
   return vnDay(new Date(at.getTime() + days * DAY_MS));
@@ -132,7 +137,7 @@ function requireSystem(ctx: CommandContext | QueryContext): void {
 export interface RetentionOutcome {
   // Whether anything was deleted (false: not due after all, or already gone).
   applied: boolean;
-  kind: 'audio' | 'video' | 'text';
+  kind: 'audio' | 'video' | 'text' | 'draft';
 }
 
 // The nightly job's step for one meeting and kind, in the meeting's own org (the worker's system context). Counts and the kind only reach the audit row; a
@@ -147,6 +152,14 @@ export const meetingRetentionShred = defineCommand({
   handler: async (ctx, input): Promise<RetentionOutcome> => {
     requireSystem(ctx);
     let applied: boolean;
+    if (input.kind === 'draft') {
+      // Drafts the recorder never published, 30 days after they were made (one statement per table tests stage and age, so a row published meanwhile stays).
+      const { rows } = await sql<{ n: number }>`
+        SELECT crove_meetings.meeting_draft_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
+      const rowCount = rows[0]?.n ?? 0;
+      ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied: rowCount > 0, rows: rowCount });
+      return { applied: rowCount > 0, kind: input.kind };
+    }
     if (input.kind === 'text') {
       const { rows } = await sql<{ done: boolean }>`
         SELECT crove_meetings.meeting_text_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);

@@ -50,6 +50,7 @@ import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
+import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -319,11 +320,15 @@ export function createRpcHandler(
   aiEnabled = false,
   // The Inbox's AI coworker (CV3, #2306): the suggested intent and the likely contacts. Unset: no suggestion, with the inbox as it is.
   conversationReader?: ConversationReader,
+  // The recorder's Vy summarizing a meeting (#2580, M6 part B2): the deployment's model behind the member-Vy model port, or unset.
+  summaryModel: ModelPort | null = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
+  // A summary is a long call a member waits for: one at a time for a member, a few a minute.
+  const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
@@ -806,6 +811,12 @@ export function createRpcHandler(
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
         },
+        bankTemplates: {
+          list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
+          create: os.hr.payroll.bankTemplates.create.handler(hrCommand('hr.payroll.bank_template.create')),
+          edit: os.hr.payroll.bankTemplates.edit.handler(hrCommand('hr.payroll.bank_template.edit')),
+          delete: os.hr.payroll.bankTemplates.delete.handler(hrCommand('hr.payroll.bank_template.delete')),
+        },
         employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
         dependents: {
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
@@ -882,6 +893,26 @@ export function createRpcHandler(
         start: os.meetings.transcript.start.handler(meetingsCommand('meetings.transcript.start')),
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
+      },
+      results: {
+        get: os.meetings.results.get.handler(meetingsQuery('meetings.result.get')),
+        saveSummary: os.meetings.results.saveSummary.handler(meetingsCommand('meetings.summary.save')),
+        publish: os.meetings.results.publish.handler(meetingsCommand('meetings.result.publish')),
+        copySummary: os.meetings.results.copySummary.handler(meetingsCommand('meetings.summary.copy_result')),
+        review: os.meetings.results.review.handler(meetingsCommand('meetings.draft.review')),
+        summaryStatus: os.meetings.results.summaryStatus.handler(meetingsQuery('meetings.summary.status')),
+        // The recorder's Vy summarizing the meeting (#2580, M6 part B2): the first interactive stage A run; see meetings-summary.ts.
+        summarize: os.meetings.results.summarize.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runMeetingSummary({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      actionItems: {
+        create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),
+        edit: os.meetings.actionItems.edit.handler(meetingsCommand('meetings.action_item.edit')),
+        delete: os.meetings.actionItems.delete.handler(meetingsCommand('meetings.action_item.delete')),
+        accept: os.meetings.actionItems.accept.handler(meetingsCommand('meetings.action_item.accept')),
+        acceptClean: os.meetings.actionItems.acceptClean.handler(meetingsCommand('meetings.action_item.accept_clean')),
+        source: os.meetings.actionItems.source.handler(meetingsQuery('meetings.action_item.source')),
       },
       readers: {
         add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
@@ -2471,9 +2502,16 @@ export function createRpcHandler(
         get: os.einvoice.drafts.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.get', input, { actor, orgId }))),
         check: os.einvoice.drafts.check.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.check', input, { actor, orgId }))),
         save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),
+        fromOrder: os.einvoice.drafts.fromOrder.handler(({ context, input }) =>
+          inFinance(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('finance.einvoice.draft_from_order', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
+        previousInvoice: os.einvoice.drafts.previousInvoice.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.previous_invoice', input, { actor, orgId }))),
         suggest: os.einvoice.drafts.suggest.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             const source = await runtime.query<EInvoiceSuggestSource>('finance.einvoice_draft.suggest_source', input, { actor, orgId });
@@ -2541,6 +2579,12 @@ export function createRpcHandler(
         reverse: os.stock.moves.reverse.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_move.reverse', input, { actor, orgId }))),
       },
       unassigned: os.stock.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.unassigned', input ?? {}, { actor, orgId }))),
+      moveFromOrderLine: os.stock.moveFromOrderLine.handler(({ context, input }) =>
+          inFinance(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('finance.stock.move_from_order_line', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
       assign: os.stock.assign.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.assign', input, { actor, orgId }))),
       report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),

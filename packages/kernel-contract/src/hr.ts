@@ -53,11 +53,16 @@ export const zHrEmploymentTerms = z.strictObject({
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
 
 // A new employee with the first terms. The legal entity is the org's default one when none is named.
+// The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @crove/l10n-vn (VN_BANKS). The shape is checked here and in the database;
+// that the code is in the list is checked by the command, so this package needs no copy of the list.
+export const zHrBankCode = z.string().regex(/^[A-Z0-9]{2,12}$/, 'bank code: 2 to 12 capital letters or digits');
+
 export const zHrEmployeeAdd = z.strictObject({
   displayName: zName,
   address: zAddress.optional(),
   identityNumber: zHrIdentityNumber.optional(),
   accountNumber: zHrAccountNumber.optional(),
+  bankCode: zHrBankCode.optional(),
   birthDate: zHrBirthDate.optional(),
   taxCode: zHrTaxCode.optional(),
   insuranceNumber: zHrInsuranceNumber.optional(),
@@ -74,6 +79,7 @@ export const zHrEmployeeEdit = z
     address: zAddress.nullable().optional(),
     identityNumber: zHrIdentityNumber.nullable().optional(),
     accountNumber: zHrAccountNumber.nullable().optional(),
+    bankCode: zHrBankCode.nullable().optional(),
     birthDate: zHrBirthDate.nullable().optional(),
     taxCode: zHrTaxCode.nullable().optional(),
     insuranceNumber: zHrInsuranceNumber.nullable().optional(),
@@ -84,6 +90,7 @@ export const zHrEmployeeEdit = z
       v.address !== undefined ||
       v.identityNumber !== undefined ||
       v.accountNumber !== undefined ||
+      v.bankCode !== undefined ||
       v.birthDate !== undefined ||
       v.taxCode !== undefined ||
       v.insuranceNumber !== undefined,
@@ -142,6 +149,8 @@ export const zHrEmployee = zHrEmployeeSummary.extend({
   address: z.string().nullable(),
   identityNumber: z.string().nullable(),
   accountNumber: z.string().nullable(),
+  // The code of the bank the person is paid at (#2897); the sensitive read only, null once erased.
+  bankCode: z.string().nullable(),
   birthDate: z.string().nullable(),
   taxCode: z.string().nullable(),
   insuranceNumber: z.string().nullable(),

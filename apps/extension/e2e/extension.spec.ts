@@ -224,6 +224,74 @@ test('an address the manifest cannot ask for is refused in the form, not by a th
   await page.close();
 });
 
+// The browser's own permission prompt cannot be answered by automation (a real chrome.permissions.request stays open), so the
+// permission API is replaced in the popup page by a small fake that keeps the granted patterns; what the tests check is what the
+// popup asks of it and what the member sees.
+const fakePermissions = (page: Page, granted: string[], mode: 'grant' | 'throw' = 'grant') =>
+  page.evaluate(
+    ([start, how]) => {
+      const held = new Set(start);
+      const removed: string[] = [];
+      (window as unknown as { perm: { removed: string[]; held: Set<string> } }).perm = { removed, held };
+      const api = chrome.permissions as unknown as Record<string, unknown>;
+      api.request = async (request: { origins?: string[] }) => {
+        if (how === 'throw') throw new Error('The manifest does not list this pattern');
+        for (const origin of request.origins ?? []) held.add(origin);
+        return true;
+      };
+      api.remove = async (request: { origins?: string[] }) => {
+        for (const origin of request.origins ?? []) {
+          held.delete(origin);
+          removed.push(origin);
+        }
+        return true;
+      };
+      api.contains = async (request: { origins?: string[] }) => (request.origins ?? []).every((origin) => held.has(origin));
+    },
+    [granted, mode] as const,
+  );
+
+const stored = () => context.serviceWorkers()[0]!.evaluate(async () => ((await chrome.storage.local.get('ludy-extension-state'))['ludy-extension-state'] as { address: string }).address);
+const setAddress = (address: string) =>
+  context.serviceWorkers()[0]!.evaluate((value) => chrome.storage.local.set({ 'ludy-extension-state': { address: value, accounts: {}, activeOrg: null, enabled: {} } }), address);
+
+test('when the browser throws for the permission, the member sees that the address is not allowed and the address stays', async () => {
+  await context.serviceWorkers()[0]!.evaluate(() => chrome.storage.local.clear());
+  const page = await popup();
+  await fakePermissions(page, [], 'throw');
+  await page.locator('#where-own').check();
+  await page.locator('#address').fill('https://selfhosted.example');
+  await page.getByRole('button', { name: 'Lưu địa chỉ' }).click();
+  await expect(page.getByText('Chưa cho phép tiện ích nói chuyện với địa chỉ này.')).toBeVisible();
+  expect(await stored().catch(() => 'https://app.ludy.vn')).toBe('https://app.ludy.vn');
+  await page.close();
+});
+
+test('going back to Ludy Cloud gives back the permission for the self-hosted address', async () => {
+  await setAddress('https://selfhosted.example');
+  const page = await popup();
+  await fakePermissions(page, ['https://selfhosted.example/*']);
+  expect(await page.evaluate(() => chrome.permissions.contains({ origins: ['https://selfhosted.example/*'] }))).toBe(true);
+  await page.locator('#where-cloud').check();
+  await page.getByRole('button', { name: 'Lưu địa chỉ' }).click();
+  await expect.poll(() => page.evaluate(() => chrome.permissions.contains({ origins: ['https://selfhosted.example/*'] }))).toBe(false);
+  expect(await stored()).toBe('https://app.ludy.vn');
+  await page.close();
+});
+
+test('a popup drawn before another one moved the address gives back the permission of the address stored now', async () => {
+  await setAddress('https://first.example');
+  const page = await popup();
+  await fakePermissions(page, ['https://first.example/*', 'https://second.example/*']);
+  // A second popup moved the address to another self-hosted one while this one stayed open.
+  await setAddress('https://second.example');
+  await page.locator('#where-cloud').check();
+  await page.getByRole('button', { name: 'Lưu địa chỉ' }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { perm: { removed: string[] } }).perm.removed)).toEqual(['https://second.example/*']);
+  expect(await page.evaluate(() => chrome.permissions.contains({ origins: ['https://first.example/*'] }))).toBe(true);
+  await page.close();
+});
+
 test('the worker refuses a start request whose flags are not booleans, and creates no meeting', async () => {
   await seed({ meetings: true });
   fake.created.length = 0;

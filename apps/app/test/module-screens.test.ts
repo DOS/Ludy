@@ -198,7 +198,7 @@ describe('module screens against the router (#1652)', () => {
         ],
       ],
       // The HR app (#2530): the staff list, for owners and admins.
-      ['hr', [['people', ['/o/$slug/hr/employees', '/o/$slug/hr/payroll', '/o/$slug/hr/declarations']]]],
+      ['hr', [['people', ['/o/$slug/hr/employees', '/o/$slug/hr/payroll', '/o/$slug/hr/declarations', '/o/$slug/hr/bank-templates']]]],
       // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),
       // Khách hàng & Bán hàng (the crm module's screens), Marketing (the posts and, from the ads module, Ads, ads plan section 2) and one Báo cáo item.
       // The rail has no CRM app of its own.
@@ -217,7 +217,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'employees', 'payroll', 'declarations', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'employees', 'payroll', 'declarations', 'bankTemplates', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
     ]);
   });
 });

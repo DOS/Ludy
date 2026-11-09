@@ -125,7 +125,6 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
 export const PENDING_DEPS: Readonly<Record<string, string>> = {
-  meetingsTranscribe: '#2578',
   'channels.marketplaceProviders': '#2519',
 };
 

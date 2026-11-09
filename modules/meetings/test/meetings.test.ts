@@ -79,6 +79,16 @@ describe('meetings commands and queries construction', () => {
       'meetings.transcript.correct',
       'meetings.transcript.start',
       'meetings.transcript.copy_result',
+      'meetings.summary.save',
+      'meetings.action_item.create',
+      'meetings.action_item.edit',
+      'meetings.action_item.delete',
+      'meetings.result.publish',
+      'meetings.action_item.accept',
+      'meetings.action_item.accept_clean',
+      'meetings.summary.copy_result',
+      'meetings.draft.review',
+      'meetings.summary.start',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -100,6 +110,9 @@ describe('meetings commands and queries construction', () => {
       'meetings.media.orphan_keys',
       'meetings.transcript.get',
       'meetings.transcript.status',
+      'meetings.result.get',
+      'meetings.action_item.source',
+      'meetings.summary.status',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');
