@@ -3,7 +3,7 @@
 // what could not be read), the live check against the stock items before a member confirms, and the confirmed orders. No buyer data of any kind appears anywhere here: the importer
 // never reads the report's buyer columns.
 import { z } from 'zod';
-import { zId, zLocalDate } from './schemas.ts';
+import { zId, zJournalAmount, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 import { zStockFactor } from './stock.ts';
 
 export const MARKETPLACE_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
@@ -199,3 +199,24 @@ export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeCo
 // Days after a member's decision (import or skip) when the original file and the per-order amounts of a marketplace report are deleted (ADR-0045 point 8, #2516). The database
 // (crove_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
 export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
+
+// The posting of a stored settlement (#2516, ADR-0045 point 6): ONE general journal voucher per settlement, Dr 131 (the platform) / Cr 511, or the reverse when the refunds and the seller discounts
+// exceed the sales. A person asks for it with the settlement alone (kernel.proposal.request with command `finance.marketplace_settlement.record`); the server builds the entry from the stored
+// lines, and builds it again when the proposal is approved, so the request carries nothing else. Nothing is requested or posted until the accountant has confirmed the account map (#2520).
+// MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_POSTING_REGIME_UNKNOWN, MARKETPLACE_SETTLEMENT_NOT_POSTABLE, MARKETPLACE_SETTLEMENT_MISMATCH, PERIOD_LOCKED (409),
+// MARKETPLACE_SETTLEMENT_POSTED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
+export const MARKETPLACE_SETTLEMENT_COMMAND = 'finance.marketplace_settlement.record';
+export const zMarketplaceSettlementRequest = z.strictObject({ settlementId: zId });
+export type MarketplaceSettlementRequest = z.infer<typeof zMarketplaceSettlementRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the settlement it posts, the platform and the period, and the settlement's sales, seller discounts and refunds in whole dong,
+// so the refund stays visible beside the net. The platform's party on the 131 line is null until the platform's first posting creates it.
+export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
+  settlementId: zId,
+  platform: zMarketplacePlatform,
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  sales: zJournalAmount,
+  sellerDiscount: zJournalAmount,
+  refund: zJournalAmount,
+});
+export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
