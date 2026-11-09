@@ -33,9 +33,11 @@ export function declarationMonths(kind: HrDeclarationQuery['kind'], period: stri
   return Array.from({ length: 12 }, (_, i) => `${period}-${String(i + 1).padStart(2, '0')}`);
 }
 
-// The stored breakdown as the builders read it. A line with no breakdown (an adjustment may have none) reads as none; a breakdown the builders cannot read is a bug and surfaces.
-function breakdownOf(raw: unknown): DeclarationBreakdown | null {
-  if (raw === null || raw === undefined) return null;
+// The stored breakdown as the builders read it. A line with no breakdown reads as none, and so does an adjustment whatever it holds: a correction keeps only the split of its insurance across the funds
+// for its posting (#2532), not the tax and wage detail of a pay line, so it is read as one with no breakdown (its tax and taxable income are added, its assessable income is not, and the document says
+// so). A pay line's breakdown the builders cannot read is a bug and surfaces.
+function breakdownOf(raw: unknown, kind: string): DeclarationBreakdown | null {
+  if (raw === null || raw === undefined || kind === 'adjustment') return null;
   const b = (typeof raw === 'string' ? JSON.parse(raw) : raw) as DeclarationBreakdown;
   return { insurance: { suspended: b.insurance.suspended, funds: b.insurance.funds.map((f) => ({ fund: f.fund, wage: f.wage, employee: f.employee, employer: f.employer })) }, tax: b.tax };
 }
@@ -93,7 +95,7 @@ export const declarationGet = defineQuery({
       unionFee: r.union_fee as string,
       taxableIncome: r.taxable_income as string,
       pit: r.pit as string,
-      breakdown: breakdownOf(r.breakdown),
+      breakdown: breakdownOf(r.breakdown, r.kind),
       adjustsMonth: r.adjusts_run_id ? (adjustedMonths.get(r.adjusts_run_id) ?? null) : null,
     }));
     const ids = [...new Set(lines.map((l) => l.employeeId))];

@@ -31,7 +31,11 @@ vi.mock('@crove/l10n-vn', async (importOriginal) => {
   };
 });
 const setMapStatus = (status: 'confirmed' | 'commentary') => {
-  for (const map of Object.values(PAYROLL_POSTING_MAPS)) (map as { status: string }).status = status;
+  for (const map of Object.values(PAYROLL_POSTING_MAPS)) {
+    (map as { status: string }).status = status;
+    // The rule for how an adjustment line is booked is confirmed with the rest (it is shared with the real maps: the mocked copies are shallow).
+    (map.adjustments as { status: string }).status = status;
+  }
 };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -355,6 +359,18 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, chief)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
+  });
+
+  it('does not offer the payment of a month that carries a correction yet: asking for it is refused', async () => {
+    const o = await org('tt133', 'solo');
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const march = await approvedRun(o);
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Điều chỉnh', gross: '500000', pit: '25000' });
+    });
+    const { proposalId } = await ask(o, april.runId, o.owner);
+    await approve(o, proposalId, o.owner);
+    await expect(pay(o, april.runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_ADJUSTMENTS' });
   });
 
   const settlementOf = (o: Org, runId: string, user = o.owner) => o.query<PayrollSettlement>(user, 'finance.payroll.settlement', { runId });

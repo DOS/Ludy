@@ -20,6 +20,8 @@ const monthEnd = (month: string): string => {
   return new Date(Date.UTC(year, m, 0)).toISOString().slice(0, 10);
 };
 export const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
+const incompleteAdjustment = () =>
+  new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh làm trước khi ghi nhận bộ phận và các quỹ bảo hiểm nên chưa hạch toán được tháng này');
 const mismatch = (what: string) => new DomainError('HR_POSTING_MISMATCH', 422, `Số liệu của bảng lương không khớp (${what}); không lập được bút toán`, { what });
 
 interface StoredFund {
@@ -50,7 +52,10 @@ export interface BuiltPosting {
   regime: PayrollRegime;
   result: ReturnType<typeof buildPosting>;
   lines: number;
-  // The net pay of each frozen line, in whole dong and in no order: what the payment of the net pay counts against the cash limit, without a name or a line id.
+  // How many correction lines the run carries: the payment of such a run is not offered yet (the next change), so the payment commands refuse it.
+  adjustments: number;
+  // The net pay of each frozen pay line, in whole dong and in no order: what the payment of the net pay counts against the cash limit, without a name or a line id. A correction is a difference, not a
+  // person's pay, so it is not counted here (the database counts the same lines in `cashLarge`).
   nets: string[];
 }
 
@@ -60,6 +65,7 @@ async function finishPosting(
   ctx: CommandContext,
   run: { legal_entity_id: string; month: string; approval: unknown },
   lines: readonly PostingLine[],
+  hasAdjustments: boolean,
 ): Promise<{ date: string; regime: PayrollRegime; result: ReturnType<typeof buildPosting> }> {
   // The chart of the entity on the last day of the month: finance alone reads its books (TT133 when none is on record).
   const date = monthEnd(run.month);
@@ -68,6 +74,10 @@ async function finishPosting(
   // The gate of the pay run's approval, for the account map: while the accountant has not confirmed the map of this chart (#2535), nothing is posted (finance's record command holds the same gate).
   if (PAYROLL_POSTING_MAPS[regime].status !== 'confirmed') {
     throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán lương của chế độ kế toán này chưa được kế toán xác nhận; chưa hạch toán được', { regime });
+  }
+  // A month that carries a correction of an earlier one also waits for the accountant's rule on how a correction is booked (the period and the sign): row 18 of the plan.
+  if (hasAdjustments && PAYROLL_POSTING_MAPS[regime].adjustments.status !== 'confirmed') {
+    throw new DomainError('HR_POSTING_MAP_UNCONFIRMED', 409, 'Quy tắc hạch toán dòng điều chỉnh của bảng lương này chưa được kế toán xác nhận; chưa hạch toán được', { regime, rule: 'adjustments' });
   }
 
   let result;
@@ -115,8 +125,9 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
     .where('run_id', '=', runId)
     .execute();
   if (stored.length === 0) throw mismatch('bảng lương không có dòng nào');
-  // A correction of an approved month carries no per-fund split of its insurance: posting it needs its own rule (a follow-up), so a run holding one is not posted here.
-  if (stored.some((l) => l.kind !== 'pay')) throw new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này');
+  // A correction of an approved month is posted with the pay lines, in this run's period, from the cost department it copied and the split of its insurance across the funds. One made before it held
+  // those (no terms, no split) cannot be posted: it is corrected again, so the entry never guesses.
+  if (stored.some((l) => l.kind !== 'pay' && (l.employment_id === null || !Array.isArray((l.breakdown as { insurance?: { funds?: unknown } } | null)?.insurance?.funds)))) throw incompleteAdjustment();
   if (stored.some((l) => l.status !== 'calculated' || l.gross === null || l.employee_insurance === null || l.employer_insurance === null || l.union_fee === null || l.pit === null || l.net === null)) {
     throw mismatch('dòng chưa tính');
   }
@@ -149,8 +160,8 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
     };
   });
 
-  const { date, regime, result } = await finishPosting(ctx, run, lines);
-  return { payrollRun: run, date, regime, result, lines: stored.length, nets: stored.map((l) => String(l.net)) };
+  const { date, regime, result } = await finishPosting(ctx, run, lines, stored.some((l) => l.kind !== 'pay'));
+  return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: stored.filter((l) => l.kind === 'pay').map((l) => String(l.net)) };
 }
 
 // The same entry rebuilt from the run's totals by cost department (crove_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
@@ -163,6 +174,8 @@ export interface BuiltTotals {
   result: ReturnType<typeof buildPosting>;
   // How many people's net pay is at the cash limit or above: a number only.
   cashLarge: number;
+  // How many correction lines the run carries (a count, never a line): see BuiltPosting.
+  adjustments: number;
 }
 interface StoredGroup {
   payFunction: string;
@@ -187,7 +200,7 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
   if (t.status !== 'approved') throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới hạch toán được');
   const c = t.counts;
   if ((c.lines ?? 0) === 0) throw mismatch('bảng lương không có dòng nào');
-  if ((c.adjustments ?? 0) > 0) throw new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa hạch toán được loại bảng lương này');
+  if ((c.adjustmentsIncomplete ?? 0) > 0) throw incompleteAdjustment();
   if ((c.notCalculated ?? 0) > 0) throw mismatch('dòng chưa tính');
   if ((c.noFunction ?? 0) > 0) throw mismatch('bộ phận hạch toán');
   if ((c.noFunds ?? 0) > 0) throw mismatch('thiếu chi tiết bảo hiểm');
@@ -213,8 +226,8 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
     };
   });
   const run = { id: t.runId, legal_entity_id: t.legalEntityId, month: t.month, approved_by: t.approvedBy, approval: { totals: t.approvalTotals } };
-  const { date, regime, result } = await finishPosting(ctx, run, lines);
-  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, result, cashLarge: c.cashLarge ?? 0 };
+  const { date, regime, result } = await finishPosting(ctx, run, lines, (c.adjustments ?? 0) > 0);
+  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, result, cashLarge: c.cashLarge ?? 0, adjustments: c.adjustments ?? 0 };
 }
 
 export const prepareRunPosting = defineCommand({
