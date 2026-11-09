@@ -13,6 +13,7 @@ import {
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
   DIRECT_UPLOAD_MAX_BYTES,
+  HR_BANK_FILE_COLUMNS,
   HR_DECLARATION_KINDS,
   MAX_IMPORT_BYTES,
   MAX_MEETING_AUDIO_BYTES,
@@ -27,7 +28,9 @@ import {
   XLSX_CONTENT_TYPE,
   accountParents,
   type FixedAsset,
+  type HrBankFile,
   type HrDeclarationDocument,
+  zHrBankFileQuery,
   zHrDeclarationDocument,
   type MisaGoodsCode,
   type StockCard,
@@ -97,7 +100,7 @@ import {
   type VatReport,
 } from '@crove/mod-finance';
 import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
-import { buildDeclarationWorkbook } from '@crove/mod-hr';
+import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
@@ -2998,6 +3001,60 @@ export function createHttpApp(deps: HttpDeps) {
             headers: {
               'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
               'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), `bang-ke-${kind}`, period, ORG_SLUG], 'xlsx'),
+              'x-content-type-options': 'nosniff',
+              'cache-control': 'private, no-store',
+            },
+          });
+        } catch (error) {
+          release();
+          throw error;
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // The bank bulk-salary file of an approved pay run (#2532, payroll plan 6.4): GET /api/payroll-bank-file/<runId>.xlsx?bank=<the bank's name>&columns=seq,name,account,bank,amount,content (columns optional, in the
+  // order wanted). Ludy never initiates a payment: the file is for the accountant to upload to the bank. Built only in the requesting owner's or admin's own context by the sensitive query
+  // hr.payroll.bank_file.get (its audit row is committed before the sealed account numbers are opened; nothing decrypted reaches an audit fact or a log), never a worker, a stored job or a stored blob,
+  // and no email. No account number is ever in the URL or the query string: only the run, the bank's name and the column choice are. It needs a second factor used in the last 5 minutes
+  // (STEP_UP_REQUIRED), takes a slot of the export limiter like the other exports, is bounded (a run with more people than the cap, or a person with no account number, is refused, never cut short)
+  // and is built whole; the audit row of the download (a count only) is written before the bytes are sent: no row, no download. The slot is held until the bytes are taken. `private, no-store`: the file
+  // holds names and account numbers. Nothing is sent to any bank.
+  if (runtime.installed('hr')) {
+    app.get('/api/payroll-bank-file/:file', async (c) => {
+      // A HEAD request would run the whole audited read and build the file only to throw the body away, leaving a download row for bytes nobody got.
+      if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
+      try {
+        const file = c.req.param('file');
+        if (!file.endsWith('.xlsx')) throw new DomainError('NOT_FOUND', 404, 'Không có file này');
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        // Refused before a slot or an audit row: the query checks it again for every caller.
+        if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
+        const columnsParam = c.req.query('columns');
+        const parsed = zHrBankFileQuery.safeParse({
+          runId: file.slice(0, -'.xlsx'.length),
+          bankName: c.req.query('bank') ?? '',
+          ...(columnsParam ? { columns: columnsParam.split(',') } : {}),
+        });
+        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, `Yêu cầu không hợp lệ: cần số hiệu bảng lương, tên ngân hàng và các cột trong ${HR_BANK_FILE_COLUMNS.join(', ')}`);
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất; hãy thử lại sau vài giây');
+        }
+        // The slot is held until the bytes are taken (held below); any failure before that lets it go.
+        try {
+          const document = await runtime.query<HrBankFile>('hr.payroll.bank_file.get', parsed.data, { actor: actorOf(user), orgId });
+          const bytes = await buildBankFileWorkbook(document, config.BRAND_NAME);
+          await runtime.execute('hr.payroll.bank_file.export', { runId: document.runId, rows: document.rows.length, columns: document.columns.length }, { actor: actorOf(user), orgId });
+          return new Response(held(new Uint8Array(bytes), release), {
+            headers: {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-luong', document.month, ORG_SLUG], 'xlsx'),
               'x-content-type-options': 'nosniff',
               'cache-control': 'private, no-store',
             },

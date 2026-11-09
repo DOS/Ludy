@@ -23,12 +23,28 @@ export type PersonalDataMatch = z.infer<typeof zPersonalDataMatch>;
 // How many private notes and to-dos of one author mention a value (#1678, ADR-0037): never which or their text.
 export const zPrivateItemCount = z.object({ authorUserId: z.string(), notes: z.number().int(), todos: z.number().int() });
 
+// How much text of one recorder's meetings mentions a value, among the meetings the owner cannot read (#2594, ADR-0047): counts only, never which meeting, its title
+// or its text.
+export const zMeetingTextCount = z.object({
+  recorderUserId: z.string(),
+  meetings: z.number().int(),
+  lines: z.number().int(),
+  results: z.number().int(),
+  items: z.number().int(),
+  titles: z.number().int(),
+});
+export type MeetingTextCount = z.infer<typeof zMeetingTextCount>;
+
 export const zPersonalDataResult = z.object({
   kind: z.enum(['email', 'digits']),
   matches: z.array(zPersonalDataMatch),
   // Private notes and to-dos that mention the value (#1678, ADR-0037): how many each author has, never which or their
   // text, so the owner can tell the authors before an erasure. Owners only: null for an admin.
   privateItems: z.array(zPrivateItemCount).nullable(),
+  // Meeting text that mentions the value in meetings the owner cannot read, per recorder (#2594): never which or its text. Owners only: null for an admin.
+  meetingText: z.array(zMeetingTextCount).nullable(),
+  // The meeting text could not be searched in time (the org holds too much of it for one search): the other rows are still here (#2594).
+  meetingTextSkipped: z.boolean(),
   // A column had more matching rows than the finder returns.
   truncated: z.boolean(),
 });
