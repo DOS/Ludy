@@ -286,15 +286,16 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
+    const approvedAudit = await o.audit('kernel.proposal.approve', after);
+    expect(approvedAudit).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
-      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-      // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532; the allowance of 9 or 10 that step one gave is gone).
-      policy_version: 10,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
+    // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+    // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532). 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves (#2751).
+    expect((approvedAudit as { policy_version?: unknown }).policy_version).toBe(11);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');

@@ -14,6 +14,7 @@ export * from './eval.ts';
 export * from './inbox.ts';
 export * from './reminder.ts';
 export * from './overview.ts';
+export * from './payroll-match.ts';
 export * from './payroll-coworker.ts';
 export * from './meter.ts';
 export * from './proofread.ts';
@@ -23,6 +24,7 @@ export * from './stock.ts';
 export * from './einvoice-draft.ts';
 export * from './quote-lines.ts';
 export * from './summary.ts';
+export * from './summary-model.ts';
 export * from './today.ts';
 export * from './transcribe.ts';
 

@@ -275,6 +275,7 @@ import {
   zHrWritten,
 } from './hr.ts';
 import { zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zNote,
   zNoteCreate,
@@ -346,6 +347,13 @@ import {
   zMeetingResults,
   zResultPublish,
   zResultPublished,
+  zDraftReview,
+  zDraftReviewed,
+  zSummarized,
+  zSummaryRef,
+  zSummaryStatus,
+  zSummaryCopied,
+  zSummaryCopy,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -353,7 +361,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -719,6 +727,13 @@ export const contract = {
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
       },
+      // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
+      bankTemplates: {
+        list: oc.input(zHrBankTemplateList).output(z.array(zHrBankTemplate)),
+        create: oc.input(zHrBankTemplateCreate).output(zHrBankTemplateWritten),
+        edit: oc.input(zHrBankTemplateEdit).output(zHrBankTemplateWritten),
+        delete: oc.input(zHrBankTemplateRef).output(zHrBankTemplateWritten),
+      },
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
       // The monthly pay run (#2531): open a month, type its inputs, read the sheet, approve it (R3, a fresh second factor), and correct an approved month by an adjustment line in a later run.
@@ -812,6 +827,10 @@ export const contract = {
       get: oc.input(zMeetingRef).output(zMeetingResults),
       saveSummary: oc.input(zMeetingResultSave).output(zMeetingResultSaved),
       publish: oc.input(zResultPublish).output(zResultPublished),
+      copySummary: oc.input(zSummaryCopy).output(zSummaryCopied),
+      review: oc.input(zDraftReview).output(zDraftReviewed),
+      summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
+      summarize: oc.input(zSummaryRef).output(zSummarized),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),
@@ -2086,6 +2105,10 @@ export const contract = {
     // voucher itself is asked for with inbox.request (finance.voucher.record, bankLineId set). Owners, admins and
     // members, who may ask for vouchers.
     lineVoucher: oc.input(z.object({ bankLineId: zId })).output(zBankLineVoucher),
+    // The payroll payments a money-out line may be, by amount (#2532); owners and admins.
+    payrollMatch: oc.input(z.object({ bankLineId: zId })).output(zBankPayrollMatch),
+    // The coworker's one line on why a line may be one of those payments (#2532): code decided, the model only words it; no text when AI is off, busy, over budget or refused.
+    payrollExplain: oc.input(zBankPayrollExplainAsk).output(zBankPayrollExplanation),
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with
     // the voucher each makes (stage 2b); the SPA asks for them one by one with inbox.request. Owners, admins and members.
     suggestions: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(z.array(zBankLineVoucher)),

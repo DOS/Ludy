@@ -7,12 +7,12 @@
 //
 // `hr.payroll.payment.verify` is what finance's record command compares the stored proposal with, in the approver's context, so a proposal row written some other way than by the preparer
 // (raw SQL) cannot pay lines the run does not hold.
-import { PAYROLL_PAYMENT_COMMAND, zHrPaymentRequest, zHrPaymentVerify, type PayrollPaymentKind } from '@crove/kernel-contract';
-import { isCashOverLimit, type Obligation } from '@crove/l10n-vn';
+import { PAYROLL_PAYMENT_COMMAND, zHrPaymentAmounts, zHrPaymentRequest, zHrPaymentVerify, type HrRunPaymentAmounts, type PayrollPaymentKind } from '@crove/kernel-contract';
+import { isCashOverLimit, money, toMoney, type Obligation } from '@crove/l10n-vn';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
-import { buildRunPosting, monthLabel } from './payroll-posting.ts';
+import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { buildRunPosting, buildRunPostingFromTotals, monthLabel } from './payroll-posting.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -89,9 +89,11 @@ export const verifyPayrollPayment = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  // Whoever may approve the payment reads what the run owes by cost department (an owner, an admin, or a member holding the approval permission; #2751): never a person's line.
+  permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, { runId, kind }) => {
-    const { payrollRun, regime, result, nets } = await buildRunPosting(ctx, runId, false);
+    const { payrollRun, regime, result, cashLarge } = await buildRunPostingFromTotals(ctx, runId);
     const obligation = obligationOf(result.obligations, kind);
     return {
       runId,
@@ -104,9 +106,46 @@ export const verifyPayrollPayment = defineCommand({
       lines: obligation.debits.map((d) => ({ account: d.account, amount: d.amount })),
       total: obligation.amount,
       // How many people's net pay is at the cash limit or above: finance rebuilds the cash flag from it, so a proposal written without the flag is refused.
-      cashLarge: cashLargeOf(kind, nets),
+      cashLarge: kind === 'net_pay' ? cashLarge : 0,
     };
   },
 });
 
+// The amount of each payment of the approved runs asked for, for the matching of a bank statement line with a payment (#2532). Owners and admins, who are the ones that ask for a payment. It reads the
+// run's totals by cost department (crove_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
+// approved, that has an adjustment, a line not calculated or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
+// entry (a test ties them): the net pay, the insurance (what employees and the employer owe), the union fee and the tax.
+export const payrollPaymentAmounts = defineQuery({
+  name: 'hr.payroll.payment.amounts',
+  input: zHrPaymentAmounts,
+  access: MANAGERS,
+  handler: async (ctx, { runIds }): Promise<HrRunPaymentAmounts[]> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
+    const out: HrRunPaymentAmounts[] = [];
+    for (const runId of new Set(runIds)) {
+      const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
+      const t = rows[0]?.totals as
+        | { month: string; status: string; counts: Record<string, number>; groups: { net: string; unionFee: string; pit: string; employeeInsurance: string; employerInsurance: string }[] }
+        | null
+        | undefined;
+      if (!t || t.status !== 'approved') continue;
+      const c = t.counts;
+      if ((c.lines ?? 0) === 0 || [c.adjustments, c.notCalculated, c.noFunction, c.noFunds, c.noDeductions, c.badLines].some((n) => (n ?? 0) > 0)) continue;
+      const groups = t.groups;
+      const sum = (pick: (g: (typeof groups)[number]) => string) => groups.reduce((acc, g) => acc.plus(money(pick(g))), money(0));
+      const all: Record<PayrollPaymentKind, ReturnType<typeof sum>> = {
+        net_pay: sum((g) => g.net),
+        insurance: sum((g) => g.employeeInsurance).plus(sum((g) => g.employerInsurance)),
+        union: sum((g) => g.unionFee),
+        tax: sum((g) => g.pit),
+      };
+      const amounts: HrRunPaymentAmounts['amounts'] = {};
+      for (const kind of Object.keys(all) as PayrollPaymentKind[]) if (!all[kind].isZero()) amounts[kind] = toMoney(all[kind]);
+      out.push({ runId, month: t.month, amounts });
+    }
+    return out;
+  },
+});
+
 export const hrPaymentCommands = [preparePayrollPayment, verifyPayrollPayment];
+export const hrPaymentQueries = [payrollPaymentAmounts];

@@ -5,7 +5,7 @@ import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOU
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -50,9 +50,11 @@ import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
+import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -318,17 +320,23 @@ export function createRpcHandler(
   aiEnabled = false,
   // The Inbox's AI coworker (CV3, #2306): the suggested intent and the likely contacts. Unset: no suggestion, with the inbox as it is.
   conversationReader?: ConversationReader,
+  // The recorder's Vy summarizing a meeting (#2580, M6 part B2): the deployment's model behind the member-Vy model port, or unset.
+  summaryModel: ModelPort | null = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
+  // A summary is a long call a member waits for: one at a time for a member, a few a minute.
+  const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
+  const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
@@ -803,6 +811,12 @@ export function createRpcHandler(
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
         },
+        bankTemplates: {
+          list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
+          create: os.hr.payroll.bankTemplates.create.handler(hrCommand('hr.payroll.bank_template.create')),
+          edit: os.hr.payroll.bankTemplates.edit.handler(hrCommand('hr.payroll.bank_template.edit')),
+          delete: os.hr.payroll.bankTemplates.delete.handler(hrCommand('hr.payroll.bank_template.delete')),
+        },
         employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
         dependents: {
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
@@ -884,6 +898,13 @@ export function createRpcHandler(
         get: os.meetings.results.get.handler(meetingsQuery('meetings.result.get')),
         saveSummary: os.meetings.results.saveSummary.handler(meetingsCommand('meetings.summary.save')),
         publish: os.meetings.results.publish.handler(meetingsCommand('meetings.result.publish')),
+        copySummary: os.meetings.results.copySummary.handler(meetingsCommand('meetings.summary.copy_result')),
+        review: os.meetings.results.review.handler(meetingsCommand('meetings.draft.review')),
+        summaryStatus: os.meetings.results.summaryStatus.handler(meetingsQuery('meetings.summary.status')),
+        // The recorder's Vy summarizing the meeting (#2580, M6 part B2): the first interactive stage A run; see meetings-summary.ts.
+        summarize: os.meetings.results.summarize.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runMeetingSummary({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
       },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),
@@ -2739,6 +2760,18 @@ export function createRpcHandler(
       ),
       lineVoucher: os.bank.lineVoucher.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.line_voucher', input, { actor, orgId })),
+      ),
+      payrollMatch: os.bank.payrollMatch.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.payroll_match', input, { actor, orgId })),
+      ),
+      // The candidates are read again here in the owner's or admin's own transaction, so the facts the model is told come from the books and the line, never from the caller.
+      payrollExplain: os.bank.payrollExplain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, runId, kind, bankLineId } = input;
+          const match = await runtime.query<BankPayrollMatch>('finance.bank.payroll_match', { bankLineId }, { actor, orgId });
+          const candidate = match.candidates.find((c) => c.runId.toLowerCase() === runId.toLowerCase() && c.kind === kind) ?? null;
+          return explainPayrollMatch(financePayrollMatchAi, orgId, actor.userId, candidate, match.date, lang ?? 'vi');
+        }),
       ),
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),

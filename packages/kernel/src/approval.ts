@@ -121,7 +121,8 @@ export function liveApprovalCommands(): string[] {
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build. 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; decideApproval and proposal_approval_decide).
 // 10: the payment of a pay run's net pay or a remittance (finance.payroll_payment.record, #2532) was given its approval policy.
-export const APPROVAL_POLICY_VERSION = 10;
+// 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves it (#2751).
+export const APPROVAL_POLICY_VERSION = 11;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).

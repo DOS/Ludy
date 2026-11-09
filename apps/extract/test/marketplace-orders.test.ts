@@ -102,6 +102,16 @@ describe('readMarketplaceOrders', () => {
     expect(readMarketplaceOrders(buildXlsx([SHOPEE_HEAD]))).toMatchObject({ recognized: false });
     expect(readMarketplaceOrders(new TextEncoder().encode('xin chào\nhello'))).toMatchObject({ recognized: false });
     expect(readMarketplaceOrders(new Uint8Array([0, 1, 2, 3]))).toMatchObject({ recognized: false });
+    // The same answer says whether the file is an income report, so no second call is needed to find out (#2753): a statement or any other sheet is none, an income report is one.
+    expect(readMarketplaceOrders(statementXlsx())).toMatchObject({ recognized: false, incomeReport: false });
+    expect(readMarketplaceOrders(new Uint8Array([0, 1, 2, 3]))).toMatchObject({ recognized: false, incomeReport: false });
+    const income = buildXlsx([['Mã đơn hàng', 'Ngày hoàn tất thanh toán', 'Giá sản phẩm', 'Phí cố định', 'Tổng số tiền đã thanh toán'], ['2611A1', '2026-11-03', 100000, -5000, 95000]]);
+    expect(readMarketplaceOrders(income)).toMatchObject({ recognized: false, incomeReport: true });
+    expect(zExtractResponse.parse({ ok: true, kind: 'marketplace_orders', orders: readMarketplaceOrders(income) })).toMatchObject({ ok: true });
+    // An order report says nothing of it, and an answer without the field (an older sandbox) is still valid.
+    expect(readMarketplaceOrders(buildXlsx([SHOPEE_HEAD, shopeeRow('2610A1', 'Hoàn thành', 'QC-1', 2, 50000)])).incomeReport).toBeUndefined();
+    const { incomeReport: _omitted, ...older } = readMarketplaceOrders(statementXlsx());
+    expect(zExtractResponse.safeParse({ ok: true, kind: 'marketplace_orders', orders: older }).success).toBe(true);
   });
 
   it('names what it could not read by its row and stores no guess', () => {

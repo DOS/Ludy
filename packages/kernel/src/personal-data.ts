@@ -274,54 +274,53 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
-  // Meetings (ADR-0047 point 7, issue #2579): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), a title may name a person, and the text a meeting gains later (transcript, summary, items) joins this
-  // list in the step that adds it. None of it has an email, a phone number or a tax code a finder could match, so none is searched (kind other); a person's
-  // request is answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an owner may do without reading it (meetings.meeting.owner_delete,
-  // R3). The nightly job deletes every meeting at its own text date and shreds audio and video at theirs.
+  // Meetings (ADR-0047 points 7 and 11, issues #2579, #2594): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), and
+  // what was said, summarized and promised may name or describe a person. The text columns are free text the finder searches (freeTextMatch): the rows an actor reads
+  // are listed like any other (row security keeps an attendees-only meeting and every draft to its readers), and what the owner cannot read is counted per recorder through
+  // crove_meetings.personal_matches, never listed. A person's request is also answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an
+  // owner may do without reading it (meetings.meeting.owner_delete, R3); the nightly job deletes every meeting at its own text date and shreds audio and video at theirs.
   'crove_meetings.meeting.title': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: "A meeting's title, which may name a person: deleted with the meeting (its recorder, or an owner for a personal-data request, or the retention job at the text date)",
+    reason: "A meeting's title, which may name a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job)",
   },
   // The transcript (ADR-0047 point 7, issue #2578): what was said and who it is attributed to. A draft is the recorder's alone and
-  // a published line is read by the meeting's readers; neither has a value a finder could match, so neither is searched (kind other).
-  // A person's request is answered by deleting the meeting; the segments go with it (cascade), and the retention job at the text date.
+  // a published line is read by the meeting's readers.
   'crove_meetings.transcript_segment.text': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: 'What was said in a meeting, which may name or describe a person: deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job at the text date)',
+    reason: "What was said in a meeting, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner, or the retention job)",
   },
   'crove_meetings.transcript_segment.speaker_label': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: 'The name a transcript line is attributed to (a speaker label, which the recorder may set to a real name): deleted with the meeting',
+    reason: "The name a transcript line is attributed to (the recorder may set it to a real name): found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
-  // The summary, the decisions and the action items (issue #2580): what was said, drafted by the recorder or copied from the result of their own Vy. Like the
-  // transcript, neither has a value a finder could match (kind other); a person's request is answered by deleting the meeting, and the rows go with it (cascade).
+  // The summary, the decisions and the action items (issue #2580): what was said, drafted by the recorder or copied from the result of their own Vy.
   'crove_meetings.meeting_result.summary': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: "A meeting's summary, which may name or describe a person: deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job at the text date)",
+    reason: "A meeting's summary, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner, or the retention job)",
   },
   'crove_meetings.meeting_result.decisions': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: "A meeting's decisions, which may name or describe a person: deleted with the meeting",
+    reason: "A meeting's decisions, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
   'crove_meetings.action_item.title': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: 'What somebody said they would do, which may name a person: deleted with the meeting (a task made from it keeps the title its confirmer saw, as the org\'s own work record)',
+    reason: "What somebody said they would do, which may name a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (a task made from it keeps the title its confirmer saw, as the org's own work record)",
   },
   'crove_meetings.action_item.who_drafted': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: 'Who, as said in the meeting, an action item was for (a name or a first name): deleted with the meeting',
+    reason: "Who, as said in the meeting, an action item was for: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
   'crove_meetings.action_item.when_drafted': {
-    kind: 'other',
+    kind: 'free_text',
     handling: 'erase',
-    reason: 'When, as said in the meeting, an action item was due (free words): deleted with the meeting',
+    reason: "When, as said in the meeting, an action item was due (free words): found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
   'crove_meetings.media_key.wrapped_key': {
     kind: 'other',
@@ -333,6 +332,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
 } as const satisfies Record<string, PersonalDataColumn>;
 
@@ -443,11 +443,51 @@ function requireProbe(value: string): Probe {
   return probe;
 }
 
+// A scan of meeting text under a statement timeout of its own (the connection's, or 10 s if that is longer: SQLSTATE 57014), in a savepoint: when the org holds more meeting text than one
+// search reads in time, the search goes on without it and says so (meetingTextSkipped), so the other rows are still found and an erasure of everything else is never blocked by meeting
+// volume. Any other error (a refusal by the database included) fails the search. The scan changes nothing; an erasure's redaction is in a savepoint too and is rolled back whole.
+const MEETING_SCAN_TIMEOUT_MS = 10_000;
+async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): Promise<T | null> {
+  await sql`SAVEPOINT meeting_text_scan`.execute(trx);
+  try {
+    // Never raised above the connection's own timeout, and put back after the scan.
+    const { rows } = await sql<{ was: string; ms: string }>`SELECT pg_catalog.current_setting('statement_timeout') AS was, setting AS ms FROM pg_catalog.pg_settings WHERE name = 'statement_timeout'`.execute(trx);
+    const pool = Number(rows[0]?.ms ?? 0);
+    const ms = pool > 0 ? Math.min(pool, MEETING_SCAN_TIMEOUT_MS) : MEETING_SCAN_TIMEOUT_MS;
+    await sql`SELECT pg_catalog.set_config('statement_timeout', ${`${ms}ms`}, true)`.execute(trx);
+    const out = await run();
+    await sql`SELECT pg_catalog.set_config('statement_timeout', ${rows[0]?.was ?? '0'}, true)`.execute(trx);
+    await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
+    return out;
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code !== '57014') throw error;
+    // The rollback also puts the timeout back (a local setting made inside the savepoint goes with it).
+    await sql`ROLLBACK TO SAVEPOINT meeting_text_scan`.execute(trx);
+    await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
+    return null;
+  }
+}
+
+// The tables of crove_meetings.personal_row_ids's kind codes.
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
+
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
 async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: Probe, privateCounts: boolean): Promise<PersonalDataResult> {
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
+  // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
+  // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
+  const meetingRows = new Map<string, string[]>();
+  let meetingTextSkipped = false;
+  const rowIds = await meetingScan(trx, async () => (await sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows);
+  if (rowIds === null) meetingTextSkipped = true;
+  for (const { kind, id } of rowIds ?? []) {
+    const table = MEETING_ROW_TABLES[kind];
+    // A kind code this build does not know is a version mismatch between the database and the code: it fails loudly, never a silent gap in what an erasure covers.
+    if (!table) throw new Error(`crove_meetings.personal_row_ids answered an unknown kind ${kind}`);
+    meetingRows.set(table, [...(meetingRows.get(table) ?? []), id]);
+  }
   for (const [key, entry] of Object.entries(PERSONAL_DATA_COLUMNS) as Array<[string, PersonalDataColumn]>) {
     if (!searchable(entry.handling)) continue;
     if (entry.privateRows === 'always') continue;
@@ -458,10 +498,16 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
     const shared = entry.privateRows === 'unless_shared' ? sql`AND t.visibility = 'org'` : sql``;
+    let byId = sql``;
+    if (schema === 'crove_meetings') {
+      const ids = meetingRows.get(table) ?? [];
+      if (ids.length === 0) continue;
+      byId = sql`AND t.id = ANY(${ids}::uuid[])`;
+    }
     const { rows } = await sql<{ row: Record<string, unknown> }>`
       SELECT pg_catalog.to_jsonb(t) - 'search' AS row
         FROM ${sql.table(`${schema}.${table}`)} AS t
-       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared}
+       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
     for (const { row } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
@@ -476,7 +522,21 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
           SELECT author_user_id, notes, todos FROM crove_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
       ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }))
     : null;
-  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, truncated };
+  // Meeting text the owner cannot read (an attendees-only meeting, a draft that is not theirs): counted per recorder, never listed (#2594, ADR-0047 points 2 and 7).
+  let meetingText: PersonalDataResult['meetingText'] = null;
+  if (privateCounts) {
+    const counts = await meetingScan(
+      trx,
+      async () =>
+        (
+          await sql<{ recorder_user_id: string; meetings: string; lines: string; results: string; items: string; titles: string }>`
+            SELECT recorder_user_id, meetings, lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+        ).rows,
+    );
+    if (counts === null) meetingTextSkipped = true;
+    meetingText = (counts ?? []).map((m) => ({ recorderUserId: m.recorder_user_id, meetings: Number(m.meetings), lines: Number(m.lines), results: Number(m.results), items: Number(m.items), titles: Number(m.titles) }));
+  }
+  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, meetingTextSkipped, truncated };
 }
 
 // The finder (#923), a command so that every search leaves an audit row (#1678 review): the counts of private items are
@@ -501,11 +561,25 @@ export const personalDataFind = defineCommand({
       private: result.privateItems === null
         ? null
         : { authors: result.privateItems.length, notes: result.privateItems.reduce((n, p) => n + p.notes, 0), todos: result.privateItems.reduce((n, p) => n + p.todos, 0) },
+      meeting_text: result.meetingText === null
+        ? null
+        : { recorders: result.meetingText.length, meetings: result.meetingText.reduce((n, m) => n + m.meetings, 0), lines: result.meetingText.reduce((n, m) => n + m.lines, 0) },
     });
     return result;
   },
 });
 
+// What an erasure says of meeting text it left or could not search (#2594).
+export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
+export const UNTOLD_MEETING_REASON =
+  'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
+export const MEMBER_VY_RESULT_REASON =
+  "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
+export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[]): string {
+  const first = [...dates].sort()[0];
+  const word = kind === 'audio' ? 'The audio' : 'The video';
+  return `${word} of meetings that held the value cannot be edited, so it is kept until its retention date (the earliest ${first}) and then shredded; an owner can delete a meeting at once (meetings.meeting.owner_delete), the recorder too`;
+}
 // Why an erasure keeps the original files of posted invoices (issue #1009), with the end of their retention hold.
 export function heldFilesReason(until: Date | null): string {
   const kept = until ? `held in storage until ${new Date(until).toISOString().slice(0, 10)}` : 'kept for the legal period';
@@ -556,12 +630,28 @@ export const personalDataNotify = defineCommand({
     if (rows.length > PERSONAL_DATA_NOTICE_ITEMS) {
       throw new DomainError('PERSONAL_DATA_NOTICE_TOO_MANY', 422, `Có hơn ${PERSONAL_DATA_NOTICE_ITEMS} ghi chú riêng và việc nhắc đến giá trị này; hãy liên hệ hỗ trợ`);
     }
-    const authors = new Map<string, { authorUserId: string; notes: number; todos: number }>();
+    // Meetings whose text the owner cannot read and that hold the value (#2594): the recorder is told how many of their meetings do, as an author is of private notes. A scan the statement
+    // timeout stopped does not stop the notice of the notes: it is left out and recorded as skipped in the audit row, and the erasure then reports those meetings as kept, never as erased.
+    const scanned = await meetingScan(ctx.trx, async () =>
+      (await sql<{ meeting_id: string; recorder_user_id: string; stamp: string; key: Uint8Array }>`
+        SELECT meeting_id, recorder_user_id, stamp::text AS stamp, key FROM crove_meetings.personal_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows,
+    );
+    const meetingsSkipped = scanned === null;
+    const meetingRows = scanned ?? [];
+    if (rows.length + meetingRows.length > PERSONAL_DATA_NOTICE_ITEMS) {
+      throw new DomainError('PERSONAL_DATA_NOTICE_TOO_MANY', 422, `Có hơn ${PERSONAL_DATA_NOTICE_ITEMS} mục riêng và cuộc họp nhắc đến giá trị này; hãy liên hệ hỗ trợ`);
+    }
+    const authors = new Map<string, { authorUserId: string; notes: number; todos: number; meetings: number }>();
     for (const row of rows) {
-      const a = authors.get(row.author_user_id) ?? { authorUserId: row.author_user_id, notes: 0, todos: 0 };
+      const a = authors.get(row.author_user_id) ?? { authorUserId: row.author_user_id, notes: 0, todos: 0, meetings: 0 };
       if (row.item_type === 'note') a.notes += 1;
       else a.todos += 1;
       authors.set(row.author_user_id, a);
+    }
+    for (const row of meetingRows) {
+      const a = authors.get(row.recorder_user_id) ?? { authorUserId: row.recorder_user_id, notes: 0, todos: 0, meetings: 0 };
+      a.meetings += 1;
+      authors.set(row.recorder_user_id, a);
     }
     const named = [...authors.values()];
     const { rows: keys } = await sql<{ key: string }>`SELECT crove_notes.private_notice_key(${probe.kind}, ${probeValue(probe)}) AS key`.execute(ctx.trx);
@@ -575,12 +665,26 @@ export const personalDataNotify = defineCommand({
       .execute();
     const told = members.filter((m) => m.user_id !== actor).length;
     const event =
-      named.length > 0 ? await ctx.emit('kernel.personal_data.notified', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos })) }) : null;
+      named.length > 0 ? await ctx.emit('kernel.personal_data.notified', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos, meetings: a.meetings })) }) : null;
     // What the erasure checks: the value's notice key, each item as '<id>:<revision>' (one changed since is not covered),
     // and the event whose notifications prove the authors were told. A keyed hash, ids and counts, never the value or
     // the text.
     const items = (type: string) => rows.filter((r) => r.item_type === type).map((r) => `${r.item_id}:${r.revision}`);
-    ctx.audit({ kind: probe.kind, key: keys[0]?.key ?? null, notes: items('note'), todos: items('todo'), authors: named.length, told, event });
+    // The meetings the same way, as '<meeting id>:<stamp of its text>' under the meetings' own key (a hash of the value, as the notes' is): the erasure redacts an unreadable meeting only at
+    // the text a notice saw.
+    const meetingKey = meetingRows[0]?.key ? Buffer.from(meetingRows[0].key).toString('hex') : null;
+    ctx.audit({
+      kind: probe.kind,
+      key: keys[0]?.key ?? null,
+      notes: items('note'),
+      todos: items('todo'),
+      meeting_key: meetingKey,
+      meetings: meetingRows.map((m) => `${m.meeting_id}:${m.stamp}`),
+      meetings_skipped: meetingsSkipped,
+      authors: named.length,
+      told,
+      event,
+    });
     return { authors: named, told };
   },
 });
@@ -790,6 +894,31 @@ export const personalDataErase = defineCommand({
     const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };
     add('crove_notes.note', privateDeleted.notes);
     add('crove_notes.todo', privateDeleted.todos);
+    // Meeting text (#2594, ADR-0047 points 2 and 7, ADR-0037 section 5): every whole mention of the value is redacted in place. In a row the owner reads (their own meeting, a
+    // published row of a meeting they are a reader of) at once: the owner's own erasure is the authority, as for a shared note. In a row the owner cannot read, only when an earlier
+    // notice named its meeting at the text it has now and its recorder was told at least 24 hours ago (crove_meetings.personal_erase): the rest stays, counted. Nothing but the text
+    // changes: the taint of a draft, the audio, the video, the files and the Vy results stay as they are. A scan the statement timeout stopped redacts nothing and is said so.
+    const redaction = await meetingScan(ctx.trx, async () =>
+      (
+        await sql<{ meeting_id: string; lines: string; results: string; items: string; titles: string; kept: string; audio_until: string | null; video_until: string | null }>`
+          SELECT meeting_id, lines, results, items, titles, kept, audio_until::text AS audio_until, video_until::text AS video_until
+            FROM crove_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
+      ).rows,
+    );
+    const meetingsKept = { rows: 0, meetings: 0 };
+    const media = { audio: [] as string[], video: [] as string[] };
+    for (const r of redaction ?? []) {
+      add('crove_meetings.transcript_segment.text', Number(r.lines));
+      add('crove_meetings.meeting_result.summary', Number(r.results));
+      add('crove_meetings.action_item.title', Number(r.items));
+      add('crove_meetings.meeting.title', Number(r.titles));
+      if (Number(r.kept) > 0) {
+        meetingsKept.rows += Number(r.kept);
+        meetingsKept.meetings += 1;
+      }
+      if (r.audio_until) media.audio.push(r.audio_until);
+      if (r.video_until) media.video.push(r.video_until);
+    }
     // Activity lines that quote the person (#1948): the mention is replaced inside the line, through the owner-only
     // definer (tenant roles may not update activity rows). Comments and the books' descriptions are append-only and
     // stay; the finder's answer below lists them with their reasons.
@@ -847,9 +976,22 @@ export const personalDataErase = defineCommand({
       const files = Number(held[0]?.files ?? 0);
       if (files > 0) kept.set('crove_kernel.file', { column: 'crove_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }
+    // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
+    if (redaction === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    else if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
+    if (media.audio.length > 0) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length, reason: meetingMediaReason('audio', media.audio) });
+    if (media.video.length > 0) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length, reason: meetingMediaReason('video', media.video) });
+    // What each member's Vy keeps privately (ADR-0049): sealed to its member, so the erasure cannot read it; it expires on its own. Counted per org, never read.
+    const vyResults = Number(
+      (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM crove_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
+    );
+    if (vyResults > 0) kept.set('crove_kernel.member_vy_result.body', { column: 'crove_kernel.member_vy_result.body', rows: vyResults, reason: MEMBER_VY_RESULT_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('crove_notes.note', { column: 'crove_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('crove_notes.todo', { column: 'crove_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
+    // Meeting text the search could not read in time: said in the answer, never left out silently (#2594).
+    if (after.meetingTextSkipped) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     const keptRows = new Map<string, number>();
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {

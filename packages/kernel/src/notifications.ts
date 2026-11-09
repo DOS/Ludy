@@ -355,7 +355,7 @@ export const notificationDispatch = defineCommand({
         // to-dos mention the person, never which, what they say or who the person is. The owner who sent it is left
         // out, as for every notification (they know).
         const e = z
-          .object({ authors: z.array(z.object({ userId: zId, notes: z.number().int().nonnegative(), todos: z.number().int().nonnegative() })).min(1).max(PERSONAL_DATA_NOTICE_ITEMS) })
+          .object({ authors: z.array(z.object({ userId: zId, notes: z.number().int().nonnegative(), todos: z.number().int().nonnegative(), meetings: z.number().int().nonnegative().default(0) })).min(1).max(PERSONAL_DATA_NOTICE_ITEMS) })
           .safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         let sent = 0;
@@ -366,7 +366,7 @@ export const notificationDispatch = defineCommand({
             key: `personal_data_notice:${event.id}`,
             // Under an entity the author sees (the notification's le_scope policy, #1280), as a to-do's reminder is.
             legalEntityId: await uploaderEntity(ctx, author.userId),
-            detail: { notes: String(author.notes), todos: String(author.todos) },
+            detail: { notes: String(author.notes), todos: String(author.todos), ...(author.meetings > 0 ? { meetings: String(author.meetings) } : {}) },
             eventId: event.id,
             actor: event.actor,
             required: true,

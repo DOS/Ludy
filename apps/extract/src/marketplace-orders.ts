@@ -8,19 +8,22 @@
 import { EXTRACT_LIMITS, type ExtractedMarketplaceOrders } from '@crove/extract-contract';
 import { findOrderColumns, orderLines } from '@crove/l10n-vn';
 import { readSheetGrid } from './bank-statement.ts';
+import { readMarketplaceIncome } from './marketplace-income.ts';
 
+// No order report. The file is also asked whether it is an income report, so the worker needs no second call for the answer.
+const none = (bytes: Uint8Array): ExtractedMarketplaceOrders => ({ ...NONE, incomeReport: readMarketplaceIncome(bytes).recognized });
 const NONE: ExtractedMarketplaceOrders = { recognized: false, platform: null, profile: null, columns: [], tooMany: false, lines: [], skipped: [], skippedCount: 0, unknownStatuses: [] };
 
 export function readMarketplaceOrders(bytes: Uint8Array): ExtractedMarketplaceOrders {
   const grid = readSheetGrid(bytes);
-  if (!grid) return NONE;
+  if (!grid) return none(bytes);
   const mapping = findOrderColumns(grid);
-  if (!mapping) return NONE;
+  if (!mapping) return none(bytes);
   const read = orderLines(grid, mapping, EXTRACT_LIMITS.maxOrderLines);
   const head = { recognized: true, platform: mapping.profile.platform, profile: { version: mapping.profile.version, confirmed: mapping.profile.confirmed }, columns: mapping.headers.map((h) => ({ field: h.field, header: h.header.slice(0, 200) })) };
   if (read === null) return { ...head, tooMany: true, lines: [], skipped: [], skippedCount: 0, unknownStatuses: [] };
   // A header with nothing under it is no report of any orders.
-  if (read.lines.length === 0 && read.skipped.length === 0) return NONE;
+  if (read.lines.length === 0 && read.skipped.length === 0) return none(bytes);
   // The list is capped, and a row that stops the file (anything but a row with no order number) must never be cut off behind a thousand totals rows: those come first, in row order.
   const skipped = [...read.skipped.filter((s) => s.reason !== 'no_order_no'), ...read.skipped.filter((s) => s.reason === 'no_order_no')];
   return {

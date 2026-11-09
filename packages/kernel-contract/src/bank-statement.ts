@@ -3,6 +3,7 @@
 // rule; the SPA only finds the columns and shows the answer.
 import { z } from 'zod';
 import { zVoucherCode } from './cash-voucher.ts';
+import { PAYROLL_PAYMENT_KINDS } from './hr-payroll.ts';
 import { BANK_MATCH_REASONS, zAccountCode, zBankMatchedBy, zId, zLocalDate, zMoney, zVoucherAmount, zVoucherType } from './schemas.ts';
 
 // A month of a busy account has a few thousand lines; the cap keeps a request well under the API's body limit.
@@ -367,3 +368,27 @@ export const zBankFeedRecordPull = z.strictObject({
   cursor: z.string().min(1).max(500),
 });
 export type BankFeedRecordPull = z.infer<typeof zBankFeedRecordPull>;
+
+// The payroll payments a money-out line may be (#2532, payroll plan 6.4): the payments of posted pay runs, not yet recorded or asked for, whose amount equals the line's. Code decides by the amount
+// and the direction; `amount_note` says the line's description also names what the payment is (the words for wages, insurance, union fee or tax), which only ranks it. A candidate names the run, the
+// month, the kind and the amount, never a person: the person then asks the payment with the line (hr.payroll.payment.prepare, `bankLineId`) and it is approved like any other.
+export const BANK_PAYROLL_REASONS = ['amount_note', 'amount'] as const;
+export type BankPayrollReason = (typeof BANK_PAYROLL_REASONS)[number];
+export const zBankPayrollCandidate = z.strictObject({
+  runId: zId,
+  month: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/),
+  kind: z.enum(PAYROLL_PAYMENT_KINDS),
+  amount: zMoney,
+  reason: z.enum(BANK_PAYROLL_REASONS),
+});
+export type BankPayrollCandidate = z.infer<typeof zBankPayrollCandidate>;
+export const zBankPayrollMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankPayrollCandidate) });
+export type BankPayrollMatch = z.infer<typeof zBankPayrollMatch>;
+
+// The coworker's one line on why the line may be that payment (finance.bank.payroll_match gives the candidates, this words one of them): the facts are read again on the server from the line and
+// the candidate named, never taken from the caller. `ai` names the state when there is no text (off: no model; busy: too many calls; budget: the AI budget is spent; failed: the call failed or its
+// text was refused), and the screen then shows the reason code alone.
+export const zBankPayrollExplainAsk = z.strictObject({ bankLineId: zId, runId: zId, kind: z.enum(PAYROLL_PAYMENT_KINDS), lang: z.enum(['vi', 'en']).optional() });
+export type BankPayrollExplainAsk = z.infer<typeof zBankPayrollExplainAsk>;
+export const zBankPayrollExplanation = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
+export type BankPayrollExplanation = z.infer<typeof zBankPayrollExplanation>;

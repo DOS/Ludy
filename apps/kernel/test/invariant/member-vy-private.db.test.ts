@@ -33,12 +33,12 @@ const suite = ADMIN ? describe : describe.skip;
 // The text a member's private note and Vy's answer to it must never reach anyone else with.
 const SECRET = "Tóm tắt riêng: khách đề nghị giảm giá 12%";
 // The only member-Vy definers a tenant login may call, by exact signature: counts for an owner or admin, the cancellation of a member's live runs by an owner, an admin or the system,
-// and crove_meetings.member_vy_reads_media_file (#2874): RLS helper for the file SELECT policy; boolean only; false outside a member-Vy agent of the same org; no wider than audio_for_member_vy.
-// All return numbers or one boolean, never text, and refuse every other caller (cases below). A name listed here that does not exist yet is harmless: the check walks the functions that exist.
+// and crove_meetings.member_vy_media_files (#2874): returns only the sealed run's own meeting's segment file ids; empty otherwise.
+// All return numbers, ids or one boolean, never text, and refuse every other caller (cases below). A name listed here that does not exist yet is harmless: the check walks the functions that exist.
 const TENANT_CALLABLE = [
   "crove_kernel.member_vy_private_counts()",
   "crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)",
-  "crove_meetings.member_vy_reads_media_file(uuid,uuid)",
+  "crove_meetings.member_vy_media_files()",
 ];
 // The department roles that grant vy.use (ADR-0049 decision 10) and the one that does not.
 const VY_ROLES = [

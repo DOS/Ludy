@@ -400,6 +400,9 @@ export const MARKETPLACE_ORDER_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shi
 export const MARKETPLACE_SKIP_REASONS = ['no_order_no', 'bad_quantity', 'bad_amount', 'bad_date', 'bad_id', 'too_long'] as const;
 export const zExtractedMarketplaceOrders = z.strictObject({
   recognized: z.boolean(),
+  // Only when recognized is false: whether the same file is a marketplace income report (#2753), so the worker classifies a received spreadsheet with this one call and does not parse a bank
+  // statement or any other sheet a second time just to find out. Absent from a sandbox that does not say (the worker then asks for the income report as before).
+  incomeReport: z.boolean().optional(),
   platform: z.enum(MARKETPLACE_PLATFORMS).nullable(),
   // The profile that read the file: its version and whether a real seller's file confirmed it.
   profile: z.strictObject({ version: z.string().max(40), confirmed: z.boolean() }).nullable(),
