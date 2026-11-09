@@ -8764,6 +8764,7 @@ export const en = {
       MARKETPLACE_POSTING_REGIME_UNKNOWN: 'This accounting regime has no marketplace account map',
       MARKETPLACE_SETTLEMENT_NOT_POSTABLE: 'The settlement cannot be posted (the net revenue is not positive or the entry is invalid)',
       HR_PAYMENT_NOT_POSTED: 'This pay run has not been posted yet; post it before recording the pay or a remittance',
+      HR_PAYMENT_POSTING_REVERSED: 'The posting of this pay run was reversed, so the pay and the remittances cannot be recorded against it',
       HR_PAYMENT_DONE: 'This payment of the pay run has already been recorded',
       HR_PAYMENT_OPEN: 'This payment of the pay run already has a proposal waiting for approval',
       HR_PAYMENT_NOTHING_DUE: 'This pay run has nothing of this kind to pay',
