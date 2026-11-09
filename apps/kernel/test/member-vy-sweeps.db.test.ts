@@ -3,6 +3,7 @@
 // and memory of a former member after 30 days, independent of Notes. The definers themselves are in member-vy-core.db.test.ts.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -197,6 +198,11 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     const memberPurge = await workerRuntime.execute<{ removed: number }>('kernel.vy_data.member_data.purge', { userId: users.member }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId });
     expect(memberPurge.removed, 'a member is never purged').toBe(0);
     expect(await rowsOf(users.member), 'the member still holds their rows').toBe(before.member);
+  });
+
+  it('maps no RPC route to the sweep commands (the router names each command it exposes)', () => {
+    const router = readFileSync(fileURLToPath(new URL('../src/rpc.ts', import.meta.url)), 'utf8');
+    expect(router.includes('kernel.vy_data.'), 'apps/kernel/src/rpc.ts names a kernel.vy_data command').toBe(false);
   });
 
   it('refuses the sweep commands to a user and to an input with extra keys', async () => {
