@@ -67,7 +67,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_connection',
-  'crove_finance.marketplace_party',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',

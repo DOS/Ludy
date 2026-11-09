@@ -105,6 +105,8 @@ export const PARTY_KIND_HOLDERS = [
   ['crove_crm.quote', 'party_id'],
   // A sales order names the buyer of the quote it froze (#2696): the same kind rule as the quote.
   ['crove_crm.sales_order', 'party_id'],
+  // A marketplace platform's party (#2516): the entries that name it as the counterparty of 131 must keep reading an organization.
+  ['crove_finance.marketplace_party', 'party_id'],
   ['crove_kernel.conversation_identity', 'party_id'],
   ['crove_kernel.conversation', 'party_id'],
   ['crove_kernel.party', 'company_id'],
