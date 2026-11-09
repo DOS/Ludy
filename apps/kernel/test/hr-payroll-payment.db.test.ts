@@ -400,7 +400,8 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     // An amount nothing owes, and a money-in line, have no candidate.
     expect((await matchOf(o, other)).candidates).toEqual([]);
     expect((await matchOf(o, inbound)).candidates).toEqual([]);
-    expect(JSON.stringify(await matchOf(o, net))).not.toContain('Canary');
+    // A candidate carries these keys and no others, so nothing in it can name a person.
+    for (const c of (await matchOf(o, net)).candidates) expect(Object.keys(c).sort()).toEqual(['amount', 'kind', 'month', 'reason', 'runId']);
   });
 
   it('stops offering a payment once it is asked for or recorded, and a member, a viewer and another org see nothing of it', async () => {
@@ -438,6 +439,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
       { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
     );
     await approve(o, asked.proposalId);
+    // The run is still approved and hr still offers its amounts, so it is the finance filter on the reversed posting that hides the candidate.
+    expect((await rows<{ status: string }>('SELECT status FROM crove_hr.payroll_run WHERE org_id = $1 AND id = $2', [o.orgId, runId]))[0]?.status).toBe('approved');
+    expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [runId] })).toHaveLength(1);
     expect((await matchOf(o, line)).candidates).toEqual([]);
   });
 
@@ -452,9 +456,12 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
       const [voucher] = await voucherOf(o, runId, kind);
       expect(got?.amounts[kind], kind).toBe(voucher?.amount);
     }
-    // A draft run and another org's run are not offered.
+    // A draft run, an unknown id and a real posted run of another org are not offered.
     const draft = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-04' });
-    expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [draft.runId as string, randomUUID()] })).toEqual([]);
+    const other = await org('tt133', 'solo');
+    const { runId: otherRun } = await postedRun(other);
+    expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [draft.runId as string, randomUUID(), otherRun] })).toEqual([]);
+    expect(await other.query<HrRunPaymentAmounts[]>(other.owner, 'hr.payroll.payment.amounts', { runIds: [otherRun] })).toHaveLength(1);
     const team = await org('tt133', 'standard');
     await expect(team.query(team.member, 'hr.payroll.payment.amounts', { runIds: [runId] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
