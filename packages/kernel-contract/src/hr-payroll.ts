@@ -68,7 +68,11 @@ export type HrLineInputsSet = z.input<typeof zHrLineInputsSet>;
 // `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions).
 export const zHrRunApprove = z.strictObject({ runId: zId, fingerprint: z.string().regex(/^[0-9a-f]{64}$/), acceptFlags: z.boolean().default(false) });
 export type HrRunApprove = z.input<typeof zHrRunApprove>;
-// A signed correction of an approved month, put in a draft run (a later month): the amounts are the differences, net and the employer's cost follow from them.
+// The funds an insurance amount is split across (the same five a pay line's breakdown holds): the posting credits each group's payable account.
+export const HR_INSURANCE_FUNDS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
+export type HrInsuranceFund = (typeof HR_INSURANCE_FUNDS)[number];
+// A signed correction of an approved month, put in a draft run (a later month): the amounts are the differences, net and the employer's cost follow from them. The insurance is split across the
+// funds, signed, and the split must add up to the typed insurance totals (the entry is built from it and never guesses); the line takes the cost department of the line it corrects.
 export const zHrLineAdjust = z.strictObject({
   runId: zId,
   adjustsRunId: zId,
@@ -80,6 +84,7 @@ export const zHrLineAdjust = z.strictObject({
   unionFee: zHrSignedAmount.default('0'),
   taxableIncome: zHrSignedAmount.default('0'),
   pit: zHrSignedAmount.default('0'),
+  funds: z.array(z.strictObject({ fund: z.enum(HR_INSURANCE_FUNDS), employee: zHrSignedAmount, employer: zHrSignedAmount })).max(HR_INSURANCE_FUNDS.length).default([]),
 });
 export type HrLineAdjust = z.input<typeof zHrLineAdjust>;
 export const zHrRunList = z.strictObject({ limit: z.number().int().min(1).max(120).default(24) });
