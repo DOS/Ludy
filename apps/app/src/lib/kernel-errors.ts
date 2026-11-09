@@ -252,11 +252,8 @@ export const KERNEL_ERROR_CODES = [
   'MARKETPLACE_SETTLEMENT_NOT_POSTABLE',
   // The payment of an approved run's net pay and remittances (#2532).
   'HR_PAYMENT_NOT_POSTED',
-<<<<<<< HEAD
   'HR_PAYMENT_POSTING_REVERSED',
-=======
   'HR_PAYMENT_ADJUSTMENTS',
->>>>>>> origin/main
   'HR_PAYMENT_DONE',
   'HR_PAYMENT_OPEN',
   'HR_PAYMENT_NOTHING_DUE',
