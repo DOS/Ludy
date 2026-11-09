@@ -191,6 +191,82 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
     expect(await mediaFiles((c) => c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId])), 'the system').toEqual([]);
   });
 
+  // The three cases the Platform PO's review of #2875 left open (#2903).
+  it('member_vy_media_files is empty once the run\'s agent is no longer active, even with a running transcribe result', async () => {
+    // The context cannot be entered for an inactive agent (AGENT_NOT_ACTIVE), so the agent is paused after the entry, in the same transaction, as the superuser (whose login passes the worker check). The helper checks the status and so does audio_for_member_vy behind it: this case pins the two together.
+    const run = runs.recorder as { agentId: string; runId: string };
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, run.agentId, run.runId]);
+      const before = (await c.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows.map((r) => r.m);
+      expect(before, 'active: its own meeting segment file').toEqual([audioFile[meetings.mine as string]]);
+      // The agent write guard is set aside for the statement that pauses the agent (a superuser's session_replication_role), as the seeding of the other tests does.
+      await c.query('SET LOCAL session_replication_role = replica');
+      for (const status of ['paused', 'retired']) {
+        await c.query('UPDATE crove_kernel.agent SET status = $1 WHERE org_id = $2 AND id = $3', [status, orgId, run.agentId]);
+        const during = (await c.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows.map((r) => r.m);
+        expect(during, `${status}: an empty set, not an error`).toEqual([]);
+      }
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  });
+
+  it('a member-Vy context of one org reads none of another org\'s media file rows, whatever the statement touches', async () => {
+    const c = new pg.Client({ connectionString: workerUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await asRun('recorder')(c);
+      // No org filter at all: every file row the context may read.
+      const everything = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.file')).rows.map((r) => r.id);
+      const set = (await c.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows.map((r) => r.m);
+      const strangers = [audioFile[meetings.strangers as string], videoFile[meetings.strangers as string]];
+      for (const file of strangers) expect(everything, 'a file row of another org').not.toContain(file);
+      // The helper's set is exactly the run's own meeting file (this pins the file policy and the helper together: neither layer is isolated here).
+      expect(set).toEqual([audioFile[meetings.mine as string]]);
+      // And a direct ask by id.
+      expect((await c.query('SELECT 1 FROM crove_kernel.file WHERE id = ANY($1::uuid[])', [strangers])).rowCount).toBe(0);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  });
+
+  it('a login that is not a crove_worker member is refused the member-Vy context entry, and even with a valid sealed context the helper answers it an empty set, not an error', async () => {
+    const run = runs.recorder as { agentId: string; runId: string };
+    // (a) The app login cannot enter the context at all (no EXECUTE on the entry function), and with no context the helper answers an empty set.
+    const c = new pg.Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SAVEPOINT entry');
+      await expect(c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, run.agentId, run.runId])).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/permission denied for function/) });
+      await c.query('ROLLBACK TO SAVEPOINT entry');
+      expect((await c.query('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows).toEqual([]);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+    // (b) A valid sealed context (entered by a worker-capable session) read by the app login: audio_for_member_vy refuses a login that is not a worker (MEETINGS_WORKER_ONLY), and the helper
+    // turns that refusal into an empty set instead of an error. The seal is transaction-local, so it survives the change of session authorization (agents.db.test.ts does the same).
+    const d = new pg.Client({ connectionString: adminUrl });
+    await d.connect();
+    try {
+      await d.query('BEGIN');
+      await d.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, run.agentId, run.runId]);
+      expect((await d.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows.map((r) => r.m), 'a worker-capable session').toEqual([audioFile[meetings.mine as string]]);
+      await d.query('SET SESSION AUTHORIZATION crove_app');
+      expect((await d.query<{ m: string }>('SELECT m FROM crove_meetings.member_vy_media_files() AS m')).rows, 'the app login').toEqual([]);
+    } finally {
+      await d.query('ROLLBACK').catch(() => {});
+      await d.end();
+    }
+  });
+
   it('the file policy runs the helper once per statement: one function scan, hashed, not a call per row', async () => {
     const c = new pg.Client({ connectionString: workerUrl });
     await c.connect();
