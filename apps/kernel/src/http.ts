@@ -3015,10 +3015,10 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
-  // The bank bulk-salary file of an approved pay run (#2532, payroll plan 6.4): GET /api/payroll-bank-file/<runId>.xlsx?bank=<the bank's name>&columns=seq,name,account,bank,amount,content (columns optional, in the
-  // order wanted). Ludy never initiates a payment: the file is for the accountant to upload to the bank. Built only in the requesting owner's or admin's own context by the sensitive query
+  // The bank bulk-salary file of an approved pay run (#2532, payroll plan 6.4): GET /api/payroll-bank-file/<runId>.xlsx?bank=<a bank code of the bank list>&columns=seq,name,account,bank,amount,content (columns optional, in the
+  // order wanted; or template=<id> of a saved template of the run's legal entity, #2893, which decides the columns, their headers and the remark; one file is for one bank, #2897). Ludy never initiates a payment: the file is for the accountant to upload to the bank. Built only in the requesting owner's or admin's own context by the sensitive query
   // hr.payroll.bank_file.get (its audit row is committed before the sealed account numbers are opened; nothing decrypted reaches an audit fact or a log), never a worker, a stored job or a stored blob,
-  // and no email. No account number is ever in the URL or the query string: only the run, the bank's name and the column choice are. It needs a second factor used in the last 5 minutes
+  // and no email. No account number is ever in the URL or the query string: only the run, the bank's code, the template's id and the column choice are. It needs a second factor used in the last 5 minutes
   // (STEP_UP_REQUIRED), takes a slot of the export limiter like the other exports, is bounded (a run with more people than the cap, or a person with no account number, is refused, never cut short)
   // and is built whole; the audit row of the download (a count only) is written before the bytes are sent: no row, no download. The slot is held until the bytes are taken. `private, no-store`: the file
   // holds names and account numbers. Nothing is sent to any bank.
@@ -3035,12 +3035,14 @@ export function createHttpApp(deps: HttpDeps) {
         // Refused before a slot or an audit row: the query checks it again for every caller.
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
         const columnsParam = c.req.query('columns');
+        const templateParam = c.req.query('template');
         const parsed = zHrBankFileQuery.safeParse({
           runId: file.slice(0, -'.xlsx'.length),
           bankName: c.req.query('bank') ?? '',
           ...(columnsParam ? { columns: columnsParam.split(',') } : {}),
+          ...(templateParam ? { templateId: templateParam } : {}),
         });
-        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, `Yêu cầu không hợp lệ: cần số hiệu bảng lương, tên ngân hàng và các cột trong ${HR_BANK_FILE_COLUMNS.join(', ')}`);
+        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, `Yêu cầu không hợp lệ: cần số hiệu bảng lương, mã ngân hàng và các cột trong ${HR_BANK_FILE_COLUMNS.join(', ')} (hoặc một mẫu, không kèm cột)`);
         const release = exportSlots.tryAcquire(user.userId);
         if (!release) {
           c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
@@ -3054,7 +3056,7 @@ export function createHttpApp(deps: HttpDeps) {
           return new Response(held(new Uint8Array(bytes), release), {
             headers: {
               'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-luong', document.month, ORG_SLUG], 'xlsx'),
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-luong', document.month, document.bankCode.toLowerCase(), ORG_SLUG], 'xlsx'),
               'x-content-type-options': 'nosniff',
               'cache-control': 'private, no-store',
             },
