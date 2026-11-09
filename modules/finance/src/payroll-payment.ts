@@ -7,7 +7,7 @@
 //   (its accounts in the entity's chart, the bank line it settles) and raises the flag of a cash payment at the 5 million limit. It writes nothing. Owners and admins only, like the proposal it serves.
 // - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context, owners and admins) and
 //   refuses a stored proposal that differs from it (the entity, the month, the chart, the lines, the total); then it records the voucher with the run and the kind on it (one live voucher per run and kind: a
-//   trigger holds it, 20261211004500) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   trigger holds it, 20261211084500) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
 // No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
 import { sql } from 'kysely';
 import { z } from 'zod';
