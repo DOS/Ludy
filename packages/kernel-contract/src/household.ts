@@ -5,7 +5,7 @@
 // the expense groups of S2c, the forms) is read from seed tables with an effective date, a source and a status. A row with the status `commentary` is not yet checked by the
 // accountant (#2520): the answers say so and nothing that files or computes a tax may rely on one.
 import { z } from 'zod';
-import { zId, zLocalDate } from './schemas.ts';
+import { zId, zLedgerPeriod, zLocalDate, zMoney } from './schemas.ts';
 import { STOCK_TRADES } from './stock.ts';
 
 // The fixed sets the database keeps as CHECK constraints (packages/db/src/schema.ts holds the same lists for its test).
@@ -71,3 +71,20 @@ export const zHouseholdRules = z.strictObject({
   commentary: z.boolean(),
 });
 export type HouseholdRules = z.infer<typeof zHouseholdRules>;
+
+// S1a-HKD, the sales listing of a household of group 1 (Circular 152/2025/TT-BTC Art. 6; plan 8.5), laid out from the ledger: one row per entry that touched account 511 in the period, so the total
+// ties to the ledger by construction (it is the credit less the debit of 511 and its sub-accounts over the period). `amount` is that net of the row (a sale is positive, a reversal or a
+// return negative). The household's name and tax code are the entity's; `openedOn` is the day its first profile took effect, the date the books were opened. The answer is refused for an entity
+// whose profile (at both ends of the period) does not require S1a: a household is shown only the books of its method.
+export const zHouseholdS1aGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
+export type HouseholdS1aGet = z.infer<typeof zHouseholdS1aGet>;
+export const zHouseholdS1aRow = z.strictObject({ entryId: zId, date: zLocalDate, reference: z.string().nullable(), description: z.string(), amount: zMoney, reversal: z.boolean() });
+export type HouseholdS1aRow = z.infer<typeof zHouseholdS1aRow>;
+export const zHouseholdS1a = z.strictObject({
+  period: z.strictObject({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable(), openedOn: zLocalDate }),
+  form: zHouseholdBookRule,
+  rows: z.array(zHouseholdS1aRow),
+  total: zMoney,
+});
+export type HouseholdS1a = z.infer<typeof zHouseholdS1a>;

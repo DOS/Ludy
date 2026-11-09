@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HouseholdProfileView, HouseholdRules } from '@crove/kernel-contract';
+import type { HouseholdProfileView, HouseholdRules, HouseholdS1a } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -247,5 +247,91 @@ suite('household business profile and rules (#2517)', () => {
     expect(await goods('2026-12-31')).toMatchObject({ vatPercent: '1.0000', pitPercent: '0.5000', status: 'commentary' });
     expect(await goods('2027-01-01')).toMatchObject({ vatPercent: '2.0000', pitPercent: '1.0000', status: 'confirmed', effectiveFrom: '2027-01-01' });
     expect(await goods('2030-05-05')).toMatchObject({ vatPercent: '2.0000' });
+  });
+
+  // An entry of the household's ledger written by the database owner (the triggers fire as for any writer), with its lines; `reverses` makes it the reversal of another entry.
+  async function entry(entity: string, orgId: string, date: string, description: string, lines: Array<[string, number, number]>, over: { invoice?: { series: string; number: string; total: number }; reverses?: string } = {}): Promise<string> {
+    return admin(async (a) => {
+      await a.query('BEGIN');
+      try {
+        // A sales document is posted in the same transaction as its entry.
+        let document: string | null = null;
+        if (over.invoice) {
+          const party = (await a.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách lẻ') RETURNING id", [orgId])).rows[0]?.id;
+          document = (
+            await a.query<{ id: string }>(
+              "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'sale', $7) RETURNING id",
+              [orgId, party, over.invoice.series, over.invoice.number, date, over.invoice.total, entity],
+            )
+          ).rows[0]?.id as string;
+        }
+        const id = (
+          await a.query<{ id: string }>(
+            `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [orgId, date, description, document ? 'finance.purchase_document' : 'finance.journal_voucher', document ?? randomUUID(), entity, over.reverses ?? null],
+          )
+        ).rows[0]?.id as string;
+        let no = 1;
+        for (const [account, debit, credit] of lines) await a.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, no++, account, debit, credit]);
+        await a.query('COMMIT');
+        return id;
+      } catch (error) {
+        await a.query('ROLLBACK');
+        throw error;
+      }
+    });
+  }
+  const s1a = (o: Org, period: string, entity = o.household, user = o.owner) => query<HouseholdS1a>(o, 'finance.household.s1a', { legalEntityId: entity, period }, user);
+
+  it('lists the sales of the household from account 511 and its total ties to the ledger', async () => {
+    const o = await org();
+    await setProfile(o);
+    await entry(o.household, o.orgId, '2026-09-05', 'Bán có hóa đơn', [['131', 100000, 0], ['511', 0, 100000]], { invoice: { series: '1C26TAA', number: '00000042', total: 100000 } });
+    const retail = await entry(o.household, o.orgId, '2026-09-12', 'Bán hàng lẻ', [['111', 60000, 0], ['511', 0, 60000]]);
+    await entry(o.household, o.orgId, '2026-09-20', 'Bán dịch vụ', [['111', 250000, 0], ['5111', 0, 250000]]);
+    await entry(o.household, o.orgId, '2026-09-25', 'Đảo bán hàng lẻ', [['111', 0, 60000], ['511', 60000, 0]], { reverses: retail });
+    // Not sales: other income, a purchase, an entry of the org's company entity, and a sale outside the period.
+    await entry(o.household, o.orgId, '2026-09-10', 'Lãi tiền gửi', [['112', 5000, 0], ['515', 0, 5000]]);
+    await entry(o.household, o.orgId, '2026-09-13', 'Mua hàng', [['156', 70000, 0], ['111', 0, 70000]]);
+    await entry(o.company, o.orgId, '2026-09-14', 'Bán của công ty', [['111', 999000, 0], ['511', 0, 999000]]);
+    await entry(o.household, o.orgId, '2026-10-02', 'Bán tháng sau', [['111', 40000, 0], ['511', 0, 40000]]);
+    const book = await s1a(o, '2026-09');
+    expect(book.period).toEqual({ period: '2026-09', from: '2026-09-01', to: '2026-09-30' });
+    expect(book.household).toEqual({ name: 'Hộ kinh doanh Nguyễn Văn A', taxCode: null, representativeName: 'Nguyễn Văn A', openedOn: '2026-01-01' });
+    expect(book.form).toMatchObject({ book: 'S1a', status: 'commentary' });
+    expect(book.rows.map((r) => [r.date, r.description, r.amount, r.reversal, r.reference])).toEqual([
+      ['2026-09-05', 'Bán có hóa đơn', '100000', false, '1C26TAA-00000042'],
+      ['2026-09-12', 'Bán hàng lẻ', '60000', false, null],
+      ['2026-09-20', 'Bán dịch vụ', '250000', false, null],
+      ['2026-09-25', 'Đảo bán hàng lẻ', '-60000', true, null],
+    ]);
+    expect(book.total).toBe('350000');
+    // The total is the ledger's own movement of account 511 for the period: credit less debit.
+    const ledger = await query<{ debit: string; credit: string }>(o, 'finance.ledger.account', { period: '2026-09', legalEntityId: o.household, accountCode: '511' });
+    expect(Number(ledger.credit) - Number(ledger.debit)).toBe(Number(book.total));
+    // A quarter and a year hold the months.
+    expect((await s1a(o, '2026-Q3')).total).toBe('350000');
+    expect((await s1a(o, '2026')).total).toBe('390000');
+    // The company's own sale is in the company's ledger, not the household's book.
+    expect(book.rows.some((r) => r.description === 'Bán của công ty')).toBe(false);
+  });
+
+  it('refuses the book to a household whose method does not need it, an entity that is not a household, and a period over a change', async () => {
+    const o = await org();
+    await expect(s1a(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
+    await setProfile(o, { effectiveFrom: '2026-01-01' });
+    await setProfile(o, { effectiveFrom: '2026-10-01', taxGroup: 2, pitMethod: 'percentage' });
+    expect((await s1a(o, '2026-Q3')).rows).toEqual([]);
+    for (const period of ['2026-Q4', '2026-10', '2026']) await expect(s1a(o, period)).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
+    await expect(s1a(o, '2026-09', o.company)).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
+    const g3 = await org();
+    await setProfile(g3, { taxGroup: 3, pitMethod: 'income' });
+    await expect(s1a(g3, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
+  });
+
+  it('lets every role read the book', async () => {
+    const o = await org();
+    await setProfile(o);
+    for (const who of [o.owner, o.admin, o.member, o.viewer]) expect((await s1a(o, '2026-09', o.household, who)).total).toBe('0');
   });
 });

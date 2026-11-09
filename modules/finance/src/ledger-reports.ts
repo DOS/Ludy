@@ -267,6 +267,13 @@ function ledgerView(data: LedgerData, accountCode: string): AccountLedgerView {
   };
 }
 
+// The general ledger of one account (and its sub-accounts) of one legal entity for a period, for a book that is a view of it (the household's sales book, #2517): the same read as
+// finance.ledger.account, so the book and the ledger cannot disagree.
+export async function accountLedgerOf(ctx: QueryContext, period: string, legalEntityId: string, accountCode: string): Promise<AccountLedgerView> {
+  const data = await loadLedgerData(ctx, period, legalEntityId);
+  return ledgerView(data, accountCode);
+}
+
 export const ledgerPeriodQuery = defineQuery({
   name: 'finance.ledger.period',
   input: zLedgerPeriodInput,

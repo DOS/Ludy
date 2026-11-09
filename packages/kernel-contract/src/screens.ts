@@ -52,6 +52,8 @@ const FINANCE_SCREENS = {
     { path: 'sales-invoices' },
     // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
     { path: 'stock' },
+    // The books of a household business (#2517): reached from Settings (Pháp nhân) for an entity of kind household, so it has no menu item of its own.
+    { path: 'household' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
