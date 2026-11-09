@@ -1652,7 +1652,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call WHERE org_id = $1`, [orgId]))[0]?.n).toBe('0');
           // The approval ran under the approval rules of version 4, judged on the people of the org now: two eligible people, so the approver is not the author.
           const approval = (await row<{ detail: { policy_version: number; eligible_approvers: number; self_approved: boolean; policy: Record<string, string> } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]))[0]?.detail;
-          expect(approval).toMatchObject({ policy_version: 10, self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
+          expect(approval).toMatchObject({ policy_version: 11, self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
           expect(approval?.eligible_approvers).toBeGreaterThanOrEqual(2);
         });
 

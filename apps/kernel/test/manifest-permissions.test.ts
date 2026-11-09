@@ -40,6 +40,7 @@ describe('module manifests declare their permissions (#1630)', () => {
     // The gates on main: kernel.proposal.approve and its bulk form, finance.period.unlock, finance.vat.return_mark, and
     // the ledger policy.
     expect(uses.map((u) => `${u.by}: ${u.permission}`).sort()).toEqual([
+      'command finance.payroll_posting.regime: finance.proposal.approve',
       'command finance.period.unlock: finance.period.unlock',
       'command finance.vat.return_mark: finance.vat.file',
       'command hr.payroll.bank_template.create: hr.payroll.run',
@@ -54,6 +55,8 @@ describe('module manifests declare their permissions (#1630)', () => {
       'command hr.payroll.employment.add: hr.payroll.run',
       'command hr.payroll.line.adjust: hr.payroll.run',
       'command hr.payroll.line.inputs.set: hr.payroll.run',
+      'command hr.payroll.payment.verify: finance.proposal.approve',
+      'command hr.payroll.posting.verify: finance.proposal.approve',
       'command hr.payroll.run.approve: hr.payroll.run',
       'command hr.payroll.run.open: hr.payroll.run',
       'command hr.payroll.run.recalculate: hr.payroll.run',

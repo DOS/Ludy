@@ -8740,7 +8740,6 @@ export const en = {
       MARKETPLACE_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the marketplace account map yet; waiting for the accountant',
       MARKETPLACE_POSTING_REGIME_UNKNOWN: 'This accounting regime has no marketplace account map',
       MARKETPLACE_SETTLEMENT_NOT_POSTABLE: 'The settlement cannot be posted (the net revenue is not positive or the entry is invalid)',
-      HR_POSTING_APPROVER_ROLE: 'Only an owner or an admin can approve a payroll posting or a pay payment, because the approver has to compare it with the pay run',
       HR_PAYMENT_NOT_POSTED: 'This pay run has not been posted yet; post it before recording the pay or a remittance',
       HR_PAYMENT_DONE: 'This payment of the pay run has already been recorded',
       HR_PAYMENT_OPEN: 'This payment of the pay run already has a proposal waiting for approval',

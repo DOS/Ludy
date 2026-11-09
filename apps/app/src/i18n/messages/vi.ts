@@ -8737,7 +8737,6 @@ export const vi = {
       MARKETPLACE_POSTING_MAP_UNCONFIRMED: 'Bảng tài khoản hạch toán tiền của sàn chưa được kế toán xác nhận: chờ kế toán xác nhận',
       MARKETPLACE_POSTING_REGIME_UNKNOWN: 'Chế độ kế toán này chưa có bảng tài khoản hạch toán tiền của sàn',
       MARKETPLACE_SETTLEMENT_NOT_POSTABLE: 'Kỳ đối soát của sàn không lập được bút toán (doanh thu ròng không dương hoặc bút toán không hợp lệ)',
-      HR_POSTING_APPROVER_ROLE: 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương hoặc chi lương, vì người duyệt phải đối chiếu được với bảng lương',
       HR_PAYMENT_NOT_POSTED: 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản',
       HR_PAYMENT_DONE: 'Khoản này của bảng lương đã được chi',
       HR_PAYMENT_OPEN: 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt',
