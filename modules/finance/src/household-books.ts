@@ -7,7 +7,7 @@
 // - finance.household.export: the audit row of an Excel download of a book (R0; the period, the book and the number of rows, never the rows).
 // Amounts are decimal strings added with decimal.js, never JS numbers.
 import { z } from 'zod';
-import { zHouseholdBook, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdS1a } from '@crove/kernel-contract';
+import { zHouseholdBook, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdBookRule, type HouseholdS1a } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
@@ -32,22 +32,8 @@ export const householdS1a = defineQuery({
   handler: async (ctx, input): Promise<HouseholdS1a> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const ledger = await accountLedgerOf(ctx, input.period, entity, SALES_ACCOUNT);
-    const { from, to } = ledger.period;
-    // The profile on the first and the last day of the period must both require S1a: a period over a change of method is asked for in shorter parts.
-    const first = await householdProfileView(ctx, entity, from);
-    const last = await householdProfileView(ctx, entity, to);
-    const form = last.books.find((b) => b.book === 'S1a');
-    if (!first.profile || !last.profile || !form || !first.books.some((b) => b.book === 'S1a')) throw notRequired();
-    const rows = ledger.lines.map((l) => ({
-      entryId: l.entryId,
-      date: l.entryDate,
-      reference: l.reference,
-      description: l.description,
-      amount: toMoney(money(l.credit).minus(money(l.debit))),
-      reversal: l.reversal,
-    }));
-    if (rows.length > HOUSEHOLD_S1A_ROW_LIMIT) throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng trong một kỳ; hãy chọn kỳ ngắn hơn');
-    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
+    const { to } = ledger.period;
+    // The book starts the day the household's first profile took effect: days before it are outside it, so a household that sets its profile today still gets this month's book from today.
     const opened = await ctx.trx
       .selectFrom('crove_finance.household_profile')
       .select('effective_from')
@@ -55,10 +41,49 @@ export const householdS1a = defineQuery({
       .where('legal_entity_id', '=', entity)
       .orderBy('effective_from', 'asc')
       .limit(1)
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!opened || opened.effective_from > to) throw notRequired();
+    const from = ledger.period.from > opened.effective_from ? ledger.period.from : opened.effective_from;
+    // Every profile in force inside the book's days must require S1a: the one at its first day and each one that starts after it, so a change of method inside the period is asked for in shorter parts.
+    const changes = await ctx.trx
+      .selectFrom('crove_finance.household_profile')
+      .select('effective_from')
+      .where('org_id', '=', ctx.orgId)
+      .where('legal_entity_id', '=', entity)
+      .where('effective_from', '>', from)
+      .where('effective_from', '<=', to)
+      .execute();
+    let form: HouseholdBookRule | undefined;
+    let lastName: string | null = null;
+    for (const day of [from, ...changes.map((c) => c.effective_from)]) {
+      const view = await householdProfileView(ctx, entity, day);
+      form = view.books.find((b) => b.book === 'S1a');
+      if (!view.profile || !form) throw notRequired();
+      lastName = view.profile.representativeName;
+    }
+    if (!form) throw notRequired();
+    // One row per entry: an entry may touch 511 on several lines (a goods line and a service line), and a discount may debit a sub-account; the row is the entry's net.
+    const byEntry = new Map<string, { entryId: string; date: string; reference: string | null; description: string; reversal: boolean; credit: string[]; debit: string[] }>();
+    for (const l of ledger.lines) {
+      if (l.entryDate < from) continue;
+      const row = byEntry.get(l.entryId) ?? { entryId: l.entryId, date: l.entryDate, reference: l.reference, description: l.description, reversal: l.reversal, credit: [], debit: [] };
+      row.credit.push(l.credit);
+      row.debit.push(l.debit);
+      byEntry.set(l.entryId, row);
+    }
+    const rows = [...byEntry.values()].map((r) => ({
+      entryId: r.entryId,
+      date: r.date,
+      reference: r.reference,
+      description: r.description,
+      amount: toMoney(sum(r.credit).minus(sum(r.debit))),
+      reversal: r.reversal,
+    }));
+    if (rows.length > HOUSEHOLD_S1A_ROW_LIMIT) throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng trong một kỳ; hãy chọn kỳ ngắn hơn');
+    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
     return {
       period: { period: ledger.period.period, from, to },
-      household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: last.profile.representativeName, openedOn: opened.effective_from },
+      household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: lastName, openedOn: opened.effective_from },
       form,
       rows,
       total: toMoney(sum(rows.map((r) => r.amount))),

@@ -74,8 +74,8 @@ export type HouseholdRules = z.infer<typeof zHouseholdRules>;
 
 // S1a-HKD, the sales listing of a household of group 1 (Circular 152/2025/TT-BTC Art. 6; plan 8.5), laid out from the ledger: one row per entry that touched account 511 in the period, so the total
 // ties to the ledger by construction (it is the credit less the debit of 511 and its sub-accounts over the period). `amount` is that net of the row (a sale is positive, a reversal or a
-// return negative). The household's name and tax code are the entity's; `openedOn` is the day its first profile took effect, the date the books were opened. The answer is refused for an entity
-// whose profile (at both ends of the period) does not require S1a: a household is shown only the books of its method.
+// return negative). The household's name and tax code are the entity's; `openedOn` is the day its first profile took effect, the date the books were opened; days before it are outside the book (`period.from` is then that day, and only entries from it are listed). The answer is refused for an entity
+// whose profile does not require S1a on any day of the book (the first day, and each day a later profile takes effect inside the period): a household is shown only the books of its method.
 export const zHouseholdS1aGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
 export type HouseholdS1aGet = z.infer<typeof zHouseholdS1aGet>;
 export const zHouseholdS1aRow = z.strictObject({ entryId: zId, date: zLocalDate, reference: z.string().nullable(), description: z.string(), amount: zMoney, reversal: z.boolean() });

@@ -290,6 +290,8 @@ suite('household business profile and rules (#2517)', () => {
     const retail = await entry(o.household, o.orgId, '2026-09-12', 'Bán hàng lẻ', [['111', 60000, 0], ['511', 0, 60000]]);
     await entry(o.household, o.orgId, '2026-09-20', 'Bán dịch vụ', [['111', 250000, 0], ['5111', 0, 250000]]);
     await entry(o.household, o.orgId, '2026-09-25', 'Đảo bán hàng lẻ', [['111', 0, 60000], ['511', 60000, 0]], { reverses: retail });
+    // One entry with a goods line and a service line (and a discount on a sub-account) is one row: its net.
+    await entry(o.household, o.orgId, '2026-09-28', 'Bán hàng và dịch vụ', [['131', 150000, 0], ['5111', 0, 100000], ['5113', 0, 60000], ['5111', 10000, 0]]);
     // Not sales: other income, a purchase, an entry of the org's company entity, and a sale outside the period.
     await entry(o.household, o.orgId, '2026-09-10', 'Lãi tiền gửi', [['112', 5000, 0], ['515', 0, 5000]]);
     await entry(o.household, o.orgId, '2026-09-13', 'Mua hàng', [['156', 70000, 0], ['111', 0, 70000]]);
@@ -304,14 +306,15 @@ suite('household business profile and rules (#2517)', () => {
       ['2026-09-12', 'Bán hàng lẻ', '60000', false, null],
       ['2026-09-20', 'Bán dịch vụ', '250000', false, null],
       ['2026-09-25', 'Đảo bán hàng lẻ', '-60000', true, null],
+      ['2026-09-28', 'Bán hàng và dịch vụ', '150000', false, null],
     ]);
-    expect(book.total).toBe('350000');
+    expect(book.total).toBe('500000');
     // The total is the ledger's own movement of account 511 for the period: credit less debit.
     const ledger = await query<{ debit: string; credit: string }>(o, 'finance.ledger.account', { period: '2026-09', legalEntityId: o.household, accountCode: '511' });
     expect(Number(ledger.credit) - Number(ledger.debit)).toBe(Number(book.total));
     // A quarter and a year hold the months.
-    expect((await s1a(o, '2026-Q3')).total).toBe('350000');
-    expect((await s1a(o, '2026')).total).toBe('390000');
+    expect((await s1a(o, '2026-Q3')).total).toBe('500000');
+    expect((await s1a(o, '2026')).total).toBe('540000');
     // The company's own sale is in the company's ledger, not the household's book.
     expect(book.rows.some((r) => r.description === 'Bán của công ty')).toBe(false);
   });
@@ -333,5 +336,31 @@ suite('household business profile and rules (#2517)', () => {
     const o = await org();
     await setProfile(o);
     for (const who of [o.owner, o.admin, o.member, o.viewer]) expect((await s1a(o, '2026-09', o.household, who)).total).toBe('0');
+  });
+
+  it('starts the book the day the first profile took effect, so a household that sets its profile today gets this period', async () => {
+    const o = await org();
+    await setProfile(o, { effectiveFrom: '2026-09-10' });
+    await entry(o.household, o.orgId, '2026-09-05', 'Bán trước ngày mở sổ', [['111', 30000, 0], ['511', 0, 30000]]);
+    await entry(o.household, o.orgId, '2026-09-12', 'Bán sau ngày mở sổ', [['111', 70000, 0], ['511', 0, 70000]]);
+    for (const period of ['2026-09', '2026-Q3', '2026']) {
+      const book = await s1a(o, period);
+      expect(book.period.from).toBe('2026-09-10');
+      expect(book.household.openedOn).toBe('2026-09-10');
+      expect(book.rows.map((r) => r.description)).toEqual(['Bán sau ngày mở sổ']);
+      expect(book.total).toBe('70000');
+    }
+    // A period that ends before the books were opened has no book.
+    await expect(s1a(o, '2026-08')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
+  });
+
+  it('refuses a period in which the method changes and changes back', async () => {
+    const o = await org();
+    await setProfile(o, { effectiveFrom: '2026-01-01' });
+    await setProfile(o, { effectiveFrom: '2026-08-01', taxGroup: 2, pitMethod: 'percentage' });
+    await setProfile(o, { effectiveFrom: '2026-09-01' });
+    expect((await s1a(o, '2026-07')).total).toBe('0');
+    expect((await s1a(o, '2026-09')).total).toBe('0');
+    await expect(s1a(o, '2026-Q3')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
   });
 });
