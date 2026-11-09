@@ -46,16 +46,23 @@ function deductionsOf(breakdown: unknown): { advance: string; other: string } {
   return { advance: d.advance, other: toMoney(money(d.damage).plus(d.other)) };
 }
 
+// What each person is paid by the run, in whole dong: the net of their pay line plus the net of their corrections, in no order and without a name (the cash limit counts a person's payment, not a line).
+function netsByPerson(lines: readonly { employee_id: string; net: unknown }[]): string[] {
+  const byPerson = new Map<string, ReturnType<typeof money>>();
+  for (const l of lines) byPerson.set(l.employee_id, (byPerson.get(l.employee_id) ?? money(0)).plus(money(String(l.net))));
+  return [...byPerson.values()].map((n) => toMoney(n));
+}
+
 export interface BuiltPosting {
   payrollRun: { id: string; legal_entity_id: string; month: string; approved_by: string | null };
   date: string;
   regime: PayrollRegime;
   result: ReturnType<typeof buildPosting>;
   lines: number;
-  // How many correction lines the run carries: the payment of such a run is not offered yet (the next change), so the payment commands refuse it.
+  // How many correction lines the run carries.
   adjustments: number;
-  // The net pay of each frozen pay line, in whole dong and in no order: what the payment of the net pay counts against the cash limit, without a name or a line id. A correction is a difference, not a
-  // person's pay, so it is not counted here (the database counts the same lines in `cashLarge`).
+  // The net pay of each person (their pay line and their corrections together), in whole dong and in no order: what the payment of the net pay counts against the cash limit, without a name or a
+  // line id (the database counts the same people in `cashLarge`).
   nets: string[];
 }
 
@@ -161,7 +168,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   });
 
   const { date, regime, result } = await finishPosting(ctx, run, lines, stored.some((l) => l.kind !== 'pay'));
-  return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: stored.filter((l) => l.kind === 'pay').map((l) => String(l.net)) };
+  return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: netsByPerson(stored) };
 }
 
 // The same entry rebuilt from the run's totals by cost department (crove_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so

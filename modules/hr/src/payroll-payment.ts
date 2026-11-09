@@ -14,9 +14,6 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { buildRunPosting, buildRunPostingFromTotals, monthLabel } from './payroll-posting.ts';
 
-// A month that carries a correction is posted, but its payment (and its bank file) wait for the next change: the amounts to pay of such a month need their own rule (a person whose net is negative, the funds).
-const paymentOfCorrections = () => new DomainError('HR_PAYMENT_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa ghi chi được loại bảng lương này');
-
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 // Words of the reason on the voucher (lý do chi): the month and what is paid, never a name.
@@ -31,6 +28,8 @@ const REASON: Record<PayrollPaymentKind, (month: string) => string> = {
 function obligationOf(obligations: readonly Obligation[], kind: PayrollPaymentKind): Obligation {
   const found = obligations.find((o) => o.kind === kind);
   if (!found) throw new DomainError('HR_PAYMENT_NOTHING_DUE', 422, 'Bảng lương này không có khoản này để chi');
+  // The corrections a month carries are signed: when they take a kind, or one of its accounts (a fund of the insurance), below zero (pay or insurance or tax to be given back), there is nothing to pay in this run, and a negative voucher is never made.
+  if (money(found.amount).isNegative() || found.debits.some((d) => money(d.amount).isNegative())) throw new DomainError('HR_PAYMENT_NEGATIVE', 422, 'Khoản này âm sau các điều chỉnh của tháng (phải hoàn lại); chưa ghi chi được, kế toán xử lý riêng');
   return found;
 }
 
@@ -47,8 +46,7 @@ export const preparePayrollPayment = defineCommand({
   writes: [],
   handler: async (ctx, input) => {
     // The run's row is held to the end of the request, so two requests for the same run take turns: the second sees the proposal the first made and is refused below.
-    const { payrollRun, regime, result, nets, adjustments } = await buildRunPosting(ctx, input.runId, true);
-    if (adjustments > 0) throw paymentOfCorrections();
+    const { payrollRun, regime, result, nets } = await buildRunPosting(ctx, input.runId, true);
     const obligation = obligationOf(result.obligations, input.kind);
     // One open proposal per run and kind: another still open ends it, and one already paid is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
@@ -97,8 +95,7 @@ export const verifyPayrollPayment = defineCommand({
   permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, { runId, kind }) => {
-    const { payrollRun, regime, result, cashLarge, adjustments } = await buildRunPostingFromTotals(ctx, runId);
-    if (adjustments > 0) throw paymentOfCorrections();
+    const { payrollRun, regime, result, cashLarge } = await buildRunPostingFromTotals(ctx, runId);
     const obligation = obligationOf(result.obligations, kind);
     return {
       runId,
@@ -118,7 +115,7 @@ export const verifyPayrollPayment = defineCommand({
 
 // The amount of each payment of the approved runs asked for, for the matching of a bank statement line with a payment (#2532). Owners and admins, who are the ones that ask for a payment. It reads the
 // run's totals by cost department (crove_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
-// approved, that has an adjustment, a line not calculated or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
+// approved, that has an adjustment made before its split was kept, a line not calculated or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
 // entry (a test ties them): the net pay, the insurance (what employees and the employer owe), the union fee and the tax.
 export const payrollPaymentAmounts = defineQuery({
   name: 'hr.payroll.payment.amounts',
@@ -135,7 +132,7 @@ export const payrollPaymentAmounts = defineQuery({
         | undefined;
       if (!t || t.status !== 'approved') continue;
       const c = t.counts;
-      if ((c.lines ?? 0) === 0 || [c.adjustments, c.notCalculated, c.noFunction, c.noFunds, c.noDeductions, c.badLines].some((n) => (n ?? 0) > 0)) continue;
+      if ((c.lines ?? 0) === 0 || [c.adjustmentsIncomplete, c.notCalculated, c.noFunction, c.noFunds, c.noDeductions, c.badLines].some((n) => (n ?? 0) > 0)) continue;
       const groups = t.groups;
       const sum = (pick: (g: (typeof groups)[number]) => string) => groups.reduce((acc, g) => acc.plus(money(pick(g))), money(0));
       const all: Record<PayrollPaymentKind, ReturnType<typeof sum>> = {
@@ -145,7 +142,8 @@ export const payrollPaymentAmounts = defineQuery({
         tax: sum((g) => g.pit),
       };
       const amounts: HrRunPaymentAmounts['amounts'] = {};
-      for (const kind of Object.keys(all) as PayrollPaymentKind[]) if (!all[kind].isZero()) amounts[kind] = toMoney(all[kind]);
+      // A kind the corrections take below zero is not offered: there is nothing to pay in this run (asking for it says why).
+      for (const kind of Object.keys(all) as PayrollPaymentKind[]) if (all[kind].greaterThan(0)) amounts[kind] = toMoney(all[kind]);
       out.push({ runId, month: t.month, amounts });
     }
     return out;
