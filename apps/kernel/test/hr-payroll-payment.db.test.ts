@@ -361,7 +361,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
-  it('does not offer the payments of a run whose per-fund sums do not add to its insurance (#2918), the posting refusing it too', async () => {
+  it('does not offer the payments of a run whose stored fund shares were changed (#2918): the offer and the posting agree', async () => {
     const o = await org('tt133', 'solo');
     const march = await approvedRun(o);
     const [good] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [march.runId] });

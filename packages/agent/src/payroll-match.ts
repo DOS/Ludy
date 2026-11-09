@@ -78,8 +78,8 @@ const KIND_WORDS: Record<PayrollMatchKind, readonly string[]> = {
   union: ['cong doan', 'union'],
   tax: ['thue', 'tax', 'taxes', 'pit', 'tncn'],
 };
-const fold = (text: string): string => text.normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
-const namesWord = (folded: string, word: string): boolean => new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`).test(folded);
+const fold = (text: string): string => text.normalize('NFKD').replace(/\p{Diacritic}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+const namesWord = (folded: string, word: string): boolean => new RegExp(`(^|[^a-z0-9])${word.replace(/ /g, '\\s+')}([^a-z0-9]|$)`).test(folded);
 function otherKindNamed(kind: PayrollMatchKind, text: string): boolean {
   const folded = fold(text);
   return (Object.keys(KIND_WORDS) as PayrollMatchKind[]).some((other) => other !== kind && KIND_WORDS[other].some((w) => namesWord(folded, w)));
