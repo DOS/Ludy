@@ -16,6 +16,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { BankSelect } from '../components/bank-select.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -506,18 +507,18 @@ function AdjustForm({ sheet, approvedRuns, onClose }: { sheet: HrRunSheet; appro
   );
 }
 
-// The bank bulk-salary file of an approved month (#2532): one file for one bank, the bank typed here. A sensitive read (names and account numbers): the server asks for a second factor used in the last 5
+// The bank bulk-salary file of an approved month (#2532): one file for one bank, chosen from the bank list (#2897); the file holds the people whose record names that bank. A sensitive read (names and account numbers): the server asks for a second factor used in the last 5
 // minutes and the action that was refused runs again once it is verified. Ludy never makes a transfer; the accountant uploads the file to the bank.
 function BankFile({ runId, month }: { runId: string; month: string }) {
   const t = useTranslations('hrPayroll');
   const [bank, setBank] = useState('');
   const download = useMutation({
     mutationFn: async () => {
-      const response = await apiFetch(`/api/payroll-bank-file/${runId}.xlsx?bank=${encodeURIComponent(bank.trim())}`);
+      const response = await apiFetch(`/api/payroll-bank-file/${runId}.xlsx?bank=${encodeURIComponent(bank)}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
-      a.download = t('bankFileName', { month });
+      a.download = t('bankFileName', { month, bank: bank.toLowerCase() });
       a.click();
       URL.revokeObjectURL(url);
     },
@@ -532,9 +533,9 @@ function BankFile({ runId, month }: { runId: string; month: string }) {
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="hr-bank-name">{t('bankFileBank')}</Label>
-          <Input id="hr-bank-name" className="w-64" maxLength={60} value={bank} onChange={(e) => setBank(e.target.value)} />
+          <BankSelect id="hr-bank-name" value={bank} onChange={setBank} />
         </div>
-        <Button variant="outline" loading={download.isPending} disabled={bank.trim() === ''} onClick={() => download.mutate()} data-testid="hr-bank-file-download">
+        <Button variant="outline" loading={download.isPending} disabled={bank === ''} onClick={() => download.mutate()} data-testid="hr-bank-file-download">
           {t('bankFileDownload')}
         </Button>
       </div>
