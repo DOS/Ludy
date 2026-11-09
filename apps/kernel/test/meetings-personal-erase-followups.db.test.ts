@@ -149,14 +149,17 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     expect(Number(skew)).toBeLessThan(60);
   });
 
-  // N4: a decision element that is not a string is neither matched nor changed.
-  it('leaves decision elements that are not strings as they are', async () => {
+  // N4: the finder reads the decisions as text, so the column takes string elements only (a number or a nested value would be found but never cleared); the erasure redacts every string.
+  it('refuses decision elements that are not strings and redacts the strings', async () => {
     const value = '12345678';
     const shared = await meeting('recorder', 'Họp quyết định lẫn kiểu', 'org');
-    const summary = await result(shared, 'Tóm tắt', ['Giữ giá', 12345678, { gia: 12345678 }, true, null, `Gọi ${value} nhé`] as unknown as string[], 'published');
+    for (const bad of [[12345678], [{ gia: 12345678 }], [true], [null], ['ok', 7]]) {
+      await expect(result(shared, 'Tóm tắt', bad as unknown as string[], 'published')).rejects.toMatchObject({ code: '23514' });
+    }
+    const summary = await result(shared, 'Tóm tắt', ['Giữ giá', `Gọi ${value} nhé`], 'published');
     const out = await erase(value);
-    expect(JSON.parse(await textOf('meeting_result', summary, 'decisions'))).toEqual(['Giữ giá', 12345678, { gia: 12345678 }, true, null, `Gọi ${MARK} nhé`]);
-    expect(out.kept.find((k) => k.column === 'crove_meetings.text')).toBeUndefined();
+    expect(JSON.parse(await textOf('meeting_result', summary, 'decisions'))).toEqual(['Giữ giá', `Gọi ${MARK} nhé`]);
+    expect(out.kept.filter((k) => k.column.startsWith('crove_meetings.'))).toEqual([]);
   });
 
   // N5: the lock order. A recorder's replaceDraft holds the draft's old lines and then inserts new ones (a FOR KEY SHARE of the meeting row for the foreign key): the erasure, which holds

@@ -3,11 +3,24 @@
 -- owners and grants, so the invariant walk of #2910 and #2914 holds unchanged; the applied file is not edited).
 --   N4  A `decisions` element that is not a string (no command writes one today) is matched and redacted as a string element only: a number, a boolean or a nested value is left as it is,
 --       where it came back as a JSON string after the redaction.
+--       The finder (personal_row_ids, personal_matches, the kernel's column search) still reads `decisions::text`, so to keep it and the erasure agreeing the column now accepts string
+--       elements only (a CHECK, added NOT VALID and then validated: no command writes anything else, and the table is not a hot one). The string-element handling below stays as a guard.
 --   N5  The lock order. The erasure used to lock the meeting row FOR UPDATE and then its text rows, while a recorder's command (replaceDraft: delete the draft's lines, insert new ones)
 --       holds line rows and then needs a FOR KEY SHARE of the meeting row for the insert's foreign key: the two could deadlock. FOR NO KEY UPDATE does not conflict with FOR KEY SHARE,
 --       so that insert goes on while the erasure waits for the old lines. The order everywhere is: the meeting row first (FOR SHARE in meetings.transcript.start and meetings.summary.start,
 --       FOR NO KEY UPDATE here), then the text rows. The kernel maps a deadlock that still happens (40P01) to a retryable PERSONAL_DATA_BUSY.
 SET LOCAL lock_timeout = '2s';
+
+DO $chk$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_meetings.meeting_result'::pg_catalog.regclass AND conname = 'meeting_result_decisions_strings') THEN
+    ALTER TABLE crove_meetings.meeting_result
+      ADD CONSTRAINT meeting_result_decisions_strings
+      CHECK (NOT pg_catalog.jsonb_path_exists(decisions, '$[*] ? (@.type() != "string")')) NOT VALID;
+  END IF;
+END
+$chk$;
+ALTER TABLE crove_meetings.meeting_result VALIDATE CONSTRAINT meeting_result_decisions_strings;
 
 CREATE OR REPLACE FUNCTION crove_meetings.personal_notice_items(p_kind text, p_value text)
 RETURNS TABLE (meeting_id uuid, recorder_user_id uuid, stamp bigint, key bytea)
