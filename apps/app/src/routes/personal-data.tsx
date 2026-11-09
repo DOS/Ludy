@@ -65,9 +65,9 @@ export function PersonalDataPage() {
   const notify = useMutation(orpc.org.personalDataNotify.mutationOptions());
   const privateItems = found.data?.privateItems ?? [];
   const hasPrivate = privateItems.length > 0;
-  // Meeting text is not erased by this step (the recorder or an owner deletes the meeting; #2594 part 2 redacts it): it does not enable the Erase button alone.
-  const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase' && !m.column.startsWith('crove_meetings.')) ?? false) || hasPrivate;
   const meetingText = found.data?.meetingText ?? [];
+  // Meeting text the owner reads is redacted in place by the erasure; the rest waits for the notice (#2594).
+  const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase') ?? false) || hasPrivate || meetingText.length > 0;
   const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate || meetingText.length > 0;
   const nameOf = (userId: string) => {
     const member = org.data?.members.find((m) => m.userId === userId);
@@ -75,6 +75,22 @@ export function PersonalDataPage() {
   };
   const items = (notes: number, todos: number) =>
     [notes > 0 ? t('privateNotes', { count: notes }) : null, todos > 0 ? t('privateTodos', { count: todos }) : null].filter(Boolean).join(` ${t('and')} `);
+
+  // The owner's notice to the authors of private items and the recorders of meetings (one action): shown once, in the first box that needs it.
+  const noticeControls = (
+    <>
+      {isOwner && !erase.data && (
+        <div className="flex flex-wrap items-center gap-2 pt-2">
+          <Button loading={notify.isPending} variant="outline" size="sm" disabled={notify.isPending || notify.isSuccess} onClick={() => notify.mutate({ value, idempotencyKey: noticeKey })}>
+            {t('notify')}
+          </Button>
+          {notify.data && <span className="text-xs text-foreground">{t('notified', { authors: notify.data.told })}</span>}
+          {notify.error && <ErrorText>{errorMessage(notify.error)}</ErrorText>}
+        </div>
+      )}
+      {isOwner && <p className="text-xs text-muted-foreground">{t('notifyHint')}</p>}
+    </>
+  );
 
   if (org.isLoading) return <PageSkeleton />;
   if (org.error) return <ErrorText>{errorMessage(org.error)}</ErrorText>;
@@ -177,16 +193,7 @@ export function PersonalDataPage() {
                 </p>
               ))}
               <p className="pt-1 text-xs text-muted-foreground">{t('privateHint')}</p>
-              {isOwner && !erase.data && (
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                  <Button loading={notify.isPending} variant="outline" size="sm" disabled={notify.isPending || notify.isSuccess} onClick={() => notify.mutate({ value, idempotencyKey: noticeKey })}>
-                    {t('notify')}
-                  </Button>
-                  {notify.data && <span className="text-xs text-foreground">{t('notified', { authors: notify.data.told })}</span>}
-                  {notify.error && <ErrorText>{errorMessage(notify.error)}</ErrorText>}
-                </div>
-              )}
-              {isOwner && <p className="text-xs text-muted-foreground">{t('notifyHint')}</p>}
+              {noticeControls}
             </div>
           )}
           {meetingText.length > 0 && (
@@ -198,6 +205,7 @@ export function PersonalDataPage() {
                 </p>
               ))}
               <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>
+              {privateItems.length === 0 && noticeControls}
             </div>
           )}
           {found.data.meetingTextSkipped && <p className="mb-2 text-sm text-warning">{t('meetingTextSkipped')}</p>}

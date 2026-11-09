@@ -295,8 +295,8 @@ suite('finding a person in the org (#923)', () => {
     expect(notice.told).toBe(2);
     expect(byAuthor(notice.authors)).toEqual(
       byAuthor([
-        { authorUserId: org.member, notes: 2, todos: 1 },
-        { authorUserId: org.admin, notes: 0, todos: 1 },
+        { authorUserId: org.member, notes: 2, todos: 1, meetings: 0 },
+        { authorUserId: org.admin, notes: 0, todos: 1, meetings: 0 },
       ]),
     );
     const audit = (
