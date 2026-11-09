@@ -162,6 +162,9 @@ suite('the recorder\'s transcription run (#2578)', () => {
     }
   }
   const sqlAdmin = (text: string, params: unknown[] = []) => admin((c) => c.query(text, params));
+  // An expired run needs both timestamps moved (CHECK expires_at > started_at); the member_vy 4-hour bound (#2856) forbids moving the start, so triggers are off for this one statement.
+  const expireRun = (runId: string) =>
+    admin((c) => c.query(`SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = '${orgId}' AND id = '${runId}'`));
 
   it('is executable by the worker login alone: every crove_ role, the trigger function included, gets a real 42501 except the worker on the audio door', async () => {
     const info = await admin((c) => c.query<{ definer: boolean; config: string[]; rettype: string }>(`SELECT prosecdef AS definer, proconfig AS config, prorettype::regtype::text AS rettype FROM pg_proc WHERE oid = '${FN}'::regprocedure`));
@@ -228,7 +231,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
     const cases: Array<{ name: string; mutate: () => Promise<unknown>; expected: string }> = [
       { name: 'succeeded', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
       { name: 'cancelled', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'TEST' WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
-      { name: 'expired', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
+      { name: 'expired', mutate: () => expireRun(runOf('extra')), expected: 'MEETINGS_RUN_REQUIRED' },
       { name: 'result failed', mutate: () => sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'failed', body = NULL, error_code = 'TEST' WHERE org_id = $1 AND run_id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
     ];
     for (const item of cases) {
@@ -254,7 +257,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
   it('refuses at the entry, with the runtime\'s own codes, a member who left, a revoked vy.use and an expired run', async () => {
     // The runtime's refusals before the definer is reached, each by its exact code: the former member's membership ends, and another member's run expires.
     await sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.former]);
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runs.other?.runId]);
+    await expireRun(runs.other?.runId as string);
     const enterError = async (who: string): Promise<string> => {
       const run = runs[who] as { agentId: string; runId: string };
       const c = new pg.Client({ connectionString: workerUrl });
