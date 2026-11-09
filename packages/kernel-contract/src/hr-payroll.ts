@@ -252,8 +252,8 @@ export const zHrCoworkerExplained = z.object({ ai: z.enum(HR_COWORKER_STATES), t
 export type HrCoworkerExplained = z.infer<typeof zHrCoworkerExplained>;
 
 // The bank bulk-salary file of an approved run (#2532, payroll plan 6.4): one row per person with the net pay, laid out for the bank's import. Ludy never initiates a payment: it hands the accountant a
-// file, and the accountant uploads it to the bank. A generic layout whose columns and order the person picks, and the bank's name typed at export (nothing is stored: no template table, so one person
-// can use it with no setup). The people's names and account numbers are in the file and in the query's answer (a sensitive read, audited before the sealed numbers are opened, fresh MFA); the audit row
+// file, and the accountant uploads it to the bank. A generic layout whose columns and order the person picks, cut by bank: one file holds the people whose record names the chosen bank (#2897), and a
+// run's people at other banks are in the other files. The people's names and account numbers are in the file and in the query's answer (a sensitive read, audited before the sealed numbers are opened, fresh MFA); the audit row
 // of the download holds counts only.
 export const HR_BANK_FILE_COLUMNS = ['seq', 'name', 'account', 'bank', 'amount', 'content'] as const;
 export type HrBankFileColumn = (typeof HR_BANK_FILE_COLUMNS)[number];
@@ -261,7 +261,8 @@ export type HrBankFileColumn = (typeof HR_BANK_FILE_COLUMNS)[number];
 export const HR_BANK_FILE_MAX_PEOPLE = 500;
 export const zHrBankFileQuery = z.strictObject({
   runId: zId,
-  // The bank the money goes to, as the bank's file names it; one bank per file.
+  // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
+  // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
   bankName: z.string().trim().min(1).max(60),
   columns: z
     .array(z.enum(HR_BANK_FILE_COLUMNS))
@@ -274,10 +275,14 @@ export type HrBankFileQuery = z.infer<typeof zHrBankFileQuery>;
 export interface HrBankFile {
   runId: string;
   month: string;
+  // The code of the bank this file is for (a bank of VN_BANKS); the rows are the people of the run at that bank, and the `bank` column of a row is that bank's short name from the list.
+  bankCode: string;
   columns: HrBankFileColumn[];
   rows: { seq: string; name: string; account: string; bank: string; amount: string; content: string }[];
-  // The total of the amounts, a decimal string.
+  // The total of this file's amounts, a decimal string. The whole run's total (every bank) equals the net pay frozen at approval, which the query checks before it answers.
   total: string;
+  // How many people of the run are paid at another bank and so are in another file: a count, never a name.
+  otherPeople: number;
 }
 // The audit command of a downloaded file: a count only, never a name, an account number or an amount. No row, no download.
 export const zHrBankFileExport = z.strictObject({ runId: zId, rows: z.number().int().min(1).max(HR_BANK_FILE_MAX_PEOPLE), columns: z.number().int().min(1).max(HR_BANK_FILE_COLUMNS.length) });
