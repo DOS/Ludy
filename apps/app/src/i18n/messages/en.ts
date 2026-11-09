@@ -9639,6 +9639,7 @@ export const en = {
         match_groups: 'List open bank lines in match groups',
         matched: 'List matched bank statement lines',
         open_lines: 'List unmatched bank statement lines',
+        payroll_match: 'List the payroll payments a money-out statement line may be',
         preview: 'Preview a bank statement',
         statement_confirm: 'Import a bank statement read from a file (sent by email or dropped in the Inbox)',
         statement_lines: 'See the lines of a bank statement read from a file before importing it',
@@ -9961,6 +9962,7 @@ export const en = {
           payslip: 'View an employee\'s payslip for the month',
         },
         payment: {
+          amounts: 'Read the amount of each payment of the approved pay months to match a statement line',
           prepare: 'Prepare the payment proposal for the net pay or a remittance of a posted pay month',
           verify: 'Rebuild what the pay run owes from the approved run to compare it when the payment is posted',
         },

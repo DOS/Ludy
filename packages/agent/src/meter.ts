@@ -51,6 +51,9 @@ export const AI_FEATURES = {
   'finance.payroll_prepare': 'finance',
   'finance.payroll_flag': 'finance',
   'finance.payroll_explain': 'finance',
+  // The finance coworker's one line on why a bank statement line may be a payroll payment (#2532): code decided by the amount, the model only words it from the kind, month, amount and date (no name, no
+  // description, no account); a line that states a figure it was not given is refused, and a person asks for the payment and approves it.
+  'finance.bank_match_explain': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.

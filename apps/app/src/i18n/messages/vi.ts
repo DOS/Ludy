@@ -9636,6 +9636,7 @@ export const vi = {
         match_groups: 'Xem các dòng sao kê chia theo nhóm khớp',
         matched: 'Xem các dòng sao kê đã khớp chứng từ',
         open_lines: 'Xem các dòng sao kê chưa đối chiếu',
+        payroll_match: 'Xem khoản chi lương mà một dòng sao kê chi ra có thể là',
         preview: 'Xem trước sao kê ngân hàng',
         statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Chứng từ chờ duyệt)',
         statement_lines: 'Xem các dòng của sao kê ngân hàng đọc từ tệp trước khi nhập',
@@ -9958,6 +9959,7 @@ export const vi = {
           payslip: 'Xem phiếu lương của một nhân viên trong tháng',
         },
         payment: {
+          amounts: 'Xem số tiền từng khoản chi lương của các tháng đã duyệt để đối chiếu dòng sao kê',
           prepare: 'Lập đề xuất chi lương hoặc nộp các khoản của một tháng đã hạch toán',
           verify: 'Dựng lại khoản phải chi từ bảng lương đã duyệt để đối chiếu khi ghi sổ',
         },

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
 import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
+import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 import {
@@ -96,6 +97,10 @@ export type ReminderGenerator = (args: { system: string; prompt: string }) => Pr
 const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
 });
+const zPayrollMatchOut = z.object({
+  sentence: z.string().describe('One plain sentence on why the bank line may be this payroll payment, citing only the facts given, each number and date written exactly as given'),
+});
+export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
 // The finance coworker on stock (#2514): the item a line is about, and the wording of a reorder message.
@@ -193,6 +198,7 @@ export class InboxReader {
   private readonly generateCompanyRank: CompanyRankGenerator;
   private readonly generateReminder: ReminderGenerator;
   private readonly generateOverview: OverviewGenerator;
+  private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
@@ -200,7 +206,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -240,6 +246,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.overview_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zOverviewOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generatePayrollMatch =
+      generators.payrollMatch ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.bank_match_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zPayrollMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -356,6 +370,14 @@ export class InboxReader {
     const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkOverviewSentence(facts, output);
+  }
+
+  /** The finance coworker's one line on why a bank statement line may be a payroll payment (#2532), from the kind, month, amount and date of the payment only, or why there is none: the text is
+   * refused when it states a number the facts do not hold, a link, or is empty, too long or more than one sentence (payroll-match.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async payrollMatchSentence(facts: PayrollMatchFacts, onUsage?: (usage: AiUsage) => void): Promise<PayrollMatchResult> {
+    const { output, usage } = await this.generatePayrollMatch({ system: payrollMatchInstructions(facts.language), prompt: payrollMatchPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkPayrollMatchSentence(facts, output);
   }
 
   /** The item each line is most likely about (#2514), in the order given: the index of the item in `items` and a one-line reason, or null for no suggestion. At most STOCK_MATCH_LINES_MAX lines
