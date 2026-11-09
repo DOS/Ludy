@@ -1526,9 +1526,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           await c.query("SAVEPOINT pin");
           const o = await outcome(c.query(sql, [...params]));
           await c.query("ROLLBACK TO SAVEPOINT pin");
-          expect(o.ok ? o.value.rowCount : o.code, why).toBe(
-            o.ok ? 0 : "42501",
-          );
+          // Extending its own run is refused by the guard (42501) or, once the 4-hour bound also holds on update (#2822), by the bound (23514);
+          // either way no row moves. The two-step rule: this accepts both before the change lands.
+          const refusals = why === "extending its own run" ? ["42501", "23514"] : ["42501"];
+          if (o.ok) expect(o.value.rowCount, why).toBe(0);
+          else expect(refusals, why).toContain(o.code);
         }
         await c.query("SAVEPOINT own_insert");
         const ownInsert = await outcome(
