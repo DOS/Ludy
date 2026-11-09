@@ -990,9 +990,15 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       (await update("expires_at = started_at + interval '3 hours'")).ok,
       "expires_at inside 4 hours",
     ).toBe(true);
+    expect(
+      (await update("expires_at = started_at + interval '4 hours'")).ok,
+      "expires_at at exactly 4 hours",
+    ).toBe(true);
     for (const [why, set] of [
       ["expires_at a day after the start", "expires_at = started_at + interval '1 day'"],
       ["the start moved a day back", "started_at = started_at - interval '1 day'"],
+      // Both moved a day forward (the new expiry is 3 hours after the new start): still counted from the original start.
+      ["both timestamps moved a day forward", "started_at = started_at + interval '1 day', expires_at = started_at + interval '1 day 3 hours'"],
     ] as const) {
       const refused = await update(set);
       // Before the clean-up migration the trigger watched agent_id alone; the bound is expected from it on.

@@ -214,6 +214,8 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       };
       expect(await askAs(switched(users.member), appUrl, users.member), 'a role-switched member about themselves').toBe(false);
       expect(await askAs(switched(users.owner), appUrl, users.member), 'a role-switched owner about a denied member').toBe(false);
+      expect(await askAs(switched(users.viewer), appUrl, users.viewer), 'a role-switched viewer about themselves').toBe(true);
+      expect(await askAs(switched(users.owner), appUrl, users.viewer), 'a role-switched owner about a granted viewer').toBe(true);
       for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
         await expect(askAs(switched(who), appUrl, about), 'a role-switched member asking about someone else').rejects.toMatchObject({ code: '42501' });
       }
