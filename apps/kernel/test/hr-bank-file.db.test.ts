@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The bank bulk-salary file of an approved pay run (#2532, payroll plan 6.4) on a real PostgreSQL 17, through the HTTP route as an owner reaches it:
-// - one row per person with the net pay, the account numbers opened only inside the audited sensitive query and only with a second factor used in the last 5 minutes;
+// - one row per person with the net pay, cut by bank (#2897): a file holds the people whose record names the chosen bank, the whole run's total is checked before any file, and a person with no bank refuses the export;
+// - the account numbers opened only inside the audited sensitive query and only with a second factor used in the last 5 minutes;
 // - the file is built whole or refused: a draft run, a person with no account number, a member and a viewer, a missing second factor, HEAD and a bad column list;
 // - a name that starts with = + - @ or a tab stays a string cell with the Text format and never becomes a formula;
 // - the headers: a safe ASCII filename, `private, no-store`, no account number in the URL; the audit rows hold counts only and no name, account number or amount.
@@ -47,12 +48,13 @@ class MemoryStore implements BlobStore {
 
 // Names that a spreadsheet program would read as a formula, and the account numbers (planted so they can be searched for).
 const TEAM = [
-  { name: '=HYPERLINK("http://evil.test","Nguyễn")', wage: '15000000', account: 'ACCT-KERNEL-1' },
-  { name: '+84 Trần Văn Hai', wage: '9000000', account: 'ACCT-KERNEL-2' },
-  { name: '-Lê Thu Cúc', wage: '30000000', account: 'ACCT-KERNEL-3' },
-  { name: '@Phạm Văn Đức', wage: '12000000', account: 'ACCT-KERNEL-4' },
+  { name: '=HYPERLINK("http://evil.test","Nguyễn")', wage: '15000000', account: 'ACCT-KERNEL-1', bank: 'VCB' },
+  { name: '+84 Trần Văn Hai', wage: '9000000', account: 'ACCT-KERNEL-2', bank: 'VCB' },
+  { name: '-Lê Thu Cúc', wage: '30000000', account: 'ACCT-KERNEL-3', bank: 'TCB' },
+  { name: '@Phạm Văn Đức', wage: '12000000', account: 'ACCT-KERNEL-4', bank: 'VCB' },
 ];
 const ACCOUNTS = TEAM.map((t) => t.account);
+const VCB_TEAM = TEAM.filter((t) => t.bank === 'VCB');
 
 suite('the bank salary file of a pay run (#2532)', () => {
   const dbName = `crove_test_bankfile_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -90,7 +92,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
       await c.end();
     }
   };
-  const url = (id: string, query = 'bank=Vietcombank') => `/api/payroll-bank-file/${id}.xlsx?${query}`;
+  const url = (id: string, query = 'bank=VCB') => `/api/payroll-bank-file/${id}.xlsx?${query}`;
 
   async function approvedRun(month: string, beforeApprove?: (runId: string) => Promise<void>) {
     for (const row of PAYROLL_RULES) (row as { status: string }).status = 'confirmed';
@@ -138,6 +140,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
       await exec<HrWritten>('hr.payroll.employee.add', {
         displayName: t.name,
         accountNumber: t.account,
+        bankCode: t.bank,
         employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: t.wage },
       });
     }
@@ -155,15 +158,15 @@ suite('the bank salary file of a pay run (#2532)', () => {
     await root.end();
   });
 
-  const fileOf = (columns?: string[]) => rt.query<HrBankFile>('hr.payroll.bank_file.get', { runId, bankName: 'Vietcombank', ...(columns ? { columns } : {}) }, { actor: asMfa(ownerId), orgId });
+  const fileOf = (columns?: string[], bank = 'VCB') => rt.query<HrBankFile>('hr.payroll.bank_file.get', { runId, bankName: bank, ...(columns ? { columns } : {}) }, { actor: asMfa(ownerId), orgId });
   const isXlsx = async (response: Response) => {
     const bytes = new Uint8Array(await response.arrayBuffer());
     // A zip package: the spreadsheet file, not an error body.
     return bytes.length > 100 && bytes[0] === 0x50 && bytes[1] === 0x4b;
   };
 
-  it('sends one row per person with the net pay, in the columns asked for, with safe headers and no account number in the URL', async () => {
-    const path = url(runId, 'bank=Vietcombank&columns=seq,name,account,bank,amount,content');
+  it('sends one row per person of the chosen bank with the net pay, in the columns asked for, with safe headers and no account number in the URL', async () => {
+    const path = url(runId, 'bank=VCB&columns=seq,name,account,bank,amount,content');
     for (const account of ACCOUNTS) expect(path).not.toContain(account);
     const response = await get(path);
     expect(response.status).toBe(200);
@@ -174,20 +177,26 @@ suite('the bank salary file of a pay run (#2532)', () => {
     expect(disposition).toMatch(/^attachment; filename="[A-Za-z0-9._-]+\.xlsx"; filename\*=UTF-8''[A-Za-z0-9._%-]+\.xlsx$/);
     expect(disposition).toContain('2026-03');
     expect(await isXlsx(response)).toBe(true);
-    // What the file holds (the same rows the workbook is built from): every account number once, the bank and the remark as typed, the amounts adding up to the run's net pay.
+    // What the file holds (the same rows the workbook is built from): the account numbers of the people at this bank, once each, the bank's short name from the list and the remark.
     const file = await fileOf(['seq', 'name', 'account', 'bank', 'amount', 'content']);
-    expect(file.rows.map((r) => r.account).sort()).toEqual([...ACCOUNTS].sort());
+    expect(file.rows.map((r) => r.account).sort()).toEqual(VCB_TEAM.map((t) => t.account).sort());
+    expect(file.bankCode).toBe('VCB');
     expect(new Set(file.rows.map((r) => r.bank))).toEqual(new Set(['Vietcombank']));
     expect(new Set(file.rows.map((r) => r.content))).toEqual(new Set(['Luong thang 03/2026']));
-    expect(file.rows.reduce((acc, r) => acc.plus(r.amount), money(0)).toFixed()).toBe(totalNet);
-    expect(file.total).toBe(totalNet);
-    expect(file.rows.map((r) => r.seq)).toEqual(['1', '2', '3', '4']);
+    expect(file.rows.reduce((acc, r) => acc.plus(r.amount), money(0)).toFixed()).toBe(file.total);
+    expect(file.rows.map((r) => r.seq)).toEqual(['1', '2', '3']);
+    expect(file.otherPeople).toBe(1);
     expect(file.columns).toEqual(['seq', 'name', 'account', 'bank', 'amount', 'content']);
+    // The other bank's file holds the others, and every bank's file together pays exactly what the run approved: nobody is lost or paid twice.
+    const other = await fileOf(undefined, 'TCB');
+    expect(other.rows.map((r) => r.account)).toEqual(['ACCT-KERNEL-3']);
+    expect(other.rows[0]?.bank).toBe('Techcombank');
+    expect(other.otherPeople).toBe(3);
+    expect(money(file.total).plus(other.total).toFixed()).toBe(totalNet);
   });
 
   it('carries a name that reads as a formula unchanged, to be written as a string cell (the workbook test holds the cell rules): no apostrophe is added to the data', async () => {
-    const file = await fileOf();
-    const names = file.rows.map((r) => r.name);
+    const names = [...(await fileOf()).rows, ...(await fileOf(undefined, 'TCB')).rows].map((r) => r.name);
     for (const t of TEAM) expect(names).toContain(t.name);
     expect(names.some((n) => n.startsWith("'"))).toBe(false);
   });
@@ -199,8 +208,12 @@ suite('the bank salary file of a pay run (#2532)', () => {
     expect((await get(url(runId, 'bank=VCB&columns=name,name'))).status).toBe(400);
     expect((await get(url(runId, 'bank=VCB&columns=password'))).status).toBe(400);
     expect((await get(url(runId, 'bank='))).status).toBe(400);
-    // A bank name that is nothing but control characters is no name.
-    expect((await get(url(runId, 'bank=%01%02'))).status).toBe(400);
+    // A bank is a code of the list, never free text: a typed name, a lower-case code and control characters are all refused with the same unknown-bank answer.
+    for (const typed of ['Vietcombank', 'vcb', '%01%02', 'ZZZZ']) {
+      const refused = await get(url(runId, `bank=${typed}`));
+      expect(refused.status, typed).toBe(422);
+      expect(JSON.stringify(await refused.json())).toContain('HR_BANK_UNKNOWN');
+    }
     expect((await get(`/api/payroll-bank-file/${runId}.csv?bank=VCB`)).status).toBe(404);
     expect((await rows<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId]))[0]?.n).toBe(before);
   });
@@ -242,9 +255,12 @@ suite('the bank salary file of a pay run (#2532)', () => {
     await rows(`ALTER TABLE crove_hr.payroll_run DISABLE TRIGGER frozen_row`);
     try {
       await rows(`UPDATE crove_hr.payroll_line SET net = net + 1000 WHERE org_id = $1 AND id = (SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [orgId, may.runId]);
-      const changed = await get(url(may.runId));
-      expect(changed.status).toBe(422);
-      expect(JSON.stringify(await changed.json())).toContain('HR_BANK_FILE_MISMATCH');
+      // The total of the whole run is checked, so every bank's file is refused, not only the bank of the person whose line changed.
+      for (const bank of ['VCB', 'TCB']) {
+        const changed = await get(url(may.runId, `bank=${bank}`));
+        expect(changed.status, bank).toBe(422);
+        expect(JSON.stringify(await changed.json())).toContain('HR_BANK_FILE_MISMATCH');
+      }
       // A run that is no longer approved (money moved, or closed) gives no second file to upload.
       await rows(`UPDATE crove_hr.payroll_run SET status = 'paid' WHERE org_id = $1 AND id = $2`, [orgId, may.runId]);
       expect((await get(url(may.runId))).status).toBe(409);
@@ -255,7 +271,33 @@ suite('the bank salary file of a pay run (#2532)', () => {
     // The audit rows of the refused requests are reads only: no download row was written for them.
     expect(await downloadCount()).toBe(before + 1);
     const downloads = await rows<{ rows: string }>(`SELECT detail->>'rows' AS rows FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId]);
-    expect(downloads.every((d) => d.rows === '4')).toBe(true);
+    expect(downloads.every((d) => d.rows === '3')).toBe(true);
+  });
+
+  it('refuses the whole export, with a count and no name, when a person has no bank, and a bank nobody of the run is paid at, and never writes a download row for either (#2897)', async () => {
+    const downloads = async () => (await rows(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId])).length;
+    const before = await downloads();
+    const [person] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 AND bank_code = 'VCB' ORDER BY id LIMIT 1`, [orgId]);
+    await exec('hr.payroll.employee.edit', { employeeId: person?.id, bankCode: null });
+    try {
+      // Whatever bank is asked for, the file is refused: a person of the run belongs to no file.
+      for (const bank of ['VCB', 'TCB']) {
+        const response = await get(url(runId, `bank=${bank}`));
+        expect(response.status, bank).toBe(422);
+        const problem = JSON.stringify(await response.json());
+        expect(problem).toContain('HR_BANK_CODE_MISSING');
+        // The message says how many (one person), never who.
+        expect(problem).toContain('1 người trong bảng lương chưa có ngân hàng');
+        for (const t of TEAM) expect(problem).not.toContain(t.name);
+      }
+    } finally {
+      await exec('hr.payroll.employee.edit', { employeeId: person?.id, bankCode: 'VCB' });
+    }
+    // A bank of the list that no one of the run is paid at: no file, said plainly.
+    const empty = await get(url(runId, 'bank=ACB'));
+    expect(empty.status).toBe(422);
+    expect(JSON.stringify(await empty.json())).toContain('HR_BANK_FILE_NO_PEOPLE');
+    expect(await downloads()).toBe(before);
   });
 
   it('refuses the whole file, with a count and no name, when a person has no account number, and holds a second factor for the query itself', async () => {
@@ -283,7 +325,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
       for (const t of TEAM) expect(text).not.toContain(t.name);
       expect(text).not.toContain(totalNet);
     }
-    expect(exported.every((a) => /"rows":\s*4/.test(a.detail))).toBe(true);
+    expect(exported.every((a) => /"rows":\s*3/.test(a.detail))).toBe(true);
     // The query's own answer is the file's data: the runtime does not hand it to anything but the caller.
     const file = await rt.query<HrBankFile>('hr.payroll.bank_file.get', { runId, bankName: 'VCB' }, { actor: asMfa(ownerId), orgId }).catch(() => null);
     expect(file === null || file.rows.length <= TEAM.length).toBe(true);
