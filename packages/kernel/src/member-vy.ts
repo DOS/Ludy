@@ -491,5 +491,45 @@ export const memberVyMeetingAudioOpen = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen];
+// The sweeps of a member's private Vy data (ADR-0049 decision 3, #2822), the system commands of the worker's daily member-vy-sweep job: results past
+// their expires_at, and a former member's results and memory. Both reach the rows only through definers that answer a count, never text; the audit
+// carries counts and ids. The worker finds the orgs and the users to ask about through crove_kernel.member_vy_results_due and member_vy_former_members_due.
+const EXPIRE_BATCH = 1000;
+// Batches one run removes at most (1,000 results each): the rest wait for the next night, so one org cannot hold the worker.
+const EXPIRE_MAX_BATCHES = 50;
+
+export const memberVyResultsExpire = defineCommand({
+  name: 'kernel.vy_data.results.expire',
+  input: z.strictObject({}),
+  risk: 'R3',
+  sideEffect: 'irreversible',
+  access: 'system',
+  handler: async (ctx): Promise<{ removed: number }> => {
+    let removed = 0;
+    for (let batch = 0; batch < EXPIRE_MAX_BATCHES; batch += 1) {
+      const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_results_expire(${EXPIRE_BATCH}::int) AS n`.execute(ctx.trx);
+      const n = Number(rows[0]?.n ?? 0);
+      removed += n;
+      if (n < EXPIRE_BATCH) break;
+    }
+    ctx.audit({ removed });
+    return { removed };
+  },
+});
+
+export const memberVyMemberDataPurge = defineCommand({
+  name: 'kernel.vy_data.member_data.purge',
+  input: z.strictObject({ userId: zId }),
+  risk: 'R3',
+  sideEffect: 'irreversible',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ removed: number }> => {
+    const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_member_data_purge(${ctx.orgId}::uuid, ${input.userId}::uuid) AS n`.execute(ctx.trx);
+    const removed = Number(rows[0]?.n ?? 0);
+    ctx.audit({ userId: input.userId, removed });
+    return { removed };
+  },
+});
+
+export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck];
