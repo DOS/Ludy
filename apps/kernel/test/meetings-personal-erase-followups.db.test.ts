@@ -112,18 +112,28 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     return false;
   };
 
-  // N2: the audio date of the answer is the earliest among all meetings that held the value, hidden ones included: the answer says so.
-  it('says that the audio retention date counts every meeting that held the value, those the owner cannot read included', async () => {
+  // N2: the audio date of the answer comes from the meetings the owner reads; a hidden meeting is only counted, so its date does not show.
+  it('gives the audio retention date of readable meetings only and counts the hidden ones', async () => {
     const value = 'khach.cu@congty.example';
+    const audioOf = async (meetingId: string, date: string) => {
+      await sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meetingId, date]);
+      const fileId = randomUUID();
+      const sha = randomUUID().replaceAll('-', '').repeat(2);
+      await sqlAdmin(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, fileId, sha, `org/${orgId}/${sha}`]);
+      await sqlAdmin(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), meetingId, fileId]);
+    };
     const hidden = await meeting('recorder', 'Họp kín có ghi âm', 'attendees', ['attendee']);
     await segment(hidden, `Gửi ${value}`, 'published');
-    const fileId = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, fileId, 'b'.repeat(64), `org/${orgId}/${'b'.repeat(64)}`]);
-    await sqlAdmin(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), hidden, fileId]);
+    await audioOf(hidden, '2027-01-02');
+    const shared = await meeting('recorder', 'Họp chung có ghi âm', 'org');
+    await segment(shared, `Gửi ${value}`, 'published');
+    await audioOf(shared, '2027-06-30');
     const out = await erase(value);
     const audio = out.kept.find((k) => k.column === 'crove_meetings.audio');
-    expect(audio?.rows).toBe(1);
-    expect(audio?.reason).toMatch(/those the owner cannot read included/);
+    expect(audio?.rows).toBe(2);
+    expect(audio?.reason).toContain('2027-06-30');
+    expect(audio?.reason).not.toContain('2027-01-02');
+    expect(audio?.reason).toMatch(/1 more held in meetings the owner cannot read/);
   });
 
   // N3: the notice's notification is stamped by the database clock, so the 24 hours the erasure waits are the database's, whatever the kernel's clock says.
@@ -153,7 +163,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
   it('refuses decision elements that are not strings and redacts the strings', async () => {
     const value = '12345678';
     const shared = await meeting('recorder', 'Họp quyết định lẫn kiểu', 'org');
-    for (const bad of [[12345678], [{ gia: 12345678 }], [true], [null], ['ok', 7]]) {
+    for (const bad of [[12345678], [{ gia: 12345678 }], [true], [null], ['ok', 7], [['x']], [[]]]) {
       await expect(result(shared, 'Tóm tắt', bad as unknown as string[], 'published')).rejects.toMatchObject({ code: '23514' });
     }
     const summary = await result(shared, 'Tóm tắt', ['Giữ giá', `Gọi ${value} nhé`], 'published');
