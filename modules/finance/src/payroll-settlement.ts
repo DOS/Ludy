@@ -11,8 +11,9 @@ import {
   type PayrollSettlement,
 } from '@crove/kernel-contract';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
-import { latestRevision } from './source-entry.ts';
+import { latestRevision, reversedSource } from './source-entry.ts';
 
 type Posting = PayrollSettlement['posting'];
 
@@ -59,11 +60,13 @@ export const payrollSettlement = defineQuery({
   access: ['owner', 'admin'] as const,
   handler: async (ctx, { runId }): Promise<PayrollSettlement> => {
     const posting = await postingOf(ctx, runId);
+    // A payment voucher that was reversed no longer counts as recorded: its kind is free again and the card offers the step (#2854).
     const recorded = await ctx.trx
-      .selectFrom('crove_finance.cash_voucher')
-      .select('payroll_payment_kind')
-      .where('org_id', '=', ctx.orgId)
-      .where('payroll_run_id', '=', runId)
+      .selectFrom('crove_finance.cash_voucher as v')
+      .select('v.payroll_payment_kind')
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.payroll_run_id', '=', runId)
+      .where(sql<boolean>`NOT ${reversedSource('v', VOUCHER_SOURCE)}`)
       .execute();
     const done = new Set(recorded.map((v) => v.payroll_payment_kind));
     const open = await openProposals(ctx, PAYROLL_PAYMENT_COMMAND, runId);

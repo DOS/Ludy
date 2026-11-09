@@ -8785,6 +8785,7 @@ export const vi = {
       MARKETPLACE_SETTLEMENT_NOT_POSTABLE: 'Kỳ đối soát của sàn không lập được bút toán (doanh thu ròng không dương hoặc bút toán không hợp lệ)',
       HR_PAYMENT_NEGATIVE: 'Khoản này âm sau các điều chỉnh của tháng (phải hoàn lại) nên chưa ghi chi được ở đây; kế toán xử lý riêng',
       HR_PAYMENT_NOT_POSTED: 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản',
+      HR_PAYMENT_POSTING_REVERSED: 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được',
       HR_PAYMENT_DONE: 'Khoản này của bảng lương đã được chi',
       HR_PAYMENT_OPEN: 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt',
       HR_PAYMENT_NOTHING_DUE: 'Bảng lương này không có khoản này để chi',
