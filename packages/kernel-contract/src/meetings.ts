@@ -172,7 +172,7 @@ export const zMeetingSettingsGet = z.strictObject({});
 // System commands of the nightly retention and the shred replay (worker only).
 export const zMeetingRetentionShred = z.strictObject({
   meetingId: zId,
-  kind: z.enum(['audio', 'video', 'text']),
+  kind: z.enum(['audio', 'video', 'text', 'draft']),
 });
 export type MeetingRetentionShred = z.infer<typeof zMeetingRetentionShred>;
 

@@ -20,6 +20,7 @@ import { PAYROLL_POSTING_MAPS, PAYROLL_RULES } from '@crove/l10n-vn';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { hrCommands, hrQueries } from '@crove/mod-hr';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { contextToken } from './fixtures/context-token.ts';
 
 // Every rule of the shipped set, and every account map of the posting, is `commentary` until the accountant confirms it (#2535), so a real approval or posting cannot pass yet: the tests confirm the
 // rows for themselves (see hr-payroll-run), and one test leaves the maps as shipped to show the posting is refused.
@@ -168,34 +169,28 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
       [o.orgId, runId, kind],
     );
 
-  it('lets only an owner or an admin approve a payment: a member holding the approval permission is told so, and the proposal stays pending with nothing recorded', async () => {
+  it('lets a member holding the approval permission approve a payment from the run\'s totals, and refuses a member without it and a viewer, nothing recorded for them (#2751)', async () => {
     const o = await org('tt133', 'trio');
     const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
+    const viewer = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `viewer-${randomUUID()}`, email: `viewer-${randomUUID().slice(0, 6)}@hr.test`, name: null });
     await withAdmin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [o.orgId, chief, viewer]);
       await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
     });
     const { runId } = await postedRun(o, 'trio');
     const { proposalId } = await pay(o, runId, 'tax', {}, o.admin);
-    // A dated allowance for #2751 (the verification of a payment from the run's totals, so a member chief accountant can approve): until it lands, either outcome is accepted for the chief accountant:
-    // refused with HR_POSTING_APPROVER_ROLE and the proposal still pending with nothing recorded, or approved with one voucher. The step-two change of #2751 pins the approval and removes this
-    // allowance; it expires with that PR and, failing that, fails on 2026-12-24.
-    expect(Date.now(), 'the allowance of #2751 for the chief accountant of a payment has expired: pin the approval').toBeLessThan(Date.parse('2026-12-24T00:00:00Z'));
-    const outcome = await approve(o, proposalId, chief).then(
-      () => 'approved' as const,
-      (error: unknown) => {
-        expect(error).toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403 });
-        return 'refused' as const;
-      },
-    );
-    const status = (await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status;
-    if (outcome === 'refused') {
-      expect(status).toBe('pending');
-      expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
-    } else {
-      expect(status).toBe('executed');
-      expect(await voucherOf(o, runId, 'tax')).toHaveLength(1);
-    }
+    // A plain member and a viewer cannot approve, and the verification of the payment refuses them whatever the approval policy says.
+    await expect(approve(o, proposalId, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(approve(o, proposalId, viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(o.exec(o.member, 'hr.payroll.payment.verify', { runId, kind: 'tax' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(o.exec(viewer, 'hr.payroll.payment.verify', { runId, kind: 'tax' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    // The chief holds the approval permission: the verification reads the totals by cost department, no person, and they approve.
+    const verified = await o.exec<{ lines: unknown[]; total: string }>(chief, 'hr.payroll.payment.verify', { runId, kind: 'tax' });
+    expect(Object.keys(verified).sort()).toEqual(['approvedBy', 'cashLarge', 'kind', 'legalEntityId', 'lines', 'month', 'regime', 'runId', 'total']);
+    expect(JSON.stringify(verified)).not.toMatch(/canary/i);
+    await expect(approve(o, proposalId, chief)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(1);
   });
 
   it('holds the approver of the run back as a co-author of its payment, and refuses a stored proposal that lost the co-author', async () => {
@@ -228,6 +223,145 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{checks}', '[]'::jsonb) WHERE org_id = $1 AND id = $2`, [o.orgId, cash.proposalId]);
     await expect(approve(o, cash.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'checks' } });
     expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
+  });
+
+  // The totals function called directly in a user's (or the system's) context as the real login roles, so its own gate is exercised, not only the command's.
+  const callTotals = async (who: { kind: 'user'; userId: string } | { kind: 'system' }, orgId: string, runId: string) => {
+    const url = new URL(adminUrl);
+    url.username = who.kind === 'user' ? 'crove_app' : 'crove_worker';
+    url.password = who.kind === 'user' ? 'test-app-pw' : 'test-worker-pw';
+    const c = new pg.Client({ connectionString: url.toString() });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      if (who.kind === 'user') await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
+      else await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      const { rows } = await c.query<{ totals: Record<string, unknown> | null }>('SELECT crove_hr.payroll_run_totals($1::uuid) AS totals', [runId]);
+      return { ok: true as const, totals: rows[0]?.totals ?? null };
+    } catch (error) {
+      return { ok: false as const, code: (error as { code?: string }).code };
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  };
+
+  it('answers the totals function to an owner, an admin and a member holding the approval permission only, with totals by cost department and no person (#2751)', async () => {
+    const o = await org('tt133', 'trio');
+    const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
+    const viewer = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `viewer-${randomUUID()}`, email: `viewer-${randomUUID().slice(0, 6)}@hr.test`, name: null });
+    await withAdmin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [o.orgId, chief, viewer]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
+    });
+    const { runId } = await postedRun(o, 'trio');
+    for (const [label, userId] of [['owner', o.owner], ['admin', o.admin], ['chief accountant', chief]] as const) {
+      const answer = await callTotals({ kind: 'user', userId }, o.orgId, runId);
+      expect(answer.ok, label).toBe(true);
+      const totals = (answer as { totals: Record<string, unknown> | null }).totals;
+      expect(Object.keys(totals ?? {}).sort(), label).toEqual(['approvalTotals', 'approvedBy', 'counts', 'groups', 'legalEntityId', 'month', 'runId', 'status']);
+      // By cost department: no name, no employee or line id anywhere in the answer.
+      expect(JSON.stringify(totals), label).not.toMatch(/canary|employee_?id|line_?id/i);
+      const groups = (totals?.groups ?? []) as { payFunction: string }[];
+      expect(groups.map((g) => g.payFunction).sort(), label).toEqual(['admin', 'production', 'sales']);
+    }
+    // A plain member, a viewer and the system context are refused by the function itself.
+    expect(await callTotals({ kind: 'user', userId: o.member }, o.orgId, runId)).toEqual({ ok: false, code: '42501' });
+    expect(await callTotals({ kind: 'user', userId: viewer }, o.orgId, runId)).toEqual({ ok: false, code: '42501' });
+    expect(await callTotals({ kind: 'system' }, o.orgId, runId)).toMatchObject({ ok: false });
+  });
+
+  it('shows another org\'s run to nobody, and a draft run only as its status: no figure before approval (#2751)', async () => {
+    const a = await org('tt133', 'solo');
+    const b = await org('tt133', 'solo');
+    const { runId } = await approvedRun(a);
+    // The owner of another org asks for this run: it is not theirs, so the answer is nothing.
+    expect(await callTotals({ kind: 'user', userId: b.owner }, b.orgId, runId)).toEqual({ ok: true, totals: null });
+    const draft = await a.exec<HrRunWritten>(a.owner, 'hr.payroll.run.open', { month: '2026-02' });
+    const answer = await callTotals({ kind: 'user', userId: a.owner }, a.orgId, draft.runId as string);
+    expect(answer).toEqual({ ok: true, totals: { runId: draft.runId, status: 'draft' } });
+  });
+
+  // Two lines of one cost department, each wrong by an opposite amount: the department's total is right, so only a per-line check can see it. Written by staff with the frozen-run guard off for the
+  // moment (an approved run is frozen against every tenant role), as a database corruption or a forged row would be.
+  async function tamperTwoLines(o: Org, runId: string, how: 'net' | 'funds') {
+    await withAdmin(async (c) => {
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      try {
+        const { rows } = await c.query<{ id: string }>(
+          `SELECT l.id FROM crove_hr.payroll_line l JOIN crove_hr.payroll_employment e ON e.org_id = l.org_id AND e.id = l.employment_id
+            WHERE l.org_id = $1 AND l.run_id = $2 AND e.pay_function = 'admin' ORDER BY l.id LIMIT 2`,
+          [o.orgId, runId],
+        );
+        expect(rows).toHaveLength(2);
+        const [up, down] = rows as [{ id: string }, { id: string }];
+        if (how === 'net') {
+          await c.query('UPDATE crove_hr.payroll_line SET net = net + 1000 WHERE org_id = $1 AND id = $2', [o.orgId, up.id]);
+          await c.query('UPDATE crove_hr.payroll_line SET net = net - 1000 WHERE org_id = $1 AND id = $2', [o.orgId, down.id]);
+        } else {
+          // The first fund of each line moves by 1000 in opposite directions: each line's split no longer adds to its own insurance.
+          await c.query(
+            `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', to_jsonb((((breakdown #>> '{insurance,funds,0,employee}')::numeric) + 1000)::text)) WHERE org_id = $1 AND id = $2`,
+            [o.orgId, up.id],
+          );
+          await c.query(
+            `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', to_jsonb((((breakdown #>> '{insurance,funds,0,employee}')::numeric) - 1000)::text)) WHERE org_id = $1 AND id = $2`,
+            [o.orgId, down.id],
+          );
+        }
+      } finally {
+        await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      }
+    });
+  }
+
+  it('refuses a run whose lines are wrong by opposite amounts in one department: the sums agree, the per-line count does not, and neither the verification nor the payment record passes (#2751)', async () => {
+    for (const how of ['net', 'funds'] as const) {
+      const o = await org('tt133', 'solo');
+      // A second person of the same cost department (admin), so two lines can cancel in its total.
+      await o.exec(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Phạm Văn Hai Canary',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '12000000' },
+      });
+      const { runId } = await postedRun(o);
+      const verifiedBefore = await o.exec<{ lines: unknown[] }>(o.owner, 'hr.payroll.posting.verify', { runId });
+      expect(verifiedBefore.lines.length, how).toBeGreaterThan(0);
+      const { proposalId } = await pay(o, runId, 'tax');
+      await tamperTwoLines(o, runId, how);
+      // The department's totals are unchanged by the two opposite errors; the database counts the broken lines, so the verification and the payment verification refuse.
+      await expect(o.exec(o.owner, 'hr.payroll.posting.verify', { runId }), how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'toàn vẹn dòng lương' } });
+      await expect(o.exec(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'tax' }), how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'toàn vẹn dòng lương' } });
+      // A payment proposal asked for before the tampering cannot be approved after it, and nothing is recorded.
+      await expect(approve(o, proposalId), how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+      expect(await voucherOf(o, runId, 'tax'), how).toHaveLength(0);
+    }
+  });
+
+  // A breakdown with a missing key reads as NULL in SQL, and NULL must count as malformed, never as well formed: the run is refused as a missing list, not passed over.
+  it('refuses a run with a line whose breakdown lost a deduction key or a fund\'s employee amount: the counts see it, both verifications and the payment record refuse, nothing recorded (#2751)', async () => {
+    const cases = [
+      { how: 'deductions', sql: `UPDATE crove_hr.payroll_line SET breakdown = breakdown #- '{deductions,damage}' WHERE org_id = $1 AND id = $2`, what: 'thiếu các khoản khấu trừ' },
+      { how: 'fund', sql: `UPDATE crove_hr.payroll_line SET breakdown = breakdown #- '{insurance,funds,0,employee}' WHERE org_id = $1 AND id = $2`, what: 'thiếu chi tiết bảo hiểm' },
+    ] as const;
+    for (const c of cases) {
+      const o = await org('tt133', 'solo');
+      const { runId } = await postedRun(o);
+      const { proposalId } = await pay(o, runId, 'tax');
+      await withAdmin(async (db) => {
+        await db.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+        try {
+          const { rows } = await db.query<{ id: string }>(`SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 AND kind = 'pay' ORDER BY id LIMIT 1`, [o.orgId, runId]);
+          expect(rows, c.how).toHaveLength(1);
+          await db.query(c.sql, [o.orgId, (rows[0] as { id: string }).id]);
+        } finally {
+          await db.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+        }
+      });
+      await expect(o.exec(o.owner, 'hr.payroll.posting.verify', { runId }), c.how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: c.what } });
+      await expect(o.exec(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'tax' }), c.how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: c.what } });
+      await expect(approve(o, proposalId), c.how).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+      expect(await voucherOf(o, runId, 'tax'), c.how).toHaveLength(0);
+    }
   });
 
   it('holds one voucher per run and kind in the table: a run needs a kind, a proposal and a payment type, and a second of the same kind is refused', async () => {

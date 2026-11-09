@@ -38,6 +38,7 @@ export const financeManifest = defineModule({
       journal_voucher: columns(['org_id', 'id', 'number', 'voucher_date', 'proposal_id', 'created_by', 'created_at', 'closing_year', 'stock_closing_month', 'stock_count_id', 'payroll_run_id', 'legal_entity_id', 'number_period', 'number_allocation_id'], { description: 'pii' }),
       legal_entity_books: columns(['org_id', 'id', 'legal_entity_id', 'regime', 'chart_version', 'effective_from', 'created_by', 'created_at']),
       marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at']),
+      marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
       misa_goods_code: columns(['org_id', 'id', 'account_code', 'item_code', 'warehouse_code', 'updated_by', 'updated_at']),
       org_account: columns(['org_id', 'id', 'code', 'name', 'parent_code', 'root_code', 'active', 'created_by', 'created_at', 'updated_by', 'updated_at']),
       period_balance_delta: columns(['org_id', 'id', 'entry_id', 'account_code', 'period_month', 'debit', 'credit', 'line_count', 'legal_entity_id']),

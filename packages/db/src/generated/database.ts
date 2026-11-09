@@ -74,6 +74,7 @@ export interface CroveFinanceSchema {
   'crove_finance.journal_voucher': FinanceJournalVoucherTable;
   'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
+  'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
   'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
@@ -1225,6 +1226,17 @@ export interface FinanceMarketplaceConnectionTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_finance.marketplace_party */
+export interface FinanceMarketplacePartyTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.misa_goods_code */
 export interface FinanceMisaGoodsCodeTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1580,6 +1592,7 @@ export interface HrPayrollEmployeeTable {
   tax_code_sealed: string | null;
   insurance_number_sealed: string | null;
   finalization_authorized_years: Generated<number[]>;
+  bank_code: string | null;
 }
 
 /** crove_hr.payroll_employment */

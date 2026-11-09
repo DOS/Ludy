@@ -66,7 +66,12 @@ function useLine() {
       case 'kernel.ai_budget':
         return n.detail.level === 'stop' ? t('text.ai_budget_stop') : t('text.ai_budget_warn', { percent: n.detail.percent ?? '' });
       case 'kernel.personal_data_notice':
-        return t('text.personal_data_notice', { items: privateItems(Number(n.detail.notes ?? 0), Number(n.detail.todos ?? 0)) });
+        return [
+          Number(n.detail.notes ?? 0) + Number(n.detail.todos ?? 0) > 0 ? t('text.personal_data_notice', { items: privateItems(Number(n.detail.notes ?? 0), Number(n.detail.todos ?? 0)) }) : null,
+          Number(n.detail.meetings ?? 0) > 0 ? t('text.personal_data_notice_meetings', { count: Number(n.detail.meetings) }) : null,
+        ]
+          .filter(Boolean)
+          .join(' ');
       default:
         return t('text.other');
     }
