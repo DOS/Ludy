@@ -647,6 +647,8 @@ export const KERNEL_ERROR_CODES = [
   'JOURNAL_VOUCHER_INVALID',
   // The personal-data finder (#923).
   'PERSONAL_DATA_QUERY',
+  // A meeting being edited while the erasure ran (#2917).
+  'PERSONAL_DATA_BUSY',
   // The notice to the authors of private items before an erasure (#1678).
   'PERSONAL_DATA_NOTICE_TOO_MANY',
   // Year-end closing (#889).
