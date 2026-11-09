@@ -17,10 +17,11 @@ BEGIN
     IF NEW.agent_id IS DISTINCT FROM OLD.agent_id THEN
       RAISE EXCEPTION 'MEMBER_VY_RUN_BINDING' USING ERRCODE = '42501';
     END IF;
-    -- Moving either timestamp of a member_vy run keeps the 4-hour bound (a later UPDATE of expires_at cannot stretch a run).
+    -- A member_vy run keeps the 4-hour bound counted from its ORIGINAL start: the start never moves, and the expiry never goes past it plus 4
+    -- hours (moving both timestamps forward would otherwise stretch the run).
     IF (NEW.expires_at IS DISTINCT FROM OLD.expires_at OR NEW.started_at IS DISTINCT FROM OLD.started_at)
        AND EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id = NEW.org_id AND a.id = NEW.agent_id AND a.kind = 'member_vy')
-       AND NEW.expires_at > NEW.started_at + interval '4 hours' THEN
+       AND (NEW.started_at IS DISTINCT FROM OLD.started_at OR NEW.expires_at > OLD.started_at + interval '4 hours') THEN
       RAISE EXCEPTION 'MEMBER_VY_RUN_EXPIRY' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
