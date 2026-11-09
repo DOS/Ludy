@@ -21,7 +21,7 @@ const monthEnd = (month: string): string => {
 };
 export const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
 const incompleteAdjustment = () =>
-  new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh làm trước khi có chi tiết bộ phận và quỹ bảo hiểm; hãy xóa và nhập lại dòng đó rồi mới hạch toán được');
+  new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh làm trước khi ghi nhận bộ phận và các quỹ bảo hiểm nên chưa hạch toán được tháng này');
 const mismatch = (what: string) => new DomainError('HR_POSTING_MISMATCH', 422, `Số liệu của bảng lương không khớp (${what}); không lập được bút toán`, { what });
 
 interface StoredFund {
@@ -52,6 +52,8 @@ export interface BuiltPosting {
   regime: PayrollRegime;
   result: ReturnType<typeof buildPosting>;
   lines: number;
+  // How many correction lines the run carries: the payment of such a run is not offered yet (the next change), so the payment commands refuse it.
+  adjustments: number;
   // The net pay of each frozen pay line, in whole dong and in no order: what the payment of the net pay counts against the cash limit, without a name or a line id. A correction is a difference, not a
   // person's pay, so it is not counted here (the database counts the same lines in `cashLarge`).
   nets: string[];
@@ -159,7 +161,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   });
 
   const { date, regime, result } = await finishPosting(ctx, run, lines, stored.some((l) => l.kind !== 'pay'));
-  return { payrollRun: run, date, regime, result, lines: stored.length, nets: stored.filter((l) => l.kind === 'pay').map((l) => String(l.net)) };
+  return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: stored.filter((l) => l.kind === 'pay').map((l) => String(l.net)) };
 }
 
 // The same entry rebuilt from the run's totals by cost department (crove_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
@@ -172,6 +174,8 @@ export interface BuiltTotals {
   result: ReturnType<typeof buildPosting>;
   // How many people's net pay is at the cash limit or above: a number only.
   cashLarge: number;
+  // How many correction lines the run carries (a count, never a line): see BuiltPosting.
+  adjustments: number;
 }
 interface StoredGroup {
   payFunction: string;
@@ -223,7 +227,7 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
   });
   const run = { id: t.runId, legal_entity_id: t.legalEntityId, month: t.month, approved_by: t.approvedBy, approval: { totals: t.approvalTotals } };
   const { date, regime, result } = await finishPosting(ctx, run, lines, (c.adjustments ?? 0) > 0);
-  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, result, cashLarge: c.cashLarge ?? 0 };
+  return { payrollRun: { id: run.id, legal_entity_id: run.legal_entity_id, month: run.month, approved_by: run.approved_by }, date, regime, result, cashLarge: c.cashLarge ?? 0, adjustments: c.adjustments ?? 0 };
 }
 
 export const prepareRunPosting = defineCommand({

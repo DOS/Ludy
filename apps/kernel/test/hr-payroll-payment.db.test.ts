@@ -361,6 +361,18 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
+  it('does not offer the payment of a month that carries a correction yet: asking for it is refused', async () => {
+    const o = await org('tt133', 'solo');
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const march = await approvedRun(o);
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Điều chỉnh', gross: '500000', pit: '25000' });
+    });
+    const { proposalId } = await ask(o, april.runId, o.owner);
+    await approve(o, proposalId, o.owner);
+    await expect(pay(o, april.runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_ADJUSTMENTS' });
+  });
+
   it('counts the person who approved the run as a co-author of its payment, and refuses a stored proposal that lost it', async () => {
     const o = await org('tt133', 'trio');
     const { runId } = await postedRun(o, 'trio');

@@ -301,6 +301,10 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const lines = await entry(o, done.journalEntryId);
     // The entry equals the run's totals as approved, adjustments included: 334 carries the net of the month (pay lines and the correction), and the entry is dated in April, not March.
     expect(lines['334']).toBe(`Cr ${money(sheet.totals.net).toFixed(0)}`);
+    // The tax and the insurance payables carry the month's totals with the correction in them (a positive correction adds to each payable).
+    expect(lines['3335']).toBe(`Cr ${money(sheet.totals.pit).toFixed(0)}`);
+    const insurancePayable = ['3383', '3384', '3385'].reduce((sum, account) => sum.plus((lines[account] ?? 'Cr 0').slice(3)), money(0));
+    expect(insurancePayable.toFixed(0)).toBe(money(sheet.totals.employeeInsurance).plus(sheet.totals.employerInsurance).toFixed(0));
     const [voucher] = await rows<{ voucher_date: string }>('SELECT to_char(voucher_date, \'YYYY-MM-DD\') AS voucher_date FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, april.runId]);
     expect(voucher?.voucher_date).toBe('2026-04-30');
     const monthOnly = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: march.runId });
@@ -318,6 +322,8 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const mayLines = await entry(o, posted.journalEntryId);
     const maySheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: may.runId });
     expect(mayLines['334']).toBe(`Cr ${money(maySheet.totals.net).toFixed(0)}`);
+    expect(mayLines['3335']).toBe(`Cr ${money(maySheet.totals.pit).toFixed(0)}`);
+    expect(['3383', '3384', '3385'].reduce((sum, account) => sum.plus((mayLines[account] ?? 'Cr 0').slice(3)), money(0)).toFixed(0)).toBe(money(maySheet.totals.employeeInsurance).plus(maySheet.totals.employerInsurance).toFixed(0));
     expect(money(maySheet.totals.gross).lessThan(money(monthOnly.totals.gross))).toBe(true);
   });
 
@@ -337,7 +343,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
       await c.query('BEGIN');
       await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
       await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND employee_id = $3 AND kind = 'pay'`, [o.orgId, march.runId, employeeId]);
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
       await c.query('COMMIT');
     });
     await expect(o.exec(o.owner, 'hr.payroll.line.adjust', { ...base })).rejects.toMatchObject({ code: 'HR_ADJUST_NO_TERMS' });
@@ -350,6 +356,22 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
       await rows(`UPDATE crove_hr.payroll_line SET employment_id = NULL, breakdown = NULL WHERE org_id = $1 AND run_id = $2 AND kind = 'adjustment'`, [o2.orgId, runId]);
     });
     await expect(ask(o2, april2.runId)).rejects.toMatchObject({ code: 'HR_POSTING_ADJUSTMENTS' });
+    // The same through the verification from the totals (what approving rebuilds): a request made while the correction was whole, whose line then loses its terms and split, is refused at the approval.
+    const o3 = await org();
+    const employee3 = await firstEmployee(o3);
+    const march3 = await approvedRun(o3);
+    const april3 = await approvedRun(o3, '2026-04', async (runId) => {
+      await o3.exec(o3.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march3.runId, employeeId: employee3, note: 'Điều chỉnh', gross: '500000', pit: '25000' });
+    });
+    const asked3 = await ask(o3, april3.runId);
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL, breakdown = NULL WHERE org_id = $1 AND run_id = $2 AND kind = 'adjustment'`, [o3.orgId, april3.runId]);
+      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('COMMIT');
+    });
+    await expect(approve(o3, asked3.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_ADJUSTMENTS' });
   });
 
   it('refuses a stored line that has no employment on record, and never reads it as administration', async () => {
@@ -360,7 +382,7 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
       await c.query('BEGIN');
       await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
       await c.query(`UPDATE crove_hr.payroll_line SET employment_id = NULL WHERE org_id = $1 AND run_id = $2 AND id = (SELECT id FROM crove_hr.payroll_line WHERE org_id = $1 AND run_id = $2 ORDER BY id LIMIT 1)`, [o.orgId, march.runId]);
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
       await c.query('COMMIT');
     });
     await expect(ask(o, march.runId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });

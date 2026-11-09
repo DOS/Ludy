@@ -577,6 +577,23 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(doc.notes.join(' ')).toContain('chưa có mã số thuế riêng');
   });
 
+  it('(declarations, #2533) reads a quarter that holds a correction made with the split of its insurance across the funds, and says its assessable income is not complete', async () => {
+    const { o, an, get } = await declarationOrg();
+    setRuleStatus('confirmed');
+    // A correction of July carried by an October run that is then approved: the correction keeps the split of its insurance for the posting, but no tax detail, and the declaration reads it as one with none.
+    const july = await withAdmin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_hr.payroll_run WHERE org_id = $1 AND month = '2026-07'`, [o.orgId])).rows[0]?.id as string);
+    const october = await o.open('2026-10');
+    await o.exec(o.owner, 'hr.payroll.line.adjust', {
+      runId: october.runId, adjustsRunId: july, employeeId: an.employeeId, note: 'Tính thiếu tiền làm thêm giờ', gross: '500000', pit: '25000',
+      employeeInsurance: '52500', employerInsurance: '0', funds: [{ fund: 'retirement_death', employee: '40000', employer: '0' }, { fund: 'health', employee: '7500', employer: '0' }, { fund: 'unemployment', employee: '5000', employer: '0' }],
+    });
+    await o.approve(october.runId, (await o.sheet(october.runId)).fingerprint, { acceptFlags: true });
+    setRuleStatus('commentary');
+    const doc = await get(o.owner, 'kk', '2026-Q4');
+    expect(doc.used.months).toContain('2026-10');
+    expect(doc.notes.join(' ')).toMatch(/điều chỉnh|chưa đầy đủ|không đầy đủ/i);
+  });
+
   it('(declarations, #2533) lists the month of the D02-LT, the annual data of an authorizer and the certificates by the rules', async () => {
     const { o, get } = await declarationOrg();
     const d02 = await get(o.owner, 'd02lt', '2026-08');
