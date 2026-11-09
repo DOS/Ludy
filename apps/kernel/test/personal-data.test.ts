@@ -84,8 +84,18 @@ describe('personal-data registry: meetings (#2578)', () => {
     expect(PERSONAL_DATA_SCHEMAS).toContain('crove_meetings');
     expect(personal).toEqual(expect.arrayContaining(['crove_meetings.meeting.title', 'crove_meetings.transcript_segment.text', 'crove_meetings.transcript_segment.speaker_label']));
     expect(personal.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING)), 'register these in PERSONAL_DATA_COLUMNS').toEqual([]);
-    for (const key of ['crove_meetings.transcript_segment.text', 'crove_meetings.transcript_segment.speaker_label']) {
-      expect(entries[key], key).toMatchObject({ kind: 'other', handling: 'erase' });
+    // The finder searches every meeting text column as free text (#2594): the rows an actor reads are listed, the rest counted per recorder.
+    for (const key of [
+      'crove_meetings.meeting.title',
+      'crove_meetings.transcript_segment.text',
+      'crove_meetings.transcript_segment.speaker_label',
+      'crove_meetings.meeting_result.summary',
+      'crove_meetings.meeting_result.decisions',
+      'crove_meetings.action_item.title',
+      'crove_meetings.action_item.who_drafted',
+      'crove_meetings.action_item.when_drafted',
+    ]) {
+      expect(entries[key], key).toMatchObject({ kind: 'free_text', handling: 'erase' });
       expect(entries[key]!.reason.length, key).toBeGreaterThan(20);
     }
   });
