@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove HR (issue #2532, docs/plan/payroll.md 6.4 and 6.6): the cash-limit count of crove_hr.payroll_run_totals follows the person. A month that carries a correction pays a person the net of their pay line
 -- and of their corrections together, so `cashLarge` (how many people are paid 5,000,000 dong or more, a number only) now sums the net per person across the run's lines instead of looking at each line.
--- The function is replaced as a whole (CREATE OR REPLACE); applied files stay untouched. Everything else is as in 20261205113500: a user context only, an approver of the posting, the run in the
+-- The function is replaced as a whole (CREATE OR REPLACE); applied files stay untouched. Everything else is as in 20261211113500: a user context only, an approver of the posting, the run in the
 -- caller's legal-entity scope and approved, nothing per person returned, never a raise on a stored value.
 SET LOCAL lock_timeout = '2s';
 
