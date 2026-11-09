@@ -70,7 +70,7 @@ export const QUEUES = {
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
   // Created by the member Vy sweeps migration (20261210200000): the daily expiry of results and purge of a former member's Vy data (#2822).
-  memberVySweep: 'member-vy-sweep',
+  memberVySweep: 'kernel-member-vy-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
   meetingsTranscribe: 'meetings-transcribe',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).

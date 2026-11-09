@@ -7,7 +7,7 @@
 --                                        removed from in the last 30 days, with whether the audit trail records their removal
 --                                        (kernel.member.remove, outcome ok): the same rule as crove_notes.former_members_due. Recorded ones
 --                                        come first, so the unrecorded never crowd them out of the limit. Ids and a flag only.
---   queue member-vy-sweep                the worker's daily queue (apps/kernel/src/member-vy-worker.ts): the expiry sweep, then the
+--   queue kernel-member-vy-sweep               the worker's daily queue (apps/kernel/src/member-vy-worker.ts): the expiry sweep, then the
 --                                        former members, each org in its own system context through the commands
 --                                        kernel.member_vy.results.expire and kernel.member_vy.member_data.purge.
 -- The comment of the core migration that names 20261126160000 as the org_purge base is wrong: the base was 20261127310000.
@@ -52,4 +52,4 @@ END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_former_members_due(integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.member_vy_former_members_due(integer) TO crove_worker;
 
-SELECT crove_jobs.create_queue('member-vy-sweep', '{"policy":"standard"}'::jsonb);
+SELECT crove_jobs.create_queue('kernel-member-vy-sweep', '{"policy":"standard"}'::jsonb);
