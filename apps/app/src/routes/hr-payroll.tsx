@@ -8,8 +8,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import type { PayrollBreakdown } from '@crove/l10n-vn';
-import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_OVERTIME_DAY_KINDS, PAYROLL_PAYMENT_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@crove/kernel-contract';
+import { money, toMoney, type PayrollBreakdown } from '@crove/l10n-vn';
+import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_INSURANCE_FUNDS, HR_OVERTIME_DAY_KINDS, PAYROLL_PAYMENT_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -408,10 +408,27 @@ function AdjustForm({ sheet, approvedRuns, onClose }: { sheet: HrRunSheet; appro
   const [note, setNote] = useState('');
   const [gross, setGross] = useState('');
   const [pit, setPit] = useState('0');
-  const [insurance, setInsurance] = useState('0');
+  // The insurance of the difference, split across the funds as typed (the employee's part and the employer's part of each): the totals the server checks are the sums of what is typed here.
+  const [split, setSplit] = useState<Record<(typeof HR_INSURANCE_FUNDS)[number], { employee: string; employer: string }>>(() =>
+    Object.fromEntries(HR_INSURANCE_FUNDS.map((fund) => [fund, { employee: '0', employer: '0' }])) as Record<(typeof HR_INSURANCE_FUNDS)[number], { employee: string; employer: string }>,
+  );
+  const splitOk = HR_INSURANCE_FUNDS.every((fund) => signedOk(split[fund].employee) && signedOk(split[fund].employer));
+  const sumOf = (pick: 'employee' | 'employer') => (splitOk ? toMoney(HR_INSURANCE_FUNDS.reduce((acc, fund) => acc.plus(money(split[fund][pick])), money(0))) : '0');
   const people = sheet.lines.filter((l) => l.kind === 'pay');
   const save = useMutation({
-    mutationFn: () => client.hr.payroll.lines.adjust({ runId: sheet.run.id, adjustsRunId: runId, employeeId, note: note.trim(), gross, pit, employeeInsurance: insurance }),
+    mutationFn: () =>
+      client.hr.payroll.lines.adjust({
+        runId: sheet.run.id,
+        adjustsRunId: runId,
+        employeeId,
+        note: note.trim(),
+        gross,
+        pit,
+        employeeInsurance: sumOf('employee'),
+        employerInsurance: sumOf('employer'),
+        // A fund left at zero is not sent: the server holds the split of what is typed, each fund once.
+        funds: HR_INSURANCE_FUNDS.filter((fund) => !money(split[fund].employee).isZero() || !money(split[fund].employer).isZero()).map((fund) => ({ fund, employee: toMoney(money(split[fund].employee)), employer: toMoney(money(split[fund].employer)) })),
+      }),
     onSuccess: async () => {
       await refresh();
       onClose();
@@ -447,13 +464,33 @@ function AdjustForm({ sheet, approvedRuns, onClose }: { sheet: HrRunSheet; appro
           <Input id="adj-gross" value={gross} inputMode="decimal" onChange={(e) => setGross(e.target.value.replace(/[^\d.-]/g, ''))} />
         </div>
         <div className="space-y-1">
-          <Label htmlFor="adj-ins">{t('adjustInsurance')}</Label>
-          <Input id="adj-ins" value={insurance} inputMode="decimal" onChange={(e) => setInsurance(e.target.value.replace(/[^\d.-]/g, ''))} />
-        </div>
-        <div className="space-y-1">
           <Label htmlFor="adj-pit">{t('adjustPit')}</Label>
           <Input id="adj-pit" value={pit} inputMode="decimal" onChange={(e) => setPit(e.target.value.replace(/[^\d.-]/g, ''))} />
         </div>
+        <fieldset className="space-y-2 sm:col-span-3" data-testid="hr-adjust-funds">
+          <legend className="text-sm font-medium">{t('adjustFunds')}</legend>
+          <p className="text-xs text-subtle-foreground">{t('adjustFundsHint')}</p>
+          {HR_INSURANCE_FUNDS.map((fund) => (
+            <div key={fund} className="grid items-end gap-2 sm:grid-cols-[1fr_10rem_10rem]">
+              <span className="text-sm">{t(`fund.${fund}`)}</span>
+              <div className="space-y-1">
+                <Label htmlFor={`adj-${fund}-employee`} className="text-xs">
+                  {t('adjustFundEmployee')}
+                </Label>
+                <Input id={`adj-${fund}-employee`} value={split[fund].employee} inputMode="decimal" onChange={(e) => setSplit({ ...split, [fund]: { ...split[fund], employee: e.target.value.replace(/[^\d.-]/g, '') } })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`adj-${fund}-employer`} className="text-xs">
+                  {t('adjustFundEmployer')}
+                </Label>
+                <Input id={`adj-${fund}-employer`} value={split[fund].employer} inputMode="decimal" onChange={(e) => setSplit({ ...split, [fund]: { ...split[fund], employer: e.target.value.replace(/[^\d.-]/g, '') } })} />
+              </div>
+            </div>
+          ))}
+          <p className="text-xs text-muted-foreground" data-testid="hr-adjust-funds-total">
+            {t('adjustFundsTotal', { employee: sumOf('employee'), employer: sumOf('employer') })}
+          </p>
+        </fieldset>
         <div className="space-y-1 sm:col-span-3">
           <Label htmlFor="adj-note">{t('adjustNote')}</Label>
           <Input id="adj-note" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
@@ -461,7 +498,7 @@ function AdjustForm({ sheet, approvedRuns, onClose }: { sheet: HrRunSheet; appro
       </div>
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
       <div className="mt-3 flex gap-2">
-        <Button loading={save.isPending} disabled={runId === '' || employeeId === '' || note.trim() === '' || ![gross, pit, insurance].every(signedOk)} onClick={() => save.mutate()} data-testid="hr-adjust-save">
+        <Button loading={save.isPending} disabled={runId === '' || employeeId === '' || note.trim() === '' || ![gross, pit].every(signedOk) || !splitOk} onClick={() => save.mutate()} data-testid="hr-adjust-save">
           {t('adjustSave')}
         </Button>
         <Button variant="ghost" onClick={onClose}>

@@ -31,7 +31,11 @@ vi.mock('@crove/l10n-vn', async (importOriginal) => {
   };
 });
 const setMapStatus = (status: 'confirmed' | 'commentary') => {
-  for (const map of Object.values(PAYROLL_POSTING_MAPS)) (map as { status: string }).status = status;
+  for (const map of Object.values(PAYROLL_POSTING_MAPS)) {
+    (map as { status: string }).status = status;
+    // The rule for how an adjustment line is booked is confirmed with the rest (it is shared with the real maps: the mocked copies are shallow).
+    (map.adjustments as { status: string }).status = status;
+  }
 };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -357,6 +361,18 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
+  it('does not offer the payment of a month that carries a correction yet: asking for it is refused', async () => {
+    const o = await org('tt133', 'solo');
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const march = await approvedRun(o);
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Điều chỉnh', gross: '500000', pit: '25000' });
+    });
+    const { proposalId } = await ask(o, april.runId, o.owner);
+    await approve(o, proposalId, o.owner);
+    await expect(pay(o, april.runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_ADJUSTMENTS' });
+  });
+
   const settlementOf = (o: Org, runId: string, user = o.owner) => o.query<PayrollSettlement>(user, 'finance.payroll.settlement', { runId });
 
   it('tells the card of the month where the posting and each payment stand, from the books and the open proposals, and names no person', async () => {
@@ -582,7 +598,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect((await settlementOf(o, runId)).payments.tax).toEqual({ status: 'none', proposalId: null });
   });
 
-  it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261211084500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
+  it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261211124500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     // A proposal holds one voucher, so each writer has its own proposal.

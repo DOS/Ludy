@@ -445,7 +445,7 @@ export const lineAdjust = defineCommand({
   target: runTarget,
   writes: [
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [
-      'legal_entity_id', 'run_id', 'employee_id', 'kind', 'status', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'adjusts_run_id', 'note',
+      'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'breakdown', 'adjusts_run_id', 'note',
       'created_by', 'created_at', 'updated_at',
     ]),
   ],
@@ -474,13 +474,28 @@ export const lineAdjust = defineCommand({
     if (!employee) throw new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên này');
     const paid = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
-      .select('id')
+      .select(['id', 'employment_id'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', target.id)
       .where('employee_id', '=', input.employeeId)
       .where('kind', '=', 'pay')
       .executeTakeFirst();
     if (!paid) throw new DomainError('HR_ADJUST_NOT_PAID', 422, 'Nhân viên này không có dòng lương trong tháng được sửa');
+    // The correction is booked to the cost department of the line it corrects: that line's terms are copied, and a line without them is refused rather than guessed at.
+    if (!paid.employment_id) throw new DomainError('HR_ADJUST_NO_TERMS', 422, 'Dòng lương được sửa không có hợp đồng nên không biết bộ phận hạch toán; không lập được dòng điều chỉnh');
+    // The split of the insurance across the funds is typed, signed, and adds up to the insurance totals: the entry is built from it, never from a guess.
+    const seen = new Set<string>();
+    let employeeSplit = money(0);
+    let employerSplit = money(0);
+    for (const f of input.funds) {
+      if (seen.has(f.fund)) throw new DomainError('HR_ADJUST_FUNDS', 422, 'Mỗi quỹ bảo hiểm chỉ nhập một lần trong dòng điều chỉnh');
+      seen.add(f.fund);
+      employeeSplit = employeeSplit.plus(money(f.employee));
+      employerSplit = employerSplit.plus(money(f.employer));
+    }
+    if (!employeeSplit.equals(money(input.employeeInsurance)) || !employerSplit.equals(money(input.employerInsurance))) {
+      throw new DomainError('HR_ADJUST_FUNDS', 422, 'Số bảo hiểm chia theo từng quỹ phải bằng tổng bảo hiểm đã nhập (phần người lao động và phần doanh nghiệp)');
+    }
     const gross = money(input.gross);
     const net = gross.minus(money(input.employeeInsurance)).minus(money(input.pit));
     const employerCost = gross.plus(money(input.employerInsurance)).plus(money(input.unionFee));
@@ -491,6 +506,7 @@ export const lineAdjust = defineCommand({
         legal_entity_id: run.legal_entity_id,
         run_id: run.id,
         employee_id: input.employeeId,
+        employment_id: paid.employment_id,
         kind: 'adjustment',
         status: 'calculated',
         gross: toMoney(gross),
@@ -501,6 +517,11 @@ export const lineAdjust = defineCommand({
         pit: toMoney(money(input.pit)),
         net: toMoney(net),
         employer_cost: toMoney(employerCost),
+        // The same shape a pay line's breakdown holds, so the posting reads both alike: the split across the funds, and no deductions of the person's own (the net is gross less insurance and tax).
+        breakdown: JSON.stringify({
+          insurance: { funds: input.funds.map((f) => ({ fund: f.fund, employee: toMoney(money(f.employee)), employer: toMoney(money(f.employer)) })) },
+          deductions: { advance: '0', damage: '0', other: '0' },
+        }),
         adjusts_run_id: target.id,
         note: input.note,
         created_by: userId,

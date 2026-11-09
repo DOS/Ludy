@@ -14,6 +14,9 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { buildRunPosting, buildRunPostingFromTotals, monthLabel } from './payroll-posting.ts';
 
+// A month that carries a correction is posted, but its payment (and its bank file) wait for the next change: the amounts to pay of such a month need their own rule (a person whose net is negative, the funds).
+const paymentOfCorrections = () => new DomainError('HR_PAYMENT_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa ghi chi được loại bảng lương này');
+
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 // Words of the reason on the voucher (lý do chi): the month and what is paid, never a name.
@@ -44,7 +47,8 @@ export const preparePayrollPayment = defineCommand({
   writes: [],
   handler: async (ctx, input) => {
     // The run's row is held to the end of the request, so two requests for the same run take turns: the second sees the proposal the first made and is refused below.
-    const { payrollRun, regime, result, nets } = await buildRunPosting(ctx, input.runId, true);
+    const { payrollRun, regime, result, nets, adjustments } = await buildRunPosting(ctx, input.runId, true);
+    if (adjustments > 0) throw paymentOfCorrections();
     const obligation = obligationOf(result.obligations, input.kind);
     // One open proposal per run and kind: another still open ends it, and one already paid is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
@@ -93,7 +97,8 @@ export const verifyPayrollPayment = defineCommand({
   permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, { runId, kind }) => {
-    const { payrollRun, regime, result, cashLarge } = await buildRunPostingFromTotals(ctx, runId);
+    const { payrollRun, regime, result, cashLarge, adjustments } = await buildRunPostingFromTotals(ctx, runId);
+    if (adjustments > 0) throw paymentOfCorrections();
     const obligation = obligationOf(result.obligations, kind);
     return {
       runId,
