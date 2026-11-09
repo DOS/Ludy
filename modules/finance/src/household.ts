@@ -54,21 +54,24 @@ async function profileAt(ctx: Ctx, entity: string, date: string): Promise<Househ
   };
 }
 
-// The books a PIT method keeps, each at the layout in force on `date`.
+// The books a PIT method keeps, each at the layout in force on `date`: the version in force is picked per book over every row, then the method is checked, so a later version that retires
+// a book from a method (an empty list, or another method) is not hidden behind an earlier one.
 async function booksFor(ctx: Ctx, method: 'none' | 'percentage' | 'income', date: string): Promise<HouseholdBookRule[]> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.household_form_version')
-    .select(['book', 'version', 'effective_from', 'name', 'status'])
+    .select(['book', 'version', 'effective_from', 'name', 'pit_methods', 'status'])
     .where('effective_from', '<=', date)
-    .where(sql<boolean>`${method} = ANY (pit_methods)`)
     .execute();
   return pickInForce(rows, (r) => r.book, date)
+    .filter((r) => r.pit_methods.includes(method))
     .map((r) => ({ book: r.book, version: r.version, name: r.name, status: r.status }))
     .sort((a, b) => a.book.localeCompare(b.book));
 }
 
 async function viewOf(ctx: Ctx, entity: string, date: string): Promise<HouseholdProfileView> {
-  const profile = await profileAt(ctx, entity, date);
+  // An entity that is no longer a household (its kind was changed) keeps its old rows but shows no profile and no book.
+  const kind = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
+  const profile = kind?.kind === 'household' ? await profileAt(ctx, entity, date) : null;
   if (!profile) return { date, profile: null, books: [], commentary: false };
   const books = await booksFor(ctx, profile.pitMethod ?? 'none', date);
   return { date, profile, books, commentary: books.some((b) => b.status !== 'confirmed') };
@@ -101,7 +104,9 @@ export const householdProfileSet = defineCommand({
     if (!okMethod) {
       throw new DomainError('HOUSEHOLD_PROFILE_METHOD', 422, 'Nhóm thuế và phương pháp tính thuế thu nhập cá nhân không khớp nhau (nhóm 1 không có phương pháp, nhóm 2 chọn theo tỷ lệ trên doanh thu hoặc theo thu nhập, nhóm 3 theo thu nhập)');
     }
-    if (input.effectiveFrom < '2000-01-01') throw new DomainError('HOUSEHOLD_PROFILE_DATE', 422, 'Ngày hiệu lực không hợp lệ');
+    // A profile starts no later than the end of next year (Vietnam time): a mistyped far date could never be corrected, since every new row must come after the latest.
+    const latestDate = `${Number(vietnamToday(ctx.now).slice(0, 4)) + 1}-12-31`;
+    if (input.effectiveFrom < '2000-01-01' || input.effectiveFrom > latestDate) throw new DomainError('HOUSEHOLD_PROFILE_DATE', 422, `Ngày hiệu lực phải từ năm 2000 đến hết ngày ${latestDate}`);
     // Two writers of one entity wait for each other, so the order check below sees what the first left.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.household_profile:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
     const latest = await ctx.trx
@@ -137,7 +142,9 @@ export const householdProfileSet = defineCommand({
       })
       .execute();
     ctx.audit({ legalEntityId: entity, effectiveFrom: input.effectiveFrom, taxGroup: input.taxGroup, pitMethod: input.pitMethod, trades: input.trades, einvoiceRegistered: input.einvoiceRegistered });
-    return viewOf(ctx, entity, input.effectiveFrom);
+    // The answer is stored with the request's idempotency key for a week, so it holds no name: the screen reads the profile again.
+    const view = await viewOf(ctx, entity, input.effectiveFrom);
+    return { ...view, profile: view.profile ? { ...view.profile, representativeName: null } : null };
   },
 });
 

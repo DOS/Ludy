@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.household_form_version (
   version text NOT NULL CHECK (version ~ '^[0-9]{4}\.[0-9]+$'),
   effective_from date NOT NULL,
   name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 200),
-  pit_methods text[] NOT NULL CHECK (cardinality(pit_methods) >= 1 AND pit_methods <@ ARRAY['none', 'percentage', 'income']::text[]),
+  -- An empty list retires the book from that date: no method keeps it any more.
+  pit_methods text[] NOT NULL CHECK (pit_methods <@ ARRAY['none', 'percentage', 'income']::text[]),
   source text NOT NULL CHECK (char_length(source) BETWEEN 1 AND 500),
   status text NOT NULL CHECK (status IN ('commentary', 'confirmed')),
   PRIMARY KEY (book, version)
@@ -134,18 +135,17 @@ INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_perce
   ('other', DATE '2026-01-01', 2, 1, 'Other trades, as quoted (plan section 5 row 7); unverified', 'commentary')
 ON CONFLICT (trade, effective_from) DO NOTHING;
 
--- Only the accounts whose name says the group are mapped here. Depreciation and outside services sit in sub-accounts that differ by org; the slice that builds S2c settles them with the accountant.
+-- A household keeps TT133 books, so only accounts of that chart are mapped, and only those whose name says the group. TT133 has no account for wages, depreciation or outside services of its own
+-- (they sit in the sub-accounts 6421 and 6422 and in the org's own sub-accounts), and 154 is left out: the slice that builds S2c settles those with the accountant (#2520).
 INSERT INTO crove_finance.household_expense_group_map (expense_group, account_prefix, effective_from, source, status) VALUES
   ('materials_goods', '611', DATE '2026-01-01', 'Purchases (TT133 account 611); the mapping is a proposal for the accountant (#2520)', 'commentary'),
-  ('materials_goods', '621', DATE '2026-01-01', 'Direct materials (TT133 account 621); a proposal for the accountant (#2520)', 'commentary'),
   ('materials_goods', '631', DATE '2026-01-01', 'Cost of production (TT133 account 631); a proposal for the accountant (#2520)', 'commentary'),
-  ('materials_goods', '632', DATE '2026-01-01', 'Cost of goods sold (account 632); a proposal for the accountant (#2520)', 'commentary'),
-  ('wages_insurance', '622', DATE '2026-01-01', 'Direct labor (TT133 account 622); a proposal for the accountant (#2520)', 'commentary'),
-  ('interest', '635', DATE '2026-01-01', 'Financial expenses (account 635); a proposal for the accountant (#2520)', 'commentary'),
-  ('other', '641', DATE '2026-01-01', 'Selling expenses (account 641) until the accountant splits them by group (#2520)', 'commentary'),
-  ('other', '642', DATE '2026-01-01', 'Administrative expenses (account 642) until the accountant splits them by group (#2520)', 'commentary'),
-  ('other', '811', DATE '2026-01-01', 'Other expenses (account 811) (#2520)', 'commentary')
+  ('materials_goods', '632', DATE '2026-01-01', 'Cost of goods sold (TT133 account 632); a proposal for the accountant (#2520)', 'commentary'),
+  ('interest', '635', DATE '2026-01-01', 'Financial expenses (TT133 account 635); a proposal for the accountant (#2520)', 'commentary'),
+  ('other', '642', DATE '2026-01-01', 'Selling and administrative expenses (TT133 account 642, 6421 and 6422) until the accountant splits them by group (#2520)', 'commentary'),
+  ('other', '811', DATE '2026-01-01', 'Other expenses (TT133 account 811) (#2520)', 'commentary')
 ON CONFLICT (account_prefix, effective_from) DO NOTHING;
+
 
 -- The titles are as the forms are commonly published; the accountant checks them and the columns against the appendix of the circular (#2520). S3a (other taxes) has no method to hang on and
 -- comes with the slice that builds it.

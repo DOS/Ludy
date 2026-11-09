@@ -29,7 +29,7 @@ export const zHouseholdProfileSet = z.strictObject({
   effectiveFrom: zLocalDate,
   taxGroup: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   pitMethod: z.enum(HOUSEHOLD_PIT_METHODS).nullable(),
-  trades: z.array(zHouseholdTrade).min(1).max(HOUSEHOLD_TRADES.length),
+  trades: z.array(zHouseholdTrade).min(1).max(HOUSEHOLD_TRADES.length).refine((list) => new Set(list).size === list.length, 'each trade once'),
   einvoiceRegistered: z.boolean(),
   representativeName: z.string().trim().min(1).max(200).nullable(),
 });

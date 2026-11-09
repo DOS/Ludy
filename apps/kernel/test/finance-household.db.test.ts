@@ -97,7 +97,8 @@ suite('household business profile and rules (#2517)', () => {
     expect(await profileAt(o, '2026-06-30')).toEqual({ date: '2026-06-30', profile: null, books: [], commentary: false });
     // Group 1 keeps S1a alone.
     const one = await setProfile(o);
-    expect(one.profile).toMatchObject({ effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' });
+    expect(one.profile).toMatchObject({ effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: null });
+    expect((await profileAt(o, '2026-06-30')).profile?.representativeName).toBe('Nguyễn Văn A');
     expect(one.books.map((b) => b.book)).toEqual(['S1a']);
     // Group 2 on a percentage of revenue keeps S2a; group 3 on income keeps S2b to S2e.
     await setProfile(o, { effectiveFrom: '2026-07-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods', 'services'], einvoiceRegistered: true });
@@ -130,13 +131,39 @@ suite('household business profile and rules (#2517)', () => {
       await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_METHOD' });
     }
     await expect(setProfile(o, { legalEntityId: o.company })).rejects.toMatchObject({ code: 'HOUSEHOLD_NOT_HOUSEHOLD' });
-    for (const bad of [{ taxGroup: 4 }, { taxGroup: 0 }, { trades: [] }, { trades: ['cars'] }, { effectiveFrom: '2026-13-01' }, { representativeName: '' }]) {
+    for (const bad of [{ taxGroup: 4 }, { taxGroup: 0 }, { trades: [] }, { trades: ['cars'] }, { trades: ['goods', 'goods'] }, { effectiveFrom: '2026-13-01' }, { representativeName: '' }]) {
       await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
     // The database holds the kind rule too, for a writer that skips the command.
     await expect(admin((c) => c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [o.orgId, o.company]))).rejects.toMatchObject({
       message: expect.stringContaining('HOUSEHOLD_PROFILE_KIND'),
     });
+  });
+
+  it('refuses a date more than a year ahead, which could never be corrected', async () => {
+    const o = await org();
+    await expect(setProfile(o, { effectiveFrom: '2206-01-01' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_DATE' });
+    await expect(setProfile(o, { effectiveFrom: '1999-12-31' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_DATE' });
+    await setProfile(o, { effectiveFrom: `${new Date().getFullYear() + 1}-12-31` });
+  });
+
+  it('shows no profile and no book for an entity whose kind was changed away from household', async () => {
+    const o = await org();
+    await setProfile(o);
+    expect((await profileAt(o, '2026-06-30')).books).toHaveLength(1);
+    await admin((c) => c.query("UPDATE crove_kernel.legal_entity SET kind = 'company' WHERE org_id = $1 AND id = $2", [o.orgId, o.household]));
+    expect(await profileAt(o, '2026-06-30')).toEqual({ date: '2026-06-30', profile: null, books: [], commentary: false });
+  });
+
+  it('lets a later version retire a book from a method', async () => {
+    const o = await org();
+    await setProfile(o, { taxGroup: 3, pitMethod: 'income' });
+    expect((await profileAt(o, '2026-12-31')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
+    await admin((c) =>
+      c.query("INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2e', '2027.1', '2027-01-01', 'Sổ chi tiết tiền', '{}', 'a retiring version (test)', 'confirmed')"),
+    );
+    expect((await profileAt(o, '2026-12-31')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
+    expect((await profileAt(o, '2027-06-01')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d']);
   });
 
   it('takes a new profile only after the latest one and after a locked period', async () => {
