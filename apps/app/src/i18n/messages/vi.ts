@@ -393,6 +393,7 @@ export const vi = {
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
       personal_data_notice: 'Theo yêu cầu xóa dữ liệu của một người, {items} của bạn có thông tin của họ và sắp bị xóa. Hãy chép lại phần bạn cần, bỏ thông tin của người đó ra.',
+      personal_data_notice_meetings: 'Có yêu cầu xóa dữ liệu của một người: {count, plural, other {# cuộc họp bạn ghi}} có nhắc đến họ. Sau 24 giờ, chủ sở hữu có thể xóa phần nhắc đó khỏi nội dung họp; phần còn lại của cuộc họp giữ nguyên. Bạn cũng có thể tự xóa cuộc họp.',
       other: 'Có thông báo mới',
     },
   },

@@ -395,6 +395,7 @@ export const en = {
       ai_budget_stop: "This month's AI budget is used up. Work that needs the AI waits; raise the budget or wait for next month. The books keep working as usual.",
       channel_expired: 'An ad account was paused because its connection expired or was refused. Connect it again to read on, with no day lost.',
       personal_data_notice: 'A person asked for their data to be erased: {items} of yours mention them and will be deleted. Copy out what you need, without their details.',
+      personal_data_notice_meetings: 'A person asked for their data to be erased: {count, plural, one {# meeting you recorded names} other {# meetings you recorded name}} them. In 24 hours the owner can remove the mention from the meeting text; the rest of the meeting stays. You can also delete the meeting yourself.',
       other: 'New notification',
     },
   },
