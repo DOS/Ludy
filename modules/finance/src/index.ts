@@ -46,6 +46,7 @@ import { stockCommands, stockQueries } from './stock.ts';
 import { stockLineCommands, stockLineQueries } from './stock-lines.ts';
 import { orderHandoffCommands } from './order-handoff.ts';
 import { payrollPaymentCommands } from './payroll-payment.ts';
+import { payrollSettlement } from './payroll-settlement.ts';
 import { payrollPostingCommands } from './payroll-posting.ts';
 import { stockCloseCommands } from './stock-close.ts';
 import { stockCountCommands, stockCountQueries } from './stock-count.ts';
@@ -172,6 +173,7 @@ export { type FinancialStatements, type StatementLine, type UnmappedRow } from '
 
 export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands];
 export const financeQueries = [
+  payrollSettlement,
   ...fixedAssetQueries,
   ...bankFeedQueries,
   ...bankAccountNumberQueries,

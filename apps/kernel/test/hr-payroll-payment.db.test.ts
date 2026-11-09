@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten } from '@crove/kernel-contract';
+import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten, type PayrollSettlement } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
 import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@crove/l10n-vn';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
@@ -371,6 +371,52 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await ask(o, april.runId, o.owner);
     await approve(o, proposalId, o.owner);
     await expect(pay(o, april.runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_ADJUSTMENTS' });
+  });
+
+  const settlementOf = (o: Org, runId: string, user = o.owner) => o.query<PayrollSettlement>(user, 'finance.payroll.settlement', { runId });
+
+  it('tells the card of the month where the posting and each payment stand, from the books and the open proposals, and names no person', async () => {
+    const o = await org('tt133', 'solo');
+    const approved = await approvedRun(o);
+    const none = { status: 'none', proposalId: null };
+    expect(await settlementOf(o, approved.runId)).toEqual({ runId: approved.runId, posting: none, payments: { net_pay: none, insurance: none, union: none, tax: none } });
+    // Asked: the posting waits in the Inbox, and the card can link to it.
+    const asked = await ask(o, approved.runId, o.owner);
+    expect((await settlementOf(o, approved.runId)).posting).toEqual({ status: 'pending', proposalId: asked.proposalId });
+    await approve(o, asked.proposalId);
+    expect((await settlementOf(o, approved.runId)).posting).toEqual({ status: 'posted', proposalId: null });
+    // A payment: pending with its proposal, then recorded; the other kinds are untouched.
+    const net = await pay(o, approved.runId, 'net_pay');
+    let state = await settlementOf(o, approved.runId);
+    expect(state.payments.net_pay).toEqual({ status: 'pending', proposalId: net.proposalId });
+    expect([state.payments.insurance.status, state.payments.union.status, state.payments.tax.status]).toEqual(['none', 'none', 'none']);
+    await approve(o, net.proposalId);
+    state = await settlementOf(o, approved.runId);
+    expect(state.payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    // Only these keys, with ids and states: no amount and no name.
+    expect(Object.keys(state).sort()).toEqual(['payments', 'posting', 'runId']);
+    expect(JSON.stringify(state)).not.toMatch(/canary/i);
+  });
+
+  it('shows a reversed posting as reversed, hides the card data from a member, and never shows another org\'s run', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    const [posting] = await rows<{ id: string }>(
+      `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+        WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
+      [o.orgId, runId],
+    );
+    const asked = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId: posting?.id, entryDate: '2026-03-31', reason: 'Lập lại bảng lương' } },
+      { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, asked.proposalId);
+    expect((await settlementOf(o, runId)).posting.status).toBe('reversed');
+    const team = await org('tt133', 'standard');
+    await expect(settlementOf(team, runId, team.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // A run of another org reads as nothing asked for: the books and the proposals are the org's own.
+    expect((await settlementOf(team, runId, team.owner)).posting).toEqual({ status: 'none', proposalId: null });
   });
 
   it('counts the person who approved the run as a co-author of its payment, and refuses a stored proposal that lost it', async () => {
