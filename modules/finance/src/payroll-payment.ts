@@ -19,19 +19,10 @@ import { buildVoucherProposal, recordVoucherPayload } from './cash-voucher.ts';
 import { payrollCashCheck } from './domain/anomaly.ts';
 import { VOUCHER_SOURCE, voucherTitle } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
+import { reversedSource } from './source-entry.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
-
-// A source (a voucher) whose entries have all been reversed: it has an original entry (source `source`, reverses nothing) and every original entry of it has a reversal pointing at it. The same
-// rule as the database's own (20261211004500, the trigger that holds one live payment voucher per run and kind), read here as the caller sees the books. Kysely `sql` for the correlated
-// subqueries; `voucher` is the alias of the voucher row, `source` the journal entry source type of its kind.
-const reversedSource = (voucher: string, source: string) => sql<boolean>`(
-  EXISTS (SELECT 1 FROM crove_finance.journal_entry o WHERE o.org_id = ${sql.ref(`${voucher}.org_id`)} AND o.source_type = ${source} AND o.source_id = ${sql.ref(`${voucher}.id`)} AND o.reverses_entry_id IS NULL)
-  AND NOT EXISTS (
-    SELECT 1 FROM crove_finance.journal_entry o
-    WHERE o.org_id = ${sql.ref(`${voucher}.org_id`)} AND o.source_type = ${source} AND o.source_id = ${sql.ref(`${voucher}.id`)} AND o.reverses_entry_id IS NULL
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)))`;
 
 // The run's entry has been posted (its voucher names the run) and that posting stands, and this kind of payment has not been recorded yet. A posting that was reversed (finance.journal.reverse) is
 // no posting any more, so nothing is paid against it (#2854); a payment voucher that was reversed no longer holds its kind, so it can be recorded again. Read under the HR module's lock on the

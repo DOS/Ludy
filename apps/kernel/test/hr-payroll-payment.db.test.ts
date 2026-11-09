@@ -553,6 +553,35 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
   });
 
+  it('offers a payment again to a money-out line once its voucher was reversed: a reversed voucher does not hold its kind for the matching either (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const [first, second] = (await statement(o, [{ out: vn(totals.net), description: 'Tra luong' }, { out: vn(totals.net), description: 'Tra luong lan 2' }])) as [string, string];
+    await approve(o, (await pay(o, runId, 'net_pay', { bankLineId: first })).proposalId);
+    // Recorded: the payment is not offered to the other line.
+    expect((await matchOf(o, second)).candidates).toEqual([]);
+    const [voucher] = await voucherOf(o, runId, 'net_pay');
+    await reverseEntry(o, await paymentEntry(o, voucher?.id as string));
+    // Reversed: the kind is free again, so the other line is offered the payment.
+    expect((await matchOf(o, second)).candidates).toHaveLength(1);
+  });
+
+  it('shows a reversed payment as not recorded on the card of the month, so the step is offered and can be recorded again (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    const [voucher] = await voucherOf(o, runId, 'net_pay');
+    await reverseEntry(o, await paymentEntry(o, voucher?.id as string));
+    // The reversed voucher no longer counts: the card offers the step again (no recorded status, no proposal waiting), and the other kinds are untouched.
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'none', proposalId: null });
+    const again = await pay(o, runId, 'net_pay');
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'pending', proposalId: again.proposalId });
+    await approve(o, again.proposalId);
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    expect((await settlementOf(o, runId)).payments.tax).toEqual({ status: 'none', proposalId: null });
+  });
+
   it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261211004500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
