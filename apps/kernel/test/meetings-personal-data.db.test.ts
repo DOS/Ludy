@@ -135,6 +135,15 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     await expect(find('recorder', EMAIL)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('answers an admin the same for a value that only an unreadable meeting holds as for a value nobody holds, so the ids are no existence oracle', async () => {
+    const hidden = await meeting(orgId, 'recorder', 'Họp kín khác', 'attendees');
+    await segment(orgId, hidden, 'Gửi về chi.nhanh.bi.mat@congty.example', 'published');
+    const onlyHidden = await find('admin', 'chi.nhanh.bi.mat@congty.example');
+    const nobody = await find('admin', 'khong.ai.co@congty.example');
+    expect(onlyHidden.matches).toEqual([]);
+    expect(onlyHidden).toEqual(nobody);
+  });
+
   it('matches a phone number as a whole number: amounts, dates and longer numbers are not hits, +84 and separators are', async () => {
     const hidden = await meeting(orgId, 'recorder', 'Họp số điện thoại', 'attendees');
     await segment(orgId, hidden, 'Tổng 1.250.000 đồng, hạn 12/03/2026, mã đơn 000123', 'published');

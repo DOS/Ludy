@@ -92,10 +92,14 @@ BEGIN
     SELECT 4::smallint, m.id, m.id, NULL::text FROM crove_meetings.meeting m
      WHERE m.org_id = v_org AND crove_kernel.text_mentions(m.title, p_kind, p_value)
   )
-  SELECT h.k, h.row_id FROM hits h
-   WHERE crove_meetings.is_meeting_recorder(v_org, h.meeting_id) OR (h.stage IS DISTINCT FROM 'draft' AND crove_meetings.is_meeting_reader(v_org, h.meeting_id))
-   ORDER BY h.k, h.row_id
-   LIMIT 4000;
+  -- At most 1000 ids of each kind (4000 in all), so a flood of transcript lines never crowds out the summary, the items or the titles; the finder lists 200 rows a column and says
+  -- when there were more.
+  SELECT x.k, x.row_id FROM (
+    SELECT h.k, h.row_id, pg_catalog.row_number() OVER (PARTITION BY h.k ORDER BY h.row_id) AS rn FROM hits h
+     WHERE crove_meetings.is_meeting_recorder(v_org, h.meeting_id) OR (h.stage IS DISTINCT FROM 'draft' AND crove_meetings.is_meeting_reader(v_org, h.meeting_id))
+  ) x
+   WHERE x.rn <= 1000
+   ORDER BY x.k, x.row_id;
 END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.personal_row_ids(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
