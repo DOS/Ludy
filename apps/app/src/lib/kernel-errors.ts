@@ -266,6 +266,8 @@ export const KERNEL_ERROR_CODES = [
   'HR_NO_PAYSLIP',
   'HR_RUN_STALE',
   'HR_ADJUST_NOT_PAID',
+  'HR_ADJUST_NO_TERMS',
+  'HR_ADJUST_FUNDS',
   // Members' notes (#1671).
   'NOTE_NOT_FOUND',
   'NOTE_AUTHOR_ONLY',
