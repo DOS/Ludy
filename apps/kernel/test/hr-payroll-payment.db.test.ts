@@ -361,16 +361,59 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
-  it('does not offer the payment of a month that carries a correction yet: asking for it is refused', async () => {
+  it('pays a month that carries corrections from the signed totals: the amounts add the corrections, the voucher equals the entry, and a kind the corrections take below zero is refused', async () => {
     const o = await org('tt133', 'solo');
     const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
     const march = await approvedRun(o);
     const april = await approvedRun(o, '2026-04', async (runId) => {
-      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Điều chỉnh', gross: '500000', pit: '25000' });
+      await o.exec(o.owner, 'hr.payroll.line.adjust', {
+        runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Điều chỉnh', gross: '500000', pit: '25000', employeeInsurance: '52500', employerInsurance: '108000',
+        funds: [{ fund: 'retirement_death', employee: '40000', employer: '88000' }, { fund: 'health', employee: '7500', employer: '15000' }, { fund: 'unemployment', employee: '5000', employer: '5000' }],
+      });
     });
     const { proposalId } = await ask(o, april.runId, o.owner);
     await approve(o, proposalId, o.owner);
-    await expect(pay(o, april.runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_ADJUSTMENTS' });
+    const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: april.runId });
+    // The amounts offered are the totals with the corrections in them, and each payment is the same figure.
+    const [got] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [april.runId] });
+    expect(got?.amounts.net_pay).toBe(money(sheet.totals.net).toFixed(0));
+    expect(got?.amounts.tax).toBe(money(sheet.totals.pit).toFixed(0));
+    expect(got?.amounts.insurance).toBe(money(sheet.totals.employeeInsurance).plus(sheet.totals.employerInsurance).toFixed(0));
+    const net = await pay(o, april.runId, 'net_pay');
+    await approve(o, net.proposalId, o.owner);
+    expect((await voucherOf(o, april.runId, 'net_pay'))[0]?.amount).toBe(money(sheet.totals.net).toFixed(0));
+    // A month whose corrections take a kind below zero has nothing to pay of it: not offered, and asking for it says why.
+    const may = await approvedRun(o, '2026-05', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: '-900000000', pit: '-100000000' });
+    });
+    const askedMay = await ask(o, may.runId, o.owner);
+    await approve(o, askedMay.proposalId, o.owner);
+    await expect(pay(o, may.runId, 'tax')).rejects.toMatchObject({ code: 'HR_PAYMENT_NEGATIVE' });
+    const [mayAmounts] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [may.runId] });
+    expect(mayAmounts?.amounts.tax).toBeUndefined();
+  });
+
+  it('counts the cash limit per person: a person whose pay is over it and whose corrections take the total under it is no longer counted', async () => {
+    const o = await org('tt133', 'solo');
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const march = await approvedRun(o);
+    const verified = (runId: string) => o.exec<{ cashLarge: number }>(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'net_pay' });
+    const { proposalId } = await ask(o, march.runId, o.owner);
+    await approve(o, proposalId, o.owner);
+    const over = (await verified(march.runId)).cashLarge;
+    expect(over).toBeGreaterThan(0);
+    // April: the same person's pay line is over the limit, and a correction of March takes their total for the month down to 1,000,000 dong.
+    let payNet = '0';
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId });
+      payNet = (sheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number]).figures?.net ?? '0';
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: money(payNet).minus(1000000).negated().toFixed(0), pit: '0' });
+    });
+    const askedApril = await ask(o, april.runId, o.owner);
+    await approve(o, askedApril.proposalId, o.owner);
+    expect(money(payNet).greaterThanOrEqualTo(5000000)).toBe(true);
+    // The people of the month paid at or over the limit are the same as in March but for this one, whose total is now under it.
+    expect((await verified(april.runId)).cashLarge).toBe(over - 1);
   });
 
   const settlementOf = (o: Org, runId: string, user = o.owner) => o.query<PayrollSettlement>(user, 'finance.payroll.settlement', { runId });

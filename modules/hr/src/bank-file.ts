@@ -5,7 +5,7 @@
 // `hr.payroll.bank_file.get` is a sensitive query in the requesting owner's or admin's own context (never a worker or a stored job): its audit row is committed before it reads, it needs a second
 // factor used in the last 5 minutes (policy P11, as the declaration exports), and it opens each person's sealed account number here and nowhere else, in one batch after the audit row. Nothing
 // decrypted reaches an audit fact or a log, and the answer is returned to the caller and never stored. Only the lines of an approved run that are paid (a pay line, calculated, with a net above zero)
-// are in it, and a run with an adjustment line or a line not calculated gets no file. A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist.
+// are in it, and a person's corrections are added to their pay, one amount per person (a person whose total is below zero, or a line not calculated, gets no file). A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist.
 //
 // One file is for one bank (#2897): the query takes the code of a bank of the list `VN_BANKS` (@crove/l10n-vn; the route's `bank` parameter carries it, so the route needs no change) and the file holds the
 // people of the run whose record names that bank, with the bank's short name from the list in the `bank` column. A person with no bank on record refuses the whole file with a count, like a missing
@@ -55,11 +55,15 @@ export const bankFileGet = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
       .execute();
-    // A run with an adjustment line (a signed correction of an earlier month, carried in this run) pays a different amount than its pay lines add up to, and a line not calculated has no net: such a
-    // run gets no file (the same refusal as the posting), never a file that pays the wrong amount.
-    if (lines.some((l) => l.kind !== 'pay')) throw new DomainError('HR_BANK_FILE_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh; chưa xuất được file chuyển lương loại bảng lương này');
+    // A line not calculated has no net: such a run gets no file (the same refusal as the posting), never a file that pays the wrong amount.
     if (lines.some((l) => l.status !== 'calculated')) throw new DomainError('HR_BANK_FILE_MISMATCH', 422, 'Bảng lương có dòng chưa tính; không xuất được file chuyển lương');
-    const paid = lines.filter((l) => l.net !== null && money(l.net as string).greaterThan(0));
+    // A person is paid once by the run: the net of their pay line and of their corrections (signed differences of earlier months) together. A person whose total is below zero owes money back, which
+    // no transfer pays: the whole export is refused with a count (never a name), so the accountant settles that case by hand. A total of zero is not in the file.
+    const totalOf = new Map<string, InstanceType<typeof Decimal>>();
+    for (const l of lines) totalOf.set(l.employee_id, (totalOf.get(l.employee_id) ?? new Decimal(0)).plus(money(l.net as string)));
+    const negative = [...totalOf.values()].filter((n) => n.isNegative()).length;
+    if (negative > 0) throw new DomainError('HR_BANK_FILE_NEGATIVE', 422, `${negative} người có tổng thực nhận âm sau các điều chỉnh (phải hoàn lại); không xuất được file chuyển lương, kế toán xử lý riêng`, { negative });
+    const paid = [...totalOf.entries()].filter(([, n]) => n.greaterThan(0)).map(([employee_id, n]) => ({ employee_id, net: n.toFixed() }));
     if (paid.length === 0) throw new DomainError('HR_BANK_FILE_EMPTY', 422, 'Bảng lương này không có khoản thực nhận nào để chuyển');
     const ids = paid.map((l) => l.employee_id);
     const employees = await ctx.trx
