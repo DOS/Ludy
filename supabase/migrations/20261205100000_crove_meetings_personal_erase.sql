@@ -37,12 +37,23 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_meetings.notice_key_of(uuid, text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
--- A hash, as a number, of the text rows of one meeting that the OWNER cannot read (p_rec: the owner is the recorder, p_read: the owner is a reader): every row when they are no reader, the drafts
--- when they are a reader but not the recorder, nothing when they are the recorder. It moves on any change of that text, whatever a row's updated_at says, so a notice names the text it
--- saw; and it does not move when the erasure redacts the rows the owner reads, so a notice sent just before that redaction stays valid. A helper, executable by no login role.
+-- A keyed hash, as a number, of the text rows of one meeting that the OWNER cannot read (p_rec: the owner is the recorder, p_read: the owner is a reader): every row when they are no
+-- reader, the drafts when they are a reader but not the recorder, nothing when they are the recorder. It moves on any change of that text, whatever a row's updated_at says, so a notice
+-- names the text it saw; and it does not move when the erasure redacts the rows the owner reads, so a notice sent just before that redaction stays valid. The hash is an HMAC-SHA256 under
+-- the deployment's hash key over a domain label, the org, the meeting and the text, cut to 64 bits: the notice's audit row (which an owner reads) holds it, and an unkeyed hash of text the
+-- owner cannot read would let them confirm a guess of that text offline (a title alone is short). A helper, executable by no login role.
 CREATE OR REPLACE FUNCTION crove_meetings.text_stamp(p_org uuid, p_meeting uuid, p_rec boolean, p_read boolean)
-RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  SELECT COALESCE(('x' || pg_catalog.substr(pg_catalog.md5(pg_catalog.string_agg(t.v, pg_catalog.chr(31) ORDER BY t.k, t.id)), 1, 16))::bit(64)::bigint, 0)
+RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_ipad bytea;
+  v_opad bytea;
+  v_text text;
+BEGIN
+  SELECT k.k_ipad, k.k_opad INTO v_ipad, v_opad FROM crove_kernel.mail_hash_key k WHERE k.id = 1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MAIL_HASH_KEY_MISSING' USING ERRCODE = '55000';
+  END IF;
+  SELECT COALESCE(pg_catalog.string_agg(t.v, pg_catalog.chr(31) ORDER BY t.k, t.id), '') INTO v_text
     FROM (
       SELECT 1 AS k, s.id::text AS id, s.stage || pg_catalog.chr(30) || s.speaker_label || pg_catalog.chr(30) || s.text AS v
         FROM crove_meetings.transcript_segment s
@@ -57,8 +68,11 @@ RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog
        WHERE i.org_id = p_org AND i.meeting_id = p_meeting AND NOT (p_rec OR (p_read AND i.stage <> 'draft'))
       UNION ALL
       SELECT 4, m.id::text, m.title FROM crove_meetings.meeting m WHERE m.org_id = p_org AND m.id = p_meeting AND NOT p_read
-    ) t
-$$;
+    ) t;
+  RETURN ('x' || pg_catalog.encode(pg_catalog.substr(
+    pg_catalog.sha256(v_opad || pg_catalog.sha256(v_ipad || pg_catalog.convert_to(
+      'crove.meetings.stamp.v1' || pg_catalog.chr(31) || p_org::text || pg_catalog.chr(31) || p_meeting::text || pg_catalog.chr(31) || v_text, 'UTF8'))), 1, 8), 'hex'))::bit(64)::bigint;
+END $$;
 REVOKE ALL ON FUNCTION crove_meetings.text_stamp(uuid, uuid, boolean, boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
 -- Whether a notice reached a recorder at least 24 hours ago: the owner who sent it (never notified of their own action), or a member with the notice's notification written that long

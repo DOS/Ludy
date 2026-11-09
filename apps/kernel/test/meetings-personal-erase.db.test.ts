@@ -314,6 +314,28 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     expect(await textOf('meeting_result', summary, 'summary')).toBe('Tóm tắt không nhắc ai');
   });
 
+  // The stamp is in the notice's audit row, which an owner reads: it must not let them confirm a guess of text they cannot read, so it is keyed (HMAC under the deployment's key, org and
+  // meeting in the input) and the same text in two orgs gives two stamps.
+  it('keys the stamp: the same meeting text in two orgs gives different stamps, and none is a plain hash of the text', async () => {
+    const shared = randomUUID();
+    const make = async (org: string, recorder: string) => {
+      await sqlAdmin(
+        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+         VALUES ($1, $2, 'Họp ngắn chỉ có tiêu đề', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
+        [org, shared, users[recorder]],
+      );
+    };
+    await make(orgId, 'recorder');
+    await make(otherOrgId, 'outsider');
+    const stamp = async (org: string) => (await sqlAdmin<{ s: string }>(`SELECT crove_meetings.text_stamp($1, $2, false, false)::text AS s`, [org, shared])).rows[0]?.s as string;
+    const [a, b] = [await stamp(orgId), await stamp(otherOrgId)];
+    expect(a).not.toBe(b);
+    // Stable for the same text, and not the first 64 bits of an unkeyed md5 of the title.
+    expect(await stamp(orgId)).toBe(a);
+    const plain = (await sqlAdmin<{ s: string }>(`SELECT (('x' || substr(md5('Họp ngắn chỉ có tiêu đề'), 1, 16))::bit(64)::bigint)::text AS s`)).rows[0]?.s;
+    expect(a).not.toBe(plain);
+  });
+
   it('fails the find when the database refuses a meeting scan (only a timeout is skipped)', async () => {
     await sqlAdmin('REVOKE EXECUTE ON FUNCTION crove_meetings.personal_row_ids(text, text) FROM crove_tenant');
     try {
