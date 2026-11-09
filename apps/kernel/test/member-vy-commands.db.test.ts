@@ -113,7 +113,8 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const run = await start(users.alice);
     await expect(store(users.bob, run.runId, { status: 'ready', body: 'x' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     await expect(store(users.alice, randomUUID(), { status: 'ready', body: 'x' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET expires_at = now() - interval '1 minute', started_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    // Triggers off for this one statement: the 4-hour bound (#2856) forbids moving the start of a member_vy run, and an expired run needs both moved (CHECK expires_at > started_at).
+    await sqlAdmin(`SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET expires_at = now() - interval '1 minute', started_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '${run.runId}'`);
     await expect(store(users.alice, run.runId, { status: 'ready', body: 'x' }), 'an expired run').rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     // A failed run stores a fixed code and no text.
     await resetRuns();
