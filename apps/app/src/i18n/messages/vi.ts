@@ -103,6 +103,7 @@ export const vi = {
     paymentReminders: 'Nhắc thu nợ',
     salesInvoices: 'Hóa đơn bán ra',
     stock: 'Hàng hóa',
+    marketplace: 'Sàn',
     vendors: 'Nhà cung cấp',
     journal: 'Bút toán',
     vouchers: 'Phiếu thu chi',
@@ -2798,6 +2799,17 @@ export const vi = {
     locationPlaceholders: { in_person: 'Địa chỉ văn phòng', phone: 'Số điện thoại sẽ gọi', video: 'Đường dẫn phòng họp', google_meet: 'Liên kết cố định nếu Meet không tạo được (không bắt buộc)' },
     meetHint: 'Mỗi lịch hẹn có một liên kết Google Meet riêng, tạo qua lịch Google của người chủ trì. Nếu Google không tạo được, lịch hẹn vẫn giữ nguyên và dùng liên kết cố định (nếu có); người chủ trì được báo.',
     meetNeedsGoogle: 'Muốn chọn Google Meet, người chủ trì tự kết nối Google Calendar và bật "Ghi lịch hẹn vào lịch này" ở trang Lịch. Chỉ dùng được cho loại lịch hẹn một người.',
+  },
+  marketplaceBalance: {
+    title: 'Sàn thương mại điện tử',
+    subtitle: 'Mỗi sàn bạn bán hàng còn nợ bạn bao nhiêu, đọc từ sổ sách. Màn này không ghi sổ gì.',
+    empty: 'Chưa có sàn nào',
+    emptyHint: 'Hãy nhập báo cáo đơn hàng hoặc báo cáo thu nhập của Shopee, TikTok Shop hoặc Lazada trong Hộp thư; mỗi sàn hiện ở đây khi có đơn hàng hoặc có đối soát đã ghi sổ.',
+    asOf: 'Tính đến {date}',
+    platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' },
+    columns: { platform: 'Sàn', sales: 'Doanh thu đã ghi sổ', payouts: 'Đã tất toán bằng các lần sàn trả', owed: 'Sàn còn nợ bạn', fees: 'Phí chờ hóa đơn' },
+    total: 'Cộng',
+    note: 'Doanh thu đã ghi sổ là số ghi Nợ tài khoản 131 của sàn; đã tất toán là số ghi Có (tiền nhận được, các khoản phí và thuế sàn đã khấu trừ); sàn còn nợ là chênh lệch. Phí chờ hóa đơn là số dư tài khoản 1388. Sàn hiện số 0 cho đến khi có đối soát đầu tiên được ghi sổ.',
   },
   legalEntities: {
     title: 'Pháp nhân',
@@ -9754,6 +9766,7 @@ export const vi = {
         suggest_source: 'Tìm khách hàng, thuế suất gần đây và các dòng của hóa đơn trước cho bản nháp hóa đơn bán ra',
       },
       marketplace: {
+        balance: 'Xem mỗi sàn còn nợ doanh nghiệp bao nhiêu',
         assign: 'Gán dòng đơn hàng của sàn cho mặt hàng',
         unassign: 'Bỏ gán dòng đơn hàng của sàn khỏi mặt hàng',
         confirm: 'Nhập báo cáo đơn hàng của sàn',

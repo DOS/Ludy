@@ -51,6 +51,7 @@ import { payrollPostingCommands } from './payroll-posting.ts';
 import { stockCloseCommands } from './stock-close.ts';
 import { stockCountCommands, stockCountQueries } from './stock-count.ts';
 import { stockExportCommands } from './stock-export.ts';
+import { marketplaceBalanceQueries } from './marketplace-balance.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
 export type { ReorderSource, SuggestSource } from './stock-low.ts';
@@ -174,6 +175,7 @@ export { type FinancialStatements, type StatementLine, type UnmappedRow } from '
 export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands];
 export const financeQueries = [
   payrollSettlement,
+  ...marketplaceBalanceQueries,
   ...fixedAssetQueries,
   ...bankFeedQueries,
   ...bankAccountNumberQueries,

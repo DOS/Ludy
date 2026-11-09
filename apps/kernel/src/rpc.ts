@@ -2406,6 +2406,9 @@ export function createRpcHandler(
         set: os.paymentReminders.customer.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.customer_collection.set', input, { actor, orgId }))),
       },
     },
+    marketplaceBalance: {
+      get: os.marketplaceBalance.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
+    },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
       // What the connect form may offer: the providers this deployment enabled, never a credential or a host.

@@ -105,6 +105,7 @@ export const en = {
     paymentReminders: 'Payment reminders',
     salesInvoices: 'Sales invoices',
     stock: 'Stock',
+    marketplace: 'Marketplaces',
     vendors: 'Vendors',
     journal: 'Journal',
     vouchers: 'Vouchers',
@@ -2800,6 +2801,17 @@ export const en = {
     locationPlaceholders: { in_person: 'Office address', phone: 'The number you will call', video: 'Meeting room link', google_meet: 'Fixed link if a Meet cannot be made (optional)' },
     meetHint: 'Each booking gets its own Google Meet link, made through the host’s Google calendar. If Google cannot make one, the booking stands and uses the fixed link (if there is one); the host is told.',
     meetNeedsGoogle: 'To pick Google Meet, the host connects Google Calendar and turns on “Write bookings to this calendar” on the Calendar page. It works for one-host event types only.',
+  },
+  marketplaceBalance: {
+    title: 'Marketplaces',
+    subtitle: 'What each marketplace you sell on still owes you, read from the books. This screen posts nothing.',
+    empty: 'No marketplace yet',
+    emptyHint: 'Import an order report or an income report of Shopee, TikTok Shop or Lazada in the Inbox; each platform shows here once it has orders or a posted settlement.',
+    asOf: 'As of {date}',
+    platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' },
+    columns: { platform: 'Marketplace', sales: 'Sales booked', payouts: 'Settled by payouts', owed: 'Still owed to you', fees: 'Fees awaiting an invoice' },
+    total: 'Total',
+    note: 'Sales booked is the debit of account 131 under the platform; settled is its credit (the money received, the fees and the tax the platform withheld); still owed is the difference. Fees awaiting an invoice is the balance of account 1388. A platform shows zeros until its first settlement is posted.',
   },
   legalEntities: {
     title: 'Legal entities',
@@ -9757,6 +9769,7 @@ export const en = {
         suggest_source: 'Look up customers, recent VAT rates and the lines of the previous invoice for a sales invoice draft',
       },
       marketplace: {
+        balance: 'View what each marketplace owes the business',
         assign: 'Assign a marketplace order line to an item',
         unassign: 'Take a marketplace order line back from its item',
         confirm: 'Import a marketplace order report',
