@@ -10,9 +10,11 @@ const DANGEROUS = ['=HYPERLINK("http://evil.test","x")', '+84 Trần Văn Hai', 
 const FILE: HrBankFile = {
   runId: '11111111-1111-4111-8111-111111111111',
   month: '2026-03',
+  bankCode: 'VCB',
   columns: ['seq', 'name', 'account', 'bank', 'amount', 'content'],
   rows: DANGEROUS.map((name, i) => ({ seq: String(i + 1), name, account: `ACCT-700${i}`, bank: '=Vietcombank', amount: `${9_000_000 + i}`, content: '-Luong thang 03/2026' })),
   total: '63000021',
+  otherPeople: 0,
 };
 
 async function sheetOf(file: HrBankFile): Promise<ExcelJS.Worksheet> {
