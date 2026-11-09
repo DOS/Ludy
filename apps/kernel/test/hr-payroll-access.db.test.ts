@@ -326,14 +326,21 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(await o.query<HrEmployeeSummary[]>(o.admin, 'hr.payroll.employee.list', { status: 'all' })).toHaveLength(1);
     const detail = await o.query<HrEmployee>(o.admin, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect(detail.dependents).toEqual([expect.objectContaining({ displayName: DEPENDENT, endedOn: '2026-06-30' })]);
-    // A former employee's record is kept for the retention: no edit at all, so neither an admin nor an owner can clear the numbers, the name or the address.
+    // A former employee's record is kept for the retention: neither an admin nor an owner can clear the identity number, the name or the address. The account number and the bank are the
+    // exception (#2905): what is still owed after leaving has to be paid somewhere.
     for (const who of [o.admin, o.owner]) {
-      for (const change of [{ identityNumber: null }, { accountNumber: null }, { bankCode: null }, { bankCode: 'TCB' }, { address: null }, { displayName: 'Changed' }]) {
+      for (const change of [{ identityNumber: null }, { address: null }, { displayName: 'Changed' }]) {
         await expect(o.exec(who, 'hr.payroll.employee.edit', { employeeId: created.employeeId, ...change }), JSON.stringify(change)).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED' });
       }
     }
     const kept = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect(kept).toMatchObject({ displayName: NAME, address: ADDRESS, identityNumber: IDENTITY, accountNumber: ACCOUNT });
+    // Allowed for a leaver who is not erased: set a new account and bank, then clear both; each change is audited by field name only.
+    await o.exec(o.admin, 'hr.payroll.employee.edit', { employeeId: created.employeeId, accountNumber: '0071001234567', bankCode: 'TCB' });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ accountNumber: '0071001234567', bankCode: 'TCB' });
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, accountNumber: null, bankCode: null });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ accountNumber: null, bankCode: null });
+    await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankCode: 'ZZZZ' })).rejects.toMatchObject({ code: 'HR_BANK_UNKNOWN' });
   });
 
   it('records the bank each person is paid at as a code of the list, read only by the one employee\'s sensitive record, and refuses a bad or unknown code (#2897)', async () => {
@@ -414,6 +421,9 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     // The name, the address and the dependent's name are in no column of any crove table (the audit rows hold markers, the rows hold the placeholder).
     expect(await hits([name, address, child, '5927301846', '618034297561'])).toEqual([]);
     await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, displayName: 'Again' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
+    // The leaver exception of #2905 stops at the erasure: no account number and no bank any more.
+    await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, accountNumber: '0071009999999' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
+    await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankCode: 'TCB' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
   });
 });
