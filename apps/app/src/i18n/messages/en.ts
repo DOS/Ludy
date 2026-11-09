@@ -8959,7 +8959,6 @@ export const en = {
       VOUCHER_INVALID: 'The voucher is not valid. Check the cash account, the party and the posting lines.',
       JOURNAL_VOUCHER_INVALID: 'The journal voucher is not valid; check its lines.',
       PERSONAL_DATA_QUERY: 'Enter an email address, a phone number, or a tax code or national ID.',
-      PERSONAL_DATA_TOO_BIG: 'This organization holds too much meeting text to search in one go. Try again later or contact support.',
       PERSONAL_DATA_NOTICE_TOO_MANY: 'Too many private notes and to-dos mention this value for one notice. Contact support.',
       YEAR_NOT_ENDED: 'This year has not ended yet, so it cannot be closed.',
       YEAR_CLOSED: "This year is already closed. To close it again, first reverse its closing entry dated 31 December of that year.",

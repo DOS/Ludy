@@ -224,6 +224,96 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     await expect(runtime.execute('meetings.result.publish', { meetingId: hidden, confirmed: true }, { actor: asUser('recorder'), orgId })).rejects.toMatchObject({ code: 'DRAFT_NOT_REVIEWED' });
   });
 
+  // The notice's meetings are named at the text the OWNER cannot read: the owner's own redaction of the rest does not make a notice stale, and a notice for another value never covers.
+  it('keeps a notice valid when the owner erases at once, covers only its own value, and treats +84 and 0 as one phone number', async () => {
+    const value = 'moi.lien.he@khach.example';
+    const shared = await meeting('recorder', 'Họp chung có nháp', 'org');
+    const published = await segment(shared, `Dòng chung ${value}`, 'published');
+    const draft = await segment(shared, `Nháp riêng ${value}`, 'draft');
+    const eventOf = async () => (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
+    await notify(value);
+    const event = await eventOf();
+    // The owner erases straight away: the published line (the owner reads it) goes, the recorder's draft stays.
+    const now = await erase(value);
+    expect(erasedRows(now, 'crove_meetings.transcript_segment.text')).toBe(1);
+    expect(await textOf('transcript_segment', published, 'text')).toBe(`Dòng chung ${MARK}`);
+    expect(await textOf('transcript_segment', draft, 'text')).toContain(value);
+    // A day later the notice still covers the draft: the owner's own redaction did not change what the notice saw.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query('COMMIT');
+    });
+    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${event}`]);
+    // A notice sent for another value does not cover this one.
+    expect(erasedRows(await erase('autre.personne@khach.example'), 'crove_meetings.transcript_segment.text')).toBe(0);
+    expect(await textOf('transcript_segment', draft, 'text')).toContain(value);
+    const later = await erase(value);
+    expect(erasedRows(later, 'crove_meetings.transcript_segment.text')).toBe(1);
+    expect(await textOf('transcript_segment', draft, 'text')).toBe(`Nháp riêng ${MARK}`);
+
+    // The same for a phone number written +84 in the notice and 0 in the erasure.
+    const room = await meeting('recorder', 'Họp kín số điện thoại', 'attendees', ['attendee']);
+    const phoneLine = await segment(room, 'Gọi anh Tuấn số 0912 345 678 nhé', 'published');
+    await notify('84912345678');
+    const phoneEvent = await eventOf();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query('COMMIT');
+    });
+    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${phoneEvent}`]);
+    expect(erasedRows(await erase('0912345678'), 'crove_meetings.transcript_segment.text')).toBe(1);
+    expect(await textOf('transcript_segment', phoneLine, 'text')).toBe(`Gọi anh Tuấn số ${MARK} nhé`);
+  });
+
+  it('does not redact text the recorder edits while the erasure waits for it: the edit is not what the notice saw', async () => {
+    const value = 'sua.dang.xoa@khach.example';
+    const hidden = await meeting('recorder', 'Họp kín đang sửa', 'attendees', ['attendee']);
+    const line = await segment(hidden, `Dòng ${value}`, 'published');
+    await notify(value);
+    const event = (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query('COMMIT');
+    });
+    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${event}`]);
+    // The recorder's correction holds the line's lock, uncommitted, while the erasure starts and waits.
+    const editor = new pg.Client({ connectionString: adminUrl });
+    await editor.connect();
+    try {
+      await editor.query('BEGIN');
+      await editor.query(`UPDATE crove_meetings.transcript_segment SET text = text || ' (đã sửa)' WHERE id = $1`, [line]);
+      const erasing = erase(value);
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting; i += 1) {
+        waiting = (await count("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%personal_erase%'")) > 0;
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(waiting).toBe(true);
+      await editor.query('COMMIT');
+      const out = await erasing;
+      expect(erasedRows(out, 'crove_meetings.transcript_segment.text')).toBe(0);
+    } finally {
+      await editor.end();
+    }
+    // The edited text, which no notice saw, stays.
+    expect(await textOf('transcript_segment', line, 'text')).toBe(`Dòng ${value} (đã sửa)`);
+  });
+
+  it('redacts decisions one element at a time and keeps the array shape', async () => {
+    const value = 'quyet.dinh@khach.example';
+    const shared = await meeting('recorder', 'Họp có quyết định', 'org');
+    const summary = await result(shared, 'Tóm tắt không nhắc ai', ['Giữ giá cũ', `Gửi ${value} bản chốt`, 'Họp lại "tuần sau"\nvà bàn tiếp'], 'published');
+    await erase(value);
+    expect(JSON.parse(await textOf('meeting_result', summary, 'decisions'))).toEqual(['Giữ giá cũ', `Gửi ${MARK} bản chốt`, 'Họp lại "tuần sau"\nvà bàn tiếp']);
+    expect(await textOf('meeting_result', summary, 'summary')).toBe('Tóm tắt không nhắc ai');
+  });
+
   it('fails the find when the database refuses a meeting scan (only a timeout is skipped)', async () => {
     await sqlAdmin('REVOKE EXECUTE ON FUNCTION crove_meetings.personal_row_ids(text, text) FROM crove_tenant');
     try {

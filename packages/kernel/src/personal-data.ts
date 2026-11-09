@@ -573,7 +573,7 @@ export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organizatio
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 export const MEMBER_VY_RESULT_REASON =
-  "Answers of each member's Vy are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
+  "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[]): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -629,13 +629,14 @@ export const personalDataNotify = defineCommand({
     if (rows.length > PERSONAL_DATA_NOTICE_ITEMS) {
       throw new DomainError('PERSONAL_DATA_NOTICE_TOO_MANY', 422, `Có hơn ${PERSONAL_DATA_NOTICE_ITEMS} ghi chú riêng và việc nhắc đến giá trị này; hãy liên hệ hỗ trợ`);
     }
-    // Meetings whose text the owner cannot read and that hold the value (#2594): the recorder is told how many of their meetings do, as an author is of private notes. A scan the
-    // statement timeout stopped fails the notice (a notice that left meetings out would let the erasure keep them without saying so).
-    const meetingRows = await meetingScan(ctx.trx, async () =>
+    // Meetings whose text the owner cannot read and that hold the value (#2594): the recorder is told how many of their meetings do, as an author is of private notes. A scan the statement
+    // timeout stopped does not stop the notice of the notes: it is left out and recorded as skipped in the audit row, and the erasure then reports those meetings as kept, never as erased.
+    const scanned = await meetingScan(ctx.trx, async () =>
       (await sql<{ meeting_id: string; recorder_user_id: string; stamp: string; key: Uint8Array }>`
         SELECT meeting_id, recorder_user_id, stamp::text AS stamp, key FROM crove_meetings.personal_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows,
     );
-    if (meetingRows === null) throw new DomainError('PERSONAL_DATA_TOO_BIG', 503, 'Tổ chức có quá nhiều nội dung họp để tìm trong một lần; hãy thử lại sau hoặc liên hệ hỗ trợ');
+    const meetingsSkipped = scanned === null;
+    const meetingRows = scanned ?? [];
     if (rows.length + meetingRows.length > PERSONAL_DATA_NOTICE_ITEMS) {
       throw new DomainError('PERSONAL_DATA_NOTICE_TOO_MANY', 422, `Có hơn ${PERSONAL_DATA_NOTICE_ITEMS} mục riêng và cuộc họp nhắc đến giá trị này; hãy liên hệ hỗ trợ`);
     }
@@ -678,6 +679,7 @@ export const personalDataNotify = defineCommand({
       todos: items('todo'),
       meeting_key: meetingKey,
       meetings: meetingRows.map((m) => `${m.meeting_id}:${m.stamp}`),
+      meetings_skipped: meetingsSkipped,
       authors: named.length,
       told,
       event,
