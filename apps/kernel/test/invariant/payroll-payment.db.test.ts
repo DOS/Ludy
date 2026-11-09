@@ -33,11 +33,7 @@ vi.mock('@crove/l10n-vn', async (importOriginal) => {
   };
 });
 const setMapStatus = (status: 'confirmed' | 'commentary') => {
-  for (const map of Object.values(PAYROLL_POSTING_MAPS)) {
-    (map as { status: string }).status = status;
-    // The rule for how an adjustment line is booked is confirmed with the rest (it is shared with the real maps: the mocked copies are shallow).
-    (map.adjustments as { status: string }).status = status;
-  }
+  for (const map of Object.values(PAYROLL_POSTING_MAPS)) (map as { status: string }).status = status;
 };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
