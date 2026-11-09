@@ -27,6 +27,7 @@ const HIDDEN_LINE = `Anh Tuấn nhắn gửi hợp đồng về ${EMAIL} nhé`;
 suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
   const dbName = `crove_test_meetings_finder_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let appUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
   let otherOrgId = '';
@@ -77,6 +78,7 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     const url = new URL(adminUrl);
     url.username = 'crove_app';
     url.password = 'test-app-pw';
+    appUrl = url.toString();
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
@@ -173,9 +175,36 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     const started = Date.now();
     const found = await find('owner', EMAIL);
     const seconds = (Date.now() - started) / 1000;
-    if (process.env.CROVE_TEST_TIMING_FILE) appendFileSync(process.env.CROVE_TEST_TIMING_FILE, `finder over 120000 lines: ${seconds.toFixed(2)} s\n`);
+    // The digits pattern (separators and look-arounds) over the same text, including the long run of digits and spaces: no slower in kind.
+    const phoneStarted = Date.now();
+    await find('owner', PHONE);
+    const phoneSeconds = (Date.now() - phoneStarted) / 1000;
+    expect(found.meetingTextSkipped).toBe(false);
+    if (process.env.CROVE_TEST_TIMING_FILE) appendFileSync(process.env.CROVE_TEST_TIMING_FILE, `finder over 120000 lines: email ${seconds.toFixed(2)} s, phone ${phoneSeconds.toFixed(2)} s\n`);
     expect(found.meetingText?.find((m) => m.recorderUserId === users.recorder)?.lines).toBeGreaterThanOrEqual(3);
     // A generous budget for a shared runner: the point is that it is seconds, not minutes.
     expect(seconds).toBeLessThan(30);
+    expect(phoneSeconds).toBeLessThan(30);
+  }, 120_000);
+
+  // After the large meeting above: a search that the connection's statement timeout stops in the meeting text goes on without it, says so, and leaves the rest of the answer whole.
+  it('goes on without meeting text when the statement timeout stops its scan, and says so, so an erasure of the rest is never blocked', async () => {
+    const fast = createPool({ connectionString: appUrl, max: 2, statementTimeoutMs: 400 });
+    pools.push(fast);
+    const quick = new Runtime(createDb(fast), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
+    // A party that holds the value, outside meeting text.
+    await sqlAdmin(`INSERT INTO crove_kernel.party (org_id, name, email) VALUES ($1, 'Khách thử', $2)`, [orgId, EMAIL]);
+    const found = await quick.execute<PersonalDataResult>('kernel.personal_data.find', { value: EMAIL }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() });
+    expect(found.meetingTextSkipped).toBe(true);
+    expect(found.matches.some((m) => m.column === 'crove_kernel.party.email')).toBe(true);
+    expect(found.meetingText).toEqual([]);
+    // The erasure goes through, lists the meeting text as not searched, and the party is erased.
+    const erased = await quick.execute<{ erased: Array<{ column: string }>; kept: Array<{ column: string; reason: string }> }>(
+      'kernel.personal_data.erase',
+      { value: EMAIL },
+      { actor: { type: 'user', userId: users.owner as string, aal: 'aal2', sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erased.erased.some((e) => e.column === 'crove_kernel.party.email')).toBe(true);
+    expect(erased.kept.find((k) => k.column === 'crove_meetings')?.reason).toMatch(/too large to search/);
   }, 120_000);
 });

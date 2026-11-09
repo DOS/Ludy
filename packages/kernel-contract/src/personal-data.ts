@@ -43,6 +43,8 @@ export const zPersonalDataResult = z.object({
   privateItems: z.array(zPrivateItemCount).nullable(),
   // Meeting text that mentions the value in meetings the owner cannot read, per recorder (#2594): never which or its text. Owners only: null for an admin.
   meetingText: z.array(zMeetingTextCount).nullable(),
+  // The meeting text could not be searched in time (the org holds too much of it for one search): the other rows are still here (#2594).
+  meetingTextSkipped: z.boolean(),
   // A column had more matching rows than the finder returns.
   truncated: z.boolean(),
 });

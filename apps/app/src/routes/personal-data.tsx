@@ -65,7 +65,8 @@ export function PersonalDataPage() {
   const notify = useMutation(orpc.org.personalDataNotify.mutationOptions());
   const privateItems = found.data?.privateItems ?? [];
   const hasPrivate = privateItems.length > 0;
-  const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase') ?? false) || hasPrivate;
+  // Meeting text is not erased by this step (the recorder or an owner deletes the meeting; #2594 part 2 redacts it): it does not enable the Erase button alone.
+  const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase' && !m.column.startsWith('crove_meetings.')) ?? false) || hasPrivate;
   const meetingText = found.data?.meetingText ?? [];
   const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate || meetingText.length > 0;
   const nameOf = (userId: string) => {
@@ -199,6 +200,7 @@ export function PersonalDataPage() {
               <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>
             </div>
           )}
+          {found.data.meetingTextSkipped && <p className="mb-2 text-sm text-warning">{t('meetingTextSkipped')}</p>}
           {found.data.truncated && <p className="mb-2 text-sm text-warning">{t('truncated')}</p>}
           {found.data.matches.length > 0 && (
             <DataTable head={[t('columns.where'), t('columns.handling'), t('columns.reason'), t('columns.row')]}>

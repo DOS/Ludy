@@ -442,19 +442,24 @@ function requireProbe(value: string): Probe {
   return probe;
 }
 
-// A scan of meeting text that the connection's statement timeout stopped (SQLSTATE 57014) is answered plainly, not as a server fault: the org holds more meeting text than one
-// search reads in time. The search changed nothing, so the owner can ask the support to run it, or search again for a narrower value.
-async function tooBigIfSlow<T>(scan: Promise<T>): Promise<T> {
+// A scan of meeting text under the connection's statement timeout (SQLSTATE 57014), in a savepoint: when the org holds more meeting text than one search reads in time, the search
+// goes on without it and says so (meetingTextSkipped), so the other rows are still found and an erasure of everything else is never blocked by meeting volume. The scan changed nothing.
+async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): Promise<T | null> {
+  await sql`SAVEPOINT meeting_text_scan`.execute(trx);
   try {
-    return await scan;
+    const out = await run();
+    await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
+    return out;
   } catch (error: unknown) {
-    if ((error as { code?: string }).code === '57014') {
-      throw new DomainError('PERSONAL_DATA_TOO_BIG', 503, 'Tổ chức có quá nhiều nội dung họp để tìm trong một lần; hãy thử lại sau hoặc liên hệ hỗ trợ');
-    }
-    throw error;
+    if ((error as { code?: string }).code !== '57014') throw error;
+    await sql`ROLLBACK TO SAVEPOINT meeting_text_scan`.execute(trx);
+    await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
+    return null;
   }
 }
 
+// Why an erasure lists meeting text it could not search.
+export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
 // The tables of crove_meetings.personal_row_ids's kind codes.
 const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
 
@@ -466,7 +471,10 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
   // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
   const meetingRows = new Map<string, string[]>();
-  for (const { kind, id } of (await tooBigIfSlow(sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx))).rows) {
+  let meetingTextSkipped = false;
+  const rowIds = await meetingScan(trx, async () => (await sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows);
+  if (rowIds === null) meetingTextSkipped = true;
+  for (const { kind, id } of rowIds ?? []) {
     const table = MEETING_ROW_TABLES[kind];
     if (table) meetingRows.set(table, [...(meetingRows.get(table) ?? []), id]);
   }
@@ -505,15 +513,20 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }))
     : null;
   // Meeting text the owner cannot read (an attendees-only meeting, a draft that is not theirs): counted per recorder, never listed (#2594, ADR-0047 point 11).
-  const meetingText = privateCounts
-    ? (
-        await tooBigIfSlow(
-          sql<{ recorder_user_id: string; meetings: string; lines: string; results: string; items: string; titles: string }>`
-          SELECT recorder_user_id, meetings, lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx),
-        )
-      ).rows.map((m) => ({ recorderUserId: m.recorder_user_id, meetings: Number(m.meetings), lines: Number(m.lines), results: Number(m.results), items: Number(m.items), titles: Number(m.titles) }))
-    : null;
-  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, truncated };
+  let meetingText: PersonalDataResult['meetingText'] = null;
+  if (privateCounts) {
+    const counts = await meetingScan(
+      trx,
+      async () =>
+        (
+          await sql<{ recorder_user_id: string; meetings: string; lines: string; results: string; items: string; titles: string }>`
+            SELECT recorder_user_id, meetings, lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+        ).rows,
+    );
+    if (counts === null) meetingTextSkipped = true;
+    meetingText = (counts ?? []).map((m) => ({ recorderUserId: m.recorder_user_id, meetings: Number(m.meetings), lines: Number(m.lines), results: Number(m.results), items: Number(m.items), titles: Number(m.titles) }));
+  }
+  return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, meetingTextSkipped, truncated };
 }
 
 // The finder (#923), a command so that every search leaves an audit row (#1678 review): the counts of private items are
@@ -890,6 +903,8 @@ export const personalDataErase = defineCommand({
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('crove_notes.note', { column: 'crove_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('crove_notes.todo', { column: 'crove_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
+    // Meeting text the search could not read in time: said in the answer, never left out silently (#2594).
+    if (after.meetingTextSkipped) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     const keptRows = new Map<string, number>();
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {
