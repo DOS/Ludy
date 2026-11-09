@@ -112,6 +112,8 @@ export const payrollPostingRegime = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  // The HR module's verification of a posting asks it on behalf of whoever may approve the posting (an owner, an admin, or a member holding the approval permission; #2751).
+  permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, input) => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
@@ -142,19 +144,12 @@ export const recordPayrollPosting = defineCommand({
     if (done) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
     // The entry is built again from the frozen run, in the approver's context (the HR module's own command: no payroll table is read from here), and the stored proposal must equal it. A proposal
     // row not written by the preparer (raw SQL) cannot post lines the run does not hold.
-    // Payroll is read by owners and admins only, so only they can approve a posting: anyone else who holds the approval permission (a chief accountant who is a member) is told so, and the proposal
-    // stays pending for one of them. If the owner later lets members read payroll totals, a follow-up can verify on the totals alone.
-    let expected: { runId: string; month: string; date: string; regime: string; legalEntityId: string; approvedBy: string | null; lines: { account: string; debit: string; credit: string }[] };
-    try {
-      expected = await ctx.run('hr.payroll.posting.verify', { runId: payload.payrollRunId });
-    } catch (error) {
-      if (error instanceof DomainError && error.code === 'FORBIDDEN') {
-        throw new DomainError('HR_POSTING_APPROVER_ROLE', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới duyệt được hạch toán lương, vì người duyệt phải đối chiếu được với bảng lương', {
-          approvers: ['owner', 'admin'],
-        });
-      }
-      throw error;
-    }
+    // The HR module rebuilds it from the run's totals by cost department, never from a person's line (#2751), so whoever may approve the posting can check it: an owner, an admin, or a member
+    // holding the approval permission (a chief accountant). Anyone else is refused by the approval policy before this runs.
+    const expected = await ctx.run<{ runId: string; month: string; date: string; regime: string; legalEntityId: string; approvedBy: string | null; lines: { account: string; debit: string; credit: string }[] }>(
+      'hr.payroll.posting.verify',
+      { runId: payload.payrollRunId },
+    );
     // The posting goes into the entity the run belongs to, never another the payload names.
     if (expected.legalEntityId.toLowerCase() !== checked.legalEntityId.toLowerCase()) {
       throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán ghi vào pháp nhân khác pháp nhân của bảng lương; hãy lập lại đề xuất', { what: 'legalEntityId' });

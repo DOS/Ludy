@@ -61,5 +61,5 @@ export type PersonalDataErasure = z.infer<typeof zPersonalDataErasure>;
 // The owner's notice before an erasure (#1678, ADR-0037 section 5): the authors it told, with how many of their private
 // notes and to-dos mention the value. The erasure deletes only the items a notice named.
 // told: the authors a notification goes to (members now, the owner who sent it aside).
-export const zPersonalDataNotice = z.object({ authors: z.array(zPrivateItemCount), told: z.number().int() });
+export const zPersonalDataNotice = z.object({ authors: z.array(zPrivateItemCount.extend({ meetings: z.number().int() })), told: z.number().int() });
 export type PersonalDataNotice = z.infer<typeof zPersonalDataNotice>;

@@ -14,6 +14,8 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { bankByCode } from '@crove/l10n-vn';
+import { BankSelect } from '../components/bank-select.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -88,6 +90,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
   const [address, setAddress] = useState('');
   const [identity, setIdentity] = useState('');
   const [account, setAccount] = useState('');
+  const [bank, setBank] = useState('');
   const [birth, setBirth] = useState('');
   const [tax, setTax] = useState('');
   const [insurance, setInsurance] = useState('');
@@ -99,6 +102,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(identity.trim() ? { identityNumber: identity.trim() } : {}),
         ...(account.trim() ? { accountNumber: account.trim() } : {}),
+        ...(bank ? { bankCode: bank } : {}),
         ...(birth ? { birthDate: birth } : {}),
         ...(tax.trim() ? { taxCode: tax.trim() } : {}),
         ...(insurance.trim() ? { insuranceNumber: insurance.trim() } : {}),
@@ -129,6 +133,10 @@ function AddForm({ onClose }: { onClose: () => void }) {
         <div className="space-y-1">
           <Label htmlFor={`${id}-account`}>{t('accountNumber')}</Label>
           <Input id={`${id}-account`} value={account} maxLength={34} autoComplete="off" onChange={(e) => setAccount(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-bank`}>{t('bankName')}</Label>
+          <BankSelect id={`${id}-bank`} value={bank} onChange={setBank} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
@@ -167,7 +175,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
-  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; tax: boolean; insurance: boolean } } | null>(null);
+  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; bank: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean } } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
@@ -195,6 +203,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
           ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
           ...(edit && (edit.clear.account ? { accountNumber: null } : edit.account.trim() ? { accountNumber: edit.account.trim() } : {})),
+          ...(edit && (edit.clear.bank ? { bankCode: null } : edit.bank ? { bankCode: edit.bank } : {})),
           ...(edit && edit.birth ? { birthDate: edit.birth } : {}),
           ...(edit && (edit.clear.tax ? { taxCode: null } : edit.tax.trim() ? { taxCode: edit.tax.trim() } : {})),
           ...(edit && (edit.clear.insurance ? { insuranceNumber: null } : edit.insurance.trim() ? { insuranceNumber: edit.insurance.trim() } : {})),
@@ -209,7 +218,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const e = q.data;
   const active = e.status === 'active' && !e.erased;
-  // A former employee's record is kept as it is, except what the declarations need of a leaver: the birth date, the tax code and the insurance number may still be set.
+  // A former employee's record is kept as it is, except what a leaver still needs: for the declarations the birth date, the tax code and the insurance number, and for paying what is
+  // still owed the account number and the bank (#2905).
   const limited = e.status !== 'active';
   const none = <span className="text-subtle-foreground">{t('none')}</span>;
   return (
@@ -244,6 +254,10 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
             )}
           </div>
           <div>
+            <dt className="text-subtle-foreground">{t('bankName')}</dt>
+            <dd data-testid="hr-employee-bank">{e.bankCode === null ? none : (bankByCode(e.bankCode)?.shortName ?? e.bankCode)}</dd>
+          </div>
+          <div>
             <dt className="text-subtle-foreground">{t('birthDate')}</dt>
             <dd data-testid="hr-employee-birth">{e.birthDate === null ? none : f.date(e.birthDate)}</dd>
           </div>
@@ -275,7 +289,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       {!e.erased && (
         <div className="mt-3">
           {edit === null ? (
-            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, tax: false, insurance: false } })}>
+            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', bank: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, bank: false, tax: false, insurance: false } })}>
               {t('edit')}
             </Button>
           ) : (
@@ -306,6 +320,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                   </label>
                 )}
               </div>
+                </>
+              )}
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-account">{t('accountNumber')}</Label>
                 <Input id="hr-edit-account" value={edit.account} maxLength={34} autoComplete="off" disabled={edit.clear.account} onChange={(ev) => setEdit({ ...edit, account: ev.target.value })} />
@@ -316,8 +332,16 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                   </label>
                 )}
               </div>
-                </>
-              )}
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-bank">{t('bankName')}</Label>
+                <BankSelect id="hr-edit-bank" value={edit.bank} disabled={edit.clear.bank} onChange={(code) => setEdit({ ...edit, bank: code })} />
+                {e.bankCode !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.bank} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, bank: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
+              </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-birth">{t('birthDate')}</Label>
                 <Input id="hr-edit-birth" type="date" min="1900-01-01" max={vietnamToday()} value={edit.birth} onChange={(ev) => setEdit({ ...edit, birth: ev.target.value })} />
@@ -346,7 +370,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               <div className="flex gap-2 sm:col-span-2">
                 <Button
                   loading={saveEdit.isPending}
-                  disabled={(!edit.clear.tax && !idNumberOk(edit.tax)) || (!edit.clear.insurance && !idNumberOk(edit.insurance)) || !(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.tax || edit.clear.insurance)}
+                  disabled={(!edit.clear.tax && !idNumberOk(edit.tax)) || (!edit.clear.insurance && !idNumberOk(edit.insurance)) || !(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.bank || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.bank || edit.clear.tax || edit.clear.insurance)}
                   onClick={() => saveEdit.mutate()}
                 >
                   {t('save')}

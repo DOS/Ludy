@@ -224,6 +224,17 @@ export const zHrPaymentRequest = z.strictObject({
 export type HrPaymentRequest = z.infer<typeof zHrPaymentRequest>;
 // What finance's record command asks the HR module to rebuild before it records the payment (hr.payroll.payment.verify).
 export const zHrPaymentVerify = z.strictObject({ runId: zId, kind: z.enum(PAYROLL_PAYMENT_KINDS) });
+// What each payment of an approved run comes to (hr.payroll.payment.amounts, #2532): the amount of each kind that is not zero, from the run's totals by cost department (the same function the
+// verification reads), so it holds no figure of one person. Finance matches a bank statement line to a payment by this amount; the payment itself is still asked for and approved as any other.
+export const HR_PAYMENT_AMOUNTS_RUNS_MAX = 24;
+export const zHrPaymentAmounts = z.strictObject({ runIds: z.array(zId).min(1).max(HR_PAYMENT_AMOUNTS_RUNS_MAX) });
+export type HrPaymentAmounts = z.infer<typeof zHrPaymentAmounts>;
+export interface HrRunPaymentAmounts {
+  runId: string;
+  month: string;
+  // Decimal strings, only the kinds the run owes.
+  amounts: Partial<Record<PayrollPaymentKind, string>>;
+}
 // The proposal (kind finance.cash_voucher, shown as a voucher) with the run it pays, the kind of payment, the month and the chart the run was posted under. It names no person.
 export const zPayrollPaymentProposal = zCashVoucherProposal.extend({
   payroll: z.strictObject({ runId: zId, kind: z.enum(PAYROLL_PAYMENT_KINDS), month: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])$/), regime: z.enum(PAYROLL_REGIMES) }),

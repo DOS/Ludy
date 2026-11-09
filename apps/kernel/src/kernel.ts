@@ -156,7 +156,7 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'payrollMatchSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;

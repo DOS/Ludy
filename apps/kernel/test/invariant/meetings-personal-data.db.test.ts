@@ -296,6 +296,12 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
         expect(JSON.stringify(answered.value.rows), row.sig).not.toContain(TITLE);
       }
       if (row.sig.startsWith('crove_meetings.personal_row_ids')) {
+        // The shared meeting gets a fresh line holding the value for this check: an erasure earlier in this file (the owner reads that meeting, so it may redact the first line)
+        // must not leave the check with nothing to find.
+        const freshLine = randomUUID();
+        await admin((c) =>
+          c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 20, 30, 'Hà', $4, 'published')`, [orgId, freshLine, sharedMeetingId, `Gửi lại về ${EMAIL}`]),
+        );
         // Ids of rows the caller can read anyway, and never one of a meeting they cannot: asked for again under row security, every id is there, and none is the hidden meeting's.
         for (const actor of allowed) {
           const checked = await outcome(
@@ -310,7 +316,7 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
           expect(checked.value.visible.every(Boolean), `${row.sig} names a row ${actor.name} cannot read`).toBe(true);
           const named = checked.value.ids.map((r) => r.id);
           // It finds what it should: the shared meeting's line, for the owner and for the admin alike (not a pass because it names nothing).
-          expect(named, `${row.sig} finds the shared meeting's line for ${actor.name}`).toContain(sharedSegmentId);
+          expect(named, `${row.sig} finds the shared meeting's line for ${actor.name}`).toContain(freshLine);
           // And nothing of the hidden meeting: not its meeting row (title), its line, its draft result or its draft item.
           for (const hidden of [meetingId, segmentId, resultId, itemId]) expect(named, `${row.sig} names a row of the hidden meeting for ${actor.name}`).not.toContain(hidden);
         }
