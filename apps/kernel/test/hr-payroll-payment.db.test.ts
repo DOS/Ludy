@@ -598,7 +598,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect((await settlementOf(o, runId)).payments.tax).toEqual({ status: 'none', proposalId: null });
   });
 
-  it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261211124500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
+  it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261212114500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     // A proposal holds one voucher, so each writer has its own proposal.
