@@ -25,6 +25,9 @@ test('with AI off the pay run and the payslip are complete, and the coworker ans
     await page.getByTestId('hr-run-open').click();
     await expect(page.getByTestId('hr-sheet-title')).toBeVisible();
     await expect(page.getByTestId('hr-employer-total')).not.toHaveText('');
+    // The card of the posting and the payments belongs to an approved month: a month still open shows neither it nor the bank file (an approved month needs the accountant's confirmed rules, #2535).
+    await expect(page.getByTestId('hr-settlement')).toHaveCount(0);
+    await expect(page.getByTestId('hr-bank-file')).toHaveCount(0);
     await page.getByTestId('hr-coworker-ask').click();
     // The state is a line, never an error; what code found (if anything this month) is listed with its facts and no sentence of the model.
     await expect(page.getByTestId('hr-coworker-state').first()).toBeVisible();
