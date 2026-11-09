@@ -16,6 +16,8 @@ export const hrManifest = defineModule({
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
       payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
+        // The code of the bank the person is paid at (#2897): a plain column (a bank's code alone identifies no one), read only by the audited sensitive paths, cleared by the erasure.
+        bank_code: 'payment',
         birth_date: 'pii',
         // The tax code and the social insurance number are in most cases the identity number (since 2025-07-01): sealed and classified like it (#2533).
         tax_code_sealed: 'national_id',
