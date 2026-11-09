@@ -4,7 +4,7 @@
 //
 // `hr.payroll.bank_file.get` is a sensitive query in the requesting owner's or admin's own context (never a worker or a stored job): its audit row is committed before it reads, it needs a second
 // factor used in the last 5 minutes (policy P11, as the declaration exports), and it opens each person's sealed account number here and nowhere else, in one batch after the audit row. Nothing
-// decrypted reaches an audit fact or a log, and the answer is returned to the caller and never stored. Only the lines of an approved run that are paid (a pay line, calculated, with a net above zero)
+// decrypted reaches an audit fact or a log, and the answer is returned to the caller and never stored. Only the people of an approved run that are paid (the net of their pay line and their corrections, above zero)
 // are in it, and a person's corrections are added to their pay, one amount per person (a person whose total is below zero, or a line not calculated, gets no file). A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist.
 //
 // One file is for one bank (#2897): the query takes the code of a bank of the list `VN_BANKS` (@crove/l10n-vn; the route's `bank` parameter carries it, so the route needs no change) and the file holds the
@@ -51,7 +51,7 @@ export const bankFileGet = defineQuery({
     if (!(APPROVED as readonly string[]).includes(run.status)) throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới xuất được file chuyển lương');
     const lines = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
-      .select(['employee_id', 'net', 'kind', 'status'])
+      .select(['employee_id', 'net', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
       .execute();

@@ -409,9 +409,10 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
       payNet = (sheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number]).figures?.net ?? '0';
       await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: money(payNet).minus(1000000).negated().toFixed(0), pit: '0' });
     });
+    // The person's own pay line is over the limit (the premise of this test), whatever the correction does to their total.
+    expect(money(payNet).greaterThanOrEqualTo(5000000)).toBe(true);
     const askedApril = await ask(o, april.runId, o.owner);
     await approve(o, askedApril.proposalId, o.owner);
-    expect(money(payNet).greaterThanOrEqualTo(5000000)).toBe(true);
     // The people of the month paid at or over the limit are the same as in March but for this one, whose total is now under it.
     expect((await verified(april.runId)).cashLarge).toBe(over - 1);
   });

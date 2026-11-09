@@ -28,8 +28,8 @@ const REASON: Record<PayrollPaymentKind, (month: string) => string> = {
 function obligationOf(obligations: readonly Obligation[], kind: PayrollPaymentKind): Obligation {
   const found = obligations.find((o) => o.kind === kind);
   if (!found) throw new DomainError('HR_PAYMENT_NOTHING_DUE', 422, 'Bảng lương này không có khoản này để chi');
-  // The corrections a month carries are signed: when they take a kind below zero (pay or insurance or tax to be given back), there is nothing to pay in this run, and a negative voucher is never made.
-  if (money(found.amount).isNegative()) throw new DomainError('HR_PAYMENT_NEGATIVE', 422, 'Khoản này âm sau các điều chỉnh của tháng (phải hoàn lại); chưa ghi chi được, kế toán xử lý riêng');
+  // The corrections a month carries are signed: when they take a kind, or one of its accounts (a fund of the insurance), below zero (pay or insurance or tax to be given back), there is nothing to pay in this run, and a negative voucher is never made.
+  if (money(found.amount).isNegative() || found.debits.some((d) => money(d.amount).isNegative())) throw new DomainError('HR_PAYMENT_NEGATIVE', 422, 'Khoản này âm sau các điều chỉnh của tháng (phải hoàn lại); chưa ghi chi được, kế toán xử lý riêng');
   return found;
 }
 

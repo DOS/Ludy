@@ -260,6 +260,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
     // The count is in the message, and no name is.
     expect(negativeBody).toContain('1 người');
     expect(negativeBody).not.toContain('ACCT-KERNEL');
+    for (const fragment of ['evil.test', 'Trần Văn Hai', 'Lê Thu Cúc', 'Phạm Văn Đức']) expect(negativeBody).not.toContain(fragment);
     // A line changed after approval (a raw session that lifts the freeze, outside the commands): the total is no longer the approved net, so there is no file.
     const may = await approvedRun('2026-07');
     expect((await get(url(may.runId))).status).toBe(200);
