@@ -218,7 +218,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const e = q.data;
   const active = e.status === 'active' && !e.erased;
-  // A former employee's record is kept as it is, except what the declarations need of a leaver: the birth date, the tax code and the insurance number may still be set.
+  // A former employee's record is kept as it is, except what a leaver still needs: for the declarations the birth date, the tax code and the insurance number, and for paying what is
+  // still owed the account number and the bank (#2905).
   const limited = e.status !== 'active';
   const none = <span className="text-subtle-foreground">{t('none')}</span>;
   return (
@@ -319,6 +320,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                   </label>
                 )}
               </div>
+                </>
+              )}
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-account">{t('accountNumber')}</Label>
                 <Input id="hr-edit-account" value={edit.account} maxLength={34} autoComplete="off" disabled={edit.clear.account} onChange={(ev) => setEdit({ ...edit, account: ev.target.value })} />
@@ -339,8 +342,6 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
                   </label>
                 )}
               </div>
-                </>
-              )}
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-birth">{t('birthDate')}</Label>
                 <Input id="hr-edit-birth" type="date" min="1900-01-01" max={vietnamToday()} value={edit.birth} onChange={(ev) => setEdit({ ...edit, birth: ev.target.value })} />

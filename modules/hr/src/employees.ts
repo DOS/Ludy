@@ -205,10 +205,11 @@ export const employeeEdit = defineCommand({
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address; the owner's erasure is the way out. The one
-    // exception is what the declarations need of a leaver (#2533): the birth date, the tax code and the insurance number may be set or corrected, audited like any edit.
+    // exceptions are what a leaver still needs: for the declarations (#2533) the birth date, the tax code and the insurance number, and for paying what is still owed (a final month, a
+    // refund) the account number and the bank (#2905); all audited like any edit. An erased person is refused by loadEmployee before this point.
     requireKnownBank(input.bankCode);
     const employee = await loadEmployee(ctx, input.employeeId);
-    if (employee.status !== 'active' && (input.displayName !== undefined || input.address !== undefined || input.identityNumber !== undefined || input.accountNumber !== undefined || input.bankCode !== undefined)) requireActive(employee);
+    if (employee.status !== 'active' && (input.displayName !== undefined || input.address !== undefined || input.identityNumber !== undefined)) requireActive(employee);
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
     const set: {
