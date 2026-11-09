@@ -675,7 +675,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     );
     refused(
       await changed(
-        `UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '$RUN'`,
+        `SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '$RUN'`,
         `SELECT 1`,
       ),
       "an expired run",
