@@ -340,7 +340,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect((await lineStates()).get(lineId)).toMatchObject({ status: 'matched' });
   });
 
-  it('lets only an owner or an admin approve a payment: a member who holds the approval permission is told so, and the proposal stays pending', async () => {
+  it('lets a chief accountant who is a member approve a payment from the run\'s totals, and the owner who froze the run is held back (#2751)', async () => {
     const o = await org('tt133', 'trio');
     const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
     await withAdmin(async (c) => {
@@ -351,11 +351,10 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const posting = await ask(o, approved.runId, o.admin);
     await approve(o, posting.proposalId, o.admin2);
     const { proposalId } = await pay(o, approved.runId, 'tax', {}, o.admin);
-    await expect(approve(o, proposalId, chief)).rejects.toMatchObject({ code: 'HR_POSTING_APPROVER_ROLE', status: 403 });
-    expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(0);
-    // The owner froze the run, so they are a co-author of its payment and held back while another may approve (the chief counts as eligible); the other admin approves.
+    // The owner froze the run, so they are a co-author of its payment and held back while another may approve (the chief counts as eligible).
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
-    await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    await expect(approve(o, proposalId, chief)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
   it('counts the person who approved the run as a co-author of its payment, and refuses a stored proposal that lost it', async () => {

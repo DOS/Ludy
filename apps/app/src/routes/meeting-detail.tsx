@@ -6,9 +6,10 @@ import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
+import { NativeSelect } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -56,6 +57,7 @@ export function MeetingDetailPage() {
 
   const orgQuery = useQuery(orpc.org.get.queryOptions());
   const isOwner = orgQuery.data?.role === 'owner';
+  const orgMembers = orgQuery.data?.members ?? [];
 
   const meeting = meetingQuery.data;
 
@@ -300,6 +302,7 @@ export function MeetingDetailPage() {
 
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} />
+      <MeetingResults meetingId={id} readers={meeting.readers} />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Consent Record Card */}
@@ -344,13 +347,16 @@ export function MeetingDetailPage() {
                 <form onSubmit={handleAddReader} className="space-y-1">
                   <Label htmlFor="reader-user-id">{t('detail.readerUserId')}</Label>
                   <div className="flex gap-2">
-                    <Input
-                      id="reader-user-id"
-                      placeholder={t('detail.readerUserIdPlaceholder')}
-                      value={newReaderUserId}
-                      onChange={(e) => setNewReaderUserId(e.target.value)}
-                      className="text-xs"
-                    />
+                    <NativeSelect id="reader-user-id" value={newReaderUserId} onChange={(e) => setNewReaderUserId(e.target.value)} className="text-xs">
+                      <option value="">{t('detail.readerUserIdPlaceholder')}</option>
+                      {orgMembers
+                        .filter((m) => !meeting.readers.includes(m.userId))
+                        .map((m) => (
+                          <option key={m.userId} value={m.userId}>
+                            {memberLabel(orgMembers, m.userId, t('results.unknownMember'))}
+                          </option>
+                        ))}
+                    </NativeSelect>
                     <Button type="submit" size="sm" disabled={!newReaderUserId.trim()} loading={addReaderMutation.isPending}>
                       {t('detail.addReader')}
                     </Button>
@@ -362,7 +368,7 @@ export function MeetingDetailPage() {
               <ul className="divide-y text-xs">
                 {meeting.readers.map((readerUserId) => (
                   <li key={readerUserId} className="flex items-center justify-between py-2">
-                    <span className="font-mono">{readerUserId}</span>
+                    <span>{memberLabel(orgMembers, readerUserId, t('results.unknownMember'))}</span>
                     {meeting.isRecorder && (
                       <Button
                         variant="ghost"

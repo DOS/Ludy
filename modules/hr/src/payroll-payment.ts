@@ -12,7 +12,7 @@ import { isCashOverLimit, type Obligation } from '@crove/l10n-vn';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand } from '@crove/kernel-runtime';
-import { buildRunPosting, monthLabel } from './payroll-posting.ts';
+import { buildRunPosting, buildRunPostingFromTotals, monthLabel } from './payroll-posting.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -89,9 +89,11 @@ export const verifyPayrollPayment = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  // Whoever may approve the payment reads what the run owes by cost department (an owner, an admin, or a member holding the approval permission; #2751): never a person's line.
+  permission: 'finance.proposal.approve',
   writes: [],
   handler: async (ctx, { runId, kind }) => {
-    const { payrollRun, regime, result, nets } = await buildRunPosting(ctx, runId, false);
+    const { payrollRun, regime, result, cashLarge } = await buildRunPostingFromTotals(ctx, runId);
     const obligation = obligationOf(result.obligations, kind);
     return {
       runId,
@@ -104,7 +106,7 @@ export const verifyPayrollPayment = defineCommand({
       lines: obligation.debits.map((d) => ({ account: d.account, amount: d.amount })),
       total: obligation.amount,
       // How many people's net pay is at the cash limit or above: finance rebuilds the cash flag from it, so a proposal written without the flag is refused.
-      cashLarge: cashLargeOf(kind, nets),
+      cashLarge: kind === 'net_pay' ? cashLarge : 0,
     };
   },
 });

@@ -33,6 +33,8 @@ test('with AI off the coworker says so, fills nothing, and the draft form works 
     await expect(picker).toBeVisible();
     await expect(page.getByTestId('invoice-previous-copy')).toHaveCount(0);
     await expect(page.getByTestId('invoice-ai-source')).toHaveCount(0);
+    // A new org has no CRM deal or booking yet: the CRM source shows nothing and the form is unchanged (#2721).
+    await expect(page.getByTestId('invoice-crm')).toHaveCount(0);
   });
 
   await test.step('the person types the lines and the server computes the amounts', async () => {

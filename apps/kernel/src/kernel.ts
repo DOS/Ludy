@@ -6,6 +6,7 @@ import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
+import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
@@ -75,7 +76,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
@@ -153,6 +154,8 @@ export interface KernelAdapters {
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
+  // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
+  summaryModel?: ModelPort | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
@@ -212,6 +215,11 @@ export function transcribeEnabled(config: Pick<Config, 'MEETINGS_TRANSCRIBE' | '
   return config.MEETINGS_TRANSCRIBE === 'on' && Boolean(config.TRANSCRIBE_BASE_URL) && Boolean(config.TRANSCRIBE_MODEL);
 }
 
+// The recorder's Vy may summarize a meeting only with MEETINGS_SUMMARY=on (#2580, M6); the module works with it off.
+export function summaryEnabled(config: Pick<Config, 'MEETINGS_SUMMARY'>): boolean {
+  return config.MEETINGS_SUMMARY === 'on';
+}
+
 // The commands and queries of the modules CROVE_MODULES enables (plan Decision 12, ADR-0031). A module left out has
 // none registered, so its commands answer COMMAND_NOT_FOUND, a ctx.query into it answers not_installed (with the
 // absentModules buildRuntime passes), and the
@@ -222,6 +230,7 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   // Whether the recorder may start a transcription here (#2578, M4b): MEETINGS_TRANSCRIBE=on with a provider.
   setTranscribeEnabled(transcribeEnabled(config));
+  setSummaryEnabled(summaryEnabled(config));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -537,6 +546,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     today: adapters.today ?? null,
     adsCampaignWriter: adapters.adsCampaignWriter ?? null,
     inboxReader: adapters.inboxReader ?? null,
+    summaryModel: adapters.summaryModel ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -646,6 +656,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
           ...(resolved.inboxReader ? { conversationReader: resolved.inboxReader } : {}),
+          ...(resolved.summaryModel ? { summaryModel: resolved.summaryModel } : {}),
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
           ...(config.TAX_PORTAL_SYNC === 'true' ? { portalSync: createPortalSync({ runtime, store, broker: resolved.broker, stepMs: config.TAX_PORTAL_STEP_SECONDS * 1000, client: createTaxPortalClient(config.TAX_PORTAL_URL ? { baseUrl: config.TAX_PORTAL_URL } : {}) }) } : {}),
           mailer: resolved.mail,
@@ -876,6 +887,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     today: aiConfig ? new TodayWriter(aiConfig) : null,
     adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
     inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
+    summaryModel: aiConfig ? summaryModelPort(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

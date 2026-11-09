@@ -172,7 +172,7 @@ export const zMeetingSettingsGet = z.strictObject({});
 // System commands of the nightly retention and the shred replay (worker only).
 export const zMeetingRetentionShred = z.strictObject({
   meetingId: zId,
-  kind: z.enum(['audio', 'video', 'text']),
+  kind: z.enum(['audio', 'video', 'text', 'draft']),
 });
 export type MeetingRetentionShred = z.infer<typeof zMeetingRetentionShred>;
 
@@ -368,3 +368,42 @@ export type MeetingResults = z.infer<typeof zMeetingResults>;
 export type ActionItemView = z.infer<typeof zActionItemView>;
 // Where a task made from an item came from, for the link on the task: the meeting when the caller may read it, else a refusal the screen words.
 export const zActionItemSource = z.strictObject({ meetingId: zId });
+
+// The recorder copies a finished summary run of their own Vy into their draft (#2580, M6 part B): the draft summary, the decisions and the action items,
+// all marked as the model's text until the recorder edits them. Nothing is shared by this; the recorder's own publish does that.
+export const zSummaryCopy = z.strictObject({ meetingId: zId, runId: zId });
+export const zSummaryCopied = z.strictObject({ meetingId: zId, decisions: z.number().int().min(0), items: z.number().int().min(0), dropped: z.number().int().min(0) });
+// What a summary run stores in its result row: the body the agent package's checks produced. The copy command reads it back strictly, as it reads a transcript.
+export const zSummaryResult = z.strictObject({
+  summary: z.string().max(RESULT_SUMMARY_MAX),
+  decisions: z.array(z.string().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
+  items: z
+    .array(
+      z.strictObject({
+        title: z.string().min(1).max(ITEM_TITLE_MAX),
+        who: z.string().max(ITEM_TEXT_MAX),
+        when: z.string().max(ITEM_TEXT_MAX),
+        seconds: z.number().int().min(0).max(86_400).nullable(),
+      }),
+    )
+    .max(ITEMS_PER_MEETING_MAX),
+  dropped: z.number().int().min(0),
+});
+export type SummaryResult = z.infer<typeof zSummaryResult>;
+
+// The recorder's explicit review of the draft Vy wrote: `confirmed: true` is their own click, never defaulted. Only then can the draft be shared.
+// `ids` are the rows the screen showed (the summary and the items): only those lose the mark, so a row copied in another tab after the recorder looked keeps it.
+export const zDraftReview = z.strictObject({ meetingId: zId, confirmed: z.literal(true), ids: z.array(zId).min(1).max(ITEMS_PER_MEETING_MAX + 1) });
+export const zDraftReviewed = z.strictObject({ meetingId: zId, cleared: z.number().int().min(0) });
+
+// The recorder's Vy summarizing a meeting (#2580, M6 part B2). `start` is the module's own command (the route runs it first); `summarize` is the route the screen
+// calls: it starts the run, reads the transcript as the recorder, makes the one model call and stores the answer in the recorder's own Vy result, then says how it
+// went in fixed words. The recorder copies a finished result into their draft with copySummary.
+export const SUMMARY_STATES = ['ready', 'failed'] as const;
+export const zSummaryStart = z.strictObject({ meetingId: zId });
+export const zSummaryStarted = z.strictObject({ meetingId: zId, runId: zId });
+export const zSummaryRef = z.strictObject({ meetingId: zId });
+// `reason` says why not: the deployment's switch is off, or the caller is not the meeting's recorder.
+export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolean(), reason: z.enum(['off', 'not_recorder']).nullable() });
+export const zSummarized = z.strictObject({ meetingId: zId, runId: zId, state: z.enum(SUMMARY_STATES), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() });
+export type Summarized = z.infer<typeof zSummarized>;

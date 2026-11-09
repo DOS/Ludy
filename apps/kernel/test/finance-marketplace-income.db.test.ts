@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
+import type { ExtractClient, ExtractedMarketplaceIncome } from '@crove/extract-contract';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
@@ -128,6 +128,19 @@ suite('marketplace income reports (#2516)', () => {
     const result = await readMarketplaceIncomeFile({ runtime: worker, store, extract }, o.orgId, fileId);
     return { fileId, ...result };
   }
+  // The file read through a sandbox whose answer is changed by `drift`, as a reader that drifted would give it.
+  async function readDrifted(o: Org, bytes: Uint8Array, drift: (income: ExtractedMarketplaceIncome) => void) {
+    const fileId = await ingest(o, bytes);
+    const drifted: ExtractClient = {
+      extract: async (kind, input) => {
+        const answer = await extract.extract(kind, input);
+        if (answer.ok && 'income' in answer) drift(answer.income);
+        return answer;
+      },
+    };
+    const result = await readMarketplaceIncomeFile({ runtime: worker, store, extract: drifted }, o.orgId, fileId);
+    return { fileId, ...result };
+  }
   const preview = (o: Org, fileId: string, user = o.member) => query<Preview>(o, 'finance.marketplace_income.preview', { fileId }, user);
   const confirm = (o: Org, fileId: string, user = o.member) => execute<{ settlementId: string; lines: number; reportNet: string; other: string }>(o, 'finance.marketplace_income.confirm', { fileId }, user);
   const settlements = (o: Org) => rows<{ id: string; platform: string; period_start: string; period_end: string; report_net: string; source_sha256: string | null }>("SELECT id::text, platform, period_start::text, period_end::text, report_net::text, source_sha256 FROM crove_finance.channel_settlement WHERE org_id = $1 ORDER BY period_start", [o.orgId]);
@@ -207,7 +220,9 @@ suite('marketplace income reports (#2516)', () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({ platform: 'shopee', period_start: '2026-11-03', period_end: '2026-11-04', report_net: '125750.0000', source_sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
     const keys = await settlementLines(o);
-    expect(keys.map((l) => [l.line_key, l.sales, l.commission, l.tax_withheld, l.other, l.net, l.source_row])).toEqual(
+    // The key is the order and a hash of the row's own figures.
+    expect(keys.map((l) => l.line_key.replace(/#[0-9a-f]{14}$/, ''))).toEqual([o.a, o.b].sort());
+    expect(keys.map((l) => [l.line_key.split('#')[0], l.sales, l.commission, l.tax_withheld, l.other, l.net, l.source_row]).sort((x, y) => String(x[0]).localeCompare(String(y[0])))).toEqual(
       [
         [o.a, '100000.0000', '5000.0000', '1000.0000', '0.0000', '80500.0000', 3],
         [o.b, '50000.0000', '2500.0000', '500.0000', '0.0000', '45250.0000', 4],
@@ -269,8 +284,11 @@ suite('marketplace income reports (#2516)', () => {
     expect(overlap.overlap).toEqual({ periodStart: '2026-11-03', periodEnd: '2026-11-04' });
     expect(overlap.blockers).toEqual(expect.arrayContaining(['OVERLAP', 'REPEATED_LINES']));
     await expect(confirm(o, again.fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_OVERLAP', status: 409, message: expect.stringContaining('03/11/2026') });
-    // A later period naming the same sale lines: the sale is already stored.
-    const later = await read(o, workbook(lines(o.a, o.b, ['2026-12-03', '2026-12-04'])));
+    // A later period naming the same sale lines: the sale is already stored. A line key holds the row's date, so only a reader that gave the stored keys to rows of another period can say it.
+    const stored = new Map((await settlementLines(o)).map((l) => [l.line_key.split('#')[0], l.line_key]));
+    const later = (await readDrifted(o, workbook(lines(o.a, o.b, ['2026-12-03', '2026-12-04'])), (income) => {
+      for (const line of income.lines) line.lineKey = stored.get(line.orderNo) as string;
+    }));
     expect((await preview(o, later.fileId)).blockers).toEqual(['REPEATED_LINES']);
     await expect(confirm(o, later.fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_INCOME_REPEATED_LINES', status: 409 });
     expect(await settlements(o)).toHaveLength(1);
@@ -291,6 +309,78 @@ suite('marketplace income reports (#2516)', () => {
     expect(outcomes).toEqual(['MARKETPLACE_INCOME_OVERLAP', 'ok']);
     expect(await settlements(o)).toHaveLength(1);
     expect(await settlementLines(o)).toHaveLength(2);
+  });
+
+  it('does not call a duplicate line key a concurrency problem: the database error surfaces as it is, and nothing is stored (#2753)', async () => {
+    const o = await org();
+    // A reader that drifted gives two lines of the order the same key: the stored report cannot be told from a good one until the database refuses it.
+    const { fileId, handled } = await readDrifted(o, workbook(lines(o.a, o.b)), (income) => {
+      for (const line of income.lines) line.lineKey = 'same-key';
+    });
+    expect(handled).toBe(true);
+    const failure = await confirm(o, fileId).then(
+      () => null,
+      (error: unknown) => error as { code?: string; message?: string; constraint?: string },
+    );
+    expect(failure).not.toBeNull();
+    expect(failure?.code).not.toBe('MARKETPLACE_INCOME_BUSY');
+    expect(JSON.stringify(failure) + String(failure?.message)).not.toContain('đang được nhập cùng lúc');
+    expect(await settlements(o)).toEqual([]);
+    expect(await settlementLines(o)).toEqual([]);
+  });
+
+  it('words a sale line stored by another report in the same moment as a repeat, not as a busy import (#2753)', async () => {
+    const o = await org();
+    // The keys carry the row's date, so two periods name one sale line only through a reader that drifted: the same keys are given to both files.
+    const sameKeys = (income: ExtractedMarketplaceIncome) => {
+      for (const line of income.lines) line.lineKey = `${line.orderNo}#fixed`;
+    };
+    const one = await readDrifted(o, workbook(lines(o.a, o.b, ['2026-11-03', '2026-11-04']), 125750, 'bản một'), sameKeys);
+    const two = await readDrifted(o, workbook(lines(o.a, o.b, ['2026-12-03', '2026-12-04']), 125750, 'bản hai'), sameKeys);
+    const results = await Promise.allSettled([confirm(o, one.fileId), confirm(o, two.fileId, o.owner)]);
+    const outcomes = results.map((r) => (r.status === 'fulfilled' ? 'ok' : (r.reason as { code?: string }).code)).sort();
+    expect(outcomes).toEqual(['MARKETPLACE_INCOME_REPEATED_LINES', 'ok']);
+    expect(await settlements(o)).toHaveLength(1);
+  });
+
+  it('records a report with a negative sale, more than four decimals or a net that does not match its parts as a failed read naming the rows, never as staged (#2753)', async () => {
+    const o = await org();
+    const bytes = workbook(lines(o.a, o.b));
+    const negative = await readDrifted(o, bytes, (income) => {
+      (income.lines[1] as { sales: string }).sales = '-50000';
+    });
+    const decimals = await readDrifted(o, workbook(lines(o.a, o.b), 125750, 'x'), (income) => {
+      const line = income.lines[0] as { commission: string; net: string; other: string };
+      line.commission = '5000.12345678';
+    });
+    const mismatch = await readDrifted(o, workbook(lines(o.a, o.b), 125750, 'y'), (income) => {
+      (income.lines[0] as { net: string }).net = '80501';
+    });
+    for (const [read, rowNo] of [[negative, 4], [decimals, 3], [mismatch, 3]] as const) {
+      expect(read.handled).toBe(true);
+      const [run] = await rows<{ status: string; error: string | null; result: unknown }>('SELECT status, error, result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, read.fileId]);
+      expect(run?.status).toBe('failed');
+      expect(run?.error).toContain('1 dòng có số tiền không hợp lệ');
+      expect(run?.error).toContain(`dòng ${rowNo} của tệp`);
+      expect(run?.result).toBeNull();
+    }
+    expect(await query<unknown[]>(o, 'finance.marketplace_income.staged', {})).toEqual([]);
+    expect(await settlements(o)).toEqual([]);
+  });
+
+  it('keeps the same sale row under the same key in another file, so a repeat is caught, and tells an order split over two rows apart (#2753)', async () => {
+    const o = await org();
+    const split = (note: string, paid: string) => workbook([row(o.a, paid, 60000, 0, 3000, 0, 0, 0, 0, 57000), row(o.a, paid, 40000, 0, 2000, 0, 0, 0, 0, 38000)], 95000, note);
+    const first = await read(o, split('một', '2026-11-03'));
+    await confirm(o, first.fileId);
+    expect((await settlementLines(o)).map((l) => l.line_key)).toHaveLength(2);
+    // The same two rows reported again for a later period are the same sales, whatever the file.
+    const again = await read(o, split('hai', '2026-11-03'));
+    expect((await preview(o, again.fileId)).repeatedLines).toBe(2);
+    // The order paid once more in another report with a different row (a later part) is no repeat.
+    const more = await read(o, workbook([row(o.a, '2026-12-01', 10000, 0, 500, 0, 0, 0, 0, 9500)], 9500, 'ba'));
+    expect((await preview(o, more.fileId)).blockers).toEqual([]);
+    await expect(confirm(o, more.fileId)).resolves.toMatchObject({ lines: 1 });
   });
 
   it('keeps nothing of the file in any audit row or activity of the org, refusals included', async () => {
@@ -350,7 +440,10 @@ suite('marketplace income reports (#2516)', () => {
     // And the order report's own reader does not take an income report.
     const income = workbook(lines(o.a, o.b));
     const asOrders = await readMarketplaceFile({ runtime: worker, store, extract }, o.orgId, await ingest(o, income));
-    expect(asOrders.handled).toBe(false);
+    expect(asOrders).toEqual({ handled: false });
+    // A sheet that is no income report either is said so by the same call, so the worker skips the income reader's own sandbox call for it (#2753).
+    const plain = await readMarketplaceFile({ runtime: worker, store, extract }, o.orgId, await ingest(o, buildXlsx([['nothing here']])));
+    expect(plain).toEqual({ handled: false, notIncome: true });
     // A row with an amount that reads as no number stops the file, naming the row.
     const broken = await read(o, workbook([row(o.a, '2026-11-03', 100000, 10000, 5000, 2000, 1500, 500, 500, 80500), ['2611X1', '', '', '', '2026-11-04', 'không phải số', '', '', '', '', '', '', 100]]));
     expect(broken.handled).toBe(true);

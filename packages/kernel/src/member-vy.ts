@@ -31,6 +31,8 @@ export const MEMBER_VY_FEATURES = {
   'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
   // The recorder's Vy transcribing one meeting in the background (#2578, M4b): the longest run, so the 4 hour cap of the kernel.
   'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
+  // The recorder's Vy summarizing one meeting in the foreground (#2580, M6): one model call over the transcript, the member waiting for it.
+  'meetings.summary': { module: 'meetings', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
