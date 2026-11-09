@@ -20,18 +20,22 @@ const ACTOR = { type: 'system' as const, component: 'kernel.member_vy' };
 const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
 
 // One pass of the expiry: every org that holds a result past its expires_at, emptied of them in its own system context (the command removes
-// up to 50,000 at a time, in batches of 1,000).
+// up to 50,000 at a time, in batches of 1,000). The due list is read in pages of ORGS_PER_PASS by org id, so the pass reaches every due org.
 export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
-  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.member_vy_results_due(${ORGS_PER_PASS}::int)`.execute(deps.workerDb);
   let removed = 0;
-  for (const row of rows) {
-    try {
-      removed += (await deps.runtime.execute<{ removed: number }>('kernel.vy_data.results.expire', {}, { actor: ACTOR, orgId: row.org_id })).removed;
-    } catch (error) {
-      console.warn(`[member-vy-sweep] results, org ${row.org_id.slice(0, 8)}`, codeOf(error));
+  let after: string | null = null;
+  for (;;) {
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.member_vy_results_due(${ORGS_PER_PASS}::int, ${after}::uuid)`.execute(deps.workerDb);
+    for (const row of rows) {
+      try {
+        removed += (await deps.runtime.execute<{ removed: number }>('kernel.vy_data.results.expire', {}, { actor: ACTOR, orgId: row.org_id })).removed;
+      } catch (error) {
+        console.warn(`[member-vy-sweep] results, org ${row.org_id.slice(0, 8)}`, codeOf(error));
+      }
     }
+    if (rows.length < ORGS_PER_PASS) return removed;
+    after = rows[rows.length - 1]?.org_id ?? null;
   }
-  return removed;
 }
 
 // One pass of the former members, after the expiry: the users who hold Vy results or memory in an org they left more than 30 days ago, each purged in
@@ -41,9 +45,10 @@ export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; worke
   const { rows } = await sql<{ org_id: string; user_id: string; recorded: boolean }>`
     SELECT org_id, user_id, recorded FROM crove_kernel.member_vy_former_members_due(${FORMER_MEMBERS_PER_PASS}::int)`.execute(deps.workerDb);
   let removed = 0;
+  const unrecorded = new Set<string>();
   for (const row of rows) {
     if (!row.recorded) {
-      console.warn(`[member-vy-sweep] org ${row.org_id.slice(0, 8)}: a former member with no recorded removal, data kept`);
+      unrecorded.add(row.org_id.slice(0, 8));
       continue;
     }
     try {
@@ -52,5 +57,7 @@ export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; worke
       console.warn(`[member-vy-sweep] former member, org ${row.org_id.slice(0, 8)}`, codeOf(error));
     }
   }
+  // One line a night, not one per member: how many were kept and in which orgs (prefixes only).
+  if (unrecorded.size > 0) console.warn(`[member-vy-sweep] former members with no recorded removal, data kept, in ${unrecorded.size} org(s): ${[...unrecorded].slice(0, 20).join(', ')}`);
   return removed;
 }

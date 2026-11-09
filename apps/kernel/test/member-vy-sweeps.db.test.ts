@@ -153,6 +153,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       await c.end();
     }
     expect((await asWorker('SELECT * FROM crove_kernel.member_vy_results_due(10)')).rows, 'the worker outside a context').toEqual([{ org_id: orgId }]);
+    expect((await asWorker(`SELECT * FROM crove_kernel.member_vy_results_due(10, '${orgId}'::uuid)`)).rows, 'keyset paging: nothing is due after this org id').toEqual([]);
   });
 
   it('removes the expired results of an org past the first batch of 1,000, and leaves the live ones and the memory', async () => {

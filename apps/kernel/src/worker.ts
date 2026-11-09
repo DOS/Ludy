@@ -1152,9 +1152,22 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // Vy working for one member (ADR-0049, #2822), kernel-level and independent of the Notes module: once a day the expired results, then the data of
   // the people who left more than 30 days ago (member-vy-worker.ts).
   await boss.work(QUEUES.memberVySweep, { batchSize: 1 }, async () => {
-    const results = await sweepMemberVyResults({ runtime: deps.runtime, workerDb: deps.workerDb });
-    const former = await sweepMemberVyFormerMembers({ runtime: deps.runtime, workerDb: deps.workerDb });
+    // Each sweep runs even if the other fails; the first failure is rethrown so the job is retried and seen.
+    let failure: unknown;
+    let results = 0;
+    let former = 0;
+    try {
+      results = await sweepMemberVyResults({ runtime: deps.runtime, workerDb: deps.workerDb });
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      former = await sweepMemberVyFormerMembers({ runtime: deps.runtime, workerDb: deps.workerDb });
+    } catch (error) {
+      failure ??= error;
+    }
     if (results > 0 || former > 0) console.log(`[member-vy-sweep] removed ${results} expired results and ${former} rows of former members`);
+    if (failure) throw failure;
   });
   await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once' });
 
