@@ -155,7 +155,9 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     const audio = erased.kept.find((k) => k.column === 'crove_meetings.audio');
     expect(audio?.rows).toBe(1);
     expect(audio?.reason).toMatch(/owner_delete/);
-    expect(audio?.reason).toMatch(/\d{4}-\d{2}-\d{2}/);
+    // The meeting is hidden from the owner: no retention date shows, only the count (#2917).
+    expect(audio?.reason).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(audio?.reason).toMatch(/1 more held in meetings the owner cannot read/);
     expect(erased.kept.find((k) => k.column === 'crove_kernel.member_vy_result.body')?.reason).toMatch(/at most 31 days/);
     // Nothing else changed.
     expect(await untouchedCounts()).toEqual(before);

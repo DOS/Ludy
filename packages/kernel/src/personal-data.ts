@@ -460,10 +460,13 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
     await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
     return out;
   } catch (error: unknown) {
-    if ((error as { code?: string }).code !== '57014') throw error;
+    const code = (error as { code?: string }).code;
+    if (code !== '57014' && code !== '40P01') throw error;
     // The rollback also puts the timeout back (a local setting made inside the savepoint goes with it).
     await sql`ROLLBACK TO SAVEPOINT meeting_text_scan`.execute(trx);
     await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
+    // A deadlock with a recorder's edit of the same meeting (the database chose this transaction to end): nothing was changed, and the owner can simply ask again.
+    if (code === '40P01') throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa cùng lúc; hãy thử lại sau ít phút');
     return null;
   }
 }
@@ -575,10 +578,13 @@ export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
-export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[]): string {
+export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
-  return `${word} of meetings that held the value cannot be edited, so it is kept until its retention date (the earliest ${first}) and then shredded; an owner can delete a meeting at once (meetings.meeting.owner_delete), the recorder too`;
+  const own = dates.length > 0 ? `it is kept until its retention date (the earliest ${first} among the meetings the owner can read) and then shredded` : 'it is kept until its retention date and then shredded';
+  // A hidden meeting's date would tell roughly when it took place: only how many there are.
+  const more = hidden > 0 ? `; ${hidden} more held in meetings the owner cannot read, kept until their own retention date` : '';
+  return `${word} of meetings that held the value cannot be edited, so ${own}${more}; an owner can delete a meeting at once (meetings.meeting.owner_delete), the recorder too`;
 }
 // Why an erasure keeps the original files of posted invoices (issue #1009), with the end of their retention hold.
 export function heldFilesReason(until: Date | null): string {
@@ -906,7 +912,7 @@ export const personalDataErase = defineCommand({
       ).rows,
     );
     const meetingsKept = { rows: 0, meetings: 0 };
-    const media = { audio: [] as string[], video: [] as string[] };
+    const mediaOf: { id: string; audio: string | null; video: string | null }[] = [];
     for (const r of redaction ?? []) {
       add('crove_meetings.transcript_segment.text', Number(r.lines));
       add('crove_meetings.meeting_result.summary', Number(r.results));
@@ -916,8 +922,18 @@ export const personalDataErase = defineCommand({
         meetingsKept.rows += Number(r.kept);
         meetingsKept.meetings += 1;
       }
-      if (r.audio_until) media.audio.push(r.audio_until);
-      if (r.video_until) media.video.push(r.video_until);
+      if (r.audio_until || r.video_until) mediaOf.push({ id: r.meeting_id, audio: r.audio_until, video: r.video_until });
+    }
+    // The retention dates of the meetings the owner reads (row security shows only those); the others are counted, their dates never shown.
+    const readable = new Set(
+      mediaOf.length === 0
+        ? []
+        : (await sql<{ id: string }>`SELECT id FROM crove_meetings.meeting WHERE id = ANY(${mediaOf.map((m) => m.id)}::uuid[])`.execute(ctx.trx)).rows.map((r) => r.id),
+    );
+    const media = { audio: [] as string[], video: [] as string[], audioHidden: 0, videoHidden: 0 };
+    for (const m of mediaOf) {
+      if (m.audio) { if (readable.has(m.id)) media.audio.push(m.audio); else media.audioHidden++; }
+      if (m.video) { if (readable.has(m.id)) media.video.push(m.video); else media.videoHidden++; }
     }
     // Activity lines that quote the person (#1948): the mention is replaced inside the line, through the owner-only
     // definer (tenant roles may not update activity rows). Comments and the books' descriptions are append-only and
@@ -980,8 +996,8 @@ export const personalDataErase = defineCommand({
     if (redaction === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     else if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
     // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
-    if (media.audio.length > 0) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length, reason: meetingMediaReason('audio', media.audio) });
-    if (media.video.length > 0) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length, reason: meetingMediaReason('video', media.video) });
+    if (mediaOf.some((m) => m.audio)) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
+    if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
     // What each member's Vy keeps privately (ADR-0049): sealed to its member, so the erasure cannot read it; it expires on its own. Counted per org, never read.
     const vyResults = Number(
       (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM crove_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
