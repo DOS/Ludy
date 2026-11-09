@@ -66,6 +66,7 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.household_profile',
   'crove_finance.marketplace_connection',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
@@ -1174,6 +1175,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_finance.fixed_asset': {
     update: { set: 'end_reason = end_reason' },
     make: (o) => ({ row: fixedAssetRow(o) }),
+  },
+  // #2517: the household business profile of a legal entity of kind household (ADR-0045, plan stock-and-marketplaces.md section 8.5): the tax group, the PIT method, the trades, whether it is
+  // registered for e-invoices and the representative's name, one row per (org, entity, effective_from), so a change is a new dated row. Only an entity of kind household may have one, so each
+  // seeded row names a household entity of its own (seeded with it). Tenant roles read and insert; nothing updates or deletes it (the representative's name is erased by the personal-data path).
+  'crove_finance.household_profile': {
+    make: (o) => {
+      const entity = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix household ${tag()}`, kind: 'household', created_by: o.owner } }],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, effective_from: '2026-01-01', tax_group: 3, pit_method: 'income', created_by: o.owner },
+      };
+    },
   },
   // The accountant's marks on input invoices that need proof of non-cash payment (#917): append-only, the latest mark of
   // a document wins (paid by bank, optionally with its bank voucher, not deductible, or cleared). Tenant roles read and
