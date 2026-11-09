@@ -236,23 +236,38 @@ suite('the bank salary file of a pay run (#2532)', () => {
     }
   });
 
-  it('refuses a run with an adjustment line, one whose total differs from the net pay frozen at approval, and one that is paid or closed, and gives no file (#2532)', async () => {
+  it('adds a person\'s corrections to their pay in one amount, refuses a person whose total is below zero with a count, and refuses a run whose total differs from the net pay frozen at approval or that is paid or closed, giving no file (#2532)', async () => {
     const downloadCount = async () => (await rows(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId])).length;
     const before = await downloadCount();
     const [first] = await rows<{ id: string }>(`SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1`, [orgId]);
-    // A correction of March carried in a June run: its pay lines no longer add up to what the run pays.
-    const april = await approvedRun('2026-06', async (id) => {
+    // A correction of March carried in a June run is added to the person's own pay: one row, one amount (the pay line's net and the correction's net together), and the files of all the banks still add up
+    // to the net pay frozen at approval (which includes the correction).
+    const june = await approvedRun('2026-06', async (id) => {
       await exec('hr.payroll.line.adjust', { runId: id, adjustsRunId: runId, employeeId: first?.id, note: 'Tính thiếu tiền làm thêm giờ', gross: '500000', pit: '25000' });
     });
-    const adjusted = await get(url(april.runId));
-    expect(adjusted.status).toBe(422);
-    expect(JSON.stringify(await adjusted.json())).toContain('HR_BANK_FILE_ADJUSTMENTS');
-    expect(await downloadCount()).toBe(before);
+    const files = await Promise.all(['VCB', 'TCB'].map((bank) => rt.query<HrBankFile>('hr.payroll.bank_file.get', { runId: june.runId, bankName: bank }, { actor: asMfa(ownerId), orgId })));
+    expect(files.reduce((sum, f) => sum.plus(f.total), money(0)).toFixed(0)).toBe(money(june.net).toFixed(0));
+    expect(files.reduce((n, f) => n + f.rows.length, 0)).toBe(TEAM.length);
+    const adjustedOnce = (await get(url(june.runId))).status;
+    expect(adjustedOnce).toBe(200);
+    expect(await downloadCount()).toBe(before + 1);
+    // A person whose corrections take their total below zero owes money back: no transfer pays that, so the whole export is refused with a count and no name, and no file is made.
+    const august = await approvedRun('2026-08', async (id) => {
+      await exec('hr.payroll.line.adjust', { runId: id, adjustsRunId: runId, employeeId: first?.id, note: 'Hoàn lại tiền đã trả', gross: '-99000000', pit: '0' });
+    });
+    const negative = await get(url(august.runId));
+    expect(negative.status).toBe(422);
+    const negativeBody = JSON.stringify(await negative.json());
+    expect(negativeBody).toContain('HR_BANK_FILE_NEGATIVE');
+    // The count is in the message, and no name is.
+    expect(negativeBody).toContain('1 người');
+    expect(negativeBody).not.toContain('ACCT-KERNEL');
+    for (const fragment of ['evil.test', 'Trần Văn Hai', 'Lê Thu Cúc', 'Phạm Văn Đức']) expect(negativeBody).not.toContain(fragment);
     // A line changed after approval (a raw session that lifts the freeze, outside the commands): the total is no longer the approved net, so there is no file.
     const may = await approvedRun('2026-07');
     expect((await get(url(may.runId))).status).toBe(200);
-    // The one real download of this test adds exactly one audit row; the refusals around it add none.
-    expect(await downloadCount()).toBe(before + 1);
+    // Each real download of this test adds exactly one audit row (the corrected month's and this one); the refusals around them add none.
+    expect(await downloadCount()).toBe(before + 2);
     await rows(`ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row`);
     await rows(`ALTER TABLE crove_hr.payroll_run DISABLE TRIGGER frozen_row`);
     try {
@@ -271,7 +286,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
       await rows(`ALTER TABLE crove_hr.payroll_run ENABLE ALWAYS TRIGGER frozen_row`);
     }
     // The audit rows of the refused requests are reads only: no download row was written for them.
-    expect(await downloadCount()).toBe(before + 1);
+    expect(await downloadCount()).toBe(before + 2);
     const downloads = await rows<{ rows: string }>(`SELECT detail->>'rows' AS rows FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId]);
     expect(downloads.every((d) => d.rows === '3')).toBe(true);
   });

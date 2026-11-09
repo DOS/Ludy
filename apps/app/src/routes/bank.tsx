@@ -15,6 +15,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { BankMatchGroups } from '../components/bank-match-groups.tsx';
+import { BankPayrollLine } from '../components/bank-payroll-line.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
@@ -37,6 +38,8 @@ import type { SheetRows } from '../lib/xlsx.ts';
 const NUM = 'px-4 py-3 text-right tabular-nums';
 // The preview lists this many rows; the counts cover them all.
 const PREVIEW_ROWS = 300;
+// Owners and admins see the payroll payment an open money-out line may be for the first lines of the month only: one read per line, so a big month does not ask for hundreds at once.
+const PAYROLL_LINES_MAX = 50;
 
 type FileState =
   | { status: 'none' }
@@ -285,6 +288,15 @@ export function BankPage() {
     ...orpc.bank.lines.queryOptions({ input: { bankAccount: account ?? '1121', period: month, legalEntityId: entity.legalEntityId } }),
     enabled: entity.ready && account !== null && /^\d{4}-\d{2}$/.test(month),
   });
+  // The first open money-out lines of the month, for owners and admins: the ones that are asked what payroll payment they may be.
+  const payrollLines = new Set(
+    canManageAccounts
+      ? (lines.data?.lines ?? [])
+          .filter((l) => l.amount.startsWith('-') && l.state.status === 'open')
+          .slice(0, PAYROLL_LINES_MAX)
+          .map((l) => l.id)
+      : [],
+  );
   // The line whose voucher is being entered.
   const [entering, setEntering] = useState<BankLine | null>(null);
 
@@ -373,6 +385,7 @@ export function BankPage() {
                         {t('status.ambiguous')}
                       </Badge>
                     )}
+                    {payrollLines.has(line.id) && <BankPayrollLine slug={slug} line={line} bankAccount={account} />}
                   </TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? '' : f.money(line.amount)}</TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? f.money(line.amount.slice(1)) : ''}</TableCell>

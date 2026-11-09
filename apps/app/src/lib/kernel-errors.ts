@@ -242,7 +242,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_BANK_FILE_EMPTY',
   'HR_BANK_CODE_MISSING',
   'HR_BANK_FILE_NO_PEOPLE',
-  'HR_BANK_FILE_ADJUSTMENTS',
+  'HR_BANK_FILE_NEGATIVE',
   'HR_BANK_FILE_MISMATCH',
   'HR_POSTING_MISMATCH',
   'HR_POSTING_MAP_UNCONFIRMED',
@@ -252,6 +252,8 @@ export const KERNEL_ERROR_CODES = [
   'MARKETPLACE_SETTLEMENT_NOT_POSTABLE',
   // The payment of an approved run's net pay and remittances (#2532).
   'HR_PAYMENT_NOT_POSTED',
+  'HR_PAYMENT_POSTING_REVERSED',
+  'HR_PAYMENT_NEGATIVE',
   'HR_PAYMENT_DONE',
   'HR_PAYMENT_OPEN',
   'HR_PAYMENT_NOTHING_DUE',
@@ -268,6 +270,8 @@ export const KERNEL_ERROR_CODES = [
   'HR_NO_PAYSLIP',
   'HR_RUN_STALE',
   'HR_ADJUST_NOT_PAID',
+  'HR_ADJUST_NO_TERMS',
+  'HR_ADJUST_FUNDS',
   // Members' notes (#1671).
   'NOTE_NOT_FOUND',
   'NOTE_AUTHOR_ONLY',
@@ -647,6 +651,8 @@ export const KERNEL_ERROR_CODES = [
   'JOURNAL_VOUCHER_INVALID',
   // The personal-data finder (#923).
   'PERSONAL_DATA_QUERY',
+  // A meeting being edited while the erasure ran (#2917).
+  'PERSONAL_DATA_BUSY',
   // The notice to the authors of private items before an erasure (#1678).
   'PERSONAL_DATA_NOTICE_TOO_MANY',
   // Year-end closing (#889).

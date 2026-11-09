@@ -39,7 +39,13 @@ export interface PostingMap {
   otherDeductions: string;
   cash: string;
   bank: string;
+  /** How a correction of an approved earlier month (an adjustment line of a later run) is booked: a rule of its own, `commentary` until the accountant confirms it (#2535). */
+  adjustments: { status: RuleStatus; cite: string };
 }
+
+// The booking of an adjustment line, as the accountant reads it (row 18). The same text for both charts: the accounts are the map's, only the period and the sign are in question.
+const ADJUSTMENT_RULE_CITE =
+  'A correction of an earlier month is booked in the run that carries it, so in the period of that run (the current one), on the same accounts as the month it corrects (the cost department of the line corrected), and with the sign of the difference: a positive one posts as pay does, a negative one on the opposite side. Only a material error of a prior year is restated, which this entry never does. Commentary until the accountant confirms it (#2535).';
 
 // TT133 (Circular 133/2016): the chart has no 622 or 627, so the pay of production staff goes to 154 (the sources say 154, 631 and 642 only, or the full set; the conflict is open, row 18).
 // TT99 (Circular 99/2025): 622, 6271, 6411, 6421 and 241 of its chart.
@@ -59,6 +65,7 @@ export const PAYROLL_POSTING_MAPS: Record<PayrollRegime, PostingMap> = {
     otherDeductions: '3388',
     cash: '111',
     bank: '112',
+    adjustments: { status: 'commentary', cite: ADJUSTMENT_RULE_CITE },
   },
   tt99: {
     regime: 'tt99',
@@ -75,6 +82,7 @@ export const PAYROLL_POSTING_MAPS: Record<PayrollRegime, PostingMap> = {
     otherDeductions: '3388',
     cash: '111',
     bank: '112',
+    adjustments: { status: 'commentary', cite: ADJUSTMENT_RULE_CITE },
   },
 };
 

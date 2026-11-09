@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten } from '@crove/kernel-contract';
+import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten, type PayrollSettlement } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
 import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@crove/l10n-vn';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
@@ -31,7 +31,11 @@ vi.mock('@crove/l10n-vn', async (importOriginal) => {
   };
 });
 const setMapStatus = (status: 'confirmed' | 'commentary') => {
-  for (const map of Object.values(PAYROLL_POSTING_MAPS)) (map as { status: string }).status = status;
+  for (const map of Object.values(PAYROLL_POSTING_MAPS)) {
+    (map as { status: string }).status = status;
+    // The rule for how an adjustment line is booked is confirmed with the rest (it is shared with the real maps: the mocked copies are shallow).
+    (map.adjustments as { status: string }).status = status;
+  }
 };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -357,6 +361,108 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
+  it('pays a month that carries corrections from the signed totals: the amounts add the corrections, the voucher equals the entry, and a kind the corrections take below zero is refused', async () => {
+    const o = await org('tt133', 'solo');
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const march = await approvedRun(o);
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', {
+        runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Điều chỉnh', gross: '500000', pit: '25000', employeeInsurance: '52500', employerInsurance: '108000',
+        funds: [{ fund: 'retirement_death', employee: '40000', employer: '88000' }, { fund: 'health', employee: '7500', employer: '15000' }, { fund: 'unemployment', employee: '5000', employer: '5000' }],
+      });
+    });
+    const { proposalId } = await ask(o, april.runId, o.owner);
+    await approve(o, proposalId, o.owner);
+    const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: april.runId });
+    // The amounts offered are the totals with the corrections in them, and each payment is the same figure.
+    const [got] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [april.runId] });
+    expect(got?.amounts.net_pay).toBe(money(sheet.totals.net).toFixed(0));
+    expect(got?.amounts.tax).toBe(money(sheet.totals.pit).toFixed(0));
+    expect(got?.amounts.insurance).toBe(money(sheet.totals.employeeInsurance).plus(sheet.totals.employerInsurance).toFixed(0));
+    const net = await pay(o, april.runId, 'net_pay');
+    await approve(o, net.proposalId, o.owner);
+    expect((await voucherOf(o, april.runId, 'net_pay'))[0]?.amount).toBe(money(sheet.totals.net).toFixed(0));
+    // A month whose corrections take a kind below zero has nothing to pay of it: not offered, and asking for it says why.
+    const may = await approvedRun(o, '2026-05', async (runId) => {
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: '-900000000', pit: '-100000000' });
+    });
+    const askedMay = await ask(o, may.runId, o.owner);
+    await approve(o, askedMay.proposalId, o.owner);
+    await expect(pay(o, may.runId, 'tax')).rejects.toMatchObject({ code: 'HR_PAYMENT_NEGATIVE' });
+    const [mayAmounts] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [may.runId] });
+    expect(mayAmounts?.amounts.tax).toBeUndefined();
+  });
+
+  it('counts the cash limit per person: a person whose pay is over it and whose corrections take the total under it is no longer counted', async () => {
+    const o = await org('tt133', 'solo');
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const march = await approvedRun(o);
+    const verified = (runId: string) => o.exec<{ cashLarge: number }>(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'net_pay' });
+    const { proposalId } = await ask(o, march.runId, o.owner);
+    await approve(o, proposalId, o.owner);
+    const over = (await verified(march.runId)).cashLarge;
+    expect(over).toBeGreaterThan(0);
+    // April: the same person's pay line is over the limit, and a correction of March takes their total for the month down to 1,000,000 dong.
+    let payNet = '0';
+    const april = await approvedRun(o, '2026-04', async (runId) => {
+      const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId });
+      payNet = (sheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number]).figures?.net ?? '0';
+      await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: money(payNet).minus(1000000).negated().toFixed(0), pit: '0' });
+    });
+    // The person's own pay line is over the limit (the premise of this test), whatever the correction does to their total.
+    expect(money(payNet).greaterThanOrEqualTo(5000000)).toBe(true);
+    const askedApril = await ask(o, april.runId, o.owner);
+    await approve(o, askedApril.proposalId, o.owner);
+    // The people of the month paid at or over the limit are the same as in March but for this one, whose total is now under it.
+    expect((await verified(april.runId)).cashLarge).toBe(over - 1);
+  });
+
+  const settlementOf = (o: Org, runId: string, user = o.owner) => o.query<PayrollSettlement>(user, 'finance.payroll.settlement', { runId });
+
+  it('tells the card of the month where the posting and each payment stand, from the books and the open proposals, and names no person', async () => {
+    const o = await org('tt133', 'solo');
+    const approved = await approvedRun(o);
+    const none = { status: 'none', proposalId: null };
+    expect(await settlementOf(o, approved.runId)).toEqual({ runId: approved.runId, posting: none, payments: { net_pay: none, insurance: none, union: none, tax: none } });
+    // Asked: the posting waits in the Inbox, and the card can link to it.
+    const asked = await ask(o, approved.runId, o.owner);
+    expect((await settlementOf(o, approved.runId)).posting).toEqual({ status: 'pending', proposalId: asked.proposalId });
+    await approve(o, asked.proposalId);
+    expect((await settlementOf(o, approved.runId)).posting).toEqual({ status: 'posted', proposalId: null });
+    // A payment: pending with its proposal, then recorded; the other kinds are untouched.
+    const net = await pay(o, approved.runId, 'net_pay');
+    let state = await settlementOf(o, approved.runId);
+    expect(state.payments.net_pay).toEqual({ status: 'pending', proposalId: net.proposalId });
+    expect([state.payments.insurance.status, state.payments.union.status, state.payments.tax.status]).toEqual(['none', 'none', 'none']);
+    await approve(o, net.proposalId);
+    state = await settlementOf(o, approved.runId);
+    expect(state.payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    // Only these keys, with ids and states: no amount and no name.
+    expect(Object.keys(state).sort()).toEqual(['payments', 'posting', 'runId']);
+    expect(JSON.stringify(state)).not.toMatch(/canary/i);
+  });
+
+  it('shows a reversed posting as reversed, hides the card data from a member, and never shows another org\'s run', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    const [posting] = await rows<{ id: string }>(
+      `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+        WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
+      [o.orgId, runId],
+    );
+    const asked = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId: posting?.id, entryDate: '2026-03-31', reason: 'Lập lại bảng lương' } },
+      { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, asked.proposalId);
+    expect((await settlementOf(o, runId)).posting.status).toBe('reversed');
+    const team = await org('tt133', 'standard');
+    await expect(settlementOf(team, runId, team.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // A run of another org reads as nothing asked for: the books and the proposals are the org's own.
+    expect((await settlementOf(team, runId, team.owner)).posting).toEqual({ status: 'none', proposalId: null });
+  });
+
   it('counts the person who approved the run as a co-author of its payment, and refuses a stored proposal that lost it', async () => {
     const o = await org('tt133', 'trio');
     const { runId } = await postedRun(o, 'trio');
@@ -443,6 +549,139 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect((await rows<{ status: string }>('SELECT status FROM crove_hr.payroll_run WHERE org_id = $1 AND id = $2', [o.orgId, runId]))[0]?.status).toBe('approved');
     expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [runId] })).toHaveLength(1);
     expect((await matchOf(o, line)).candidates).toEqual([]);
+  });
+
+  // Reverses one journal entry through the ordinary path: a proposal of finance.journal.reverse that the owner approves.
+  async function reverseEntry(o: Org, entryId: string | undefined, date = '2026-03-31') {
+    const asked = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId, entryDate: date, reason: 'Lập lại' } },
+      { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, asked.proposalId);
+  }
+  const postingEntry = async (o: Org, runId: string) =>
+    (
+      await rows<{ id: string }>(
+        `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+          WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
+        [o.orgId, runId],
+      )
+    )[0]?.id;
+  const paymentEntry = async (o: Org, voucherId: string) =>
+    (await rows<{ id: string }>(`SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.cash_voucher' AND source_id = $2 AND reverses_entry_id IS NULL`, [o.orgId, voucherId]))[0]?.id;
+
+  it('refuses a payment request, and the record of a request made before, once the posting of the run was reversed, and records nothing (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    // Asked while the posting stood: it waits for approval.
+    const waiting = await pay(o, runId, 'tax');
+    await reverseEntry(o, await postingEntry(o, runId));
+    // A new request is refused, and so is the approval of the one that was waiting: the posting it rests on is gone.
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_POSTING_REVERSED', status: 409 });
+    await expect(approve(o, waiting.proposalId)).rejects.toMatchObject({ code: 'HR_PAYMENT_POSTING_REVERSED' });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
+  });
+
+  it('lets the same run and kind be recorded again once its payment voucher was reversed, and still refuses a second live voucher of it, in the command and in the table (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const first = await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    const [firstVoucher] = await voucherOf(o, runId, 'net_pay');
+    // A live voucher holds the kind: refused by the command, and by the table for a row written some other way (a raw insert, whatever its proposal).
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_DONE' });
+    const other = (await pay(o, runId, 'union')).proposalId;
+    const insert = (proposal: string) =>
+      rows(
+        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+         VALUES ($1, 'bank_debit', 0, '2026-03-31', '1121', 'chi', 1000, $2, $3, 'net_pay')`,
+        [o.orgId, proposal, runId],
+      );
+    await expect(insert(other)).rejects.toMatchObject({ code: '23505', constraint: 'cash_voucher_payroll_payment_uq' });
+    // The voucher is reversed (its entry has a reversal): the kind is free, so the payment is asked for and recorded again, and the new voucher is the live one.
+    await reverseEntry(o, await paymentEntry(o, firstVoucher?.id as string));
+    const again = await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    expect(again.voucherId).not.toBe(first.voucherId);
+    const vouchers = await voucherOf(o, runId, 'net_pay');
+    expect(vouchers).toHaveLength(2);
+    expect(vouchers.every((v) => money(v.amount).equals(money(totals.net)))).toBe(true);
+    // Two live vouchers of one run and kind are still refused: the second record is HR_PAYMENT_DONE, and a raw insert is the table's unique violation.
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_DONE' });
+    await expect(insert(other)).rejects.toMatchObject({ code: '23505', constraint: 'cash_voucher_payroll_payment_uq' });
+    // The same goes for another kind of the same run: it was never held.
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+  });
+
+  it('offers a payment again to a money-out line once its voucher was reversed: a reversed voucher does not hold its kind for the matching either (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const [first, second] = (await statement(o, [{ out: vn(totals.net), description: 'Tra luong' }, { out: vn(totals.net), description: 'Tra luong lan 2' }])) as [string, string];
+    await approve(o, (await pay(o, runId, 'net_pay', { bankLineId: first })).proposalId);
+    // Recorded: the payment is not offered to the other line.
+    expect((await matchOf(o, second)).candidates).toEqual([]);
+    const [voucher] = await voucherOf(o, runId, 'net_pay');
+    await reverseEntry(o, await paymentEntry(o, voucher?.id as string));
+    // Reversed: the kind is free again, so the other line is offered the payment.
+    expect((await matchOf(o, second)).candidates).toHaveLength(1);
+  });
+
+  it('shows a reversed payment as not recorded on the card of the month, so the step is offered and can be recorded again (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    const [voucher] = await voucherOf(o, runId, 'net_pay');
+    await reverseEntry(o, await paymentEntry(o, voucher?.id as string));
+    // The reversed voucher no longer counts: the card offers the step again (no recorded status, no proposal waiting), and the other kinds are untouched.
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'none', proposalId: null });
+    const again = await pay(o, runId, 'net_pay');
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'pending', proposalId: again.proposalId });
+    await approve(o, again.proposalId);
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    expect((await settlementOf(o, runId)).payments.tax).toEqual({ status: 'none', proposalId: null });
+  });
+
+  it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261212114500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    // A proposal holds one voucher, so each writer has its own proposal.
+    const proposals = { first: (await pay(o, runId, 'union')).proposalId, second: (await pay(o, runId, 'insurance')).proposalId, third: (await pay(o, runId, 'tax')).proposalId };
+    const insert = (c: pg.Client, type: 'cash_payment' | 'bank_debit', kind: string, proposal: string) =>
+      c.query(
+        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+         VALUES ($1, $2, 0, '2026-03-31', $3, 'chi', 1000, $4, $5, $6)`,
+        [o.orgId, type, type === 'cash_payment' ? '1111' : '1121', proposal, runId, kind],
+      );
+    const first = new pg.Client({ connectionString: adminUrl });
+    const second = new pg.Client({ connectionString: adminUrl });
+    const third = new pg.Client({ connectionString: adminUrl });
+    await Promise.all([first.connect(), second.connect(), third.connect()]);
+    try {
+      // The first writer holds the (run, net_pay) slot without committing.
+      await first.query('BEGIN');
+      await insert(first, 'cash_payment', 'net_pay', proposals.first);
+      // Another kind of the same run, of yet another voucher type, goes through at once.
+      await third.query('BEGIN');
+      await insert(third, 'bank_debit', 'tax', proposals.third);
+      await third.query('ROLLBACK');
+      // The same kind with another voucher type waits for the first writer.
+      await second.query('BEGIN');
+      let finished = false;
+      const waiting = insert(second, 'bank_debit', 'net_pay', proposals.second).then(() => {
+        finished = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(finished).toBe(false);
+      // The first writer lets go (it would never commit a voucher without its entry anyway): the second goes on.
+      await first.query('ROLLBACK');
+      await waiting;
+      expect(finished).toBe(true);
+      await second.query('ROLLBACK');
+    } finally {
+      await Promise.all([first, second, third].map((c) => c.query('ROLLBACK').catch(() => undefined)));
+      await Promise.all([first.end(), second.end(), third.end()]);
+    }
   });
 
   it('offers amounts equal to the obligations of the run\'s entry, by kind: what the query adds up is what the payment will ask for', async () => {

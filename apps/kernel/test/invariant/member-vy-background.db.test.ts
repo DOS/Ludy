@@ -675,7 +675,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     );
     refused(
       await changed(
-        `UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '$RUN'`,
+        `SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '$RUN'`,
         `SELECT 1`,
       ),
       "an expired run",
@@ -971,6 +971,39 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       sealOf,
     );
     expect(seal.tainted, "the seal of a member-mode run").toBe(true);
+  });
+
+  it("keeps the 4-hour bound of a member Vy run when expires_at or started_at is updated later", async () => {
+    if (!has.kind) return;
+    const run = await liveRun("vyUser");
+    const update = (set: string) =>
+      outcome(
+        admin((a) =>
+          a.query(
+            `UPDATE crove_kernel.ai_run SET ${set} WHERE org_id = $1 AND id = $2`,
+            [orgId, run.runId],
+          ),
+        ),
+      );
+    // Positive control: a later expiry inside the bound is accepted, so the refusals below are about the bound.
+    expect(
+      (await update("expires_at = started_at + interval '3 hours'")).ok,
+      "expires_at inside 4 hours",
+    ).toBe(true);
+    expect(
+      (await update("expires_at = started_at + interval '4 hours'")).ok,
+      "expires_at at exactly 4 hours",
+    ).toBe(true);
+    for (const [why, set] of [
+      ["expires_at a day after the start", "expires_at = started_at + interval '1 day'"],
+      ["the start moved a day back", "started_at = started_at - interval '1 day'"],
+      // Both moved a day forward (the new expiry is 3 hours after the new start): still counted from the original start.
+      ["both timestamps moved a day forward", "started_at = started_at + interval '1 day', expires_at = started_at + interval '1 day 3 hours'"],
+    ] as const) {
+      const refused = await update(set);
+      // Before the clean-up migration the trigger watched agent_id alone; the bound is expected from it on.
+      expect(refused, why).toMatchObject({ ok: false, code: "23514" });
+    }
   });
 
   // ---- Writes ----------------------------------------------------------------------------------------------------------------
