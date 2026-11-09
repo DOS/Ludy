@@ -361,6 +361,27 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
+  it('does not offer the payments of a run whose per-fund sums do not add to its insurance (#2918), the posting refusing it too', async () => {
+    const o = await org('tt133', 'solo');
+    const march = await approvedRun(o);
+    const [good] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [march.runId] });
+    expect(good?.amounts.net_pay).toBeDefined();
+    // A raw session that lifts the freeze of an approved run (outside the commands) changes one fund's share: the funds no longer add to the insurance the lines carry.
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      const done = await c.query(
+        `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', '"1"') WHERE org_id = $1 AND run_id = $2 AND kind = 'pay' AND breakdown #> '{insurance,funds,0}' IS NOT NULL`,
+        [o.orgId, march.runId],
+      );
+      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('COMMIT');
+      expect(done.rowCount).toBeGreaterThan(0);
+    });
+    expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [march.runId] })).toEqual([]);
+    await expect(ask(o, march.runId, o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+  });
+
   it('pays a month that carries corrections from the signed totals: the amounts add the corrections, the voucher equals the entry, and a kind the corrections take below zero is refused', async () => {
     const o = await org('tt133', 'solo');
     const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
