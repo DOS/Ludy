@@ -59,6 +59,8 @@ export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './e
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
+export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
+export { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 export { readMarketplaceIncomeFile, recordMarketplaceIncomeReadFailure, type MarketplaceIncomeFileDeps } from './marketplace-income.ts';
 export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
 export {
