@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The household business kind (#2517, plan stock-and-marketplaces.md section 8.5), on PostgreSQL 17: the profile of an entity of kind household (a new dated row, never an edit; refused inside a
+// locked period, for another kind of entity and for a group and method that do not fit), the books each method requires, and the law as dated data (a new row changes the periods from its
+// date and none before; every seed row is still `commentary` until the accountant confirms it, #2520). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool, type Db } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import type { HouseholdProfileView, HouseholdRules } from '@crove/kernel-contract';
+import { Runtime } from '@crove/kernel-runtime';
+import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const suite = ADMIN ? describe : describe.skip;
+
+suite('household business profile and rules (#2517)', () => {
+  const dbName = `crove_test_household_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let pool: pg.Pool;
+  let db: Db;
+  let rt: Runtime;
+  const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) });
+
+  async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end();
+    }
+  }
+  const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@household.test`, name: null });
+  type Org = { orgId: string; owner: string; admin: string; member: string; viewer: string; company: string; household: string };
+  async function org(): Promise<Org> {
+    const owner = await identity('owner');
+    const { orgId } = await createOrg(rt, asUser(owner), `Hộ Kinh Doanh ${randomUUID().slice(0, 6)}`);
+    const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
+    await admin((c) =>
+      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+    );
+    const company = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id as string;
+    const household = randomUUID();
+    await admin((c) =>
+      c.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [orgId, household, owner]),
+    );
+    return { orgId, owner, admin: adminUser, member, viewer, company, household };
+  }
+  const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
+  const setProfile = (o: Org, over: Record<string, unknown> = {}, user = o.owner) =>
+    execute<HouseholdProfileView>(
+      o,
+      'finance.household.profile_set',
+      { legalEntityId: o.household, effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', ...over },
+      user,
+    );
+  const profileAt = (o: Org, date: string, user = o.owner) => query<HouseholdProfileView>(o, 'finance.household.profile_get', { legalEntityId: o.household, date }, user);
+
+  beforeAll(async () => {
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const app = new URL(adminUrl);
+    app.username = 'crove_app';
+    app.password = 'test-app-pw';
+    pool = createPool({ connectionString: app.toString(), max: 4 });
+    db = createDb(pool);
+    rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await pool?.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  it('has no profile and no book until one is set, and then lists the books of its method', async () => {
+    const o = await org();
+    expect(await profileAt(o, '2026-06-30')).toEqual({ date: '2026-06-30', profile: null, books: [], commentary: false });
+    // Group 1 keeps S1a alone.
+    const one = await setProfile(o);
+    expect(one.profile).toMatchObject({ effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' });
+    expect(one.books.map((b) => b.book)).toEqual(['S1a']);
+    // Group 2 on a percentage of revenue keeps S2a; group 3 on income keeps S2b to S2e.
+    await setProfile(o, { effectiveFrom: '2026-07-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods', 'services'], einvoiceRegistered: true });
+    await setProfile(o, { effectiveFrom: '2027-01-01', taxGroup: 3, pitMethod: 'income' });
+    expect((await profileAt(o, '2026-12-31')).books.map((b) => b.book)).toEqual(['S2a']);
+    expect((await profileAt(o, '2027-01-01')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
+    // A change is a new row: the earlier period keeps the profile it was made under.
+    expect((await profileAt(o, '2026-06-30')).profile).toMatchObject({ taxGroup: 1, trades: ['goods'] });
+    expect((await profileAt(o, '2026-07-01')).profile).toMatchObject({ taxGroup: 2, pitMethod: 'percentage', trades: ['goods', 'services'], einvoiceRegistered: true });
+    // Group 2 may choose the income method.
+    await setProfile(o, { effectiveFrom: '2027-07-01', taxGroup: 2, pitMethod: 'income' });
+    expect((await profileAt(o, '2027-07-01')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
+  });
+
+  it('says every book is commentary until the accountant confirms the row', async () => {
+    const o = await org();
+    const view = await setProfile(o);
+    expect(view.commentary).toBe(true);
+    expect(view.books).toEqual([expect.objectContaining({ book: 'S1a', version: '2026.1', status: 'commentary' })]);
+  });
+
+  it('refuses a group and method that do not fit, and an entity that is not a household', async () => {
+    const o = await org();
+    for (const bad of [
+      { taxGroup: 1, pitMethod: 'income' },
+      { taxGroup: 2, pitMethod: null },
+      { taxGroup: 3, pitMethod: 'percentage' },
+      { taxGroup: 3, pitMethod: null },
+    ]) {
+      await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_METHOD' });
+    }
+    await expect(setProfile(o, { legalEntityId: o.company })).rejects.toMatchObject({ code: 'HOUSEHOLD_NOT_HOUSEHOLD' });
+    for (const bad of [{ taxGroup: 4 }, { taxGroup: 0 }, { trades: [] }, { trades: ['cars'] }, { effectiveFrom: '2026-13-01' }, { representativeName: '' }]) {
+      await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'VALIDATION' });
+    }
+    // The database holds the kind rule too, for a writer that skips the command.
+    await expect(admin((c) => c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [o.orgId, o.company]))).rejects.toMatchObject({
+      message: expect.stringContaining('HOUSEHOLD_PROFILE_KIND'),
+    });
+  });
+
+  it('takes a new profile only after the latest one and after a locked period', async () => {
+    const o = await org();
+    await setProfile(o, { effectiveFrom: '2026-03-01' });
+    for (const date of ['2026-03-01', '2026-02-01']) await expect(setProfile(o, { effectiveFrom: date, taxGroup: 2, pitMethod: 'percentage' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_ORDER' });
+    await admin((c) =>
+      c.query("INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30')", [o.orgId, o.household]),
+    );
+    await expect(setProfile(o, { effectiveFrom: '2026-06-30', taxGroup: 2, pitMethod: 'percentage' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_LOCKED' });
+    await setProfile(o, { effectiveFrom: '2026-07-01', taxGroup: 2, pitMethod: 'percentage' });
+    expect((await profileAt(o, '2026-06-30')).profile?.taxGroup).toBe(1);
+  });
+
+  it('lets owners and admins set a profile, every role read it, and keeps the name out of the audit row', async () => {
+    const o = await org();
+    await setProfile(o, {}, o.admin);
+    await expect(setProfile(o, { effectiveFrom: '2026-09-01', taxGroup: 2, pitMethod: 'percentage' }, o.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(setProfile(o, { effectiveFrom: '2026-09-01', taxGroup: 2, pitMethod: 'percentage' }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    for (const who of [o.owner, o.admin, o.member, o.viewer]) expect((await profileAt(o, '2026-06-30', who)).profile?.taxGroup).toBe(1);
+    const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok'`, [o.orgId])).rows);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toMatchObject({ legalEntityId: o.household, effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false });
+    expect(JSON.stringify(rows[0]?.detail)).not.toContain('Nguyễn');
+  });
+
+  it("shows another org's household nothing", async () => {
+    const a = await org();
+    const b = await org();
+    await setProfile(a);
+    await expect(query(b, 'finance.household.profile_get', { legalEntityId: a.household })).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED' });
+    const seen = await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.household_profile WHERE org_id = $1', [b.orgId])).rowCount);
+    expect(seen).toBe(0);
+  });
+
+  it('never lets a tenant role change a profile or the law, and a profile row never changes in place', async () => {
+    const app = new URL(adminUrl);
+    app.username = 'crove_app';
+    app.password = 'test-app-pw';
+    const client = new pg.Client({ connectionString: app.toString() });
+    await client.connect();
+    try {
+      for (const table of ['household_threshold', 'household_trade_rate', 'household_expense_group_map', 'household_form_version', 'household_profile']) {
+        await expect(client.query(`DELETE FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
+        await expect(client.query(`UPDATE crove_finance.${table} SET source = source`)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|42703)$/) });
+      }
+    } finally {
+      await client.end();
+    }
+  });
+
+  it('seeds the law as dated rows, all still commentary, and reads the row in force on a date', async () => {
+    const o = await org();
+    const rules = await query<HouseholdRules>(o, 'finance.household.rules', { date: '2026-06-30' }, o.viewer);
+    expect(rules.commentary).toBe(true);
+    expect(rules.thresholds.map((t) => t.code).sort()).toEqual(['income_method_revenue', 'no_tax_revenue']);
+    expect(rules.thresholds.find((t) => t.code === 'no_tax_revenue')).toMatchObject({ amount: '1000000000.0000', status: 'commentary', effectiveFrom: '2026-01-01' });
+    // The e-invoice threshold starts on 2026-07-01.
+    expect((await query<HouseholdRules>(o, 'finance.household.rules', { date: '2026-07-01' })).thresholds.map((t) => t.code)).toContain('einvoice_mandatory_revenue');
+    expect(rules.tradeRates.map((r) => [r.trade, r.vatPercent, r.pitPercent])).toEqual(
+      expect.arrayContaining([
+        ['goods', '1.0000', '0.5000'],
+        ['services', '5.0000', '2.0000'],
+      ]),
+    );
+    expect(rules.forms.map((f) => f.book).sort()).toEqual(['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e']);
+    expect([...rules.thresholds, ...rules.tradeRates, ...rules.expenseGroups, ...rules.forms].every((r) => r.status === 'commentary' && r.source.length > 0)).toBe(true);
+    // Before the first row there is nothing in force.
+    const early = await query<HouseholdRules>(o, 'finance.household.rules', { date: '2025-12-31' });
+    expect([early.thresholds, early.tradeRates, early.expenseGroups, early.forms].every((l) => l.length === 0)).toBe(true);
+  });
+
+  it('changes a rate for the periods from a new dated row and for none before it', async () => {
+    const o = await org();
+    await admin((c) =>
+      c.query(
+        "INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', '2027-01-01', 2, 1, 'a later dated row (test)', 'confirmed')",
+      ),
+    );
+    const goods = async (date: string) => (await query<HouseholdRules>(o, 'finance.household.rules', { date })).tradeRates.find((r) => r.trade === 'goods');
+    expect(await goods('2026-12-31')).toMatchObject({ vatPercent: '1.0000', pitPercent: '0.5000', status: 'commentary' });
+    expect(await goods('2027-01-01')).toMatchObject({ vatPercent: '2.0000', pitPercent: '1.0000', status: 'confirmed', effectiveFrom: '2027-01-01' });
+    expect(await goods('2030-05-05')).toMatchObject({ vatPercent: '2.0000' });
+  });
+});

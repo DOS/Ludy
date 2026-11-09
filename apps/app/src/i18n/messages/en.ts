@@ -8807,6 +8807,11 @@ export const en = {
       HR_ADJUST_NOT_PAID: 'This employee has no pay line in the month being corrected',
       HR_ADJUST_NO_TERMS: 'The pay line being corrected has no employment terms, so its cost department is unknown; the adjustment cannot be made',
       HR_ADJUST_FUNDS: 'The insurance split across the funds must add up to the insurance totals entered (the employee part and the employer part), with each fund once',
+      HOUSEHOLD_NOT_HOUSEHOLD: 'Only a legal entity that is a household business can have a household profile',
+      HOUSEHOLD_PROFILE_METHOD: 'The tax group and the personal income tax method do not fit: group 1 has no method, group 2 is a percentage of revenue or income, group 3 is income',
+      HOUSEHOLD_PROFILE_DATE: 'The effective date is not valid',
+      HOUSEHOLD_PROFILE_ORDER: 'A new profile must take effect after the latest one; a change is a new row from its date',
+      HOUSEHOLD_PROFILE_LOCKED: 'The period is locked; the new profile must take effect after the locked period',
       NOTE_NOT_FOUND: 'This note was not found.',
       NOTE_AUTHOR_ONLY: 'Only the author can do this; owners and admins may also pin, archive or delete a shared note.',
       NOTE_IN_TRASH: 'This note is in the trash; restore it first.',
@@ -9697,6 +9702,11 @@ export const en = {
       },
       bank_party_rules: {
         list: 'List bank line rules',
+      },
+      household: {
+        profile_get: 'View the household profile of a legal entity and the books it requires',
+        profile_set: 'Set the household profile of a legal entity from a date',
+        rules: 'View the household tax rules in force on a date',
       },
       collection_setting: {
         get: 'View the org\'s payment reminder settings',
