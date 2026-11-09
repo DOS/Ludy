@@ -474,7 +474,7 @@ function AdjustForm({ sheet, approvedRuns, onClose }: { sheet: HrRunSheet; appro
 // The posting and the payments of an approved month (#2532), asked for from the month itself: the posting first (one entry for the whole month, built by the server from the frozen run), then
 // the net pay and each remittance once it is posted. Each is a proposal that an owner or an admin approves in the Inbox with a fresh second factor; nothing here posts, and Ludy never makes a
 // transfer: a payment voucher records one that was made. The card reads where each step stands (finance, from the books and the open proposals: no name, no amount) and offers only the next step.
-function SettlementPayment({ runId, kind, step }: { runId: string; kind: (typeof PAYROLL_PAYMENT_KINDS)[number]; step: { status: 'none' | 'pending' | 'recorded'; proposalId: string | null } }) {
+function SettlementPayment({ runId, kind, step, canAsk }: { runId: string; kind: (typeof PAYROLL_PAYMENT_KINDS)[number]; step: { status: 'none' | 'pending' | 'recorded'; proposalId: string | null }; canAsk: boolean }) {
   const t = useTranslations('hrPayroll');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const accounts = useQuery(orpc.accounts.list.queryOptions());
@@ -482,13 +482,16 @@ function SettlementPayment({ runId, kind, step }: { runId: string; kind: (typeof
   const [type, setType] = useState<'cash_payment' | 'bank_debit'>('bank_debit');
   const [date, setDate] = useState(() => vietnamToday());
   const [account, setAccount] = useState('');
-  // One key per row: a retry of the same request returns the same proposal.
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  // One key per request, renewed once it succeeds: a retry returns the same proposal, but a new request after the approver rejected the first one must not replay it.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const choices = cashAccountChoices(accounts.data ?? [], type);
   const cash = choices.some((a) => a.code === account) ? account : (choices[0]?.code ?? '');
   const ask = useMutation({
     mutationFn: () => client.inbox.request({ command: 'finance.payroll_payment.record', idempotencyKey, input: { runId, kind, type, date, cashAccount: cash } }),
-    onSuccess: () => setOpen(false),
+    onSuccess: () => {
+      setOpen(false);
+      setIdempotencyKey(crypto.randomUUID());
+    },
     onSettled: () => void queryClient.invalidateQueries(),
   });
   return (
@@ -501,14 +504,21 @@ function SettlementPayment({ runId, kind, step }: { runId: string; kind: (typeof
             {t('payPending')}
           </Link>
         )}
-        {step.status === 'none' && !open && (
+        {step.status === 'none' && canAsk && !open && (
           <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid={`hr-settle-pay-${kind}-open`}>
             {t('payAsk')}
           </Button>
         )}
       </div>
-      {step.status === 'none' && open && (
-        <div className="mt-3 flex flex-wrap items-end gap-3" data-testid={`hr-settle-pay-${kind}-form`}>
+      {step.status === 'none' && canAsk && open && (
+        <form
+          className="mt-3 flex flex-wrap items-end gap-3"
+          data-testid={`hr-settle-pay-${kind}-form`}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (cash !== '' && date !== '' && !ask.isPending) ask.mutate();
+          }}
+        >
           <div className="space-y-1">
             <Label htmlFor={`pay-type-${kind}`}>{t('payType')}</Label>
             <NativeSelect id={`pay-type-${kind}`} value={type} onChange={(e) => setType(e.target.value as 'cash_payment' | 'bank_debit')}>
@@ -530,13 +540,13 @@ function SettlementPayment({ runId, kind, step }: { runId: string; kind: (typeof
             <Label htmlFor={`pay-date-${kind}`}>{t('payDate')}</Label>
             <Input id={`pay-date-${kind}`} type="date" className="w-44" value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
-          <Button size="sm" loading={ask.isPending} disabled={cash === '' || date === ''} onClick={() => ask.mutate()} data-testid={`hr-settle-pay-${kind}-submit`}>
+          <Button type="submit" size="sm" loading={ask.isPending} disabled={cash === '' || date === ''} data-testid={`hr-settle-pay-${kind}-submit`}>
             {t('paySubmit')}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
             {t('payCancel')}
           </Button>
-        </div>
+        </form>
       )}
       {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
     </li>
@@ -547,10 +557,11 @@ function Settlement({ runId }: { runId: string }) {
   const t = useTranslations('hrPayroll');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const state = useQuery(orpc.hr.payroll.settlement.queryOptions({ input: { runId } }));
-  // One key per card: a retry of the same request returns the same proposal.
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  // One key per request, renewed once it succeeds (see SettlementPayment).
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const post = useMutation({
     mutationFn: () => client.inbox.request({ command: 'finance.payroll_posting.record', idempotencyKey, input: { runId } }),
+    onSuccess: () => setIdempotencyKey(crypto.randomUUID()),
     onSettled: () => void queryClient.invalidateQueries(),
   });
   const s = state.data;
@@ -578,10 +589,10 @@ function Settlement({ runId }: { runId: string }) {
           </div>
           {post.error && <ErrorText>{errorMessage(post.error)}</ErrorText>}
           {s.posting.status === 'reversed' && <p className="mt-2 text-sm text-muted-foreground">{t('settleReversedNote')}</p>}
-          {s.posting.status === 'posted' ? (
+          {s.posting.status === 'posted' || (s.posting.status === 'reversed' && PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none')) ? (
             <ul className="mt-3 divide-y border-t" data-testid="hr-settle-payments">
               {PAYROLL_PAYMENT_KINDS.map((kind) => (
-                <SettlementPayment key={kind} runId={runId} kind={kind} step={s.payments[kind]} />
+                <SettlementPayment key={kind} runId={runId} kind={kind} step={s.payments[kind]} canAsk={s.posting.status === 'posted'} />
               ))}
             </ul>
           ) : (

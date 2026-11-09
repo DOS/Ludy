@@ -382,7 +382,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(JSON.stringify(state)).not.toMatch(/canary/i);
   });
 
-  it('shows a reversed posting as reversed, hides the card data from a member and a viewer, and never shows another org\'s run', async () => {
+  it('shows a reversed posting as reversed, hides the card data from a member, and never shows another org\'s run', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const [posting] = await rows<{ id: string }>(
