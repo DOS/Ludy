@@ -70,6 +70,8 @@ export interface NotifyInput {
   actor?: string | null;
   // Sent even to a member who turned the kind off (a notice an action waits on).
   required?: boolean;
+  // The notification's time is the database's clock, not the kernel's: an erasure waits 24 hours from it (its notice-told check), and that wait is measured by the database too.
+  databaseClock?: boolean;
 }
 
 export async function notifyMembers(ctx: CommandContext, input: NotifyInput): Promise<number> {
@@ -97,7 +99,7 @@ export async function notifyMembers(ctx: CommandContext, input: NotifyInput): Pr
         subject_id: input.subject?.id ?? null,
         ...(input.legalEntityId ? { legal_entity_id: input.legalEntityId } : {}),
         detail: JSON.stringify(input.detail ?? {}),
-        created_at: ctx.now,
+        ...(input.databaseClock ? {} : { created_at: ctx.now }),
       })),
     )
     .onConflict((oc) => oc.columns(['org_id', 'user_id', 'dedupe_key']).doNothing())
@@ -370,6 +372,7 @@ export const notificationDispatch = defineCommand({
             eventId: event.id,
             actor: event.actor,
             required: true,
+            databaseClock: true,
           });
         }
         return { sent };
