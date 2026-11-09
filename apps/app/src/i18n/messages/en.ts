@@ -10251,6 +10251,14 @@ export const en = {
           start: 'Start a run of Vy working for you',
         },
       },
+      vy_data: {
+        member_data: {
+          purge: "Remove a former member's Vy results and memory after 30 days (daily sweep)",
+        },
+        results: {
+          expire: 'Remove expired results Vy made for members (daily sweep)',
+        },
+      },
       member: {
         change_role: "Change a member's role",
         invite: {

@@ -69,6 +69,8 @@ export const QUEUES = {
   notesTrash: 'notes-trash',
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
+  // Created by the member Vy sweeps migration (20261212100000): the daily expiry of results and purge of a former member's Vy data (#2822).
+  memberVySweep: 'kernel-member-vy-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
   meetingsTranscribe: 'meetings-transcribe',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
@@ -171,6 +173,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  [QUEUES.memberVySweep]: 'none',
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
   // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its

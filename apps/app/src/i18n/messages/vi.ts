@@ -10248,6 +10248,14 @@ export const vi = {
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
       },
+      vy_data: {
+        member_data: {
+          purge: 'Xóa kết quả và ghi nhớ Vy của thành viên đã rời sau 30 ngày (dọn hằng ngày)',
+        },
+        results: {
+          expire: 'Xóa các kết quả Vy đã hết hạn của thành viên (dọn hằng ngày)',
+        },
+      },
       member: {
         change_role: 'Đổi vai trò thành viên',
         invite: {
