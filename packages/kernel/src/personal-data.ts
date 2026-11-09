@@ -135,6 +135,13 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: "The tax code of a business or household the org keeps books for; a household's is its owner's national ID number. Kept with its books",
     override: { when: 'is_default', handling: 'keep_org', reason: "The tax code of the org's default legal entity, the org's own" },
   },
+  // The household business profile (#2517): the name printed with the signature place of the household's books (Circular 152), usually its owner's. It is part of those books, so it is kept with
+  // them; the profile rows go with the org (offboarding) and are never edited, a correction being a later row.
+  'crove_finance.household_profile.representative_name': {
+    kind: 'name',
+    handling: 'keep_legal',
+    reason: "The name of the household's representative, printed on its books of Circular 152 beside the signature; part of the accounting records, kept with them and removed with the org",
+  },
   // Agents and connected accounts.
   'crove_kernel.agent.display_name': { kind: 'other', handling: 'not_personal', reason: 'The name of an AI agent' },
   'crove_kernel.channel_connection.display_name': {
