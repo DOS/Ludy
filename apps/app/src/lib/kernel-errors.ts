@@ -238,6 +238,10 @@ export const KERNEL_ERROR_CODES = [
   'HR_POSTING_OPEN',
   'HR_POSTING_DONE',
   'HR_POSTING_ADJUSTMENTS',
+  'HR_BANK_ACCOUNT_MISSING',
+  'HR_BANK_FILE_EMPTY',
+  'HR_BANK_FILE_ADJUSTMENTS',
+  'HR_BANK_FILE_MISMATCH',
   'HR_POSTING_MISMATCH',
   'HR_POSTING_MAP_UNCONFIRMED',
   // The account map of a marketplace's money waits for the accountant (#2516).
