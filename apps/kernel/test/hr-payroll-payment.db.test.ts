@@ -675,40 +675,39 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(insertPosting()).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
   });
 
-  it('makes two writers of one run take turns for its posting slot once an earlier posting was reversed, and does not hold another run (the lock of 20261212124500) (#2931)', async () => {
+  it('makes a writer of a run wait while another holds the posting slot of that run, once an earlier posting was reversed (the advisory lock of 20261212124500, held alone so no other lock explains the wait) (#2931)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const [voucher] = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
     await reverseEntry(o, await postingEntry(o, runId));
-    // Writers copy the reversed voucher (its proposal passes the effect check); they differ only in the run they name.
-    const insert = (c: pg.Client, run: string) =>
+    // The writer copies the reversed voucher (its proposal passes the effect check) for the same run.
+    const insert = (c: pg.Client) =>
       c.query(
-        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, $2::uuid FROM crove_finance.journal_voucher WHERE id = $1`,
-        [voucher?.id, run],
+        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`,
+        [voucher?.id],
       );
-    const first = new pg.Client({ connectionString: adminUrl });
-    const second = new pg.Client({ connectionString: adminUrl });
-    await Promise.all([first.connect(), second.connect()]);
+    const holder = new pg.Client({ connectionString: adminUrl });
+    const writer = new pg.Client({ connectionString: adminUrl });
+    await Promise.all([holder.connect(), writer.connect()]);
     try {
-      // The first writer holds the run's slot without committing.
-      await first.query('BEGIN');
-      await insert(first, runId);
-      // The same run waits for it.
-      await second.query('BEGIN');
+      // The holder takes only the slot's advisory key (the number series and the unique keys are not touched), as a first writer would in the trigger.
+      await holder.query('BEGIN');
+      await holder.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_finance.journal_voucher_payroll_slot:' || $1::text || ':' || $2::text, 0))`, [o.orgId, runId]);
+      await writer.query('BEGIN');
       let finished = false;
-      const waiting = insert(second, runId).then(() => {
+      const waiting = insert(writer).then(() => {
         finished = true;
       });
       await new Promise((resolve) => setTimeout(resolve, 600));
+      // Only the slot lock can hold the writer here.
       expect(finished).toBe(false);
-      // The first lets go (a voucher is never committed without its entry anyway): the second goes on.
-      await first.query('ROLLBACK');
+      await holder.query('ROLLBACK');
       await waiting;
       expect(finished).toBe(true);
-      await second.query('ROLLBACK');
+      await writer.query('ROLLBACK');
     } finally {
-      await Promise.all([first, second].map((c) => c.query('ROLLBACK').catch(() => undefined)));
-      await Promise.all([first.end(), second.end()]);
+      await Promise.all([holder, writer].map((c) => c.query('ROLLBACK').catch(() => undefined)));
+      await Promise.all([holder.end(), writer.end()]);
     }
   });
 
