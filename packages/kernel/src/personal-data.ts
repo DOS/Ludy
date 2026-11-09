@@ -460,10 +460,13 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
     await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
     return out;
   } catch (error: unknown) {
-    if ((error as { code?: string }).code !== '57014') throw error;
+    const code = (error as { code?: string }).code;
+    if (code !== '57014' && code !== '40P01') throw error;
     // The rollback also puts the timeout back (a local setting made inside the savepoint goes with it).
     await sql`ROLLBACK TO SAVEPOINT meeting_text_scan`.execute(trx);
     await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
+    // A deadlock with a recorder's edit of the same meeting (the database chose this transaction to end): nothing was changed, and the owner can simply ask again.
+    if (code === '40P01') throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa cùng lúc; hãy thử lại sau ít phút');
     return null;
   }
 }
@@ -578,7 +581,7 @@ export const MEMBER_VY_RESULT_REASON =
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[]): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
-  return `${word} of meetings that held the value cannot be edited, so it is kept until its retention date (the earliest ${first}) and then shredded; an owner can delete a meeting at once (meetings.meeting.owner_delete), the recorder too`;
+  return `${word} of meetings that held the value cannot be edited, so it is kept until its retention date (the earliest ${first}, among all such meetings, those the owner cannot read included) and then shredded; an owner can delete a meeting at once (meetings.meeting.owner_delete), the recorder too`;
 }
 // Why an erasure keeps the original files of posted invoices (issue #1009), with the end of their retention hold.
 export function heldFilesReason(until: Date | null): string {
