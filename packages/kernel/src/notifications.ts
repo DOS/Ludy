@@ -70,7 +70,7 @@ export interface NotifyInput {
   actor?: string | null;
   // Sent even to a member who turned the kind off (a notice an action waits on).
   required?: boolean;
-  // The notification's time is the database's clock, not the kernel's: an erasure waits 24 hours from it (crove_meetings.notice_told), and that wait is measured by the database too.
+  // The notification's time is the database's clock, not the kernel's: an erasure waits 24 hours from it (its notice-told check), and that wait is measured by the database too.
   databaseClock?: boolean;
 }
 
