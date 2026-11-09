@@ -52,4 +52,4 @@ END $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_former_members_due(integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.member_vy_former_members_due(integer) TO crove_worker;
 
-SELECT crove_jobs.create_queue('kernel-member-vy-sweep', '{"policy":"standard"}'::jsonb);
+SELECT crove_jobs.create_queue('kernel-member-vy-sweep', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
