@@ -15,6 +15,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { BankMatchGroups } from '../components/bank-match-groups.tsx';
+import { BankPayrollLine } from '../components/bank-payroll-line.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
@@ -37,6 +38,8 @@ import type { SheetRows } from '../lib/xlsx.ts';
 const NUM = 'px-4 py-3 text-right tabular-nums';
 // The preview lists this many rows; the counts cover them all.
 const PREVIEW_ROWS = 300;
+// Owners and admins see the payroll payment an open money-out line may be for the first lines of the month only: one read per line, so a big month does not ask for hundreds at once.
+const PAYROLL_LINES_MAX = 50;
 
 type FileState =
   | { status: 'none' }
@@ -362,7 +365,7 @@ export function BankPage() {
                 </TableRow>
               }
             >
-              {lines.data.lines.map((line) => (
+              {lines.data.lines.map((line, index) => (
                 <TableRow key={line.id}>
                   <TableCell className="px-4 py-3 text-muted-foreground">{f.date(line.date)}</TableCell>
                   <TableCell className="px-4 py-3 font-mono text-xs">{line.reference ?? ''}</TableCell>
@@ -373,6 +376,7 @@ export function BankPage() {
                         {t('status.ambiguous')}
                       </Badge>
                     )}
+                    {canManageAccounts && line.amount.startsWith('-') && line.state.status === 'open' && index < PAYROLL_LINES_MAX && <BankPayrollLine slug={slug} line={line} bankAccount={account} />}
                   </TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? '' : f.money(line.amount)}</TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? f.money(line.amount.slice(1)) : ''}</TableCell>
