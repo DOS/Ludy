@@ -5,10 +5,11 @@
 // screen asks once and again only after its own change. The sheet, the payslips and the flags (deterministic checks) work with AI off; the finance coworker's part (#2534: prepare, flag, explain)
 // is a button a person presses, read-only, and shows nothing but the sheet when the model is off, busy, out of budget or refused.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import type { PayrollBreakdown } from '@crove/l10n-vn';
-import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_OVERTIME_DAY_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@crove/kernel-contract';
+import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_OVERTIME_DAY_KINDS, PAYROLL_PAYMENT_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -20,6 +21,7 @@ import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { cashAccountChoices } from '../lib/vouchers.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
@@ -469,6 +471,128 @@ function AdjustForm({ sheet, approvedRuns, onClose }: { sheet: HrRunSheet; appro
   );
 }
 
+// The posting and the payments of an approved month (#2532), asked for from the month itself: the posting first (one entry for the whole month, built by the server from the frozen run), then
+// the net pay and each remittance once it is posted. Each is a proposal that an owner or an admin approves in the Inbox with a fresh second factor; nothing here posts, and Ludy never makes a
+// transfer: a payment voucher records one that was made. The card reads where each step stands (finance, from the books and the open proposals: no name, no amount) and offers only the next step.
+function SettlementPayment({ runId, kind, step }: { runId: string; kind: (typeof PAYROLL_PAYMENT_KINDS)[number]; step: { status: 'none' | 'pending' | 'recorded'; proposalId: string | null } }) {
+  const t = useTranslations('hrPayroll');
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const accounts = useQuery(orpc.accounts.list.queryOptions());
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<'cash_payment' | 'bank_debit'>('bank_debit');
+  const [date, setDate] = useState(() => vietnamToday());
+  const [account, setAccount] = useState('');
+  // One key per row: a retry of the same request returns the same proposal.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const choices = cashAccountChoices(accounts.data ?? [], type);
+  const cash = choices.some((a) => a.code === account) ? account : (choices[0]?.code ?? '');
+  const ask = useMutation({
+    mutationFn: () => client.inbox.request({ command: 'finance.payroll_payment.record', idempotencyKey, input: { runId, kind, type, date, cashAccount: cash } }),
+    onSuccess: () => setOpen(false),
+    onSettled: () => void queryClient.invalidateQueries(),
+  });
+  return (
+    <li className="py-3" data-testid={`hr-settle-pay-${kind}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium">{t(`payKind.${kind}`)}</span>
+        {step.status === 'recorded' && <Badge variant="outline" data-testid={`hr-settle-pay-${kind}-state`}>{t('payRecorded')}</Badge>}
+        {step.status === 'pending' && step.proposalId && (
+          <Link to="/o/$slug/inbox/$id" params={{ slug, id: step.proposalId }} className="text-sm text-link underline" data-testid={`hr-settle-pay-${kind}-state`}>
+            {t('payPending')}
+          </Link>
+        )}
+        {step.status === 'none' && !open && (
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid={`hr-settle-pay-${kind}-open`}>
+            {t('payAsk')}
+          </Button>
+        )}
+      </div>
+      {step.status === 'none' && open && (
+        <div className="mt-3 flex flex-wrap items-end gap-3" data-testid={`hr-settle-pay-${kind}-form`}>
+          <div className="space-y-1">
+            <Label htmlFor={`pay-type-${kind}`}>{t('payType')}</Label>
+            <NativeSelect id={`pay-type-${kind}`} value={type} onChange={(e) => setType(e.target.value as 'cash_payment' | 'bank_debit')}>
+              <NativeSelectOption value="bank_debit">{t('payTypeBank')}</NativeSelectOption>
+              <NativeSelectOption value="cash_payment">{t('payTypeCash')}</NativeSelectOption>
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`pay-account-${kind}`}>{t('payAccount')}</Label>
+            <NativeSelect id={`pay-account-${kind}`} value={cash} onChange={(e) => setAccount(e.target.value)}>
+              {choices.map((a) => (
+                <NativeSelectOption key={a.code} value={a.code}>
+                  {a.code} {a.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`pay-date-${kind}`}>{t('payDate')}</Label>
+            <Input id={`pay-date-${kind}`} type="date" className="w-44" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <Button size="sm" loading={ask.isPending} disabled={cash === '' || date === ''} onClick={() => ask.mutate()} data-testid={`hr-settle-pay-${kind}-submit`}>
+            {t('paySubmit')}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+            {t('payCancel')}
+          </Button>
+        </div>
+      )}
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+    </li>
+  );
+}
+
+function Settlement({ runId }: { runId: string }) {
+  const t = useTranslations('hrPayroll');
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const state = useQuery(orpc.hr.payroll.settlement.queryOptions({ input: { runId } }));
+  // One key per card: a retry of the same request returns the same proposal.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const post = useMutation({
+    mutationFn: () => client.inbox.request({ command: 'finance.payroll_posting.record', idempotencyKey, input: { runId } }),
+    onSettled: () => void queryClient.invalidateQueries(),
+  });
+  const s = state.data;
+  return (
+    <Card className="mt-6 block p-4 print:hidden" aria-label={t('settleTitle')} data-testid="hr-settlement">
+      <h3 className="mb-1 text-sm font-semibold">{t('settleTitle')}</h3>
+      <p className="mb-3 text-sm text-muted-foreground">{t('settleHint')}</p>
+      {state.error && <ErrorText>{errorMessage(state.error)}</ErrorText>}
+      {s && (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2" data-testid="hr-settle-posting">
+            <span className="text-sm font-medium">{t('settlePosting')}</span>
+            {s.posting.status === 'posted' && <Badge variant="outline" data-testid="hr-settle-posting-state">{t('settlePosted')}</Badge>}
+            {s.posting.status === 'reversed' && <Badge variant="outline" data-testid="hr-settle-posting-state">{t('settleReversed')}</Badge>}
+            {s.posting.status === 'pending' && s.posting.proposalId && (
+              <Link to="/o/$slug/inbox/$id" params={{ slug, id: s.posting.proposalId }} className="text-sm text-link underline" data-testid="hr-settle-posting-state">
+                {t('settlePending')}
+              </Link>
+            )}
+            {s.posting.status === 'none' && (
+              <Button variant="outline" size="sm" loading={post.isPending} onClick={() => post.mutate()} data-testid="hr-settle-post">
+                {t('settlePost')}
+              </Button>
+            )}
+          </div>
+          {post.error && <ErrorText>{errorMessage(post.error)}</ErrorText>}
+          {s.posting.status === 'reversed' && <p className="mt-2 text-sm text-muted-foreground">{t('settleReversedNote')}</p>}
+          {s.posting.status === 'posted' ? (
+            <ul className="mt-3 divide-y border-t" data-testid="hr-settle-payments">
+              {PAYROLL_PAYMENT_KINDS.map((kind) => (
+                <SettlementPayment key={kind} runId={runId} kind={kind} step={s.payments[kind]} />
+              ))}
+            </ul>
+          ) : (
+            s.posting.status !== 'reversed' && <p className="mt-2 text-sm text-muted-foreground">{t('settlePayAfterPosting')}</p>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // The bank bulk-salary file of an approved month (#2532): one file for one bank, the bank typed here. A sensitive read (names and account numbers): the server asks for a second factor used in the last 5
 // minutes and the action that was refused runs again once it is verified. Ludy never makes a transfer; the accountant uploads the file to the bank.
 function BankFile({ runId, month }: { runId: string; month: string }) {
@@ -666,6 +790,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
         </Card>
       )}
       {!draft && <p className="mt-4 text-sm text-muted-foreground">{t('frozenNote')}</p>}
+      {s.run.status === 'approved' && <Settlement runId={runId} />}
       {s.run.status === 'approved' && <BankFile runId={runId} month={s.run.month} />}
       {s.rules.length > 0 && (
         <details className="mt-6 text-xs text-muted-foreground">

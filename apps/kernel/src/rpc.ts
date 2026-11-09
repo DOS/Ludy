@@ -826,6 +826,8 @@ export function createRpcHandler(
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
+        // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
+        settlement: os.hr.payroll.settlement.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.payroll.settlement', input, { actor, orgId }))),
         lines: {
           setInputs: os.hr.payroll.lines.setInputs.handler(hrCommand('hr.payroll.line.inputs.set')),
           adjust: os.hr.payroll.lines.adjust.handler(hrCommand('hr.payroll.line.adjust')),

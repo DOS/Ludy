@@ -282,3 +282,22 @@ export interface HrBankFile {
 // The audit command of a downloaded file: a count only, never a name, an account number or an amount. No row, no download.
 export const zHrBankFileExport = z.strictObject({ runId: zId, rows: z.number().int().min(1).max(HR_BANK_FILE_MAX_PEOPLE), columns: z.number().int().min(1).max(HR_BANK_FILE_COLUMNS.length) });
 export type HrBankFileExport = z.infer<typeof zHrBankFileExport>;
+
+// Where the posting and the payments of an approved pay run stand (#2532), for the card of the month: read from the books and the open proposals by finance, never from a line, so it holds no
+// name and no amount. A posting is `none` (not asked for), `pending` (a proposal waits in the Inbox), `posted`, or `reversed` (its entry was reversed: there is nothing left to pay against).
+// A payment is `none`, `pending` or `recorded`, by kind. `proposalId` is the open proposal of a pending step, so the card can link to it.
+export const PAYROLL_SETTLEMENT_POSTING = ['none', 'pending', 'posted', 'reversed'] as const;
+export const PAYROLL_SETTLEMENT_PAYMENT = ['none', 'pending', 'recorded'] as const;
+export const zPayrollSettlementRef = z.strictObject({ runId: zId });
+const zSettlementStep = <T extends readonly [string, ...string[]]>(states: T) => z.strictObject({ status: z.enum(states), proposalId: zId.nullable() });
+export const zPayrollSettlement = z.strictObject({
+  runId: zId,
+  posting: zSettlementStep(PAYROLL_SETTLEMENT_POSTING),
+  payments: z.strictObject({
+    net_pay: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+    insurance: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+    union: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+    tax: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+  }),
+});
+export type PayrollSettlement = z.infer<typeof zPayrollSettlement>;
