@@ -205,7 +205,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
             `SELECT to_regprocedure('${FN}') IS NOT NULL AS ok`,
           )
         ).rows[0]?.ok === true;
-      if (!has) return;
+      if (!has) throw new Error(`${FN} is missing: the presence pin below names it`);
       agentId = randomUUID();
       // The binding triggers need the member's own context; this fixture sets them aside for the agent row alone.
       await c.query("SET session_replication_role = replica");
@@ -226,6 +226,12 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     await root.end();
   });
 
+
+  // The presence pin (#2822): the function the cases below call is there, so none of them can pass by finding nothing to check (they once skipped when it was missing).
+  it("finds the function the cases below rest on", () => {
+    expect(has, `${FN} exists`).toBe(true);
+  });
+
   it("is pinned: a definer with a fixed search_path that only the worker login may execute", async () => {
     const { rows } = await admin((c) =>
       c.query<{ definer: boolean; config: string[]; callers: string[] }>(
@@ -234,7 +240,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
          FROM pg_proc p WHERE p.oid = to_regprocedure('${FN}')`,
       ),
     );
-    if (!has) return expect(rows).toEqual([]);
     expect(rows[0]).toEqual({
       definer: true,
       config: ["search_path=pg_catalog, pg_temp"],
@@ -243,7 +248,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   });
 
   it("closes a run as the worker in the system context: succeeded with a ready result, failed or cancelled with a fixed code", async () => {
-    if (!has) return;
     const ok = await runWith("ready");
     expect((await finish(ok, "succeeded", null)).ok, "a ready result").toBe(
       true,
@@ -278,7 +282,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   });
 
   it("refuses every other caller: the API login, a user, an agent and a member-mode context, another org, and no context", async () => {
-    if (!has) return;
     const run = await runWith("ready");
     const forbidden = { ok: false, code: "42501" };
     expect(
@@ -341,7 +344,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   });
 
   it("derives the status from the result when none is given, and takes only a code from the list (#2822 part 3)", async () => {
-    if (!has) return;
     // A ready result closes the run as succeeded, a failed one as failed with the code, whatever the caller would have said.
     const ready = await runWith("ready");
     expect((await finish(ready, null, null)).ok, "derived succeeded").toBe(true);
@@ -366,7 +368,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   });
 
   it("refuses a status that disagrees with the result, a code with text, and answers false for a run that is no longer running", async () => {
-    if (!has) return;
     const waiting = await runWith("running");
     expect(
       (await finish(waiting, "succeeded", null)).ok,

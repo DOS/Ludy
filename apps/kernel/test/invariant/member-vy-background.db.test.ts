@@ -50,13 +50,8 @@ const CTX_WRITERS = [
   "crove_kernel.enter_system_context(uuid)",
 ];
 const MEMBER_ENTRY = "crove_kernel.enter_member_vy_context(uuid,uuid,uuid)";
-// Policies that read ctx_acting_user_id, as (table, policy, command, permissive): before the catalog exists, and with it.
-const POLICIES_BEFORE = [
-  ["crove_kernel.ai_run", "member_vy_read", "*", false],
-  ["crove_kernel.member_vy_memory", "member_only", "*", false],
-  ["crove_kernel.member_vy_result", "member_only", "*", false],
-];
-const POLICIES_AFTER = [
+// Policies that read ctx_acting_user_id, as (table, policy, command, permissive).
+const POLICIES = [
   ["crove_kernel.ai_run", "member_vy_read", "*", false],
   ["crove_kernel.member_vy_memory", "member_read", "r", false],
   ["crove_kernel.member_vy_result", "member_only", "*", false],
@@ -385,6 +380,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   // ---- Unconditional: nothing here needs a stage B object ----------------------------------------------------------------
+
+  // The presence pin (#2822): what member Vy rests on is there, so none of the cases below can pass by finding nothing to check. These cases once skipped when an
+  // object was missing (the file was written before stage A merged); they now run unconditionally, and this one names what is absent.
+  it("finds every object the cases below rest on: the member entry, the catalog, the agent kind and the notes table", () => {
+    expect(has, "the objects looked up in beforeAll").toEqual({ entry: true, catalog: true, kind: true, notes: true });
+  });
+
   it("pins the functions that write the sealed context, with the member entry among them only when it exists", async () => {
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
@@ -397,7 +399,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       rows.map((r) => r.n).sort(),
       "functions that call ctx_write",
-    ).toEqual([...CTX_WRITERS, ...(has.entry ? [MEMBER_ENTRY] : [])].sort());
+    ).toEqual([...CTX_WRITERS, MEMBER_ENTRY].sort());
   });
 
   it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {
@@ -413,7 +415,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses a member's Vy agent and run in enter_agent_context, and enters no member context through any other entry", async () => {
-    if (!has.kind) return;
     const run = await liveRun("vyUser");
     const viaAgent = await outcome(
       inContext(
@@ -482,11 +483,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       found.sealReaders,
       "functions that read the sealed member directly",
-    ).toEqual(has.catalog ? ["crove_kernel.ctx_acting_user_id()"] : []);
+    ).toEqual(["crove_kernel.ctx_acting_user_id()"]);
     expect(
       found.policies.map((p) => [p.t, p.n, p.cmd, p.perm]),
       "policies that read the helper: (table, policy, command, permissive)",
-    ).toEqual(has.catalog ? POLICIES_AFTER : POLICIES_BEFORE);
+    ).toEqual(POLICIES);
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
@@ -495,7 +496,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(has.catalog, "the catalog exists exactly when the entry does").toBe(
       has.entry,
     );
-    if (!has.catalog) return;
     const catalog = (
       await admin((c) =>
         c.query<{ table_name: string; mode: string }>(
@@ -557,7 +557,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   // ---- The entry -----------------------------------------------------------------------------------------------------------
   it("enters a member-mode context for a live run of an active member, with the member's own rights and the sealed shape", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("limited");
     const seal = await inContext(
       workerUrl,
@@ -612,7 +611,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses the entry, each with its own cause: org, agent, run, member and the other orgs", async () => {
-    if (!has.entry || !has.kind) return;
     const refused = (
       o: { ok: boolean; code?: string; message?: string },
       why: string,
@@ -766,7 +764,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses the entry under an org, module or agent kill switch and under the global ai switch, and under a spent hard-stop budget", async () => {
-    if (!has.entry || !has.kind) return;
     const engage = (scope: string, target: string) =>
       admin(
         async (c) =>
@@ -875,7 +872,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("takes FOR SHARE on the member's membership row, so a removal waits for an entering transaction (55P03)", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const holder = new pg.Client({ connectionString: workerUrl });
     await holder.connect();
@@ -917,7 +913,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("enters in a READ ONLY transaction without the membership lock, reads as the member and writes nothing", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser);
     const c = new pg.Client({ connectionString: workerUrl });
@@ -957,7 +952,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("seals tainted true whatever the run row says", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     await admin((a) =>
       a.query(
@@ -974,7 +968,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("keeps the 4-hour bound of a member Vy run when expires_at or started_at is updated later", async () => {
-    if (!has.kind) return;
     const run = await liveRun("vyUser");
     const update = (set: string) =>
       outcome(
@@ -1008,7 +1001,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   // ---- Writes ----------------------------------------------------------------------------------------------------------------
   it("refuses a member-mode context every guarded table that is not a catalog 'write' table, enumerated from the catalog (AGENT_FORBIDDEN)", async () => {
-    if (!has.entry || !has.kind || !has.catalog) return;
     const tables = (
       await admin((c) =>
         c.query<{ name: string }>(
@@ -1057,7 +1049,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("pins each exempt and narrow table by its own rule: audit detail, keys, wakeups, tasks, comments, activity, proposals, notifications, memory and notes", async () => {
-    if (!has.entry || !has.kind) return;
     const taskId = await admin(
       async (c) =>
         (
@@ -1361,7 +1352,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         "the member's memory it may read",
       ).toEqual(["Gọi khách là anh"]);
     });
-    if (!has.notes) return;
     await asVy("vyUser", async (c) => {
       // The member's own notes and the shared ones its role and scope may read; never another member's private note; no write.
       const seen = (
@@ -1618,7 +1608,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("lets a member-mode context emit no event and keep no idempotency text: outbox_pending, emit() and an own-run key (AGENT_FORBIDDEN)", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     // As the superuser, so a missing privilege cannot stand in for the guard: the guard fires on the row, whoever writes it.
     const attempts = await admin(async (c) => {
@@ -1741,7 +1730,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("writes only its own result: the run's result updates, another member's is out of reach, and the cross-member insert is refused", async () => {
-    if (!has.entry || !has.kind) return;
     // An earlier run's result of the same member, then the run under test (a new run cancels the earlier one).
     const earlier = await liveRun("vyUser");
     const earlierResult = await addResult(earlier.runId, users.vyUser);
