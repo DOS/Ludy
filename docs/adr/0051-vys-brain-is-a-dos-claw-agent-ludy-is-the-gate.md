@@ -1,6 +1,6 @@
 # 0051. Vy's brain is a DOS Claw agent; Ludy is the gate
 
-- Status: Accepted (2026-11-10) as a direction. The owner decided it on 2026-11-10 in the Platform PO chat (the popup answer "Đồng ý", on the proposal in the Context below). The mechanism of decisions 2 to 4 is accepted by the Platform PO with the pull request that builds each part.
+- Status: Accepted (2026-11-10) as a direction. The owner decided it on 2026-11-10 in the Platform PO chat (the popup answer "Đồng ý", on the proposal in the Context below), and added the packaging rule of decision 9 the same day. The mechanism of decisions 2 to 4 is accepted by the Platform PO with the pull request that builds each part.
 - Date: 2026-11-10
 - Deciders: owner (JOY) for the direction; the Platform PO for the mechanism
 - Builds on: [ADR-0029](0029-agents-positions-and-org-chart.md) (agents, positions, the write allowlist, decision 8: runtimes are adapters, the `agent_grant`); [ADR-0049](0049-member-scoped-vy.md) (Vy working under one member's rights); [ADR-0018](0018-untrusted-content.md) (untrusted content); the approval and risk tiers (R0 to R3), the AI budget meter (#2382) and the kill switches (#886)
@@ -18,7 +18,7 @@ DOS already runs the agent side. As the Platform PO described it from the DOS an
 - **work.dos.ai** is a pinned Paperclip release (MIT). It provides the org chart, issues and delegation, heartbeats, and routines triggered by cron or by an HMAC-signed webhook. Its phase 3, DOS Claw agents on the chart, is designed and not live.
 - Ly, Dy and Uy are meant to be DOS Claw agents under Vy on that chart. Delegation goes through work.dos.ai, and any business effect goes through Ludy.
 
-The owner decided on 2026-11-10: **Vy's agent brain is a DOS Claw agent on work.dos.ai, not something built in Ludy.** Ludy keeps what only Ludy can keep: the data, the permission boundary and the approvals.
+The owner decided on 2026-11-10: **Vy's agent brain is a DOS Claw agent on work.dos.ai, not something built in Ludy.** Ludy keeps what only Ludy can keep: the data, the permission boundary and the approvals. A second decision the same day sets the Cloud packaging (decision 9).
 
 ## Decision
 
@@ -45,6 +45,14 @@ The owner decided on 2026-11-10: **Vy's agent brain is a DOS Claw agent on work.
 7. **Principle 1 is kept honestly.** Ludy runs on its own with `docker compose up` and is not locked to one third party. The consequence, stated plainly: **a self-hosted Ludy without DOS has the rule-based alerts on Home and the meeting summary, and no reasoning Vy.** Any MCP client can still pair the same way (OpenAI, Anthropic, Google, OpenClaw): the endpoint and the webhook are generic, and nothing in them names DOS. The **DOS preset** (the endpoint, the DOS ID sign-in and the work.dos.ai webhook URL pre-filled) is an optional adapter, **off by default**, so AGENTS.md's rule that anything DOS-specific stays out of the open core is read as: the open core carries the generic door, and a preset is only a default value for it.
 
 8. **What Ludy does not trust.** The agent's output is tainted data (ADR-0018): it reaches a record only through a command the grant allows, with the same checks as a person's click. A webhook response is not read as an instruction. The agent's own model calls are DOS.AI's and are not metered by Ludy's meter (the meter still covers Ludy's own calls); what Ludy bounds for a grant is its tool rate, its role, and the approvals it cannot skip.
+
+9. **Ludy Cloud packaging: one Vy by default, the other coworkers as paid add-ons (owner, 2026-11-10).** The owner decided the same day, in his words: "Tao nghĩ bản cloud cứ có mặc định Vy đi. Rồi ai cần thì mua thêm Ly, Uy, Hy gì đó thôi. Là 1 addon, ai ko cần AI thì khỏi xài". So:
+   - Ludy Cloud includes **one Vy agent** (a DOS Claw agent) by default for every org;
+   - each other AI coworker (Ly, Dy, Uy, and later ones such as Hy) is a **paid add-on bought per org**, and each add-on is its own DOS Claw agent under Vy on the work.dos.ai chart;
+   - an org that wants no AI does not use them, and **the rest of Ludy works fully without any agent** (AI off stays a supported mode);
+   - a self-hosted Ludy is unchanged: the rule-based alerts on Home, plus pairing any MCP client (decision 7).
+
+   The cost reasoning: a DOS Claw agent is priced per agent per month plus token usage, so the default stays at one agent. Wake-ups come only from Ludy's deterministic rules and schedules an org set (decision 4), so a quiet day costs almost no tokens. Packaging and price are a DOS.AI and Ludy Cloud decision, not Ludy code: the open core carries no price and no entitlement logic beyond the grant (an add-on is one more paired agent with its own `agent_grant`).
 
 ## Considered
 
