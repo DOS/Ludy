@@ -50,13 +50,8 @@ const CTX_WRITERS = [
   "crove_kernel.enter_system_context(uuid)",
 ];
 const MEMBER_ENTRY = "crove_kernel.enter_member_vy_context(uuid,uuid,uuid)";
-// Policies that read ctx_acting_user_id, as (table, policy, command, permissive): before the catalog exists, and with it.
-const POLICIES_BEFORE = [
-  ["crove_kernel.ai_run", "member_vy_read", "*", false],
-  ["crove_kernel.member_vy_memory", "member_only", "*", false],
-  ["crove_kernel.member_vy_result", "member_only", "*", false],
-];
-const POLICIES_AFTER = [
+// Policies that read ctx_acting_user_id, as (table, policy, command, permissive).
+const POLICIES = [
   ["crove_kernel.ai_run", "member_vy_read", "*", false],
   ["crove_kernel.member_vy_memory", "member_read", "r", false],
   ["crove_kernel.member_vy_result", "member_only", "*", false],
@@ -385,6 +380,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   // ---- Unconditional: nothing here needs a stage B object ----------------------------------------------------------------
+
+  // The presence pin (#2822): what member Vy rests on is there, so none of the cases below can pass by finding nothing to check. These cases once skipped when an
+  // object was missing (the file was written before stage A merged); they now run unconditionally, and this one names what is absent.
+  it("finds every object the cases below rest on: the member entry, the catalog, the agent kind and the notes table", () => {
+    expect(has, "the objects looked up in beforeAll").toEqual({ entry: true, catalog: true, kind: true, notes: true });
+  });
+
   it("pins the functions that write the sealed context, with the member entry among them only when it exists", async () => {
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
@@ -397,7 +399,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       rows.map((r) => r.n).sort(),
       "functions that call ctx_write",
-    ).toEqual([...CTX_WRITERS, ...(has.entry ? [MEMBER_ENTRY] : [])].sort());
+    ).toEqual([...CTX_WRITERS, MEMBER_ENTRY].sort());
   });
 
   it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {
@@ -413,7 +415,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses a member's Vy agent and run in enter_agent_context, and enters no member context through any other entry", async () => {
-    if (!has.kind) return;
     const run = await liveRun("vyUser");
     const viaAgent = await outcome(
       inContext(
@@ -482,11 +483,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       found.sealReaders,
       "functions that read the sealed member directly",
-    ).toEqual(has.catalog ? ["crove_kernel.ctx_acting_user_id()"] : []);
+    ).toEqual(["crove_kernel.ctx_acting_user_id()"]);
     expect(
       found.policies.map((p) => [p.t, p.n, p.cmd, p.perm]),
       "policies that read the helper: (table, policy, command, permissive)",
-    ).toEqual(has.catalog ? POLICIES_AFTER : POLICIES_BEFORE);
+    ).toEqual(POLICIES);
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
@@ -495,7 +496,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(has.catalog, "the catalog exists exactly when the entry does").toBe(
       has.entry,
     );
-    if (!has.catalog) return;
     const catalog = (
       await admin((c) =>
         c.query<{ table_name: string; mode: string }>(
@@ -557,7 +557,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   // ---- The entry -----------------------------------------------------------------------------------------------------------
   it("enters a member-mode context for a live run of an active member, with the member's own rights and the sealed shape", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("limited");
     const seal = await inContext(
       workerUrl,
@@ -612,7 +611,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses the entry, each with its own cause: org, agent, run, member and the other orgs", async () => {
-    if (!has.entry || !has.kind) return;
     const refused = (
       o: { ok: boolean; code?: string; message?: string },
       why: string,
@@ -766,7 +764,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses the entry under an org, module or agent kill switch and under the global ai switch, and under a spent hard-stop budget", async () => {
-    if (!has.entry || !has.kind) return;
     const engage = (scope: string, target: string) =>
       admin(
         async (c) =>
@@ -875,7 +872,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("takes FOR SHARE on the member's membership row, so a removal waits for an entering transaction (55P03)", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const holder = new pg.Client({ connectionString: workerUrl });
     await holder.connect();
@@ -917,7 +913,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("enters in a READ ONLY transaction without the membership lock, reads as the member and writes nothing", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser);
     const c = new pg.Client({ connectionString: workerUrl });
@@ -957,7 +952,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("seals tainted true whatever the run row says", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     await admin((a) =>
       a.query(
@@ -974,7 +968,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("keeps the 4-hour bound of a member Vy run when expires_at or started_at is updated later", async () => {
-    if (!has.kind) return;
     const run = await liveRun("vyUser");
     const update = (set: string) =>
       outcome(
@@ -1008,7 +1001,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   // ---- Writes ----------------------------------------------------------------------------------------------------------------
   it("refuses a member-mode context every guarded table that is not a catalog 'write' table, enumerated from the catalog (AGENT_FORBIDDEN)", async () => {
-    if (!has.entry || !has.kind || !has.catalog) return;
     const tables = (
       await admin((c) =>
         c.query<{ name: string }>(
@@ -1057,7 +1049,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("pins each exempt and narrow table by its own rule: audit detail, keys, wakeups, tasks, comments, activity, proposals, notifications, memory and notes", async () => {
-    if (!has.entry || !has.kind) return;
     const taskId = await admin(
       async (c) =>
         (
@@ -1361,7 +1352,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         "the member's memory it may read",
       ).toEqual(["Gọi khách là anh"]);
     });
-    if (!has.notes) return;
     await asVy("vyUser", async (c) => {
       // The member's own notes and the shared ones its role and scope may read; never another member's private note; no write.
       const seen = (
@@ -1391,6 +1381,172 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           .rows,
         "an entity-limited member's Vy",
       ).toEqual([]);
+    });
+  });
+
+  it("binds the ids in a member-mode audit row to the run's own result: runId, resultId, subjectId and subjectType, in an audit row, a cached response and a denied row (#2822)", async () => {
+    if (!has.entry || !has.kind) return;
+    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN" };
+    // The audit row of the agent and run in context, tried in a savepoint (as the guard sees any writer).
+    const tryAudit = async (
+      c: pg.Client,
+      run: { agentId: string; runId: string },
+      detail: unknown,
+      cols: { command?: string; target?: string | null; targetId?: string | null; outcome?: string } = {},
+    ) => {
+      await c.query("SAVEPOINT s");
+      const o = await outcome(
+        c.query(
+          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, input_sha256, detail, target_id) VALUES ($1, 'agent', $2, $3, $4, $8, $5, $6, $7::jsonb, $9)`,
+          [orgId, run.agentId, cols.command ?? "kernel.member_vy.result.store", randomUUID(), cols.target === undefined ? null : cols.target, HASH, JSON.stringify(detail), cols.outcome ?? "ok", cols.targetId ?? null],
+        ),
+      );
+      await c.query("ROLLBACK TO SAVEPOINT s");
+      return o;
+    };
+    // The responses an idempotency key of the run caches, each tried in a savepoint as the superuser, so a missing privilege cannot stand in for the guard.
+    const tryKeys = (run: { agentId: string; runId: string }, responses: unknown[]) =>
+      admin(async (c) => {
+        await c.query("BEGIN");
+        try {
+          await memberEnter(run.agentId, run.runId)(c);
+          const out: Awaited<ReturnType<typeof outcome>>[] = [];
+          for (const response of responses) {
+            await c.query("SAVEPOINT s");
+            out.push(
+              await outcome(
+                c.query(
+                  `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, response) VALUES ($1, $2, $3, 'kernel.member_vy.result.store', $4, $5::jsonb)`,
+                  [orgId, `agent:${run.agentId}:${run.runId}`, randomUUID(), HASH, JSON.stringify(response)],
+                ),
+              ),
+            );
+            await c.query("ROLLBACK TO SAVEPOINT s");
+          }
+          return out;
+        } finally {
+          await c.query("ROLLBACK");
+        }
+      });
+    // Another member's run with its result: the ids a run must not borrow.
+    const foreignRun = await liveRun("other");
+    const foreignSubject = randomUUID();
+    const foreignResult = await addResult(foreignRun.runId, users.other, "running", foreignSubject);
+    const denied = (run: { runId: string }) => ({ agentRun: run.runId, code: "AGENT_FORBIDDEN", rule: "member_vy_context" });
+
+    // A run with its result row: its own ids pass, no other does.
+    await asVy("vyUser", async (c, run) => {
+      const ownSubject = randomUUID();
+      const ownResult = await addResult(run.runId, users.vyUser, "running", ownSubject);
+      const base = { agentRun: run.runId };
+      for (const [why, detail] of [
+        ["all of its own ids", { ...base, runId: run.runId, resultId: ownResult, subjectId: ownSubject, subjectType: "note", status: "ready" }],
+        ["its result id alone", { ...base, resultId: ownResult }],
+        ["its subject alone", { ...base, subjectId: ownSubject, subjectType: "note" }],
+        ["no ids at all", { ...base, status: "ready", bodyLength: 3 }],
+      ] as const) {
+        const ok = await tryAudit(c, run, detail);
+        expect(ok.ok || ok.message, why).toBe(true);
+      }
+      for (const [why, detail] of [
+        ["a run id that is not the run's own", { ...base, runId: randomUUID() }],
+        ["a result id that is not the run's result", { ...base, resultId: randomUUID() }],
+        ["a subject id that is not the result's subject", { ...base, subjectId: randomUUID() }],
+        ["a subject type that is not the result's (a known word, the wrong one)", { ...base, subjectType: "meeting" }],
+        ["another run's id", { ...base, runId: foreignRun.runId }],
+        ["another run's result id", { ...base, resultId: foreignResult }],
+        ["another run's subject id", { ...base, subjectId: foreignSubject }],
+        ["all of another run's ids", { ...base, runId: foreignRun.runId, resultId: foreignResult, subjectId: foreignSubject, subjectType: "note" }],
+        ["its own result id with another run's subject", { ...base, resultId: ownResult, subjectId: foreignSubject }],
+      ] as const) {
+        expect(await tryAudit(c, run, detail), why).toMatchObject(forbidden);
+      }
+      // The meeting audio command's audit row names the subject: the one of the run's result (with the right command and target).
+      const audio = await tryAudit(c, run, { ...base, runId: run.runId, subjectId: ownSubject, count: 3 }, { command: "kernel.member_vy.meeting_audio.open" });
+      expect(audio.ok || audio.message, "the audio command naming its run's subject").toBe(true);
+      expect(await tryAudit(c, run, { ...base, runId: run.runId, subjectId: foreignSubject, count: 3 }, { command: "kernel.member_vy.meeting_audio.open" }), "the audio command naming another subject").toMatchObject(forbidden);
+      // The same binding on the response an idempotency key caches.
+      const keyResponses = [
+        { resultId: ownResult, status: "ready" },
+        { resultId: randomUUID() },
+        { resultId: foreignResult },
+        { subjectId: foreignSubject },
+      ];
+      const keyOutcomes = await tryKeys(run, keyResponses);
+      expect(keyOutcomes[0]?.ok || (keyOutcomes[0] as { message?: string }).message, "a cached response naming the run's own result").toBe(true);
+      for (const [why, o] of [
+        ["a cached response naming a free result id", keyOutcomes[1]],
+        ["a cached response naming another run's result", keyOutcomes[2]],
+        ["a cached response naming another run's subject", keyOutcomes[3]],
+      ] as const) {
+        expect(o, why).toMatchObject(forbidden);
+      }
+      // A denied-refusal row (#2943) carries code, rule and agentRun and no other key, so it cannot carry an id of any kind; the binding covers it all the same.
+      const deniedOk = await tryAudit(c, run, denied(run), { command: "kernel.task.create", target: "kernel.task", outcome: "denied" });
+      expect(deniedOk.ok || deniedOk.message, "the control: a denied row of the run").toBe(true);
+      for (const [why, detail] of [
+        ["a denied row with a free run id", { ...denied(run), runId: randomUUID() }],
+        ["a denied row with another run's id", { ...denied(run), runId: foreignRun.runId }],
+        ["a denied row with another run's result id", { ...denied(run), resultId: foreignResult }],
+        ["a denied row with its own result id (the denied rows carry no ids)", { ...denied(run), resultId: ownResult }],
+      ] as const) {
+        expect(await tryAudit(c, run, detail, { command: "kernel.task.create", target: "kernel.task", outcome: "denied" }), why).toMatchObject(forbidden);
+      }
+    });
+
+    // The target of an audit row is bound as well: none, or the run itself as a kernel.ai_run; a denied row (whose target the runtime takes from the model's
+    // input) has none.
+    await asVy("vyUser", async (c, run) => {
+      const base = { agentRun: run.runId };
+      for (const [why, cols] of [
+        ["no target", {}],
+        ["the run itself as its target", { target: "kernel.ai_run", targetId: run.runId }],
+      ] as const) {
+        const ok = await tryAudit(c, run, base, cols);
+        expect(ok.ok || ok.message, why).toBe(true);
+      }
+      for (const [why, cols] of [
+        ["a free target id", { target: "kernel.ai_run", targetId: randomUUID() }],
+        ["another run's id as the target", { target: "kernel.ai_run", targetId: foreignRun.runId }],
+        ["a target id with no target type", { targetId: run.runId }],
+        ["the run's id under another target type", { target: "kernel.task", targetId: run.runId }],
+      ] as const) {
+        expect(await tryAudit(c, run, base, cols), why).toMatchObject(forbidden);
+      }
+      const deniedCols = { command: "kernel.task.create", target: "kernel.task", outcome: "denied" };
+      for (const [why, targetId] of [
+        ["a denied row with a free target id", randomUUID()],
+        ["a denied row with another run's id as its target", foreignRun.runId],
+        ["a denied row with the run's own id as its target", run.runId],
+      ] as const) {
+        expect(await tryAudit(c, run, denied(run), { ...deniedCols, targetId }), why).toMatchObject(forbidden);
+      }
+    });
+
+    // A run with no result row yet: none of resultId, subjectId and subjectType is allowed (absent, or null, which the shape check refuses).
+    await asVy("limited", async (c, run) => {
+      const base = { agentRun: run.runId };
+      for (const [why, detail] of [
+        ["no ids at all", { ...base, status: "running", bodyLength: 0 }],
+        ["its own run id", { ...base, runId: run.runId }],
+      ] as const) {
+        const ok = await tryAudit(c, run, detail);
+        expect(ok.ok || ok.message, why).toBe(true);
+      }
+      for (const [why, detail] of [
+        ["a result id when the run has no result", { ...base, resultId: randomUUID() }],
+        ["a subject id when the run has no result", { ...base, subjectId: randomUUID() }],
+        ["a subject type when the run has no result", { ...base, subjectType: "note" }],
+        ["a null result id (the shape check refuses a null)", { ...base, resultId: null }],
+        ["another run's result id", { ...base, resultId: foreignResult }],
+        ["another run's subject id", { ...base, subjectId: foreignSubject }],
+        ["a free run id", { ...base, runId: randomUUID() }],
+      ] as const) {
+        expect(await tryAudit(c, run, detail), why).toMatchObject(forbidden);
+      }
+      const keyOutcomes = await tryKeys(run, [{ status: "ready" }, { resultId: randomUUID() }]);
+      expect(keyOutcomes[0]?.ok, "a cached response with no ids").toBe(true);
+      expect(keyOutcomes[1], "a cached response with a result id when the run has none").toMatchObject(forbidden);
     });
   });
 
@@ -1452,7 +1608,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("lets a member-mode context emit no event and keep no idempotency text: outbox_pending, emit() and an own-run key (AGENT_FORBIDDEN)", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     // As the superuser, so a missing privilege cannot stand in for the guard: the guard fires on the row, whoever writes it.
     const attempts = await admin(async (c) => {
@@ -1575,7 +1730,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("writes only its own result: the run's result updates, another member's is out of reach, and the cross-member insert is refused", async () => {
-    if (!has.entry || !has.kind) return;
     // An earlier run's result of the same member, then the run under test (a new run cancels the earlier one).
     const earlier = await liveRun("vyUser");
     const earlierResult = await addResult(earlier.runId, users.vyUser);
