@@ -478,7 +478,9 @@ export const UPLOAD_BUSY_RETRY_SECONDS = 3;
 export const EXPORT_BUSY_RETRY_SECONDS = 5;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
-export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false): string {
+// apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
+// ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
+export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
   const authOrigin = new URL(authUrl, 'http://localhost').origin;
@@ -496,6 +498,9 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     turnstile ? `script-src 'self' ${TURNSTILE_ORIGIN}` : "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' blob: data:",
+    // A meeting's audio plays from a blob URL the app makes, and its video from the stream route by ticket (#2703): media-src
+    // would otherwise fall back to default-src, which refuses blob: and, apart from the API, the API's origin.
+    `media-src 'self' blob:${apiOrigin ? ` ${apiOrigin}` : ''}`,
     `connect-src 'self' ${authOrigin}${storageOrigin ? ` ${storageOrigin}` : ''}`,
     ...(turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
     "object-src 'none'",
