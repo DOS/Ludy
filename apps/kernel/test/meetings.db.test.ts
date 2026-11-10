@@ -1173,4 +1173,39 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(store.opened.length).toBe(opened);
     expect(store.staged.has(stagingKey)).toBe(false);
   });
+
+  it('20. the media route seals with the injected broker, the one the server shares with the reseal pass (#2703)', async () => {
+    // The config of this file has no credential key, so the route's own fallback (createCredentialBroker(config)) could seal nothing:
+    // a sealed claim, and the injected broker's key derivations, show the route used deps.broker.
+    const purposes: string[] = [];
+    const counting = {
+      ...broker,
+      deriveKey: (keyId: string, purpose: string) => {
+        purposes.push(`${keyId}:${purpose}`);
+        return broker.deriveKey!(keyId, purpose);
+      },
+    } as unknown as CredentialBroker;
+    const shared = createHttpApp({ ...deps, broker: counting });
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Shared broker', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const uploadId = randomUUID();
+    const stagingKey = `staging/${randomBytes(32).toString('hex')}`;
+    store.staged.set(stagingKey, Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(100, 7)]));
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
+        [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
+      );
+    });
+    const res = await shared.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      body: JSON.stringify({ uploadId, kind: 'audio' }),
+    });
+    expect(res.status).toBe(200);
+    expect(purposes).toContain('k1-meetings-test:crove.meetings.v1|wrap');
+    const keyId = await admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows[0]?.key_id);
+    expect(keyId).toBe('k1-meetings-test');
+  });
 });

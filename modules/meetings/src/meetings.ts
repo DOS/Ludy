@@ -23,12 +23,14 @@ import {
 } from './retention.ts';
 import {
   auditValue,
+  MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
   zMeetingExtensionStatus,
   zMeetingListInput,
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
   zMeetingMediaRecord,
+  zMeetingOwnerListInput,
   zMeetingReaderAdd,
   zMeetingReaderRemove,
   zMeetingRef,
@@ -36,6 +38,8 @@ import {
   type MeetingDetail,
   type MeetingExtensionStatus,
   type MeetingLanguage,
+  type MeetingOwnerList,
+  type MeetingOwnerListItem,
   type MeetingStatus,
   type MeetingSummary,
   type MeetingVisibility,
@@ -378,6 +382,59 @@ export const meetingOwnerDelete = defineCommand({
 
     ctx.audit({ meetingId: input.meetingId, shredded: true, complianceOwnerDelete: true });
     return { meetingId: input.meetingId, shredded: true };
+  },
+});
+
+// The owner's compliance list (#2703, ADR-0047): every meeting of the org as metadata only, the attendees-only ones the owner is no reader
+// of included, so the owner can pick one for meetings.meeting.owner_delete. A command, not a query, so every call leaves an audit row; the
+// row holds counts and ids, never text. The definer checks the owner again and answers no text column.
+const OWNER_LIST_STATUS: Record<number, MeetingStatus> = { 1: 'ready', 2: 'processing', 3: 'completed', 4: 'error' };
+
+export const meetingOwnerList = defineCommand({
+  name: 'meetings.meeting.owner_list',
+  input: zMeetingOwnerListInput,
+  risk: 'R0',
+  sideEffect: 'none',
+  access: ['owner'],
+  handler: async (ctx, input): Promise<MeetingOwnerList> => {
+    userOf(ctx.actor);
+    const limit = input.limit ?? MEETING_OWNER_LIST_PAGE;
+    // One row more than the page tells whether another page follows. The definer caps a call at the page size, so a full page asks
+    // again for one row past it instead.
+    const { rows } = await sql<{
+      id: string;
+      started_text: string;
+      recorder_user_id: string;
+      org_wide: boolean;
+      status_code: number;
+      audio_retention_date: Date | string;
+      video_retention_date: Date | string | null;
+      text_retention_date: Date | string | null;
+    }>`
+      SELECT l.id, pg_catalog.to_json(l.started_at) #>> '{}' AS started_text, l.recorder_user_id, l.org_wide, l.status_code,
+             l.audio_retention_date, l.video_retention_date, l.text_retention_date
+      FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, ${limit}::integer, ${input.afterStartedAt ?? null}::timestamptz, ${input.afterId ?? null}::uuid) l
+    `.execute(ctx.trx);
+    const items: MeetingOwnerListItem[] = rows.map((r) => ({
+      id: r.id,
+      recorderUserId: r.recorder_user_id,
+      startedAt: r.started_text,
+      visibility: r.org_wide ? 'org' : 'attendees',
+      status: OWNER_LIST_STATUS[r.status_code] ?? 'error',
+      audioRetentionDate: dayText(r.audio_retention_date),
+      videoRetentionDate: r.video_retention_date === null ? null : dayText(r.video_retention_date),
+      textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
+    }));
+    let next: MeetingOwnerList['next'] = null;
+    const last = items[items.length - 1];
+    if (items.length === limit && last) {
+      const { rows: more } = await sql<{ id: string }>`
+        SELECT l.id FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, 1, ${last.startedAt}::timestamptz, ${last.id}::uuid) l
+      `.execute(ctx.trx);
+      if (more.length > 0) next = { afterStartedAt: last.startedAt, afterId: last.id };
+    }
+    ctx.audit({ count: items.length, limit, paged: input.afterId !== undefined, more: next !== null });
+    return { items, next };
   },
 });
 
@@ -872,6 +929,7 @@ export const meetingsCommands = [
   meetingMediaRecord,
   meetingDelete,
   meetingOwnerDelete,
+  meetingOwnerList,
   meetingReaderAdd,
   meetingReaderRemove,
   meetingMediaKeyReseal,

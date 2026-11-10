@@ -653,6 +653,9 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           store,
           authenticate,
           pool,
+          // The meetings media route seals and opens with the same broker as the worker's reseal pass. The 'none' broker
+          // is left out so the route keeps its own fallback (createCredentialBroker(config)).
+          ...(resolved.broker.id !== 'none' ? { broker: resolved.broker } : {}),
           aiEnabled: resolved.ai !== null,
           aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
           ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),

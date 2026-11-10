@@ -311,6 +311,8 @@ import {
   zMeetingCreate,
   zMeetingCreated,
   zMeetingDeleted,
+  zMeetingOwnerList,
+  zMeetingOwnerListInput,
   zMeetingDetail,
   zMeetingListInput,
   zMeetingReaderAdd,
@@ -809,6 +811,8 @@ export const contract = {
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
+    ownerList: oc.input(zMeetingOwnerListInput).output(zMeetingOwnerList),
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),

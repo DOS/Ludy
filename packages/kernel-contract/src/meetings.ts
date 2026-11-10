@@ -96,6 +96,45 @@ export const zMeetingDeleted = z.strictObject({
 });
 export type MeetingDeleted = z.infer<typeof zMeetingDeleted>;
 
+// The owner's compliance list (#2703, ADR-0047): every meeting of the org, the attendees-only ones the owner cannot read included, as
+// metadata only, so the owner can find one to delete. Never a title, a transcript, a summary, a reader or any other text.
+export const MEETING_OWNER_LIST_PAGE = 200;
+
+export const zMeetingOwnerListInput = z
+  .strictObject({
+    limit: z.number().int().min(1).max(MEETING_OWNER_LIST_PAGE).optional(),
+    // The keyset cursor: the start and id of the last row of the previous page, both or neither.
+    afterStartedAt: z.iso.datetime({ offset: true }).optional(),
+    afterId: zId.optional(),
+  })
+  .refine((v) => (v.afterStartedAt === undefined) === (v.afterId === undefined), {
+    message: 'afterStartedAt and afterId come together',
+    path: ['afterId'],
+  });
+export type MeetingOwnerListInput = z.infer<typeof zMeetingOwnerListInput>;
+
+export const zMeetingOwnerListItem = z.strictObject({
+  id: zId,
+  recorderUserId: zId,
+  // When the meeting started (its creation time when it has no start).
+  startedAt: z.string(),
+  visibility: zMeetingVisibility,
+  status: zMeetingStatus,
+  audioRetentionDate: z.string(),
+  // null: the meeting kept no video.
+  videoRetentionDate: z.string().nullable(),
+  // null: the org keeps text until a person deletes the meeting.
+  textRetentionDate: z.string().nullable(),
+});
+export type MeetingOwnerListItem = z.infer<typeof zMeetingOwnerListItem>;
+
+export const zMeetingOwnerList = z.strictObject({
+  items: z.array(zMeetingOwnerListItem),
+  // The cursor of the next page, null on the last one.
+  next: z.strictObject({ afterStartedAt: z.string(), afterId: zId }).nullable(),
+});
+export type MeetingOwnerList = z.infer<typeof zMeetingOwnerList>;
+
 export const zMeetingReaderAdd = z.strictObject({
   meetingId: zId,
   userId: zId,
