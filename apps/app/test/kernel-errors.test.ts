@@ -47,6 +47,8 @@ const NOT_SHOWN: Record<string, string> = {
   BANK_FEED_CURSOR_MOVED: 'worker',
   // The tax portal sync (#325): a download already made for the synced list; fetchXml skips it, the SPA never gets it.
   PORTAL_CALL_DONE: 'portal sync',
+  // Home's cross-app rules (Vy plan C4, kernel.today): a line's signals read answered outside its contract. kernel.today catches it and counts it in `failed`; the SPA never gets it.
+  SIGNAL_CONTRACT_BROKEN: 'home signals',
   // The inbound mail endpoint answers the mail relay, not a browser.
   EMPTY_MESSAGE: 'inbound mail',
   UNKNOWN_RECIPIENT: 'inbound mail',

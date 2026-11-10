@@ -12,6 +12,7 @@ import {
   FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ,
   FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ,
   OVERDUE_RECEIVABLE_MIN_DAYS,
+  SIGNAL_PARTIAL_VIEW_CODE,
   SUPPLIER_BANK_CHANGE_DAYS,
   WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@crove/kernel-contract';
 import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
@@ -238,9 +239,9 @@ describe('the overdue receivable with an open deal rule (Vy C4, V5)', () => {
     expect(await runReceivable({}, { absent: ['crm'] })).toEqual([]);
   });
 
-  it('keeps the oldest due date of a party that comes in several rows, orders the longest overdue first, and caps at 20 with one grouped item', async () => {
+  it('reads a repeated party in the overdue answer as outside the contract (no guessing which row is right), orders the longest overdue first, and caps at 20 with one grouped item', async () => {
     const twice = await runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ oldestDueOn: '2026-11-15' }), overdue({ oldestDueOn: '2026-11-05' })] });
-    expect(twice[0]?.title).toEqual({ key: 'signals.overdueReceivableOpenDeal', params: { days: 15 } });
+    expect(twice).toEqual([]);
     const parties = Array.from({ length: 23 }, () => randomUUID());
     const items = await runReceivable({
       [CRM_OPEN_DEALS_SIGNALS_READ]: parties.map((partyId) => openDeal({ partyId })),
@@ -297,13 +298,14 @@ describe('the supplier bank account changed with a payment waiting rule (Vy C4, 
     expect(inputs[FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]).toEqual({ partyIds: [party] });
   });
 
-  it('does not fire on its near misses: no payment waiting, a payment of another supplier, a change older than 30 days or in the future, no change at all', async () => {
+  it('does not fire on its near misses: no payment waiting, a payment of another supplier, a change older than 30 days, no change at all (and a future-dated change still counts)', async () => {
     const payments = (rows: unknown[]) => ({ [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: rows });
     expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], ...payments([]) })).toEqual([]);
     expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], ...payments([waiting({ partyId: other })]) })).toEqual([]);
     expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-10-20' })], ...payments([waiting()]) })).toEqual([]); // 31 days
     expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-10-21' })], ...payments([waiting()]) })).toHaveLength(1); // 30 days
-    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-11-25' })], ...payments([waiting()]) })).toEqual([]);
+    // A change dated in the future (a clock a little ahead, an effective date) counts as today: the rule must not fail open on it.
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-11-25' })], ...payments([waiting()]) })).toHaveLength(1);
     const asked: string[] = [];
     expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [], ...payments([waiting()]) }, { asked })).toEqual([]);
     expect(asked).toEqual([FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]); // no change, so payments are not even asked
@@ -346,9 +348,11 @@ describe('the supplier bank account changed with a payment waiting rule (Vy C4, 
     expect(errors.every((e) => e.startsWith('[signals]') && !/Công ty/.test(e))).toBe(true);
   });
 
-  it('keeps the latest change per supplier, lists the most recent change first, caps at 20 with one grouped block item, and counts days on the Vietnam calendar', async () => {
-    const twice = await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-11-02' }), change({ changedOn: '2026-11-18' })], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] });
-    expect(twice[0]?.title.params).toEqual({ days: 2, count: 2 });
+  it('reads a repeated supplier in either answer as a broken contract, and caps at 20 with one grouped block item, most recent change first', async () => {
+    const errors: string[] = [];
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-11-02' }), change({ changedOn: '2026-11-18' })], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting(), waiting({ amount: '1' })] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    expect(errors).toHaveLength(2);
     const parties = Array.from({ length: 23 }, () => randomUUID());
     const items = await runBank({
       [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: parties.map((partyId, i) => change({ partyId, changedOn: `2026-11-${String(1 + (i % 9)).padStart(2, '0')}` })),
@@ -357,6 +361,32 @@ describe('the supplier bank account changed with a payment waiting rule (Vy C4, 
     expect(items).toHaveLength(SIGNAL_ITEMS_MAX + 1);
     expect(items[SIGNAL_ITEMS_MAX]).toMatchObject({ id: 'signal:supplier-bank-changed:more', severity: 'block', count: 3 });
     expect(items.every((i) => i.severity === 'block')).toBe(true);
+  });
+
+  it('tells a partial view apart from no right at all: a partial refusal of the changes or of the payments read is a visible warn item, no right gives nothing', async () => {
+    const partial = () => {
+      throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'only part of the supplier data is visible');
+    };
+    // The changes themselves are only partly visible: a "could not fully check" item without a count.
+    const items = await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: partial, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] });
+    expect(items).toEqual([{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:partial', title: { key: 'signals.supplierBankChangedPartial' }, severity: 'warn', href: '/inbox' }]);
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+    // The payments are only partly visible: the unchecked item with the number of changed suppliers.
+    const unchecked = await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: partial });
+    expect(unchecked).toMatchObject([{ id: 'signal:supplier-bank-changed:unchecked', severity: 'warn', count: 1 }]);
+    // No finance right at all (an ordinary refusal): nothing, as for a member who cannot see the suppliers.
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: refuse, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] })).toEqual([]);
+  });
+
+  it('cuts no supplier: 500 changed suppliers are all asked about, 501 in the answer is outside the contract and fails the read visibly', async () => {
+    const some = (n: number) => Array.from({ length: n }, () => randomUUID());
+    const inputs: Record<string, unknown> = {};
+    const five = some(500);
+    await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: five.map((partyId) => change({ partyId })), [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [] }, { inputs });
+    expect((inputs[FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ] as { partyIds: string[] }).partyIds).toHaveLength(500);
+    const errors: string[] = [];
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: some(501).map((partyId) => change({ partyId })), [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    expect(errors).toHaveLength(1);
   });
 
   it('lets a database error through', async () => {

@@ -192,6 +192,7 @@ export const en = {
         supplierBankChanged: 'A supplier changed its bank account {days, plural, one {# day} other {# days}} ago and {count, plural, one {# payment is} other {# payments are}} waiting: check the account before paying',
         supplierBankChangedMore: '{count, plural, one {# more supplier} other {# more suppliers}} changed a bank account and have a payment waiting',
         supplierBankChangedUnchecked: '{count, plural, one {# supplier} other {# suppliers}} changed a bank account recently; their waiting payments could not be checked, look before paying',
+        supplierBankChangedPartial: 'You can see only part of the supplier data, so bank account changes could not be fully checked: look at the waiting payments yourself before paying',
       },
       crm: {
         noActivity: 'Reminder: this deal has had no update for {days, plural, one {# day} other {# days}}',

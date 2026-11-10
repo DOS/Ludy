@@ -22,6 +22,7 @@ import {
   FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ,
   FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ,
   OVERDUE_RECEIVABLE_MIN_DAYS,
+  SIGNAL_PARTIAL_VIEW_CODE,
   SUPPLIER_BANK_CHANGE_DAYS,
   WON_DEAL_NO_INVOICE_DAYS,
   vietnamToday,
@@ -53,7 +54,7 @@ const daysBetween = (from: string, to: string): number => Math.round((Date.parse
 
 // What one line's signals read gave: its rows, nothing to join (not registered, module off, or a refusal: no right to see, a view that is only partial), or an
 // answer outside the contract (a bug of that line, which is not the same as "nothing").
-type Signals<T> = { status: 'ok'; rows: T } | { status: 'unavailable' } | { status: 'broken' };
+type Signals<T> = { status: 'ok'; rows: T } | { status: 'unavailable' } | { status: 'partial' } | { status: 'broken' };
 
 async function readSignals<T>(ctx: QueryContext, name: string, schema: z.ZodType<T>, input: unknown = {}): Promise<Signals<T>> {
   let answer;
@@ -61,7 +62,7 @@ async function readSignals<T>(ctx: QueryContext, name: string, schema: z.ZodType
     answer = await ctx.query<unknown>(name, input);
   } catch (error) {
     // Thrown before any SQL, so the transaction is still usable. Anything else (a database error) may have left it unusable and fails the answer.
-    if (error instanceof DomainError) return { status: 'unavailable' };
+    if (error instanceof DomainError) return error.code === SIGNAL_PARTIAL_VIEW_CODE ? { status: 'partial' } : { status: 'unavailable' };
     throw error;
   }
   if (answer.status !== 'ok') return { status: 'unavailable' };
@@ -132,15 +133,10 @@ export function receivableWithOpenDealQuery(options: { now?: () => Date } = {}) 
       const receivables = await signalsOf(ctx, FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ, zFinanceOverdueReceivableSignals, { partyIds });
       if (!receivables) return [];
       const today = vietnamToday(options.now?.() ?? new Date());
-      // Only the parties of the open deals (a row for another party is ignored), one row per party (the oldest due date and the larger total win if it repeats).
+      // Only the parties of the open deals (a row for another party is ignored); the contract allows one row per party.
       const wanted = new Set(partyIds);
       const byParty = new Map<string, { oldestDueOn: string; amount: string }>();
-      for (const r of receivables) {
-        if (!wanted.has(r.partyId)) continue;
-        const known = byParty.get(r.partyId);
-        if (!known) byParty.set(r.partyId, { oldestDueOn: r.oldestDueOn, amount: r.amount });
-        else byParty.set(r.partyId, { oldestDueOn: r.oldestDueOn < known.oldestDueOn ? r.oldestDueOn : known.oldestDueOn, amount: Number(r.amount) > Number(known.amount) ? r.amount : known.amount });
-      }
+      for (const r of receivables) if (wanted.has(r.partyId)) byParty.set(r.partyId, { oldestDueOn: r.oldestDueOn, amount: r.amount });
       const due = [...byParty.entries()]
         .map(([partyId, r]) => ({ partyId, ...r, days: daysBetween(r.oldestDueOn, today) }))
         .filter((r) => r.days >= OVERDUE_RECEIVABLE_MIN_DAYS)
@@ -169,6 +165,7 @@ export function receivableWithOpenDealQuery(options: { now?: () => Date } = {}) 
 // scheduled. This is a payment-fraud signal, so it is `block` and it is never dropped silently:
 //   - the bank-change read answers first. A member with no right to it (it refuses, or is not registered) gets nothing: they cannot see the change either;
 //   - for the suppliers it lists, Accounting is asked about their waiting payments. A supplier with one gives a `block` item;
+//   - a PARTIAL view of the changes themselves (SIGNAL_PARTIAL_VIEW, an entity scope narrower than the org) gives one `warn` item saying the check is incomplete;
 //   - if that second read cannot answer (it refuses because the member's view of the supplier's payments is partial, or it is not registered), the member HAS seen
 //     a changed account and cannot see its payments, so the answer is one `warn` item saying the payments could not be checked, never an empty list;
 //   - an answer outside the contract, from either read, is a bug of that line: it is logged and the read fails (`SIGNAL_CONTRACT_BROKEN`), so Home counts it in
@@ -187,32 +184,30 @@ export function supplierBankChangedQuery(options: { now?: () => Date; log?: Pick
       const changes = await readSignals(ctx, FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ, zFinanceSupplierBankChangeSignals);
       if (changes.status === 'broken') throw broken(FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ);
       if (changes.status === 'unavailable') return [];
+      // A partial view of the changes (an entity scope narrower than the org): the member may be missing a changed account, so they are told, never given nothing.
+      if (changes.status === 'partial') return [{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:partial', title: { key: 'signals.supplierBankChangedPartial' }, severity: 'warn', href: '/inbox' }];
       const today = vietnamToday(options.now?.() ?? new Date());
-      // The latest change per supplier, inside the window (a date in the future never counts).
+      // The suppliers that changed an account inside the window. A change dated in the future (a clock a little ahead, an effective date) counts as today: the rule
+      // must not fail open on it.
       const changedOn = new Map<string, string>();
       for (const c of changes.rows) {
-        const age = daysBetween(c.changedOn, today);
-        if (age < 0 || age > SUPPLIER_BANK_CHANGE_DAYS) continue;
-        if ((changedOn.get(c.partyId) ?? '') < c.changedOn) changedOn.set(c.partyId, c.changedOn);
+        const age = Math.max(0, daysBetween(c.changedOn, today));
+        if (age <= SUPPLIER_BANK_CHANGE_DAYS) changedOn.set(c.partyId, c.changedOn);
       }
       if (changedOn.size === 0) return [];
-      const partyIds = [...changedOn.keys()].slice(0, 500);
+      // At most 500 (the contract's cap on the changes read, which is also the payments read's input cap): none is cut.
+      const partyIds = [...changedOn.keys()];
       const payments = await readSignals(ctx, FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ, zFinanceSupplierPaymentsWaitingSignals, { partyIds });
       if (payments.status === 'broken') throw broken(FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ);
-      if (payments.status === 'unavailable') {
+      if (payments.status === 'unavailable' || payments.status === 'partial') {
         // Not checked: say so, once, with how many suppliers changed their account.
         return [{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:unchecked', title: { key: 'signals.supplierBankChangedUnchecked', params: { count: partyIds.length } }, count: partyIds.length, severity: 'warn', href: '/inbox' }];
       }
       const wanted = new Set(partyIds);
       const waiting = new Map<string, { count: number; amount: string }>();
-      for (const p of payments.rows) {
-        if (!wanted.has(p.partyId)) continue;
-        const known = waiting.get(p.partyId);
-        // A repeated row for a supplier keeps the larger one (never adds: the read owns the total).
-        if (!known || Number(p.amount) > Number(known.amount)) waiting.set(p.partyId, { count: p.count, amount: p.amount });
-      }
+      for (const p of payments.rows) if (wanted.has(p.partyId)) waiting.set(p.partyId, { count: p.count, amount: p.amount });
       const hits = [...waiting.entries()]
-        .map(([partyId, w]) => ({ partyId, ...w, days: daysBetween(changedOn.get(partyId) as string, today) }))
+        .map(([partyId, w]) => ({ partyId, ...w, days: Math.max(0, daysBetween(changedOn.get(partyId) as string, today)) }))
         .sort((a, b) => a.days - b.days || (a.partyId < b.partyId ? -1 : 1));
       const items: TodayItem[] = hits.slice(0, SIGNAL_ITEMS_MAX).map((h) => ({
         kind: 'flag',
