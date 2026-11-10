@@ -125,6 +125,7 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
+import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
@@ -283,6 +284,10 @@ export interface HttpDeps {
   videoUploads?: ConcurrencyLimiter;
   // How long a raw meeting upload may go without receiving a byte before it is cancelled (tests shorten it).
   mediaStallMs?: number;
+  // Refused meeting video tickets per client address (#2703). Default: STREAM_REDEEM_FAILURES_PER_MINUTE.
+  videoTicketFailures?: RateLimiter;
+  // Meeting video responses being read at once, per user (#2703). Default: VIDEO_STREAMS_PER_USER each.
+  videoStreams?: ConcurrencyLimiter;
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
@@ -335,6 +340,9 @@ export const STREAM_RETRY_SECONDS = 15;
 // it by up to the per-address in-flight cap. The in-flight cap bounds the database work of many addresses at once (503 STREAM_BUSY past it), and
 // one address may hold only a quarter of it.
 export const STREAM_REDEEM_FAILURES_PER_MINUTE = 20;
+// Meeting video responses one user may be reading at once through a ticket (#2703): a player opens a few ranges together.
+export const VIDEO_STREAMS_PER_USER = 3;
+const VIDEO_STREAMS_RETRY_SECONDS = 2;
 export const STREAM_REDEEMS_IN_FLIGHT = 32;
 export const STREAM_REDEEMS_IN_FLIGHT_PER_CLIENT = 8;
 
@@ -1400,6 +1408,89 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // Playback of one meeting's video by a short-lived signed ticket (#2703). A `<video>` cannot send the bearer header, so this
+  // route runs before the bearer middleware below and the credential is the ticket POST /api/meetings/:id/video/ticket
+  // issued (stateless: an HMAC under a key the credential broker derives for this one purpose). The ticket only says who
+  // asked, for which meeting, video file and key, until when. EVERY request, each range included, then checks again that
+  // the session is live (kernel.stream.check) and runs the reader-checked media query as the ticket's user, so a revoked
+  // session or a removed reader loses access on the next request. One answer, 401 VIDEO_TICKET_INVALID, for every
+  // refusal; each one counts against a per-client budget. GET and HEAD only. The ticket is read from the query and goes to
+  // no log (the access line names the route pattern); no CORS headers (a media element makes a no-cors request).
+  const videoTicketFailures = deps.videoTicketFailures ?? new RateLimiter({ perMinute: STREAM_REDEEM_FAILURES_PER_MINUTE });
+  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: 1024, perKey: VIDEO_STREAMS_PER_USER });
+  const videoTicketKey = (keyId: string): Buffer | null => {
+    try {
+      const broker = deps.broker ?? createCredentialBroker(config);
+      if (broker.deriveKey) return broker.deriveKey(keyId, MEDIA_TICKET_KEY_LABEL);
+      return broker.derive && broker.keyId === keyId ? broker.derive(MEDIA_TICKET_KEY_LABEL) : null;
+    } catch {
+      // An unknown key id (a rotated-out key) is no key.
+      return null;
+    }
+  };
+  const VIDEO_TICKET_RESPONSE_HEADERS = {
+    'referrer-policy': 'no-referrer',
+    'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+    'content-disposition': 'inline',
+  } as const;
+  app.get('/api/meetings/:id/video/stream', async (c) => {
+    for (const [name, value] of Object.entries(VIDEO_TICKET_RESPONSE_HEADERS)) c.header(name, value);
+    const client = clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS));
+    const budget = videoTicketFailures.peek(client);
+    if (!budget.allowed) {
+      c.header('retry-after', String(budget.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: budget.retryAfterSeconds }, 429);
+    }
+    // The same answer for every refusal, and a failure against the client's budget.
+    const refused = () => {
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      videoTicketFailures.take(client);
+      return c.json({ code: 'VIDEO_TICKET_INVALID' }, 401);
+    };
+    const ticket = c.req.query('ticket');
+    if (!wellFormedMediaTicket(ticket)) return refused();
+    const keyId = peekMediaTicketKeyId(ticket);
+    const key = keyId === null ? null : videoTicketKey(keyId);
+    if (!key) return refused();
+    const payload = verifyMediaTicket(ticket, key, Math.floor(Date.now() / 1000));
+    key.fill(0);
+    const meetingId = c.req.param('id');
+    if (!payload || payload.purpose !== MEDIA_TICKET_PURPOSE || payload.meetingId !== meetingId.toLowerCase()) return refused();
+    // The request limit of the user the ticket proves, as the bearer routes have.
+    const decision = limiter?.take(payload.userId);
+    if (decision && !decision.allowed) {
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    }
+    setLogContext({ orgId: payload.orgId });
+    const actor: UserActor = { type: 'user', userId: payload.userId, aal: payload.aal, sessionId: payload.sessionId, mfaAt: payload.mfaAt };
+    // A refusal of the database (session gone, member gone, reader removed, retention over, key shredded) is the same 401;
+    // anything else (the database down) is an error of ours.
+    const fail = (error: unknown) => (error instanceof DomainError && error.status >= 400 && error.status < 500 ? refused() : problem(c, error));
+    try {
+      await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId: payload.orgId });
+    } catch (error) {
+      return fail(error);
+    }
+    const release = videoStreams.tryAcquire(payload.userId);
+    if (!release) {
+      c.header('retry-after', String(VIDEO_STREAMS_RETRY_SECONDS));
+      return c.json({ code: 'RATE_LIMITED', message: 'Quá nhiều luồng video đang mở, hãy thử lại sau', retryAfterSeconds: VIDEO_STREAMS_RETRY_SECONDS }, 429);
+    }
+    return serveMeetingMedia(c, {
+      kind: 'video',
+      actor,
+      orgId: payload.orgId,
+      meetingId: payload.meetingId,
+      headOnly: c.req.method === 'HEAD',
+      headers: { ...VIDEO_TICKET_RESPONSE_HEADERS },
+      expect: { fileId: payload.fileId, keyId: payload.keyId },
+      onFinished: release,
+      fail,
+    });
+  });
+
   // The Ludy extension trades the one-time code the signed-in member approved in the app for its token (issue #2582,
   // ADR-0047 point 10). Public by necessity: the extension holds no session, and the credential is the code, 256 random
   // bits that live five minutes, work once and are bound by PKCE (S256) to the verifier only the extension holds. A
@@ -1526,6 +1617,47 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   }
+
+  // A short-lived ticket for GET /api/meetings/:id/video/stream (#2703), behind the bearer check above (so the per-user
+  // request limit applies, and an extension token never gets here: the route is in no extension scope). It is issued only to a
+  // current reader of a meeting that keeps video (the same reader-checked query the playback runs), bound to the org, the
+  // user, the session, the meeting, the video file and its key, for at most ten minutes and never past the bearer token's own
+  // expiry. No body is read.
+  app.post('/api/meetings/:id/video/ticket', async (c) => {
+    c.header('cache-control', 'no-store');
+    try {
+      if (!runtime.installed('meetings')) return c.notFound();
+      const user = c.get('user');
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      // Fail closed: without the token's exp a ticket could outlive the token (jwt mode trusts it until then).
+      const tokenExp = user.tokenExp;
+      if (tokenExp === undefined) throw new DomainError('VIDEO_TICKET_UNAVAILABLE', 503, 'Không thể cấp vé xem video lúc này');
+      if (tokenExp <= nowSeconds) throw new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id');
+      const media = await runtime.query<{ fileId: string; keyId: string }>('meetings.meeting.media_meta', { meetingId, kind: 'video' }, { actor: actorOf(user), orgId });
+      const key = videoTicketKey(media.keyId);
+      if (!key) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
+      const exp = Math.min(nowSeconds + MEDIA_TICKET_MAX_TTL_SECONDS, tokenExp);
+      const ticket = signMediaTicket(key, {
+        keyId: media.keyId,
+        orgId,
+        userId: user.userId,
+        sessionId: user.sessionId,
+        aal: user.aal,
+        mfaAt: user.mfaAt,
+        meetingId: meetingId.toLowerCase(),
+        fileId: media.fileId,
+        purpose: MEDIA_TICKET_PURPOSE,
+        iat: nowSeconds,
+        exp,
+      });
+      key.fill(0);
+      return c.json({ ticket, expiresInSeconds: exp - nowSeconds });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
 
   // The member approves the Ludy extension for the org of the request (issue #2582): the sign-in page of the app calls this
   // with the member's own session after they chose the org and pressed "Cho phép". The code is made here and returned
@@ -1889,26 +2021,55 @@ export function createHttpApp(deps: HttpDeps) {
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
   const playbackAudited = new Map<string, number>();
-  async function streamMeetingMedia(c: Context, kind: 'audio' | 'video') {
-    if (!runtime.installed('meetings')) return c.notFound();
+  // What the two playback routes share (the bearer route and the ticket route, #2703): the range handling, the audit window,
+  // the decryption and the response headers, so a ticket plays exactly what the bearer route plays. The caller has already
+  // proved who the actor is; this runs the reader-checked media query as that actor on every request, ranges included.
+  interface MeetingMediaServe {
+    kind: 'audio' | 'video';
+    actor: UserActor;
+    orgId: string;
+    meetingId: string;
+    // Answer the headers a GET would, without reading or decrypting the body.
+    headOnly?: boolean;
+    // Added to every success answer.
+    headers?: Record<string, string>;
+    // The video file and key id a ticket was issued for: the media now named must be the same.
+    expect?: { fileId: string; keyId: string };
+    // Called once when the response is finished or was never started (a body read to the end, cancelled, or an error).
+    onFinished?: () => void;
+    // The answer for any error thrown on the way.
+    fail: (error: unknown) => Response;
+  }
+  async function serveMeetingMedia(c: Context, p: MeetingMediaServe): Promise<Response> {
+    const { kind, actor, orgId, meetingId } = p;
+    if (!runtime.installed('meetings')) {
+      p.onFinished?.();
+      return c.notFound();
+    }
 
-    const user = c.get('user');
-    const releaseLarge = large ? large.tryAcquire(user.userId) : () => undefined;
-    if (!releaseLarge) return problem(c, busy(c));
+    const slot = large ? large.tryAcquire(actor.userId) : () => undefined;
+    if (!slot) {
+      p.onFinished?.();
+      return p.fail(busy(c));
+    }
+    let finished = false;
+    const releaseLarge = () => {
+      if (finished) return;
+      finished = true;
+      slot();
+      p.onFinished?.();
+    };
 
     let dataKey: Buffer | null = null;
     let wrapSubkey: Buffer | null = null;
     let heldReturned = false;
 
     try {
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      const meetingId = c.req.param('id');
-
       const rangeHeader = c.req.header('range');
 
       // The first request of a (member, meeting, kind) in a window is the audited sensitive read, whatever its Range; the
       // continuation ranges of the same playback then use the unaudited metadata read, so scrubbing writes one audit row.
-      const auditKey = `${orgId}:${user.userId}:${meetingId}:${kind}`;
+      const auditKey = `${orgId}:${actor.userId}:${meetingId}:${kind}`;
       const now = Date.now();
       const auditedUntil = playbackAudited.get(auditKey);
       const continuation = auditedUntil !== undefined && auditedUntil > now;
@@ -1928,7 +2089,10 @@ export function createHttpApp(deps: HttpDeps) {
         contentType: string;
         keyId: string;
         wrappedKey: Buffer;
-      }>(queryName, queryInput, { actor: actorOf(user), orgId });
+      }>(queryName, queryInput, { actor, orgId });
+      if (p.expect && (media.fileId !== p.expect.fileId || media.keyId !== p.expect.keyId)) {
+        throw new DomainError('VIDEO_TICKET_INVALID', 401, 'The ticket is for another video');
+      }
       // Marked only after the audited read succeeded, so a failed audit write cannot let the retry skip it.
       if (!continuation) {
         if (playbackAudited.size >= 10_000) for (const [k, until] of playbackAudited) if (until <= now) playbackAudited.delete(k);
@@ -1970,7 +2134,12 @@ export function createHttpApp(deps: HttpDeps) {
         'content-security-policy': "default-src 'none'; sandbox",
         'cross-origin-resource-policy': 'same-site',
         'cache-control': 'private, no-store',
+        ...p.headers,
       };
+
+      if (p.headOnly) {
+        return new Response(null, { status: 200, headers: { ...mediaHeaders, 'content-length': String(totalPlaintextLength) } });
+      }
 
       if (rangeHeader && rangeHeader.startsWith('bytes=')) {
         const spec = rangeHeader.slice(6).trim();
@@ -1982,7 +2151,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (isNaN(suffix) || suffix <= 0 || totalPlaintextLength === 0) {
             return new Response(null, {
               status: 416,
-              headers: { 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
+              headers: { ...p.headers, 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
             });
           }
           start = Math.max(0, totalPlaintextLength - suffix);
@@ -1994,7 +2163,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (isNaN(start) || isNaN(end) || start < 0 || start > end || start >= totalPlaintextLength) {
             return new Response(null, {
               status: 416,
-              headers: { 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
+              headers: { ...p.headers, 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
             });
           }
           end = Math.min(end, totalPlaintextLength - 1);
@@ -2087,7 +2256,7 @@ export function createHttpApp(deps: HttpDeps) {
             // the media key this stream holds, so the id is not compared. The file is compared: retention deletes the media
             // rows (#2579), so the segment or video the meeting names now may not be the object this stream reads.
             if (streamOffset > 0) {
-              const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor, orgId });
               if (current.fileId !== media.fileId) throw new DomainError('MEDIA_REPLACED', 409, 'The meeting media changed while it was playing');
             }
             if (streamOffset >= totalPlaintextLength) {
@@ -2132,7 +2301,7 @@ export function createHttpApp(deps: HttpDeps) {
         },
       });
     } catch (error) {
-      return problem(c, error);
+      return p.fail(error);
     } finally {
       dataKey?.fill(0);
       wrapSubkey?.fill(0);
@@ -2140,6 +2309,18 @@ export function createHttpApp(deps: HttpDeps) {
         releaseLarge();
       }
     }
+  }
+
+  async function streamMeetingMedia(c: Context, kind: 'audio' | 'video'): Promise<Response> {
+    if (!runtime.installed('meetings')) return c.notFound();
+    const user = c.get('user');
+    let orgId: string;
+    try {
+      orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+    } catch (error) {
+      return problem(c, error);
+    }
+    return serveMeetingMedia(c, { kind, actor: actorOf(user), orgId, meetingId: c.req.param('id') ?? '', fail: (error) => problem(c, error) });
   }
 
   app.get('/api/meetings/:id/audio', (c) => streamMeetingMedia(c, 'audio'));
