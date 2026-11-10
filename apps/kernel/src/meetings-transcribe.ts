@@ -160,7 +160,7 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     // Best effort: when the context itself is refused (the member left, a switch is on) there is nothing to write and the finish below fails the result.
     await vy.execute('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'failed', errorCode: code } }).catch(() => undefined);
   }
-  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, status: code === null ? 'succeeded' : 'failed', errorCode: code }, { actor: SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
+  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, errorCode: code }, { actor: SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
     console.error(`[meetings-transcribe] org ${job.orgId.slice(0, 8)} could not close run ${job.runId.slice(0, 8)}`, error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
   });
   console.log(`[meetings-transcribe] org ${job.orgId.slice(0, 8)} run ${job.runId.slice(0, 8)} ${code === null ? 'succeeded' : `failed ${code}`}`);

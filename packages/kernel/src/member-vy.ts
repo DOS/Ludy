@@ -408,16 +408,18 @@ export const memberVyMeterRecord = defineCommand({
 // run that was still running. The status and the code are fixed words, never text (the definer checks the code's shape).
 export const memberVyRunFinish = defineCommand({
   name: 'kernel.member_vy.run.finish',
-  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() }),
+  // The status is left out to have it derived from the result (a ready result succeeded, anything else failed); only a cancel says so. The code is one of
+  // the definer's fixed words (crove_kernel.member_vy_run_error_code_ok), which refuses any other.
+  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']).optional(), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
   handler: async (ctx, input): Promise<{ closed: boolean }> => {
     const { rows } = await sql<{ closed: boolean }>`
-      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
+      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status ?? null}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
     const closed = rows[0]?.closed === true;
-    ctx.audit({ run_id: input.runId, status: input.status, closed });
+    ctx.audit({ run_id: input.runId, status: input.status ?? 'derived', closed });
     return { closed };
   },
 });
