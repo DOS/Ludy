@@ -242,6 +242,39 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
     await expect(store.holds.hold({ key, generation: 's3:00000000-0000-0000-0000-000000000000', sha256 }, until)).rejects.toBeInstanceOf(BlobNotFoundError);
   });
 
+  // A retention delete (#2789) on the Object Lock bucket: the tag and the marker go on, and the held version stays: readable by its version id, with the same retain-until date,
+  // and its version delete still refused. The lifecycle expiry itself runs in days on the server's clock, so the drill of docs/runbooks/provision-pilot.md checks it.
+  it('leaves a held version untouched when a retention delete tags and deletes the object (#2789)', async () => {
+    const bucket = `crove-locked-${randomUUID().slice(0, 8)}`;
+    await client.send(new CreateBucketCommand({ Bucket: bucket, ObjectLockEnabledForBucket: true }));
+    const store = S3BlobStore.connect({ ...options, bucket });
+    const original = encode(`<HDon>${randomUUID()}</HDon>`);
+    const sha256 = sha256Hex(original);
+    const key = fileKey(orgId, sha256);
+    const generation = await store.put(key, original, 'application/xml');
+    const versionId = generation.slice('s3:'.length);
+    const until = new Date(Math.ceil(Date.now() / 1000) * 1000 + 86_400_000);
+    await expect(store.holds.hold({ key, generation, sha256 }, until)).resolves.toEqual(until);
+
+    await store.delete(key, { retention: 'expire' });
+
+    // The current object is gone behind a marker, and the held version carries the tag.
+    await expect(store.get(key)).rejects.toBeInstanceOf(BlobNotFoundError);
+    const tags = await client.send(new GetObjectTaggingCommand({ Bucket: bucket, Key: key, VersionId: versionId }));
+    expect(tags.TagSet).toEqual([{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }]);
+    // It still reads by its version id, with the retention it had.
+    expect(await readVerified(store, { key, generation, sha256 })).toEqual(original);
+    const retention = await client.send(new GetObjectRetentionCommand({ Bucket: bucket, Key: key, VersionId: versionId }));
+    expect(retention.Retention?.Mode).toBe('GOVERNANCE');
+    expect(retention.Retention?.RetainUntilDate?.getTime()).toBe(until.getTime());
+    // And deleting that version is refused (AWS answers 403 AccessDenied, MinIO 400 InvalidRequest).
+    const refused = await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId })).then(
+      () => null,
+      (error: { name?: string }) => error.name,
+    );
+    expect(['AccessDenied', 'InvalidRequest']).toContain(refused);
+  });
+
   // The browser side of a presigned POST: the form fields, then the file last.
   async function post(form: PresignedUpload, bytes: Uint8Array, fields: Record<string, string> = form.fields) {
     const body = new FormData();

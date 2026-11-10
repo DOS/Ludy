@@ -465,8 +465,9 @@ export class S3BlobStore implements BlobStore {
               CopySource: `${this.bucket}/${staging}`,
               ContentType: contentType || 'application/octet-stream',
               MetadataDirective: 'REPLACE',
-              // No tags carried over from the staging object: the retention tag is set only by delete().
-              TaggingDirective: 'REPLACE',
+              // No tags carried over from the staging object: the retention tag is set only by delete(). Sent only where tagging exists (S3 and compatible stores with versioning):
+              // R2 (versioning off) and GCS interoperability do not take the header, and they never get the tag either.
+              ...(this.flavor === 's3' && this.versioning !== 'off' ? { TaggingDirective: 'REPLACE' as const } : {}),
             }),
           );
           const landed = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -619,7 +620,9 @@ export class S3BlobStore implements BlobStore {
     assertStorageKey(key);
     // Retention delete (#2789): on a versioned S3 bucket the delete only adds a marker and the version stays. The tag goes on that version first (a tag belongs to a
     // version and stays with it when it turns noncurrent), and the bucket's lifecycle rule on the tag expires it. The key and value are constants, never tenant data.
-    // No tag, no delete: any failure but a missing object (or a delete marker) stops here, and the retention job retries the file on its next run.
+    // No tag, no delete: any failure but a missing object (or a delete marker) stops here, and the retention job retries the file on its next run. A tag can stay on a version
+    // that is still current when the delete then fails: harmless, the rule only expires noncurrent versions. GCS and S3_VERSIONING=off delete without a tag on purpose (a stalled
+    // retention job would keep the original readable, which is worse); the runbook says what the operator does there.
     if (options?.retention === 'expire' && this.flavor === 's3' && this.versioning !== 'off') {
       try {
         await this.client.send(

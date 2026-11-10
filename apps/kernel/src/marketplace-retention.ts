@@ -46,7 +46,8 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
       try {
         const key = await deps.runtime.query<{ storageKey: string; shared: boolean } | null>('finance.marketplace_retention.key', { fileId: row.file_id }, options);
         if (key) {
-          // An object another file row also names is left; only this file's original is marked gone.
+          // An object another file row also names is left; only this file's original is marked gone. The tag is per version: a same-bytes upload that dedupes onto the object just before this
+          // delete is deleted with it (the file row clears its marker and the next run deletes again), and a version written after the delete is untagged until a run tags and deletes it.
           if (!key.shared) {
             await deps.store.delete(key.storageKey, { retention: 'expire' });
             run.objects += 1;

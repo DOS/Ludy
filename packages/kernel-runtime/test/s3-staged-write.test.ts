@@ -29,7 +29,7 @@ const s3Error = (name: string, status: number) => Object.assign(new Error(name),
 const PART = 8 * 1024 * 1024;
 
 // An S3 that keeps objects and multipart uploads in memory, and records every command.
-function fakeS3(options: { versionId?: string; shortBy?: number } = {}) {
+function fakeS3(options: { versionId?: string; shortBy?: number; store?: ConstructorParameters<typeof S3BlobStore>[2] } = {}) {
   const objects = new Map<string, Buffer>();
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer>; aborted: boolean }>();
   const sent: string[] = [];
@@ -95,7 +95,7 @@ function fakeS3(options: { versionId?: string; shortBy?: number } = {}) {
       throw new Error(`unexpected command ${(command as object).constructor.name}`);
     },
   } as unknown as S3Sender;
-  return { store: new S3BlobStore(client, 'crove-files', { presigner: {} as never }), objects, uploads, sent, copies };
+  return { store: new S3BlobStore(client, 'crove-files', { presigner: {} as never, ...options.store }), objects, uploads, sent, copies };
 }
 
 const orgId = randomUUID();
@@ -126,6 +126,17 @@ describe('S3BlobStore streamed write', () => {
     expect(copies).toHaveLength(1);
     expect(copies[0]).toMatchObject({ MetadataDirective: 'REPLACE', TaggingDirective: 'REPLACE' });
     expect(copies[0]).not.toHaveProperty('Tagging');
+  });
+
+  it('sends no tagging header where the store has no tagging (versioning off as on R2, or GCS interoperability)', async () => {
+    for (const store of [{ versioning: 'off' as const }, { flavor: 'gcs' as const }]) {
+      const { store: blobs, copies } = fakeS3({ store });
+      const write = await blobs.beginStagedWrite(directory);
+      await write.write(randomBytes(5000));
+      await write.commit(place, 'video/webm');
+      expect(copies[0]).toMatchObject({ MetadataDirective: 'REPLACE' });
+      expect(copies[0]).not.toHaveProperty('TaggingDirective');
+    }
   });
 
   it('refuses an object whose stored size is not what was written, and cleans up', async () => {
