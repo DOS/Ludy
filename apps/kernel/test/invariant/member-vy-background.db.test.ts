@@ -1344,6 +1344,8 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     // changes only by an owner decision (the source half is test/invariant/member-vy-sinks.test.ts).
     const FROZEN = [
       "crove_kernel.agent_write_guard",
+      // Names the error code MEMBER_VY_RESULT_RUN_MISMATCH in its list of allowed words (case-insensitive match); it reads no row.
+      "crove_kernel.member_vy_audit_detail_ok",
       "crove_kernel.member_vy_former_members_due",
       "crove_kernel.member_vy_member_data_purge",
       "crove_kernel.member_vy_private_counts",
