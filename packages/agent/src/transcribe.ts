@@ -291,7 +291,7 @@ export function chatAnswerToTranscription(raw: unknown): Record<string, unknown>
 }
 
 // Posts one request and reads the capped body as JSON: a redirect is never followed, a failure is named by kind and status only.
-async function postJson(config: TranscribeConfig, url: string, body: BodyInit, headers: Record<string, string>): Promise<unknown> {
+async function postJson(config: TranscribeConfig, url: string, body: FormData | string, headers: Record<string, string>): Promise<unknown> {
   const send = config.fetch ?? fetch;
   let response: Response;
   try {
