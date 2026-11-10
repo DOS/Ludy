@@ -46,12 +46,17 @@ const cmd = (
   }) as CommandDef<unknown, unknown>;
 const memberVy = { taint: "propagate" as const };
 const COMMANDS = [
-  cmd("kernel.member_vy.t_whoami", { memberVy }, async (ctx) => ({
-    actor: ctx.actor,
-    member: ctx.memberVy,
-    agent: ctx.agent,
-    role: ctx.role,
-  })),
+  // The audit row of a member-mode command names a command from a short list (#2822 part 3a), so the two commands that succeed here carry the names of the
+  // two real member-mode commands; this one audits ids too, which the audit test below reads.
+  cmd("kernel.member_vy.result.store", { memberVy }, async (ctx) => {
+    ctx.audit({ resultId: randomUUID(), status: "ready", bodyLength: 3 });
+    return {
+      actor: ctx.actor,
+      member: ctx.memberVy,
+      agent: ctx.agent,
+      role: ctx.role,
+    };
+  }),
   cmd("kernel.member_vy.t_undeclared", { risk: "R0" }, async () => ({
     ok: true,
   })),
@@ -61,14 +66,10 @@ const COMMANDS = [
     async () => ({ ok: true }),
   ),
   cmd(
-    "kernel.member_vy.t_members_only",
+    "kernel.member_vy.meeting_audio.open",
     { access: ["owner", "admin", "member"], memberVy },
     async () => ({ ok: true }),
   ),
-  cmd("kernel.member_vy.t_audit_ids", { memberVy }, async (ctx) => {
-    ctx.audit({ resultId: randomUUID(), status: "ready", bodyLength: 3 });
-    return { ok: true };
-  }),
   cmd("kernel.member_vy.t_audit_text", { memberVy }, async (ctx) => {
     ctx.audit({ summary: "Tóm tắt riêng: khách đề nghị giảm giá 12%" });
     return { ok: true };
@@ -255,7 +256,7 @@ suite("member-scoped agent actor in the runtime", () => {
       member: Record<string, unknown>;
       agent: unknown;
       role: unknown;
-    }>("kernel.member_vy.t_whoami", {});
+    }>("kernel.member_vy.result.store", {});
     expect(out.actor).toEqual({
       type: "agent",
       agentId: vy.member?.agentId,
@@ -290,19 +291,19 @@ suite("member-scoped agent actor in the runtime", () => {
     ).toBe("FORBIDDEN:member_vy_role");
     expect(
       await refused(
-        run("member").execute("kernel.member_vy.t_members_only", {}),
+        run("member").execute("kernel.member_vy.meeting_audio.open", {}),
       ),
       "a member on a members command",
     ).toBe("ran");
     // A viewer who was given vy.use runs no command a viewer cannot run.
     expect(
       await refused(
-        run("viewer").execute("kernel.member_vy.t_members_only", {}),
+        run("viewer").execute("kernel.member_vy.meeting_audio.open", {}),
       ),
       "a viewer on a members-only command",
     ).toBe("FORBIDDEN:member_vy_role");
     expect(
-      await refused(run("viewer").execute("kernel.member_vy.t_whoami", {})),
+      await refused(run("viewer").execute("kernel.member_vy.result.store", {})),
       "a viewer on a command open to viewers",
     ).toBe("ran");
   });
@@ -379,14 +380,14 @@ suite("member-scoped agent actor in the runtime", () => {
   });
 
   it("writes the audit row of a member-mode command with ids, enums and numbers, and refuses one with text", async () => {
-    await run("member").execute("kernel.member_vy.t_audit_ids", {});
+    await run("member").execute("kernel.member_vy.result.store", {});
     const rows = await admin((c) =>
       c.query<{
         actor_type: string;
         actor_id: string;
         detail: Record<string, unknown>;
       }>(
-        `SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.t_audit_ids' AND outcome = 'ok'`,
+        `SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store' AND outcome = 'ok'`,
         [orgId],
       ),
     );
@@ -416,11 +417,11 @@ suite("member-scoped agent actor in the runtime", () => {
     };
     // A member's Vy through the org-chart entry (the flag left off), and an unknown agent through the member entry.
     await expect(
-      worker.execute("kernel.member_vy.t_whoami", {}, { actor: plain, orgId }),
+      worker.execute("kernel.member_vy.result.store", {}, { actor: plain, orgId }),
     ).rejects.toBeDefined();
     await expect(
       worker.execute(
-        "kernel.member_vy.t_whoami",
+        "kernel.member_vy.result.store",
         {},
         { actor: { ...plain, agentId: randomUUID(), memberVy: true }, orgId },
       ),
@@ -428,7 +429,7 @@ suite("member-scoped agent actor in the runtime", () => {
     // The member's agent named in another org.
     await expect(
       worker.execute(
-        "kernel.member_vy.t_whoami",
+        "kernel.member_vy.result.store",
         {},
         { actor: { ...plain, memberVy: true }, orgId: randomUUID() },
       ),
@@ -441,7 +442,7 @@ suite("member-scoped agent actor in the runtime", () => {
       ),
     );
     await expect(
-      run("viewer").execute("kernel.member_vy.t_whoami", {}),
+      run("viewer").execute("kernel.member_vy.result.store", {}),
     ).rejects.toBeDefined();
   });
 
