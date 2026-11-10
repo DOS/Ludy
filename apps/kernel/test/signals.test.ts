@@ -4,11 +4,12 @@
 // the day rule and its near misses, the fail-closed paths, and that nothing but ids, dates and amounts crosses.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CRM_WON_DEALS_SIGNALS_READ, FINANCE_SALES_SIGNALS_READ, WON_DEAL_NO_INVOICE_DAYS, zCrmWonDealSignal, zFinanceSalesSignal, zTodayItems } from '@crove/kernel-contract';
+import { CRM_WON_DEALS_SIGNALS_READ, FINANCE_SALES_SIGNALS_READ, WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@crove/kernel-contract';
 import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
 import { DEAL_WITHOUT_INVOICE_READ, SIGNAL_ITEMS_MAX, dealWithoutInvoiceQuery } from '@crove/kernel';
 
-const NOW = new Date('2026-11-20T03:00:00Z'); // 10:00 in Vietnam, 2026-11-20
+// 00:30 on 2026-11-20 in Vietnam, still 2026-11-19 in UTC: the days are counted on the Vietnam calendar.
+const NOW = new Date('2026-11-19T17:30:00Z');
 const party = randomUUID();
 const other = randomUUID();
 const deal = (over: Record<string, unknown> = {}) => ({ dealId: randomUUID(), partyId: party, wonOn: '2026-11-12', amount: '1500000', ...over });
@@ -17,10 +18,11 @@ const sale = (over: Record<string, unknown> = {}) => ({ partyId: party, lastSale
 type Reads = Record<string, unknown | (() => never)>;
 
 // A context whose query() answers from `reads`: a function throws, a missing name is QUERY_NOT_FOUND, an `absent` module is not_installed.
-function contextOf(reads: Reads, absent: readonly string[] = [], asked: string[] = []): QueryContext {
+function contextOf(reads: Reads, absent: readonly string[] = [], asked: string[] = [], inputs: Record<string, unknown> = {}): QueryContext {
   return {
-    query: async (name: string): Promise<Lookup<unknown>> => {
+    query: async (name: string, input?: unknown): Promise<Lookup<unknown>> => {
       asked.push(name);
+      inputs[name] = input;
       const module = name.split('.')[0] as string;
       if (absent.includes(module)) return { status: 'not_installed', module };
       if (!(name in reads)) throw new DomainError('QUERY_NOT_FOUND', 404, `no query ${name}`);
@@ -31,8 +33,8 @@ function contextOf(reads: Reads, absent: readonly string[] = [], asked: string[]
   } as unknown as QueryContext;
 }
 
-const run = (reads: Reads, options: { absent?: readonly string[]; asked?: string[] } = {}) =>
-  dealWithoutInvoiceQuery({ now: () => NOW }).handler(contextOf(reads, options.absent, options.asked), {});
+const run = (reads: Reads, options: { absent?: readonly string[]; asked?: string[]; inputs?: Record<string, unknown> } = {}) =>
+  dealWithoutInvoiceQuery({ now: () => NOW }).handler(contextOf(reads, options.absent, options.asked, options.inputs), {});
 
 describe('the won deal with no sales invoice rule (Vy C4)', () => {
   it('is a registered kernel read with the constant of the plan: 7 days, a constant and not a setting', () => {
@@ -52,6 +54,7 @@ describe('the won deal with no sales invoice rule (Vy C4)', () => {
         amount: '1500000',
         currency: 'VND',
         severity: 'warn',
+        dueAt: '2026-11-19T00:00:00+07:00',
         href: '/deals',
       },
     ]);
@@ -113,6 +116,44 @@ describe('the won deal with no sales invoice rule (Vy C4)', () => {
     expect(last).toMatchObject({ id: 'signal:won-deal-no-invoice:more', count: 3, title: { key: 'signals.wonDealNoInvoiceMore', params: { count: 3 } } });
     const days = items.slice(0, SIGNAL_ITEMS_MAX).map((i) => (i.title.params as { days: number }).days);
     expect(days).toEqual([...days].sort((a, b) => b - a));
+  });
+
+  it('asks finance only about the parties of the won deals, by id, once each, so a row cap on its side cannot hide an invoiced customer', async () => {
+    const inputs: Record<string, unknown> = {};
+    const a = deal();
+    const b = deal({ partyId: other });
+    const c = deal({ partyId: other });
+    await run({ [CRM_WON_DEALS_SIGNALS_READ]: [a, b, c], [FINANCE_SALES_SIGNALS_READ]: [] }, { inputs });
+    expect(inputs[FINANCE_SALES_SIGNALS_READ]).toEqual({ partyIds: [party, other] });
+  });
+
+  it('keeps the latest invoice date of a party that comes in several rows, whatever their order', async () => {
+    const reads = (rows: unknown[]) => ({ [CRM_WON_DEALS_SIGNALS_READ]: [deal()], [FINANCE_SALES_SIGNALS_READ]: rows });
+    expect(await run(reads([sale({ lastSaleOn: '2026-11-18' }), sale({ lastSaleOn: '2026-11-01' })]))).toHaveLength(0);
+    expect(await run(reads([sale({ lastSaleOn: '2026-11-01' }), sale({ lastSaleOn: '2026-11-18' })]))).toHaveLength(0);
+  });
+
+  it('counts the days on the Vietnam calendar (half past midnight there is still the day before in UTC)', async () => {
+    // NOW is 2026-11-19 17:30Z, which is 2026-11-20 in Vietnam: won on 11-13 is 7 days, won on 11-14 is 6.
+    const on = (wonOn: string) => run({ [CRM_WON_DEALS_SIGNALS_READ]: [deal({ wonOn })], [FINANCE_SALES_SIGNALS_READ]: [] });
+    expect(await on('2026-11-13')).toHaveLength(1);
+    expect(await on('2026-11-14')).toHaveLength(0);
+  });
+
+  it('refuses a date that is not on the calendar and a negative amount, which void the read', async () => {
+    expect(zCrmWonDealSignals.safeParse([deal({ wonOn: '2026-02-30' })]).success).toBe(false);
+    expect(zCrmWonDealSignals.safeParse([deal({ amount: '-5' })]).success).toBe(false);
+    expect(zCrmWonDealSignals.safeParse([deal()]).success).toBe(true);
+    expect(await run({ [CRM_WON_DEALS_SIGNALS_READ]: [deal({ wonOn: '2026-02-30' })], [FINANCE_SALES_SIGNALS_READ]: [] })).toEqual([]);
+  });
+
+  it('keeps the most overdue deal first on Home, with the grouped item last', async () => {
+    const deals = Array.from({ length: 23 }, (_, i) => deal({ wonOn: `2026-10-${String(1 + (i % 9)).padStart(2, '0')}`, partyId: randomUUID() }));
+    const items = await run({ [CRM_WON_DEALS_SIGNALS_READ]: deals, [FINANCE_SALES_SIGNALS_READ]: [] });
+    const home = sortTodayItems(items);
+    expect(home.at(-1)?.id).toBe('signal:won-deal-no-invoice:more');
+    const days = home.slice(0, SIGNAL_ITEMS_MAX).map((i) => (i.title.params as { days: number }).days);
+    expect(days).toEqual([...days].sort((x, y) => y - x));
   });
 
   it('lets a database error through, since the transaction may be unusable', async () => {

@@ -16,11 +16,17 @@ export const WON_DEAL_NO_INVOICE_DAYS = 7;
 export const SIGNALS_MAX_FINANCE = 1000;
 export const SIGNALS_MAX_CRM = 500;
 
-// A calendar date in Vietnam, 'YYYY-MM-DD'.
-const zSignalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a date, YYYY-MM-DD');
+// A real calendar date in Vietnam, 'YYYY-MM-DD' (2026-02-30 is refused, not rolled over to March).
+const zSignalDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'a date, YYYY-MM-DD')
+  .refine((v) => new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v, 'a real calendar date');
 
-// Accounting's side: `finance.signals.sales`. One row per party with at least one sales invoice the caller can open: the date of the latest one and
-// how many there are.
+// Accounting's side: `finance.signals.sales`. Its input is the parties to look at, the ones of the won deals the CRM side listed (ids only, so no cut can hide
+// an invoiced customer behind a row cap). Its answer is one row per asked party that has at least one sales invoice the caller can open: the date of the
+// latest one and how many there are. A party it does not list has no invoice the caller can see.
+export const zFinanceSalesSignalsInput = z.strictObject({ partyIds: z.array(z.uuid()).min(1).max(SIGNALS_MAX_CRM) });
+export type FinanceSalesSignalsInput = z.infer<typeof zFinanceSalesSignalsInput>;
 export const zFinanceSalesSignal = z.strictObject({
   partyId: z.uuid(),
   lastSaleOn: zSignalDate,
@@ -35,7 +41,8 @@ export const zCrmWonDealSignal = z.strictObject({
   dealId: z.uuid(),
   partyId: z.uuid(),
   wonOn: zSignalDate,
-  amount: zMoney,
+  // A deal's amount is never negative.
+  amount: zMoney.refine((v) => !v.startsWith('-'), 'not negative'),
 });
 export type CrmWonDealSignal = z.infer<typeof zCrmWonDealSignal>;
 export const zCrmWonDealSignals = z.array(zCrmWonDealSignal).max(SIGNALS_MAX_CRM);

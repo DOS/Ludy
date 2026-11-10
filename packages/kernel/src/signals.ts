@@ -30,13 +30,16 @@ export const SIGNAL_ITEMS_MAX = 20;
 export const DEAL_WITHOUT_INVOICE_READ = 'kernel.signals.deal_without_invoice';
 
 // Whole days from one Vietnam calendar day to a later one.
+// The start (Vietnam time) of the day a win turns 7 days old.
+const dueAt = (wonOn: string): string => `${new Date(Date.parse(`${wonOn}T00:00:00Z`) + WON_DEAL_NO_INVOICE_DAYS * DAY_MS).toISOString().slice(0, 10)}T00:00:00+07:00`;
+
 const daysBetween = (from: string, to: string): number => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 
 // One line's signals read, or null when there is nothing to join: not registered, module off, refused, or an answer that is not the contract's.
-async function signalsOf<T>(ctx: QueryContext, name: string, schema: z.ZodType<T>): Promise<T | null> {
+async function signalsOf<T>(ctx: QueryContext, name: string, schema: z.ZodType<T>, input: unknown = {}): Promise<T | null> {
   let answer;
   try {
-    answer = await ctx.query<unknown>(name, {});
+    answer = await ctx.query<unknown>(name, input);
   } catch (error) {
     // Thrown before any SQL, so the transaction is still usable. Anything else (a database error) may have left it unusable and fails the answer.
     if (error instanceof DomainError) return null;
@@ -55,10 +58,14 @@ export function dealWithoutInvoiceQuery(options: { now?: () => Date } = {}) {
     handler: async (ctx): Promise<TodayItem[]> => {
       const deals = await signalsOf(ctx, CRM_WON_DEALS_SIGNALS_READ, zCrmWonDealSignals);
       if (!deals || deals.length === 0) return [];
-      const sales = await signalsOf(ctx, FINANCE_SALES_SIGNALS_READ, zFinanceSalesSignals);
+      // Finance is asked about the parties of these deals only (ids, no text), so a row cap on its side cannot hide an invoiced customer.
+      const partyIds = [...new Set(deals.map((d) => d.partyId))];
+      const sales = await signalsOf(ctx, FINANCE_SALES_SIGNALS_READ, zFinanceSalesSignals, { partyIds });
       if (!sales) return [];
       const today = vietnamToday(options.now?.() ?? new Date());
-      const lastSale = new Map(sales.map((s) => [s.partyId, s.lastSaleOn]));
+      // The latest sale date per party, whatever the number of rows a party comes in.
+      const lastSale = new Map<string, string>();
+      for (const s of sales) if ((lastSale.get(s.partyId) ?? '') < s.lastSaleOn) lastSale.set(s.partyId, s.lastSaleOn);
       const due = deals
         .map((deal) => ({ deal, days: daysBetween(deal.wonOn, today) }))
         // Won long enough ago, and no sales invoice of the party dated on or after the day it was won (an older invoice is another sale).
@@ -72,6 +79,8 @@ export function dealWithoutInvoiceQuery(options: { now?: () => Date } = {}) {
         amount: deal.amount,
         currency: 'VND',
         severity: 'warn',
+        // The day it became due: Home sorts a flag by the nearer dueAt, so the most overdue deal comes first and the grouped item (no dueAt) last.
+        dueAt: dueAt(deal.wonOn),
         href: '/deals',
       }));
       const rest = due.length - items.length;
