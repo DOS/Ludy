@@ -58,8 +58,8 @@ BEGIN
       IF TG_TABLE_NAME = 'audit_event' THEN
         v_detail := NEW.detail;
         -- The ids in the detail are the run's own (#2822): runId is the run the context was sealed for; resultId, subjectId and subjectType are those of the one result
-        -- row of that run, and when the run has no result yet the detail carries none of them (absent or null). Never a free uuid, which would carry 128 bits of
-        -- anything into the write-once audit stream.
+        -- row of that run, and when the run has no result yet the detail carries none of them (absent or null). The target is the same: none, or the run itself (a denied row, whose target comes from the model's input, has none). Never a free
+        -- uuid, which would carry 128 bits of anything into the write-once audit stream.
         SELECT r.id, r.subject_id, r.subject_type INTO v_res_id, v_res_subject, v_res_type
         FROM crove_kernel.member_vy_result r WHERE r.org_id = NEW.org_id AND r.run_id = v_run;
         v_found := FOUND;
@@ -71,8 +71,10 @@ BEGIN
         IF TG_OP = 'INSERT' AND NEW.actor_type = 'agent' AND NEW.actor_id = v_agent
            AND COALESCE(v_ids_ok, false)
            AND NEW.detail ->> 'agentRun' = (v_ctx ->> 'run')
-           AND ((crove_kernel.member_vy_audit_command_ok(NEW.command) AND crove_kernel.member_vy_audit_target_ok(NEW.target_type))
-                OR crove_kernel.member_vy_denied_audit_ok(NEW.org_id, v_agent, (v_ctx ->> 'run')::uuid, NEW.outcome, NEW.command, NEW.target_type, NEW.detail))
+           AND ((crove_kernel.member_vy_audit_command_ok(NEW.command) AND crove_kernel.member_vy_audit_target_ok(NEW.target_type)
+                 AND (NEW.target_id IS NULL OR (NEW.target_type = 'kernel.ai_run' AND NEW.target_id = v_run)))
+                OR (NEW.target_id IS NULL
+                    AND crove_kernel.member_vy_denied_audit_ok(NEW.org_id, v_agent, (v_ctx ->> 'run')::uuid, NEW.outcome, NEW.command, NEW.target_type, NEW.detail)))
            AND NEW.input_sha256 ~ '^(k1:)?[0-9a-f]{64}$'
            AND crove_kernel.member_vy_audit_detail_ok(NEW.detail) THEN
           NEW.occurred_at := pg_catalog.now();
@@ -81,8 +83,8 @@ BEGIN
       ELSIF TG_TABLE_NAME = 'idempotency_key' THEN
         v_detail := NEW.response;
         -- The ids in the detail are the run's own (#2822): runId is the run the context was sealed for; resultId, subjectId and subjectType are those of the one result
-        -- row of that run, and when the run has no result yet the detail carries none of them (absent or null). Never a free uuid, which would carry 128 bits of
-        -- anything into the write-once audit stream.
+        -- row of that run, and when the run has no result yet the detail carries none of them (absent or null). Never a free
+        -- uuid, which would carry 128 bits of anything into the write-once audit stream.
         SELECT r.id, r.subject_id, r.subject_type INTO v_res_id, v_res_subject, v_res_type
         FROM crove_kernel.member_vy_result r WHERE r.org_id = NEW.org_id AND r.run_id = v_run;
         v_found := FOUND;

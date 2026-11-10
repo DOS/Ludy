@@ -2771,7 +2771,8 @@ export class Runtime {
           commandId,
           outcome,
           input: canonical,
-          target: safeTarget(def, input),
+          // The model's input names the target of a refused command: a member-mode denied row carries none (the guard refuses one).
+          target: memberDenied ? null : safeTarget(def, input),
           proposalId: null,
           detail: refusalAuditDetail(refusal, actor),
         });

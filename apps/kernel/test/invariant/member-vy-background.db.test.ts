@@ -1402,13 +1402,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       c: pg.Client,
       run: { agentId: string; runId: string },
       detail: unknown,
-      cols: { command?: string; target?: string | null; outcome?: string } = {},
+      cols: { command?: string; target?: string | null; targetId?: string | null; outcome?: string } = {},
     ) => {
       await c.query("SAVEPOINT s");
       const o = await outcome(
         c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, input_sha256, detail) VALUES ($1, 'agent', $2, $3, $4, $8, $5, $6, $7::jsonb)`,
-          [orgId, run.agentId, cols.command ?? "kernel.member_vy.result.store", randomUUID(), cols.target === undefined ? null : cols.target, HASH, JSON.stringify(detail), cols.outcome ?? "ok"],
+          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, input_sha256, detail, target_id) VALUES ($1, 'agent', $2, $3, $4, $8, $5, $6, $7::jsonb, $9)`,
+          [orgId, run.agentId, cols.command ?? "kernel.member_vy.result.store", randomUUID(), cols.target === undefined ? null : cols.target, HASH, JSON.stringify(detail), cols.outcome ?? "ok", cols.targetId ?? null],
         ),
       );
       await c.query("ROLLBACK TO SAVEPOINT s");
@@ -1501,6 +1501,35 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         ["a denied row with its own result id (the denied rows carry no ids)", { ...denied(run), resultId: ownResult }],
       ] as const) {
         expect(await tryAudit(c, run, detail, { command: "kernel.task.create", target: "kernel.task", outcome: "denied" }), why).toMatchObject(forbidden);
+      }
+    });
+
+    // The target of an audit row is bound as well: none, or the run itself as a kernel.ai_run; a denied row (whose target the runtime takes from the model's
+    // input) has none.
+    await asVy("vyUser", async (c, run) => {
+      const base = { agentRun: run.runId };
+      for (const [why, cols] of [
+        ["no target", {}],
+        ["the run itself as its target", { target: "kernel.ai_run", targetId: run.runId }],
+      ] as const) {
+        const ok = await tryAudit(c, run, base, cols);
+        expect(ok.ok || ok.message, why).toBe(true);
+      }
+      for (const [why, cols] of [
+        ["a free target id", { target: "kernel.ai_run", targetId: randomUUID() }],
+        ["another run's id as the target", { target: "kernel.ai_run", targetId: foreignRun.runId }],
+        ["a target id with no target type", { targetId: run.runId }],
+        ["the run's id under another target type", { target: "kernel.task", targetId: run.runId }],
+      ] as const) {
+        expect(await tryAudit(c, run, base, cols), why).toMatchObject(forbidden);
+      }
+      const deniedCols = { command: "kernel.task.create", target: "kernel.task", outcome: "denied" };
+      for (const [why, targetId] of [
+        ["a denied row with a free target id", randomUUID()],
+        ["a denied row with another run's id as its target", foreignRun.runId],
+        ["a denied row with the run's own id as its target", run.runId],
+      ] as const) {
+        expect(await tryAudit(c, run, denied(run), { ...deniedCols, targetId }), why).toMatchObject(forbidden);
       }
     });
 
