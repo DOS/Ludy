@@ -761,6 +761,11 @@ export function refusalAuditDetail(refusal: DomainError, actor: Actor): Record<s
   if (typeof refusal.details?.rule === 'string') detail.rule = refusal.details.rule;
   if (actor.type === 'user') Object.assign(detail, sessionDetail(actor));
   if (actor.type === 'agent') detail.agentRun = actor.runId;
+  // Vy in member mode: the write guard takes a refusal row with the keys code, rule and agentRun and no other (ADR-0049 decision 4, #2822), so a key
+  // a refusal adds on its own is dropped here, never audited.
+  if (actor.type === 'agent' && actor.memberVy === true) {
+    for (const key of Object.keys(detail)) if (key !== 'code' && key !== 'rule' && key !== 'agentRun') delete detail[key];
+  }
   return detail;
 }
 
@@ -2753,6 +2758,7 @@ export class Runtime {
   ): Promise<void> {
     const commandId = uuidv7();
     const outcome = refusal.status === 403 ? 'denied' : 'failed';
+    const memberDenied = outcome === 'denied' && actor.type === 'agent' && actor.memberVy === true;
     try {
       const db = await this.#cells.resolveTenant(orgId);
       await db.transaction().execute(async (trx) => {
@@ -2787,8 +2793,10 @@ export class Runtime {
       });
       if (contextTaint(auditError)) logInternal(`execute ${name} refusal audit`, auditError, { orgId, actor });
       // An actor removed from the org in between: the org's audit no longer takes the row, security_event does.
-      if (lost.code === 'NOT_A_MEMBER') await this.noteSecurityEvent(name, actor, orgId, refusal.code);
+      if (lost.code === 'NOT_A_MEMBER' && !memberDenied) await this.noteSecurityEvent(name, actor, orgId, refusal.code);
     }
+    // Vy in member mode reaching for a command it may not run is worth a note whether or not its row fit the guard's bound (security_event samples per caller).
+    if (memberDenied) await this.noteSecurityEvent(name, actor, orgId, refusal.code);
   }
 
   // Notes a refusal made before membership was established in crove_kernel.security_event (sampled per caller,
