@@ -213,6 +213,22 @@ describe('the provider adapter (fake provider)', () => {
     expect(((await run(declared, chunk(0)).catch((e: unknown) => e)) as TranscriptionError).kind).toBe('invalid_response');
   });
 
+  it('never follows a redirect: the audio and the key are not re-sent to where a provider points', async () => {
+    const calls: string[] = [];
+    // A provider behind a redirect to plain http: a fetch that honours redirect: 'follow' would go on to the second URL; one told 'error' refuses.
+    const redirecting = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push(String(url));
+      if (init?.redirect === 'error') throw new TypeError('fetch failed: redirect mode is set to error');
+      calls.push('http://elsewhere.test/v1/audio/transcriptions');
+      return new Response('{"text":"x"}', { status: 200 });
+    }) as typeof fetch;
+    const config = { ...fakeProvider([{ body: { text: 'x' } }]).config, fetch: redirecting };
+    const error = (await run(config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError;
+    expect(error).toBeInstanceOf(TranscriptionError);
+    expect(error.kind).toBe('network');
+    expect(calls, 'only the configured URL was asked').toEqual(['http://stt.test/v1/audio/transcriptions']);
+  });
+
   it('sends no key header when the deployment has none', async () => {
     const provider = fakeProvider([{ body: { text: '' } }]);
     await run({ ...provider.config, apiKey: null }, chunk(0));

@@ -19,7 +19,7 @@ import {
   type BlobStore,
   type CredentialBroker,
 } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps } from '../src/meetings-transcribe.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
@@ -194,8 +194,8 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect((await drafts()).rows[0]?.n).toBe('0');
 
     // Only the recorder copies, and the copy is the draft shape of M4a.
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('other'), orgId }))).not.toBeNull();
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('owner'), orgId }))).not.toBeNull();
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('other'), orgId }))).toBe('MEETING_NOT_FOUND');
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('owner'), orgId }))).toBe('MEETING_NOT_FOUND');
     expect((await drafts()).rows[0]?.n).toBe('0');
     const copied = await app.execute<{ stored: number }>('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('recorder'), orgId });
     expect(copied.stored).toBe(4);
@@ -216,7 +216,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await refuses(start('recorder', theirs))).toBe('FORBIDDEN');
     const { runId } = await start('recorder', mine);
     await runJob('recorder', mine, runId);
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId: theirs, runId }, { actor: asUser('recorder'), orgId }))).not.toBeNull();
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId: theirs, runId }, { actor: asUser('recorder'), orgId }))).toBe('FORBIDDEN');
   });
 
   it('refuses a non-recorder, and a former member\'s run ends without a result', async () => {
@@ -231,8 +231,8 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const row = await admin((c) => c.query<{ status: string; body: string | null }>(`SELECT status, body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
     expect(row.rows[0]?.status).not.toBe('ready');
     expect(row.rows[0]?.body).toBeNull();
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('former'), orgId }))).not.toBeNull();
-    expect(await refuses(start('former', meetingId))).not.toBeNull();
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('former'), orgId }))).toBe('NOT_A_MEMBER');
+    expect(await refuses(start('former', meetingId))).toBe('NOT_A_MEMBER');
   });
 
   it('with transcription off the meeting works and nothing starts; a kill switch and a spent budget refuse before any call', async () => {
@@ -241,6 +241,15 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await refuses(start('recorder', meetingId))).toBe('TRANSCRIBE_OFF');
     expect(await status('recorder', meetingId)).toMatchObject({ enabled: false, state: 'none' });
     setTranscribeEnabled(true);
+    // No credential key: no job could be worked, so the start is refused with its own code and nothing is queued (#2863).
+    setTranscribeBroker(false);
+    try {
+      expect(await refuses(start('recorder', meetingId))).toBe('TRANSCRIBE_NO_BROKER');
+      expect(await status('recorder', meetingId)).toMatchObject({ enabled: false, state: 'none' });
+    } finally {
+      setTranscribeBroker(true);
+    }
+    expect(await status('recorder', meetingId)).toMatchObject({ enabled: true, state: 'none' });
     // The meeting itself is untouched by any of this.
     expect(await app.query('meetings.meeting.get', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ id: meetingId });
 
@@ -346,6 +355,21 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM crove_meetings.media_key WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])));
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
+    const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
+  });
+
+  // #2863 item 1: the audio's retention date ends its period from that day, before the nightly shred has run: no run starts, and a run under way ends as the shred does.
+  it('refuses to start once the audio retention date is reached, and a run under way ends with MEDIA_KEY_SHREDDED', async () => {
+    const late = await seedMeeting('recorder');
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, late]));
+    expect(await refuses(start('recorder', late))).toBe('MEDIA_KEY_SHREDDED');
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const before = providerCalls;
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls).toBe(before);
     const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
     expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
   });

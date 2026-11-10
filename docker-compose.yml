@@ -146,6 +146,8 @@ services:
       # The recorder's Vy summarizing a meeting (#2580): off unless MEETINGS_SUMMARY=on; the meetings module works without it.
       MEETINGS_SUMMARY: ${MEETINGS_SUMMARY:-off}
       TRANSCRIBE_BASE_URL: ${TRANSCRIBE_BASE_URL:-}
+      # https by default; set 1 only for a provider on a private network reached over plain http (the audio and the key then travel unencrypted).
+      TRANSCRIBE_ALLOW_INSECURE_HTTP: ${TRANSCRIBE_ALLOW_INSECURE_HTTP:-0}
       TRANSCRIBE_API_KEY: ${TRANSCRIBE_API_KEY:-}
       TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-}
       AI_PRICE_AUDIO_PER_MIN: ${AI_PRICE_AUDIO_PER_MIN:-0}
