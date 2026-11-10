@@ -519,6 +519,9 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
+  // so size it from the members who may watch together and the process's memory (a window is 4 MiB); a request over the limit is told to retry (429).
+  MEETINGS_VIDEO_STREAMS_MAX: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(4096).default(64)),
   // https by default: the audio and the key travel to it. Plain http is accepted for localhost and 127.0.0.1, and for any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1
   // (a speech-to-text container on the compose network is http://<service>:<port>); the check is in loadConfig below (#2863).
   TRANSCRIBE_BASE_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),

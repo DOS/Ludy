@@ -600,6 +600,61 @@ suite('meeting video tickets (#2703)', () => {
     }
   });
 
+  it('takes the global stream cap from MEETINGS_VIDEO_STREAMS_MAX: past it a stream of another member is told to retry, and a slot frees on cancel (#2965)', async () => {
+    const meetingId = await videoMeeting(mp4(5 * 1024 * 1024 + 123));
+    expect(deps.config.MEETINGS_VIDEO_STREAMS_MAX).toBe(64);
+    const config = { ...deps.config, MEETINGS_VIDEO_STREAMS_MAX: 1 };
+    // The limiter is the app's own (none is injected), so its size is the configured one.
+    const capped = createHttpApp({ ...deps, config });
+    const mine = await issue('recorder', meetingId, capped);
+    const theirs = await issue('attendee', meetingId, capped);
+    const first = await stream(meetingId, mine.body.ticket!, {}, capped);
+    expect(first.status).toBe(200);
+    const second = await stream(meetingId, theirs.body.ticket!, {}, capped);
+    expect(second.status).toBe(429);
+    expect(Number(second.headers.get('retry-after'))).toBeGreaterThan(0);
+    await first.body!.cancel();
+    await vi.waitFor(async () => {
+      const again = await stream(meetingId, theirs.body.ticket!, {}, capped);
+      expect(again.status).toBe(200);
+      await again.body!.cancel();
+    });
+  });
+
+  it('accepts the ticket on the stream path only: a trailing segment, a longer name, a prefix and a different case never serve it (#2965)', async () => {
+    const meetingId = await videoMeeting(mp4(3000));
+    const { body } = await issue('attendee', meetingId);
+    const ticket = body.ticket!;
+    const good = await app.request(`/api/meetings/${meetingId}/video/stream?ticket=${ticket}`, { headers: { range: 'bytes=0-9' } });
+    expect(good.status).toBe(206);
+    await good.arrayBuffer();
+    const others = [
+      `/api/meetings/${meetingId}/video/stream/?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/stream/extra?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/stream/..%2Fvideo?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/streams?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/streamx?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/Stream?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/audio/stream?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/stream?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/ticket?ticket=${ticket}`,
+      `/api/meetings/video/stream?ticket=${ticket}`,
+      `/api/x/meetings/${meetingId}/video/stream?ticket=${ticket}`,
+    ];
+    for (const path of others) {
+      for (const method of ['GET', 'HEAD']) {
+        const res = await app.request(path, { method, headers: { range: 'bytes=0-9' } });
+        // Without a bearer token they reach the bearer check (or nothing at all): never the video.
+        expect([401, 404, 405], `${method} ${path}`).toContain(res.status);
+        expect(res.headers.get('content-range'), `${method} ${path}`).toBeNull();
+        // Refused by the bearer check (or no route), not by the ticket handler: the ticket route must never have run for these paths.
+        if (method === 'GET') expect(await res.text(), `GET ${path}`).not.toContain('VIDEO_TICKET_INVALID');
+        else await res.arrayBuffer();
+      }
+    }
+  });
+
   it('allows three video streams per user at once, and frees a slot when one ends or is cancelled', async () => {
     const meetingId = await videoMeeting(mp4(5 * 1024 * 1024 + 123));
     const videoStreams = new ConcurrencyLimiter({ total: 10, perKey: 3 });

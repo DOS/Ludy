@@ -290,7 +290,7 @@ export interface HttpDeps {
   mediaStallMs?: number;
   // Refused meeting video tickets per client address (#2703). Default: STREAM_REDEEM_FAILURES_PER_MINUTE.
   videoTicketFailures?: RateLimiter;
-  // Meeting video responses being read at once, per user (#2703). Default: VIDEO_STREAMS_PER_USER each.
+  // Meeting video responses being read at once, per user (#2703). Default: VIDEO_STREAMS_PER_USER each, MEETINGS_VIDEO_STREAMS_MAX in all.
   videoStreams?: ConcurrencyLimiter;
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
@@ -1452,7 +1452,7 @@ export function createHttpApp(deps: HttpDeps) {
   // refusal; each one counts against a per-client budget. GET and HEAD only. The ticket is read from the query and goes to
   // no log (the access line names the route pattern); no CORS headers (a media element makes a no-cors request).
   const videoTicketFailures = deps.videoTicketFailures ?? new RateLimiter({ perMinute: STREAM_REDEEM_FAILURES_PER_MINUTE });
-  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: 64, perKey: VIDEO_STREAMS_PER_USER });
+  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: config.MEETINGS_VIDEO_STREAMS_MAX, perKey: VIDEO_STREAMS_PER_USER });
   const videoTicketKey = (keyId: string): Buffer | null => {
     try {
       const broker = deps.broker ?? createCredentialBroker(config);
