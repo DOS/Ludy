@@ -2,7 +2,7 @@
 // The length of meeting media is measured in crove-media, never taken from the client (#2985): the sealed blob is read back and
 // decrypted window by window, and what the sandbox says is checked before it is trusted.
 import { randomBytes } from 'node:crypto';
-import { MediaClientError, type MediaClient, type MediaProbeResult } from '@crove/media-contract';
+import { MediaClientError, type MediaMeasureClient, type MediaProbeResult } from '@crove/media-contract/measure';
 import { DomainError, encryptBlobBuffer, BLOB_CHUNK_SIZE, type BlobStore } from '@crove/kernel-runtime';
 import { describe, expect, it } from 'vitest';
 import { createMediaMeasurer, decryptedWindows, mediaMeasurerFor } from '../src/meetings-measure.ts';
@@ -25,7 +25,7 @@ function probe(over: Partial<MediaProbeResult> = {}): MediaProbeResult {
   };
 }
 
-function client(answer: () => Promise<MediaProbeResult>): MediaClient & { drained: Uint8Array[] } {
+function client(answer: () => Promise<MediaProbeResult>): MediaMeasureClient & { drained: Uint8Array[] } {
   const drained: Uint8Array[] = [];
   const fail = async (): Promise<never> => {
     throw new Error('not used');
@@ -42,10 +42,6 @@ function client(answer: () => Promise<MediaProbeResult>): MediaClient & { draine
       for await (const piece of chunks) drained.push(piece);
       return answer();
     },
-    normalize: fail,
-    split: fail,
-    repackageVideo: fail,
-    process: fail,
   };
 }
 

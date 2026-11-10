@@ -1,4 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The crove-media wire contract and client, shared by the sandbox (apps/media) and the kernel (upload probe, transcription).
+// The crove-media wire contract and the kernel's narrow client (probe and measure). The full client lives in apps/media/src/client.ts.
 export * from './types.ts';
-export * from './client.ts';
+export * from './measure.ts';

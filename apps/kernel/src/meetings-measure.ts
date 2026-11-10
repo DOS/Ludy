@@ -6,12 +6,12 @@
 // never held whole. Whatever the sandbox says is untrusted: the client validates it with strict schemas and only a duration in range
 // and the right kind of stream are accepted.
 import {
-  createMediaClient,
+  createMediaMeasureClient,
   MEDIA_LIMITS,
   MediaClientError,
-  type MediaClient,
+  type MediaMeasureClient,
   type MediaProbeResult,
-} from '@crove/media-contract';
+} from '@crove/media-contract/measure';
 import {
   DomainError,
   decryptBlobChunks,
@@ -95,7 +95,7 @@ function accepted(kind: 'audio' | 'video', probe: MediaProbeResult): number {
   return Math.ceil(probe.durationSeconds);
 }
 
-export function createMediaMeasurer(client: MediaClient): MediaMeasurer {
+export function createMediaMeasurer(client: MediaMeasureClient): MediaMeasurer {
   return {
     configured: true,
     async measure(kind, source) {
@@ -127,5 +127,5 @@ export function mediaMeasurerFor(url: string | undefined, timeoutMs?: number): M
     };
     return { configured: false, measure: none, measureBytes: none };
   }
-  return createMediaMeasurer(createMediaClient(url, timeoutMs === undefined ? {} : { timeoutMs }));
+  return createMediaMeasurer(createMediaMeasureClient(url, timeoutMs === undefined ? {} : { timeoutMs }));
 }
