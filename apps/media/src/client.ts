@@ -31,6 +31,8 @@ export class MediaClientError extends Error {
 
 export interface MediaClient {
   probe(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult>;
+  // The same probe with the media sent as it is produced (a decrypting reader), so the caller never holds the file whole.
+  probeStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult>;
   normalize(bytes: Uint8Array, options?: { bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaNormalizeResult>;
   split(bytes: Uint8Array, options?: { maxSegmentSeconds?: number; bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaSplitResult>;
   repackageVideo(bytes: Uint8Array, options?: { dropAudio?: boolean }, signal?: AbortSignal): Promise<Uint8Array>;
@@ -39,6 +41,25 @@ export interface MediaClient {
     options?: { maxSegmentSeconds?: number; bitrateKbps?: number },
     signal?: AbortSignal,
   ): Promise<MediaProcessResult>;
+}
+
+// A pull-driven web stream over an async iterable: the next piece is read only when the request can take it.
+function streamOf(source: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array> {
+  const iterator = source[Symbol.asyncIterator]();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const step = await iterator.next();
+        if (step.done) controller.close();
+        else controller.enqueue(step.value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    async cancel() {
+      await iterator.return?.().catch(() => undefined);
+    },
+  });
 }
 
 export function createMediaClient(baseUrl: string): MediaClient {
@@ -88,19 +109,21 @@ export function createMediaClient(baseUrl: string): MediaClient {
 
   async function call<T>(
     endpoint: string,
-    bytes: Uint8Array,
+    bytes: Uint8Array | AsyncIterable<Uint8Array>,
     schema: { parse: (val: unknown) => T },
     signal?: AbortSignal,
   ): Promise<T> {
     const url = `${base}${endpoint}`;
-    const init: RequestInit = {
+    const streaming = !(bytes instanceof Uint8Array);
+    const init: RequestInit & { duplex?: 'half' } = {
       method: 'POST',
-      body: bytes as unknown as BodyInit,
+      body: (streaming ? streamOf(bytes) : bytes) as unknown as BodyInit,
       headers: {
         'content-type': 'application/octet-stream',
       },
       redirect: 'error',
     };
+    if (streaming) init.duplex = 'half';
     init.signal = signal ?? AbortSignal.timeout(MEDIA_TIMING.processTimeoutMs + 15_000);
     const response = await fetch(url, init);
 
@@ -134,6 +157,10 @@ export function createMediaClient(baseUrl: string): MediaClient {
   return {
     async probe(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult> {
       return call('/probe', bytes, zMediaProbeResult, signal);
+    },
+
+    async probeStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult> {
+      return call('/probe', chunks, zMediaProbeResult, signal);
     },
 
     async normalize(bytes: Uint8Array, options?: { bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaNormalizeResult> {

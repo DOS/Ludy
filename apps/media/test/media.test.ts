@@ -105,6 +105,8 @@ describe('crove-media config and allowlist', () => {
     expect(config.HOST).toBe('127.0.0.1');
     expect(config.MEDIA_CONCURRENCY).toBe(1);
     expect(config.MEDIA_MAX_QUEUE).toBe(4);
+    expect(config.MEDIA_BODY_TIMEOUT_MS).toBe(60_000);
+    expect(loadMediaConfig({ NODE_ENV: 'test', MEDIA_BODY_TIMEOUT_MS: '900000' }).MEDIA_BODY_TIMEOUT_MS).toBe(900_000);
   });
 
   it('detects credential variable names', () => {
@@ -200,6 +202,38 @@ describe('crove-media HTTP server & client SDK', () => {
     const client = createMediaClient(baseUrl);
     const result = await client.probe(new Uint8Array([1, 2, 3]));
     expect(result).toEqual(mockProbe);
+  });
+
+  it('probes a stream sent in pieces without holding it whole (#2985)', async () => {
+    let received = 0;
+    const baseUrl = await startServer({
+      runProbe: async (bytes) => {
+        received = bytes.byteLength;
+        return mockProbe;
+      },
+    });
+    const client = createMediaClient(baseUrl);
+    async function* pieces() {
+      yield new Uint8Array([1, 2, 3]);
+      yield new Uint8Array([4, 5]);
+    }
+    expect(await client.probeStream(pieces())).toEqual(mockProbe);
+    expect(received).toBe(5);
+  });
+
+  it('stops reading a stream the server refuses (#2985)', async () => {
+    const baseUrl = await startServer({ maxInputBytes: 4 });
+    const client = createMediaClient(baseUrl);
+    let closed = false;
+    async function* pieces() {
+      try {
+        for (let i = 0; i < 1000; i += 1) yield new Uint8Array(1024);
+      } finally {
+        closed = true;
+      }
+    }
+    await expect(client.probeStream(pieces())).rejects.toBeInstanceOf(Error);
+    expect(closed).toBe(true);
   });
 
   it('runs normalize with client SDK', async () => {
