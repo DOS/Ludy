@@ -84,10 +84,8 @@ export const zCrmOpenDealSignal = z.strictObject({
 export type CrmOpenDealSignal = z.infer<typeof zCrmOpenDealSignal>;
 export const zCrmOpenDealSignals = z.array(zCrmOpenDealSignal).max(SIGNALS_MAX_CRM);
 
-// Accounting's side of rule 2: `finance.signals.overdue_receivables`. Input: `{ partyIds }` as for the sales read. One row per asked party with at least one
+// Accounting's side of rule 2: `finance.signals.overdue_receivables`. Input: `{ partyIds }` (`zFinanceSalesSignalsInput`, the same as for the sales read). One row per asked party with at least one
 // receivable (a sales invoice not fully paid) past its due date: the oldest due date among them, the overdue total and how many.
-export const zFinanceOverdueReceivablesInput = zFinanceSalesSignalsInput;
-export type FinanceOverdueReceivablesInput = z.infer<typeof zFinanceOverdueReceivablesInput>;
 export const zFinanceOverdueReceivableSignal = z.strictObject({
   partyId: z.uuid(),
   oldestDueOn: zSignalDate,
@@ -109,13 +107,11 @@ export type FinanceSupplierBankChangeSignal = z.infer<typeof zFinanceSupplierBan
 // At most 500 suppliers, the most the payments read takes as input: a read with more changed suppliers REFUSES with SIGNAL_PARTIAL_VIEW rather than leave some out.
 export const zFinanceSupplierBankChangeSignals = z.array(zFinanceSupplierBankChangeSignal).max(SIGNALS_MAX_CRM).refine(uniqueParties, 'one row per supplier');
 
-// Accounting's side of rule 3, second read: `finance.signals.supplier_payments_waiting`. Input `{ partyIds }` (the suppliers of the first read). One row per
+// Accounting's side of rule 3, second read: `finance.signals.supplier_payments_waiting`. Input `{ partyIds }` (`zFinanceSalesSignalsInput`; the suppliers of the first read). One row per
 // asked supplier with at least one payment waiting, either for approval or already scheduled: how many and their total. It REFUSES when the caller's view of
 // that supplier's payments is partial (a legal-entity scope narrower than the org, a payment of the supplier in a book the caller cannot open), with a DomainError
 // of code SIGNAL_PARTIAL_VIEW: an empty answer
 // means "no payment is waiting", never "you cannot see one".
-export const zFinanceSupplierPaymentsWaitingInput = zFinanceSalesSignalsInput;
-export type FinanceSupplierPaymentsWaitingInput = z.infer<typeof zFinanceSupplierPaymentsWaitingInput>;
 export const zFinanceSupplierPaymentsWaitingSignal = z.strictObject({
   partyId: z.uuid(),
   count: z.number().int().positive(),
