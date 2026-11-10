@@ -315,7 +315,7 @@ export const meetingMediaRecord = defineCommand({
           file_id: fileId,
           segment_order: 0,
           start_offset_seconds: 0,
-          length_seconds: input.lengthSeconds ?? 1800,
+          length_seconds: input.lengthSeconds,
         })
         .execute();
     } else {
@@ -329,7 +329,7 @@ export const meetingMediaRecord = defineCommand({
           id: randomUUID(),
           meeting_id: input.meetingId,
           file_id: fileId,
-          length_seconds: input.lengthSeconds ?? 1800,
+          length_seconds: input.lengthSeconds,
           video_retention_date: videoRetentionDate,
         })
         .execute();

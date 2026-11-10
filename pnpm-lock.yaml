@@ -536,6 +536,9 @@ importers:
       '@crove/mail':
         specifier: workspace:*
         version: link:../../packages/mail
+      '@crove/media-contract':
+        specifier: workspace:*
+        version: link:../../packages/media-contract
       '@crove/mod-ads':
         specifier: workspace:*
         version: link:../../modules/ads
@@ -603,6 +606,9 @@ importers:
 
   apps/media:
     dependencies:
+      '@crove/media-contract':
+        specifier: workspace:*
+        version: link:../../packages/media-contract
       '@hono/node-server':
         specifier: 'catalog:'
         version: 2.1.5(hono@4.13.13)
@@ -965,6 +971,12 @@ importers:
       nodemailer:
         specifier: 'catalog:'
         version: 10.1.4
+
+  packages/media-contract:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
 
   packages/meeting-recorder: {}
 

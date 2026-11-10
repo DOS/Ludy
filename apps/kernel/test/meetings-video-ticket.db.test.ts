@@ -16,6 +16,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { installJsonLogs } from '../src/log.ts';
 import { MEDIA_TICKET_KEY_LABEL, signMediaTicket, type MediaTicketPayload } from '../src/media-ticket.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
@@ -235,7 +236,7 @@ suite('meeting video tickets (#2703)', () => {
       commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries],
     });
-    deps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
+    deps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false, mediaMeasurer: fakeMediaMeasurer() };
     app = createHttpApp(deps);
 
     const created = await rpc('org/create', 'owner', { name: `Video Ticket Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);

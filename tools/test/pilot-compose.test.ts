@@ -83,11 +83,17 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const worker = services['worker'];
     expect(api?.environment).not.toHaveProperty('WORKER_DATABASE_URL');
     expect(api?.environment).not.toHaveProperty('EXTRACT_URL');
-    expect(Object.keys(api?.networks ?? {})).toEqual(['default']);
+    // The API reaches crove-media (and not crove-extract): it measures the length of a meeting recording at upload (#2985).
+    expect(Object.keys(api?.networks ?? {}).sort()).toEqual(['default', 'media']);
+    expect(api?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
     expect(api?.environment?.['DATABASE_URL']).toContain('crove_app');
     expect(worker?.environment?.['WORKER_DATABASE_URL']).toContain('crove_worker');
     expect(worker?.environment?.['EXTRACT_URL']).toBe('http://crove-extract:8090');
-    expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract']);
+    expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract', 'media']);
+    expect(worker?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
+    // crove-media runs in the default stack and sits behind a profile in the pilot layout, whose release has no image for it yet.
+    expect(config(['docker-compose.yml'])['crove-media']?.profiles).toBeUndefined();
+    expect(config(['docker-compose.yml', 'compose.pilot.yml'])['crove-media']).toBeUndefined();
     // Only the API opens a port.
     expect(api?.ports).toHaveLength(1);
     expect(worker?.ports).toBeUndefined();

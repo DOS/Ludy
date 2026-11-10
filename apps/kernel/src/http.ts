@@ -125,6 +125,7 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
+import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
@@ -215,6 +216,8 @@ export interface HttpDeps {
   runtime: Runtime;
   store: BlobStore;
   broker?: CredentialBroker;
+  // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
+  mediaMeasurer?: MediaMeasurer;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -2073,6 +2076,7 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
+  const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
   const playbackAudited = new Map<string, number>();
   // What the two playback routes share (the bearer route and the ticket route, #2703): the range handling, the audit window,
@@ -2467,9 +2471,10 @@ export function createHttpApp(deps: HttpDeps) {
       let releaseJsonVideo: (() => void) | null = null;
 
       try {
+        // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
+        if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
-        let lengthSeconds: number | undefined;
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
@@ -2521,11 +2526,11 @@ export function createHttpApp(deps: HttpDeps) {
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
             if (!releaseJsonVideo) throw busy(c);
           }
+          // The client's lengthSeconds is a hint at most and never stored: the sandbox measures the length (#2985).
           if (body.lengthSeconds !== undefined) {
             if (typeof body.lengthSeconds !== 'number' || !Number.isInteger(body.lengthSeconds) || body.lengthSeconds <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = body.lengthSeconds;
           }
 
           await verifyRecorderAndKind(kind);
@@ -2584,7 +2589,6 @@ export function createHttpApp(deps: HttpDeps) {
             if (!Number.isInteger(parsedLen) || parsedLen <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = parsedLen;
           }
           prepareKeys(kind);
           // The form was parsed whole by the body reader (use the raw body below for a large file); the sealing still streams.
@@ -2603,7 +2607,6 @@ export function createHttpApp(deps: HttpDeps) {
             if (lengthVal.trim() === '' || !Number.isInteger(parsedLen) || parsedLen <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = parsedLen;
           }
           const rawBody = c.req.raw.body;
           if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
@@ -2634,6 +2637,19 @@ export function createHttpApp(deps: HttpDeps) {
         });
         const { key: storageKey, generation, sha256, contentType: sniffedContentType } = sealed;
 
+        // The sandbox measures the sealed media (read back and decrypted a window at a time, never held whole or written out). It
+        // refuses a file it cannot read, one that is too long, or when it is down; the sealed bytes then have no row, so drop them.
+        let measuredSeconds: number;
+        try {
+          measuredSeconds = await mediaMeasurer.measure(
+            kind,
+            decryptedWindows(store, { storageKey, generation, sizeBytes: sealed.size }, dataKey, binding),
+          );
+        } catch (error) {
+          if (sealed.created) await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
+          throw error;
+        }
+
         let result: { fileId: string };
         try {
           result = await runtime.execute<{ fileId: string }>(
@@ -2648,7 +2664,7 @@ export function createHttpApp(deps: HttpDeps) {
               sizeBytes: sealed.size,
               sha256,
               contentType: sniffedContentType,
-              lengthSeconds: lengthSeconds ?? 1800,
+              lengthSeconds: measuredSeconds,
             },
             { actor: actorOf(user), orgId },
           );
