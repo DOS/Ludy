@@ -500,6 +500,10 @@ const schema = z.object({
   // crove-extract, the parsing sandbox (plan §7.6, External-tenant gate T12), e.g. http://crove-extract:8090.
   // Required for the worker role: the worker never parses PDF, XML or MIME itself. The API role does not use it.
   EXTRACT_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // crove-media, the media sandbox (Meetings M3, #2985), e.g. http://crove-media:8095. The API measures the length of every meeting
+  // recording in it at upload and the worker re-measures an old one before it is transcribed. Unset: meeting uploads are refused
+  // (MEDIA_PROBE_UNAVAILABLE), because a recording whose length cannot be known would bypass the AI meter.
+  MEDIA_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
   // Extract jobs the worker runs at once (#2119), each one reading a file and, for a PDF or a photo, calling the AI. Unset:
   // 4, or the sandbox's slots when it has fewer. EXTRACT_CONCURRENCY is the sandbox's own setting of that name (its
   // parser slots, 1 to 8, the sandbox's own default being 1); give the worker the same value, since it cannot ask: docker

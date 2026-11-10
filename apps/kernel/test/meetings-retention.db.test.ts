@@ -20,6 +20,7 @@ import { dayAfter, meetingsCommands, meetingsQueries, retentionDates } from '@cr
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { SHRED_REF_ALERT_AFTER, createShredRefSync, replayShreds, runMeetingsRetention, shredRefKey, sweepMeetingMedia, syncShredRefs } from '../src/meetings-retention.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
@@ -191,7 +192,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const registry = { commands: [...kernelCommands, ...financeCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry).register({ commands: [orgPurgeCommand({ store })] });
-    const deps: HttpDeps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
+    const deps: HttpDeps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false, mediaMeasurer: fakeMediaMeasurer() };
     app = createHttpApp(deps);
     const created = await rpc('org/create', 'owner', { name: `Retention Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);
     expect(created.status).toBe(200);
