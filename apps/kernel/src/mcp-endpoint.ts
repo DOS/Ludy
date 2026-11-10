@@ -265,8 +265,11 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       // The authorization grant first (the provider's own record), then ours: if ours fails the provider's is destroyed, so nothing is left half made.
       const grant = new oauth.provider.Grant({ accountId: user.userId, clientId });
       grant.addResourceScope(oauth.resource, MCP_SCOPE);
-      // A client that also asked for `openid` gets it (the consent is for the resource either way), so its authorization does not loop back to the consent page.
-      if (String(interaction.params.scope ?? '').split(' ').includes('openid')) grant.addOIDCScope('openid');
+      // A client that also asked for `openid` gets it (the consent is for the resource either way), and the scope this grant is for is also a scope of the provider,
+      // so its authorization does not loop back to the consent page (op_scopes_missing).
+      const asked = new Set(String(interaction.params.scope ?? '').split(' '));
+      const oidcScopes = ['openid', MCP_SCOPE].filter((scope) => asked.has(scope));
+      if (oidcScopes.length > 0) grant.addOIDCScope(oidcScopes.join(' '));
       const oauthGrantId = await grant.save();
       try {
         await runtime.execute(

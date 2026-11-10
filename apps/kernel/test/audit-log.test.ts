@@ -1,6 +1,6 @@
 // The audit log's display rules (#672): which detail keys are hidden, how a detail reads on one line, and CSV cells.
 import { describe, expect, it } from 'vitest';
-import { auditCsv, auditDetailLine, csvCell, hiddenKey } from '@crove/kernel';
+import { auditCsv, auditDetailLine, auditVia, csvCell, hiddenKey } from '@crove/kernel';
 
 describe('audit detail', () => {
   it('hides keys that name a secret, by word', () => {
@@ -44,10 +44,22 @@ describe('audit CSV', () => {
 
   it('writes a UTF-8 marked file with CRLF lines', () => {
     const csv = auditCsv([
-      { id: 'i', at: '2026-10-01T03:00:00.000Z', actorType: 'user', actorId: null, actorName: 'Lê Văn A', command: 'kernel.org.set_address', outcome: 'ok', targetType: null, targetId: null, proposalId: null, detail: 'a=1' },
+      { id: 'i', at: '2026-10-01T03:00:00.000Z', actorType: 'user', actorId: null, actorName: 'Lê Văn A', command: 'kernel.org.set_address', outcome: 'ok', targetType: null, targetId: null, proposalId: null, via: null, detail: 'a=1' },
+      { id: 'j', at: '2026-10-01T03:00:00.000Z', actorType: 'system', actorId: null, actorName: null, command: 'kernel.mcp.call', outcome: 'ok', targetType: null, targetId: null, proposalId: null, via: { kind: 'mcp', clientName: 'Claude Desktop' }, detail: 'tool=ludy_about' },
     ]);
     expect(csv.startsWith('﻿occurred_at,')).toBe(true);
     expect(csv.endsWith('\r\n')).toBe(true);
-    expect(csv.split('\r\n')[1]).toBe('2026-10-01T03:00:00.000Z,user,,Lê Văn A,kernel.org.set_address,ok,,,,a=1');
+    expect(csv.split('\r\n')[1]).toBe('2026-10-01T03:00:00.000Z,user,,Lê Văn A,kernel.org.set_address,ok,,,,,a=1');
+    expect(csv.split('\r\n')[2]).toBe('2026-10-01T03:00:00.000Z,system,,,kernel.mcp.call,ok,,,,mcp:Claude Desktop,tool=ludy_about');
+  });
+
+  it('reads an MCP call as the AI app that made it, with the name it declared, cleaned', () => {
+    expect(auditVia({ mcpCall: true, mcpGrant: 'g', mcpClient: 'c', mcpClientName: 'Claude\nDesktop' })).toEqual({ kind: 'mcp', clientName: 'Claude Desktop' });
+    expect(auditVia(JSON.stringify({ mcpCall: true, mcpClientName: 'X' }))).toEqual({ kind: 'mcp', clientName: 'X' });
+    expect(auditVia({ mcpCall: true })).toEqual({ kind: 'mcp', clientName: '?' });
+  });
+
+  it('reads nothing as MCP unless the row says mcpCall: true', () => {
+    for (const d of [null, undefined, 'text', [], {}, { mcpCall: 'true' }, { mcpClientName: 'X' }, { via: 'mcp' }]) expect(auditVia(d)).toBeNull();
   });
 });

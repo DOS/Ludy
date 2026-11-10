@@ -5333,6 +5333,8 @@ export const en = {
     system: 'System',
     agent: 'AI agent',
     former: 'Former member',
+    viaMcp: 'Via {name} (MCP)',
+    viaMcpNote: 'An AI app that named itself; not a click by a person in the org',
     filterCommand: 'Command',
     anyCommand: 'All commands',
     filterOutcome: 'Outcome',

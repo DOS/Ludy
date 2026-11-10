@@ -41,14 +41,18 @@ const row = (id: string, command: string): AuditEntry => ({
   targetType: null,
   targetId: null,
   proposalId: null,
+  via: null,
   detail: null,
 });
 
-function render(locale: 'vi' | 'en'): string {
+// A row an AI app wrote over MCP: actor system, the client's self-declared name in `via`.
+const mcpRow = (id: string): AuditEntry => ({ ...row(id, 'kernel.mcp.call'), actorType: 'system', actorId: null, actorName: null, via: { kind: 'mcp', clientName: 'Claude Desktop' } });
+
+function render(locale: 'vi' | 'en', rows: AuditEntry[] = [row('a', 'kernel.proposal.approve'), row('b', 'kernel.retired.command')]): string {
   const qc = client.current;
   qc.setQueryData(['org', 'get'], { role: 'owner', members: [] });
   qc.setQueryData(['org', 'auditCommands'], ['kernel.proposal.approve', 'kernel.retired.command', 'finance.period.lock']);
-  qc.setQueryData(['org', 'audit'], { pages: [{ items: [row('a', 'kernel.proposal.approve'), row('b', 'kernel.retired.command')], more: false }], pageParams: [undefined] });
+  qc.setQueryData(['org', 'audit'], { pages: [{ items: rows, more: false }], pageParams: [undefined] });
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
@@ -72,6 +76,16 @@ describe('AuditPage command labels', () => {
     expect(html).toContain('value="kernel.proposal.approve">Approve a proposal</option>');
     expect(html).toContain('value="kernel.retired.command">kernel.retired.command</option>');
     expect(html).toMatch(/<span class="font-mono text-xs">kernel\.retired\.command<\/span>/);
+  });
+});
+
+describe('AuditPage MCP rows (#2975)', () => {
+  it('names the AI app and says it is self-declared, never as a person or the bare system', () => {
+    const vi = render('vi', [mcpRow('m')]);
+    expect(vi).toContain('Qua Claude Desktop (MCP)');
+    expect(vi).toContain('Ứng dụng AI tự khai tên');
+    expect(vi).not.toContain('Theo hệ thống');
+    expect(render('en', [mcpRow('m')])).toContain('Via Claude Desktop (MCP)');
   });
 });
 

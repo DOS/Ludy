@@ -177,7 +177,8 @@ function AuditLog({ search }: { search: AuditSearch }) {
               <TableRow key={r.id}>
                 <TableCell className="px-4 py-3 whitespace-nowrap text-muted-foreground">{f.dateTime(r.at)}</TableCell>
                 <TableCell className="px-4 py-3 text-foreground">
-                  {r.actorType === 'system' ? t('system') : (r.actorName ?? t('former'))}
+                  {r.via ? t('viaMcp', { name: r.via.clientName }) : r.actorType === 'system' ? t('system') : (r.actorName ?? t('former'))}
+                  {r.via && <p className="text-xs text-subtle-foreground">{t('viaMcpNote')}</p>}
                   {r.actorType === 'agent' && <p className="text-xs text-subtle-foreground">{t('agent')}</p>}
                 </TableCell>
                 <TableCell className="px-4 py-3 text-foreground">

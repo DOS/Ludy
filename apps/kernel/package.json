@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@crove/extract": "workspace:*",
+    "@modelcontextprotocol/sdk": "catalog:",
     "@types/oidc-provider": "catalog:",
     "@types/pg": "catalog:",
     "fast-check": "catalog:"
