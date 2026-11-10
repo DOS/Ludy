@@ -3555,6 +3555,8 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
                 () => true,
                 () => false,
               );
+            // Only a noInsertControl table may need the fallback; a setup that fails to commit on any other table is a broken factory and fails here, as before.
+            expect(committed || Boolean(factory.noInsertControl), `${table}: the member-mode setup of a table with an own-insert control must commit`).toBe(true);
             if (!committed) {
               // A setup that cannot be committed without its target row (a noInsertControl table, #2822: a void's reversal entry needs its
               // lines, which need the void): the database owner writes it in one transaction outside any context, then enters member mode on

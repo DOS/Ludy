@@ -675,7 +675,7 @@ suite("member-scoped agent actor in the runtime", () => {
       // The rule: any hint the run sends is addressed to its member (a member's own rows carry " @<user>", as the note, to-do and
       // notification hints do), never org-wide and never to another member.
       expect(
-        fromRun.filter((h) => !h.startsWith(`${orgId} `) || !h.split("+")[0]?.endsWith(` @${member}`)),
+        fromRun.filter((h) => !new RegExp(`^${orgId} \\S+ \\S+ @${member}$`).test(h)),
         "hints of the member-mode run not addressed to its member alone",
       ).toEqual([]);
       // Today the run's writes (its result; its audit row) send none at all: a hint added later is reviewed here.
