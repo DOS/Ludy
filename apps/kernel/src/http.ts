@@ -1433,9 +1433,6 @@ export function createHttpApp(deps: HttpDeps) {
     'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
     'content-disposition': 'inline',
-    // A <video> is a no-cors request: with the app and the API on different sites, same-site would block it. The ticket is the
-    // credential and nothing here is readable without CORS, which this route never sends.
-    'cross-origin-resource-policy': 'cross-origin',
   } as const;
   app.get('/api/meetings/:id/video/stream', async (c) => {
     for (const [name, value] of Object.entries(VIDEO_TICKET_RESPONSE_HEADERS)) c.header(name, value);

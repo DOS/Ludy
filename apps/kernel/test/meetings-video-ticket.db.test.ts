@@ -347,7 +347,6 @@ suite('meeting video tickets (#2703)', () => {
 
     const partial = await stream(meetingId, ticket, { headers: { range: 'bytes=0-9' } });
     expect(partial.headers.get('referrer-policy')).toBe('no-referrer');
-    expect(partial.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
     expect(partial.headers.get('cache-control')).toBe('private, no-store');
     expect(partial.headers.get('x-content-type-options')).toBe('nosniff');
     expect(partial.headers.get('content-disposition')).toBe('inline');
