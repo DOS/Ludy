@@ -102,6 +102,9 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
     ownerA: '',
     memberA1: '',
     memberA2: '',
+    // A member of org A kept only for the post-issuance eligibility probes of exchange_extension_auth_code (#2662): they demote, disable and remove
+    // this member, so a probe that fails half way cannot leave memberA1, the member the other tests use, in a state they would fail on.
+    probeA: '',
     viewerA: '',
     ownerB: '',
     memberB1: '',
@@ -238,8 +241,9 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
            ($1, $2, 'member'),
            ($1, $3, 'member'),
            ($1, $4, 'viewer'),
-           ($5, $6, 'member')`,
-        [orgAId, users.memberA1, users.memberA2, users.viewerA, orgBId, users.memberB1],
+           ($5, $6, 'member'),
+           ($1, $7, 'member')`,
+        [orgAId, users.memberA1, users.memberA2, users.viewerA, orgBId, users.memberB1, users.probeA],
       );
     });
 
@@ -659,26 +663,44 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         expect(verifyRes.rows.length).toBe(1);
         expect(verifyRes.rows[0]?.token_id).toBe(res.rows[0]?.token_id);
 
-        // Post-issuance eligibility check on exchange: demoted, disabled, removed member (Round 2 item 4)
+        // Post-issuance eligibility check on exchange: demoted, disabled, removed member (Round 2 item 4). Run on the dedicated member probeA (#2662), restored
+        // after each probe, so a failure here leaves memberA1 and the tests after this one untouched.
+        // A control first: the dedicated member is eligible as it stands, so each refusal below is the doing of its own change and not of a fixture
+        // that could never exchange (a probe on a member that is refused anyway would pass for nothing).
+        const controlCode = makeAuthCode();
+        await admin(async (c) => {
+          await c.query(
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Probe Control', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
+            [orgAId, controlCode.id, users.probeA, controlCode.hash, controlCode.challenge],
+          );
+        });
+        const controlExchange = await safeExchange(controlCode.hash, controlCode.verifier, randomBytes(32));
+        expect(controlExchange.rows.length, 'an eligible probe member must exchange').toBe(1);
+        expect(controlExchange.rows[0]?.user_id).toBe(users.probeA);
+        await admin(async (c) => {
+          await c.query(`DELETE FROM crove_kernel.extension_token WHERE id = $1`, [controlExchange.rows[0]?.token_id]);
+        });
+
         // (a) Demoted to 'viewer'
         const demoteCode = makeAuthCode();
         await admin(async (c) => {
           await c.query(
             `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
              VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Demote Test', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
-            [orgAId, demoteCode.id, users.memberA1, demoteCode.hash, demoteCode.challenge],
+            [orgAId, demoteCode.id, users.probeA, demoteCode.hash, demoteCode.challenge],
           );
-          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.probeA]);
         });
         const demoteExchange = await safeExchange(demoteCode.hash, demoteCode.verifier, randomBytes(32));
         expect(demoteExchange.rows.length, 'exchange for demoted member must return 0 rows').toBe(0);
         await admin(async (c) => {
           const tokenRows = await c.query<{ cnt: number }>(
             `SELECT count(*)::int AS cnt FROM crove_kernel.extension_token WHERE org_id = $1 AND user_id = $2 AND device_name = 'Demote Test'`,
-            [orgAId, users.memberA1],
+            [orgAId, users.probeA],
           );
           expect(tokenRows.rows[0]?.cnt).toBe(0);
-          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.probeA]);
         });
 
         // (b) User account disabled
@@ -687,19 +709,19 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
           await c.query(
             `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
              VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Disabled Test', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
-            [orgAId, disabledCode.id, users.memberA1, disabledCode.hash, disabledCode.challenge],
+            [orgAId, disabledCode.id, users.probeA, disabledCode.hash, disabledCode.challenge],
           );
-          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA1]);
+          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.probeA]);
         });
         const disabledExchange = await safeExchange(disabledCode.hash, disabledCode.verifier, randomBytes(32));
         expect(disabledExchange.rows.length, 'exchange for disabled user must return 0 rows').toBe(0);
         await admin(async (c) => {
           const tokenRows = await c.query<{ cnt: number }>(
             `SELECT count(*)::int AS cnt FROM crove_kernel.extension_token WHERE org_id = $1 AND user_id = $2 AND device_name = 'Disabled Test'`,
-            [orgAId, users.memberA1],
+            [orgAId, users.probeA],
           );
           expect(tokenRows.rows[0]?.cnt).toBe(0);
-          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.memberA1]);
+          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.probeA]);
         });
 
         // (c) Member removed from tenant_member
@@ -708,19 +730,19 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
           await c.query(
             `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, extension_id, created_at, expires_at)
              VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Removed Test', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now(), now() + interval '5 minutes')`,
-            [orgAId, removedCode.id, users.memberA1, removedCode.hash, removedCode.challenge],
+            [orgAId, removedCode.id, users.probeA, removedCode.hash, removedCode.challenge],
           );
-          await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
+          await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgAId, users.probeA]);
         });
         const removedExchange = await safeExchange(removedCode.hash, removedCode.verifier, randomBytes(32));
         expect(removedExchange.rows.length, 'exchange for removed member must return 0 rows').toBe(0);
         await admin(async (c) => {
           const tokenRows = await c.query<{ cnt: number }>(
             `SELECT count(*)::int AS cnt FROM crove_kernel.extension_token WHERE org_id = $1 AND user_id = $2 AND device_name = 'Removed Test'`,
-            [orgAId, users.memberA1],
+            [orgAId, users.probeA],
           );
           expect(tokenRows.rows[0]?.cnt).toBe(0);
-          await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgAId, users.memberA1]);
+          await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgAId, users.probeA]);
         });
       } finally {
         await appClient.end();
