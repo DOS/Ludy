@@ -68,6 +68,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.media.record',
       'meetings.meeting.delete',
       'meetings.meeting.owner_delete',
+      'meetings.meeting.owner_list',
       'meetings.reader.add',
       'meetings.reader.remove',
       'meetings.media_key.reseal',
