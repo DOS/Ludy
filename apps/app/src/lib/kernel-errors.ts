@@ -286,6 +286,7 @@ export const KERNEL_ERROR_CODES = [
   'TRANSCRIPT_SEGMENT_NOT_FOUND',
   // Transcription as the recorder's own Vy (#2578, M4b).
   'TRANSCRIBE_OFF',
+  'TRANSCRIBE_NO_BROKER',
   'TRANSCRIBE_RUNNING',
   'MEETING_NO_AUDIO',
   'TRANSCRIPT_EMPTY',

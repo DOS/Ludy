@@ -254,6 +254,32 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect(await afterEntry('gone', meeting, () => sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, member)), 'member removed').toBe('MEETINGS_NOT_RECORDER');
   });
 
+  it('refuses after a successful entry once the meeting\'s audio retention date is reached (#2863)', async () => {
+    const meeting = meetings.extras as string;
+    runs.extra = await startRun('extra', meeting);
+    const until = (await sqlAdmin(`SELECT audio_retention_date::text AS d FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meeting])).rows[0]?.d as string;
+    expect(await afterEntry('extra', meeting, async () => undefined), 'a control, a date still ahead').toBeNull();
+    try {
+      expect(await afterEntry('extra', meeting, () => sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meeting])), 'on the date').toBe('MEETINGS_AUDIO_EXPIRED');
+    } finally {
+      await sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meeting, until]);
+    }
+    expect(await afterEntry('extra', meeting, async () => undefined), 'a control after the restore').toBeNull();
+  });
+
+  it('refuses the admit (run.check) of a run whose member was demoted to viewer, by the runtime before any handler (#2863 item 6)', async () => {
+    const meeting = meetings.extras as string;
+    runs.extra = await startRun('extra', meeting);
+    const member = [orgId, users.extra];
+    expect(await code(vy('extra').query('kernel.member_vy.run.check', {})), 'a control').toBeNull();
+    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, member);
+    try {
+      expect(await code(vy('extra').query('kernel.member_vy.run.check', {})), 'demoted to viewer').toBe('FORBIDDEN');
+    } finally {
+      await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, member);
+    }
+  });
+
   it('refuses at the entry, with the runtime\'s own codes, a member who left, a revoked vy.use and an expired run', async () => {
     // The runtime's refusals before the definer is reached, each by its exact code: the former member's membership ends, and another member's run expires.
     await sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.former]);
