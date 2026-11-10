@@ -648,7 +648,9 @@ suite('meeting video tickets (#2703)', () => {
         // Without a bearer token they reach the bearer check (or nothing at all): never the video.
         expect([401, 404, 405], `${method} ${path}`).toContain(res.status);
         expect(res.headers.get('content-range'), `${method} ${path}`).toBeNull();
-        await res.arrayBuffer();
+        // Refused by the bearer check (or no route), not by the ticket handler: the ticket route must never have run for these paths.
+        if (method === 'GET') expect(await res.text(), `GET ${path}`).not.toContain('VIDEO_TICKET_INVALID');
+        else await res.arrayBuffer();
       }
     }
   });

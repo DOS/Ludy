@@ -145,7 +145,7 @@ services:
       MEETINGS_TRANSCRIBE: ${MEETINGS_TRANSCRIBE:-off}
       # The recorder's Vy summarizing a meeting (#2580): off unless MEETINGS_SUMMARY=on; the meetings module works without it.
       MEETINGS_SUMMARY: ${MEETINGS_SUMMARY:-off}
-      # Meeting videos streamed at once by this process, over all members (3 each); a request over it is told to retry (#2965).
+      # Meeting videos streamed at once by this process, over all members (3 each, or this many if it is lower); a request over it is told to retry (#2965).
       MEETINGS_VIDEO_STREAMS_MAX: ${MEETINGS_VIDEO_STREAMS_MAX:-64}
       TRANSCRIBE_BASE_URL: ${TRANSCRIBE_BASE_URL:-}
       # https by default; set 1 only for a provider on a private network reached over plain http (the audio and the key then travel unencrypted).
