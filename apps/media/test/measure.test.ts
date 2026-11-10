@@ -47,7 +47,7 @@ describe.skipIf(!hasFfmpeg)('measureFile', () => {
     expect((await probeFile(real)).durationSeconds).toBeGreaterThan(8.5);
     const lie = join(dir, 'lie.webm');
     // Matroska Duration element (0x4489) holds a float: patch every occurrence in the first 4 KiB to 1000 ms (a 4-byte float is 0x447A0000).
-    const bytes = Buffer.from(execFileSync('cat', [real]));
+    const bytes = readFileSync(real);
     for (let i = 0; i < Math.min(bytes.length - 7, 4096); i += 1) {
       if (bytes[i] === 0x44 && bytes[i + 1] === 0x89 && (bytes[i + 2] === 0x84 || bytes[i + 2] === 0x88)) {
         if (bytes[i + 2] === 0x84) bytes.writeFloatBE(1000, i + 3);
