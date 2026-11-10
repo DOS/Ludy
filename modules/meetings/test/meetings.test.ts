@@ -15,6 +15,7 @@ import {
   meetingGet,
   meetingList,
   meetingMediaMeta,
+  mediaExtension,
   meetingMediaRecord,
   meetingVideoRead,
   meetingsCommands,
@@ -121,5 +122,22 @@ describe('meetings commands and queries construction', () => {
     expect(meetingAudioRead.name).toBe('meetings.meeting.audio_read');
     expect(meetingVideoRead.name).toBe('meetings.meeting.video_read');
     expect(meetingMediaMeta.name).toBe('meetings.meeting.media_meta');
+  });
+});
+
+describe('mediaExtension (#2703)', () => {
+  it('names the stored file by the sniffed container', () => {
+    expect(mediaExtension('audio/ogg', 'audio')).toBe('ogg');
+    expect(mediaExtension('audio/webm', 'audio')).toBe('webm');
+    expect(mediaExtension('audio/mp4', 'audio')).toBe('m4a');
+    expect(mediaExtension('audio/mpeg', 'audio')).toBe('mp3');
+    expect(mediaExtension('audio/wav', 'audio')).toBe('wav');
+    expect(mediaExtension('video/webm', 'video')).toBe('webm');
+    expect(mediaExtension('video/mp4', 'video')).toBe('mp4');
+  });
+
+  it('falls back for an unknown type', () => {
+    expect(mediaExtension('application/x-unknown', 'audio')).toBe('bin');
+    expect(mediaExtension('application/x-unknown', 'video')).toBe('mp4');
   });
 });

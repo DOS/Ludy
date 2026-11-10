@@ -656,7 +656,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
   it('removes nothing but orphan meeting media, and leaves an object another file row names', async () => {
     const meetingId = await createMeeting('recorder', { title: 'Orphan test' });
     await upload('recorder', meetingId, 'audio', 'a');
-    const live = (await rows<{ id: string; storage_key: string }>("SELECT id, storage_key FROM crove_kernel.file WHERE org_id = $1 AND filename = $2", [orgId, `meeting-${meetingId}.opus`]))[0]!;
+    const live = (await rows<{ id: string; storage_key: string }>("SELECT id, storage_key FROM crove_kernel.file WHERE org_id = $1 AND filename = $2", [orgId, `meeting-${meetingId}.ogg`]))[0]!;
     // A live segment is never an orphan, and the discard refuses it.
     await sweep();
     expect(store.storage.has(live.storage_key)).toBe(true);
