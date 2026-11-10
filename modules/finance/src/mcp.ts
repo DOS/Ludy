@@ -8,7 +8,7 @@
 // reaches the client as data, one plain line, and the tool says so. The legal entity is not chosen here: the row policy of the caller's scope decides which entities'
 // invoices are visible, as it does on the documents screen. Money stays a decimal string.
 import { z } from 'zod';
-import { zLocalDate } from '@crove/kernel-contract';
+import { plainLine, zLocalDate } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 
@@ -41,9 +41,6 @@ export interface McpInvoices {
   truncated: boolean;
 }
 
-// One plain line for a reader outside the org: control characters (line breaks included) become a space, the ends are trimmed, at most `max` characters.
-const plain = (value: string, max: number): string => [...value.replace(/\p{Cc}+/gu, ' ').trim()].slice(0, max).join('');
-
 export const mcpInvoices = defineQuery({
   name: 'finance.mcp.invoices',
   input: zMcpInvoicesInput,
@@ -71,14 +68,14 @@ export const mcpInvoices = defineQuery({
     const invoices = rows.map((r) => ({
       id: r.id,
       direction: r.direction,
-      series: plain(r.invoice_series, 20),
-      number: plain(r.invoice_number, 40),
+      series: plainLine(r.invoice_series, 20),
+      number: plainLine(r.invoice_number, 40),
       issueDate: r.invoice_date,
-      partyName: plain(r.party_name, 300),
+      partyName: plainLine(r.party_name, 300),
       subtotal: r.subtotal,
       vatAmount: r.vat_amount,
       total: r.total,
-      currency: r.currency,
+      currency: plainLine(r.currency, 10),
       voided: r.voided_id !== null,
     }));
     return { invoices, total, truncated: total > invoices.length };

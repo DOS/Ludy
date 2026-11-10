@@ -176,8 +176,8 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
       }
       const parsed = tool.argsSchema.safeParse(raw);
       if (!parsed.success) {
-        // The names of the fields that are wrong, never their values (a value is the client's text).
-        const fields = [...new Set(parsed.error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? issue.keys.map((k) => k.slice(0, 40)) : [issue.path.join('.') || '(arguments)'])))];
+        // The names of the fields that are wrong, never their values; a key the schema does not have is not named either (it is the client's text).
+        const fields = [...new Set(parsed.error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? ['(unknown field)'] : [issue.path.join('.') || '(arguments)'])))];
         return { kind: 'json', status: 200, body: rpcError(id, RPC_INVALID_PARAMS, `Invalid arguments: ${fields.slice(0, 10).join(', ')}`) };
       }
       try {

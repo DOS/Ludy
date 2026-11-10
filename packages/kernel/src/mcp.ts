@@ -12,7 +12,7 @@
 // No command declares `mcp`: an MCP grant reaches no write (a test pins it).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
+import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 
@@ -146,10 +146,6 @@ export const mcpAbout = defineQuery({
   },
 });
 
-// What a person typed or an import brought, as one plain line for a reader outside the org: control characters (line breaks included) become a space,
-// the ends are trimmed, and it is cut at `max` characters. The text is data for the client, never an instruction, and says so in the tool's description.
-const plain = (value: string, max: number): string => [...value.replace(/\p{Cc}+/gu, ' ').trim()].slice(0, max).join('');
-
 export const MCP_LIST_DEFAULT = 25;
 export const MCP_LIST_MAX = 50;
 const zMcpLimit = z.number().int().min(1).max(MCP_LIST_MAX).default(MCP_LIST_DEFAULT).describe(`How many rows to return, newest first (1 to ${MCP_LIST_MAX}, default ${MCP_LIST_DEFAULT}).`);
@@ -197,7 +193,7 @@ export const mcpParties = defineQuery({
       SELECT count(*)::int AS n FROM crove_kernel.party p
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND (${kind}::text IS NULL OR p.kind = ${kind}::text)`.execute(ctx.trx);
     const total = count.rows[0]?.n ?? 0;
-    const parties = found.rows.map((r) => ({ id: r.id, kind: r.kind, name: plain(r.name, 300), companyName: r.company_name === null ? null : plain(r.company_name, 300), createdOn: r.created_on }));
+    const parties = found.rows.map((r) => ({ id: r.id, kind: r.kind, name: plainLine(r.name, 300), companyName: r.company_name === null ? null : plainLine(r.company_name, 300), createdOn: r.created_on }));
     return { parties, total, truncated: total > parties.length };
   },
 });
