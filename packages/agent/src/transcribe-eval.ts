@@ -16,9 +16,9 @@
 // Nothing here is a model call: the numbers are the deterministic check of what a model wrote (AGENTS.md: AI output is tainted,
 // deterministic checks decide).
 
-// The most cells of the alignment table: the longest meeting (two hours) is well under 20 000 syllables, 20 000 squared is
-// 400 million cells of one byte.
-const MAX_ALIGNMENT_CELLS = 400_000_000;
+// The most cells of the alignment table. A two hour meeting (the sandbox's limit) is about 30 000 syllables at the fastest speech, so 30 000
+// squared is 900 million cells; each cell keeps its step in 2 bits, 300 MB at this cap.
+const MAX_ALIGNMENT_CELLS = 1_200_000_000;
 
 export class TranscriptEvalError extends Error {
   constructor(message: string) {
@@ -105,29 +105,34 @@ export function alignTokens(reference: readonly string[], hypothesis: readonly s
   const m = hypothesis.length;
   if ((n + 1) * (m + 1) > MAX_ALIGNMENT_CELLS) throw new TranscriptEvalError('the transcripts are too long to align');
   const width = m + 1;
-  const back = new Uint8Array((n + 1) * width);
+  // The step into each cell, 2 bits a cell: a two hour meeting would need 900 MB at a byte a cell.
+  const back = new Uint8Array(Math.ceil(((n + 1) * width) / 4));
+  const setStep = (index: number, step: number) => {
+    back[index >> 2]! |= step << ((index & 3) * 2);
+  };
+  const stepAt = (index: number) => (back[index >> 2]! >> ((index & 3) * 2)) & 3;
   let previous = new Uint32Array(width);
   let row = new Uint32Array(width);
   for (let j = 1; j <= m; j += 1) {
     previous[j] = j;
-    back[j] = LEFT;
+    setStep(j, LEFT);
   }
   for (let i = 1; i <= n; i += 1) {
     row[0] = i;
-    back[i * width] = UP;
+    setStep(i * width, UP);
     for (let j = 1; j <= m; j += 1) {
       const diag = previous[j - 1]! + (reference[i - 1] === hypothesis[j - 1] ? 0 : 1);
       const up = previous[j]! + 1;
       const left = row[j - 1]! + 1;
       if (diag <= up && diag <= left) {
         row[j] = diag;
-        back[i * width + j] = DIAG;
+        setStep(i * width + j, DIAG);
       } else if (up <= left) {
         row[j] = up;
-        back[i * width + j] = UP;
+        setStep(i * width + j, UP);
       } else {
         row[j] = left;
-        back[i * width + j] = LEFT;
+        setStep(i * width + j, LEFT);
       }
     }
     [previous, row] = [row, previous];
@@ -136,7 +141,7 @@ export function alignTokens(reference: readonly string[], hypothesis: readonly s
   let i = n;
   let j = m;
   while (i > 0 || j > 0) {
-    const step = back[i * width + j];
+    const step = stepAt(i * width + j);
     if (i > 0 && j > 0 && step === DIAG) {
       ops.push({ type: reference[i - 1] === hypothesis[j - 1] ? 'ok' : 'sub', ref: i - 1, hyp: j - 1 });
       i -= 1;
@@ -206,24 +211,55 @@ export interface TranscriptScore {
 
 const TOP_SUBSTITUTIONS = 5;
 
-// The best one-to-one mapping from the provider's labels to the reference's speakers, by how many aligned words each pair
-// shares (greedy from the largest count): a provider names its speakers "Người nói 1", a person wrote "Lan".
+// The best one-to-one mapping from the provider's labels to the reference's speakers, by how many aligned words each pair shares:
+// a provider names its speakers "Người nói 1", a person wrote "Lan". The best assignment is searched over the subsets of the
+// smaller side (a meeting has a handful of speakers); past MAX_SPEAKERS_EXACT on either side it falls back to taking the largest counts first.
+const MAX_SPEAKERS_EXACT = 12;
+
+function bestMatched(refs: string[], hyps: string[], counts: Map<string, number>): number {
+  const count = (r: string, h: string) => counts.get(`${r}\u0000${h}`) ?? 0;
+  const [rows, cols, at] = refs.length <= hyps.length ? [refs, hyps, (r: string, c: string) => count(r, c)] : [hyps, refs, (r: string, c: string) => count(c, r)];
+  if (rows.length > MAX_SPEAKERS_EXACT || cols.length > MAX_SPEAKERS_EXACT) {
+    const usedRef = new Set<string>();
+    const usedHyp = new Set<string>();
+    let matched = 0;
+    for (const [key, n] of [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))) {
+      const [r, h] = key.split('\u0000') as [string, string];
+      if (usedRef.has(r) || usedHyp.has(h)) continue;
+      usedRef.add(r);
+      usedHyp.add(h);
+      matched += n;
+    }
+    return matched;
+  }
+  // best[mask] = the most words matched using the columns in mask for the rows seen so far.
+  let best = new Map<number, number>([[0, 0]]);
+  for (const row of rows) {
+    const next = new Map(best);
+    for (const [mask, value] of best) {
+      cols.forEach((col, j) => {
+        if (mask & (1 << j)) return;
+        const total = value + at(row, col);
+        const key = mask | (1 << j);
+        if (total > (next.get(key) ?? -1)) next.set(key, total);
+      });
+    }
+    best = next;
+  }
+  return Math.max(...best.values());
+}
+
 function diarize(pairs: Array<{ refSpeaker: string; hypSpeaker: string }>): DiarizationScore {
   const counts = new Map<string, number>();
+  const refs = new Set<string>();
+  const hyps = new Set<string>();
   for (const { refSpeaker, hypSpeaker } of pairs) {
     const key = `${refSpeaker}\u0000${hypSpeaker}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
+    refs.add(refSpeaker);
+    hyps.add(hypSpeaker);
   }
-  const usedRef = new Set<string>();
-  const usedHyp = new Set<string>();
-  let matched = 0;
-  for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))) {
-    const [refSpeaker, hypSpeaker] = key.split('\u0000') as [string, string];
-    if (usedRef.has(refSpeaker) || usedHyp.has(hypSpeaker)) continue;
-    usedRef.add(refSpeaker);
-    usedHyp.add(hypSpeaker);
-    matched += count;
-  }
+  const matched = bestMatched([...refs], [...hyps], counts);
   return { words: pairs.length, matched, accuracy: pairs.length === 0 ? 0 : matched / pairs.length };
 }
 

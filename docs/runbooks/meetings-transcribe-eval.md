@@ -18,7 +18,7 @@ This measures the recorder's Vy transcription. Vy itself is not changed by it, a
 ## How the numbers are counted
 
 - Text is made NFC, lower case, and every run of punctuation or space is a boundary. Vietnamese is written one syllable per word, so a word is one token.
-- A different diacritic is a different word: `má` for `ma` is an error.
+- A different diacritic is a different word: `má` for `ma` is an error. So is the other spelling of a tone: Vietnamese writes `hoà` and `hòa` (and `thuỷ` and `thủy`) both ways, and the scorer does not join them, so write the reference in the style the provider uses or expect those words to show as substitutions.
 - Words are aligned with the smallest number of substitutions, deletions and insertions (Levenshtein over tokens). WER is (substitutions + deletions + insertions) divided by the reference words. It can be above 100 percent when the provider wrote much more than was said.
 - CER is the same distance over the characters of the normalized text.
 - Speaker labels and timestamps do not count for WER. Diarization is scored apart: a provider calls its speakers "Người nói 1", a person wrote "Lan", so each provider label is mapped to at most one reference speaker (the best match first) and the report gives the share of aligned words whose label is the mapped one.
@@ -58,8 +58,10 @@ pnpm ai:eval:transcribe
 - The sandbox is the real `apps/media` service, started as a child process on a free local port with ffmpeg from the PATH. To use a running sandbox (the container) instead, set `MEDIA_URL`.
 - `TRANSCRIBE_EVAL_LANGUAGE=en` runs an English set (default `vi`).
 - The report never prints a line of a transcript, a speaker's name or a file's name: files are "file 1", "file 2" for a private set. It is safe to paste into an issue. To also see the most frequent word substitutions on your own screen, add `TRANSCRIBE_EVAL_SHOW_PAIRS=true`, and never paste that output anywhere public.
+- A job summary (`GITHUB_STEP_SUMMARY`) gets the report only when its word pairs are off or the set is the synthetic one.
 - The full diff of each file (every error with the words, for a person to read) goes to a local directory, `TRANSCRIBE_EVAL_OUT` or a new private temporary one, with mode 600. It holds transcript text: keep it on the machine and delete it when done.
 - `TRANSCRIBE_EVAL_MAX_WER=0.15` makes the run fail above that WER (a gate); without it the numbers are only reported.
+- A recording is one test with a 3 hour limit, so a one hour meeting is not cut short. Alignment handles a two hour meeting (about 30 000 words) in a few seconds and about 300 MB of memory.
 - Without `TRANSCRIBE_EVAL_DIR`, the eval scores the committed synthetic clips (see below).
 
 ## 3. Read the result

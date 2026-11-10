@@ -2,7 +2,7 @@
 // The transcription eval's runner (#2979): the set loader, then the production path end to end on the committed synthetic clips with
 // a fake provider, so the numbers are known in advance. No real provider is called. The sandbox runs for real (a child process of
 // apps/media, with ffmpeg) when ffmpeg is on the machine, and a stand-in cuts the chunks otherwise.
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -65,6 +65,16 @@ describe('loadTranscriptSet', () => {
     expect(error!.message).toContain('orphan.txt');
     expect(error!.message).not.toContain('ok.ogg');
     expect(error!.message).not.toContain('notes.md');
+  });
+
+  it('matches an upper-case .TXT reference and reads it from its own path, and does not follow a symbolic link out of the set', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crove-transcribe-case-'));
+    writeFileSync(join(dir, 'hop.ogg'), 'x');
+    writeFileSync(join(dir, 'hop.TXT'), 'xin chào');
+    symlinkSync(dir, join(dir, 'loop'));
+    const pairs = loadTranscriptSet(dir);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.referencePath).toBe(join(dir, 'hop.TXT'));
   });
 
   it('refuses a directory with no recording at all', () => {

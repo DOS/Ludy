@@ -18,6 +18,9 @@ const language = process.env.TRANSCRIBE_EVAL_LANGUAGE?.trim() === 'en' ? 'en' : 
 const showPairs = privateDir === null || process.env.TRANSCRIBE_EVAL_SHOW_PAIRS === 'true';
 // A pass line is only a gate when one is set; the plan's proposed 15 percent is for the owner to confirm with the first real run.
 const maxWer = process.env.TRANSCRIBE_EVAL_MAX_WER ? Number(process.env.TRANSCRIBE_EVAL_MAX_WER) : null;
+if (maxWer !== null && !(Number.isFinite(maxWer) && maxWer >= 0)) throw new Error('TRANSCRIBE_EVAL_MAX_WER must be a number of at least 0, for example 0.15');
+// One recording is one test: a one hour meeting is 6 chunks sent one after the other, each allowed 10 minutes by the adapter, plus the sandbox's own work.
+const RECORDING_TIMEOUT_MS = 3 * 60 * 60_000;
 
 if (!provider) console.warn('TRANSCRIBE_BASE_URL and TRANSCRIBE_MODEL are not set: skipping the transcription eval');
 // A set with a missing pair stops here, naming the files, before anything is sent.
@@ -40,19 +43,21 @@ describe.skipIf(!provider)('transcription eval', () => {
       results.push(run.result);
       if (diffDir) {
         const path = join(diffDir, `${pair.id}.diff.txt`);
-        mkdirSync(dirname(path), { recursive: true });
+        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
         writeFileSync(path, formatLocalDiff(run.scored), { mode: 0o600 });
       }
-    });
+    }, RECORDING_TIMEOUT_MS);
   }
 
   it('reports WER, CER, time per hour of audio and the audio minutes billed', () => {
-    expect(results.map((r) => r.id).sort(), 'every recording must be scored').toEqual(pairs.map((p) => p.id).sort());
+    // Counts, not names: a failed assertion prints both sides, and a private set's file names are not for a log.
+    expect(results.length, 'every recording must be scored').toBe(pairs.length);
     const summary = summarizeTranscriptionEval(results);
     const report = formatTranscriptionEvalReport(summary, { showPairs, nameFiles: privateDir === null });
     console.log(report);
     if (diffDir) console.log(`The full diff of each file (it holds transcript text) is in ${diffDir}`);
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
+    // Never the word pairs of a private set into a job summary, which others can read.
+    if (process.env.GITHUB_STEP_SUMMARY && (privateDir === null || !showPairs)) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
     if (maxWer !== null) expect(summary.wer, report).toBeLessThanOrEqual(maxWer);
   });
 });

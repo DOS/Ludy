@@ -5,7 +5,8 @@
 // path: the crove-media sandbox normalizes it to mono Opus and cuts it into 10 minute chunks, then transcribeChunks is called
 // with the deployment's TRANSCRIBE_* config (either request mode), and the merged transcript is scored against the reference.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { join, relative } from 'node:path';
 import { createMediaClient, type MediaClient } from '@crove/media/client';
@@ -32,12 +33,13 @@ export interface TranscriptPair {
   referencePath: string;
 }
 
+// The files of a directory and its subdirectories. A symbolic link is not followed, so a link to a parent folder cannot loop.
 function walk(dir: string): string[] {
-  return readdirSync(dir)
-    .sort()
-    .flatMap((name) => {
-      const path = join(dir, name);
-      return statSync(path).isDirectory() ? walk(path) : [path];
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : 1))
+    .flatMap((entry) => {
+      const path = join(dir, entry.name);
+      return entry.isDirectory() ? walk(path) : entry.isFile() ? [path] : [];
     });
 }
 
@@ -47,20 +49,23 @@ const extensionOf = (path: string) => path.slice(path.lastIndexOf('.')).toLowerC
 // that names the files: a set that silently drops files measures less than it claims. An empty set is refused too.
 export function loadTranscriptSet(dir: string): TranscriptPair[] {
   const files = walk(dir);
-  const references = new Set(files.filter((f) => extensionOf(f) === '.txt').map((f) => f.slice(0, -'.txt'.length)));
+  // The reference of each base name, with the path it really has (an upper-case .TXT is matched and read from its own path).
+  const references = new Map(files.filter((f) => extensionOf(f) === '.txt').map((f) => [f.slice(0, f.lastIndexOf('.')), f]));
   const problems: string[] = [];
   const pairs: TranscriptPair[] = [];
   for (const path of files) {
     if (!AUDIO_EXTENSIONS.includes(extensionOf(path))) continue;
     const base = path.slice(0, path.lastIndexOf('.'));
     const id = relative(dir, base);
-    if (!references.delete(base)) {
+    const referencePath = references.get(base);
+    if (referencePath === undefined) {
       problems.push(`${relative(dir, path)}: no ${id}.txt next to the recording`);
       continue;
     }
-    pairs.push({ id, audioPath: path, referencePath: `${base}.txt` });
+    pairs.push({ id, audioPath: path, referencePath });
   }
-  for (const base of references) problems.push(`${relative(dir, base)}.txt: no recording (${AUDIO_EXTENSIONS.join(', ')}) next to the reference`);
+  const used = new Set(pairs.map((p) => p.referencePath));
+  for (const referencePath of references.values()) if (!used.has(referencePath)) problems.push(`${relative(dir, referencePath)}: no recording (${AUDIO_EXTENSIONS.join(', ')}) next to the reference`);
   if (problems.length > 0) throw new TranscriptEvalError(`the transcription set ${dir} is incomplete:\n${problems.join('\n')}`);
   if (pairs.length === 0) throw new TranscriptEvalError(`the transcription set ${dir} holds no recording (${AUDIO_EXTENSIONS.join(', ')})`);
   return pairs;
@@ -141,25 +146,44 @@ export async function startMediaSandbox(env: NodeJS.ProcessEnv = process.env): P
   if (external) return { client: createMediaClient(external), stop: async () => undefined };
   const port = await freePort();
   const entry = join(import.meta.dirname, '..', '..', '..', 'apps', 'media', 'src', 'main.ts');
+  // Its own scratch directory: at start the sandbox deletes every crove-media-* entry of the temporary directory, which would remove
+  // the working files of another crove-media (a test in the same run, or a service on this machine).
+  const scratch = mkdtempSync(join(tmpdir(), 'crove-transcribe-eval-media-'));
   const child: ChildProcess = spawn(process.execPath, [entry], {
-    env: { PATH: env.PATH ?? '', NODE_ENV: 'test', PORT: String(port), HOST: '127.0.0.1' },
+    env: { PATH: env.PATH ?? '', NODE_ENV: 'test', PORT: String(port), HOST: '127.0.0.1', TMPDIR: scratch },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let stderr = '';
   child.stderr?.on('data', (chunk: Buffer) => {
     stderr = (stderr + chunk.toString()).slice(-2000);
   });
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  // A child left behind when the process ends early (a test that timed out never reaches its finally).
+  const killAtExit = () => {
+    if (!exited()) child.kill('SIGKILL');
+  };
+  process.once('exit', killAtExit);
   const stop = async () => {
-    if (child.exitCode !== null) return;
-    await new Promise<void>((resolve) => {
-      child.once('exit', () => resolve());
-      child.kill('SIGTERM');
-    });
+    process.off('exit', killAtExit);
+    if (!exited()) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
+        child.once('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        child.kill('SIGTERM');
+      });
+    }
+    rmSync(scratch, { recursive: true, force: true });
   };
   const url = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 30_000;
   for (;;) {
-    if (child.exitCode !== null) throw new TranscriptEvalError(`the media sandbox did not start: ${stderr.trim() || `exit ${child.exitCode}`}`);
+    if (exited()) {
+      await stop();
+      throw new TranscriptEvalError(`the media sandbox did not start: ${stderr.trim() || `exit ${child.exitCode ?? child.signalCode}`}`);
+    }
     try {
       const response = await fetch(`${url}/healthz`);
       if (response.ok) break;

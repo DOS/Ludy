@@ -58,6 +58,19 @@ describe('scoreTranscript', () => {
     expect(nothing).toMatchObject({ deletions: 2, wer: 1, cer: 1 });
   });
 
+  it('aligns with the fewest errors whatever the lengths (the edit count equals the edit distance, on random tokens)', () => {
+    let seed = 7;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+    for (let round = 0; round < 40; round += 1) {
+      const a = Array.from({ length: 1 + (next() % 60) }, () => `t${next() % 5}`);
+      const b = Array.from({ length: next() % 70 }, () => `t${next() % 5}`);
+      const ops = alignTokens(a, b);
+      expect(ops.filter((o) => o.type !== 'ok').length).toBe(editDistance(a, b));
+      expect(ops.filter((o) => o.type !== 'ins').length).toBe(a.length);
+      expect(ops.filter((o) => o.type !== 'del').length).toBe(b.length);
+    }
+  });
+
   it('prefers one substitution to a deletion plus an insertion', () => {
     const ops = alignTokens(['a', 'b', 'c'], ['a', 'x', 'c']);
     expect(ops.map((o) => o.type)).toEqual(['ok', 'sub', 'ok']);
@@ -83,7 +96,7 @@ describe('scoreTranscript', () => {
   });
 
   it('refuses a pair of texts too long to align, instead of using all the memory', () => {
-    const long = Array.from({ length: 21_000 }, (_, i) => `t${i % 7}`);
+    const long = Array.from({ length: 35_000 }, (_, i) => `t${i % 7}`);
     expect(() => alignTokens(long, long)).toThrow(/too long/);
   });
 });
@@ -109,6 +122,18 @@ describe('diarization', () => {
     ]).score;
     // One provider label for everyone: it can map to one speaker only (Lan has 7 of the 10 words).
     expect(wrong.diarization).toEqual({ words: 10, matched: 7, accuracy: 0.7 });
+  });
+
+  it('finds the best one-to-one mapping, not the greedy one', () => {
+    // Words by (reference speaker, provider label): Ann-X 5, Ann-Y 4, Bob-X 4. Greedy takes Ann-X and then nothing for Bob (5 words);
+    // the best mapping is Ann-Y and Bob-X (8 words).
+    const ref = `[Ann] ${'a '.repeat(9)}[Bob] ${'b '.repeat(4)}`;
+    const hyp: HypothesisSegment[] = [
+      { speakerLabel: 'X', text: 'a '.repeat(5) },
+      { speakerLabel: 'Y', text: 'a '.repeat(4) },
+      { speakerLabel: 'X', text: 'b '.repeat(4) },
+    ];
+    expect(scoreTranscript(ref, hyp).score.diarization).toEqual({ words: 13, matched: 8, accuracy: 8 / 13 });
   });
 
   it('keeps a [marker] out of the words', () => {
