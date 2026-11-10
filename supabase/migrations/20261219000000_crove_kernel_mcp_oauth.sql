@@ -150,7 +150,7 @@ RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
   DELETE FROM crove_kernel.oauth_record o WHERE o.model = p_model AND o.key_hash = p_key_hash
 $$;
 
--- Destroys every record of one authorization grant (its refresh tokens, codes and the grant itself).
+-- Destroys every record of one authorization grant (its refresh tokens, codes and the grant itself) and ends the agent_grant that carries it.
 CREATE OR REPLACE FUNCTION crove_kernel.oauth_record_revoke_by_grant(p_grant_id text)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -161,6 +161,9 @@ BEGIN
   END IF;
   DELETE FROM crove_kernel.oauth_record o WHERE o.grant_id = p_grant_id OR (o.model = 'Grant' AND o.payload ->> 'jti' = p_grant_id);
   GET DIAGNOSTICS v_count = ROW_COUNT;
+  -- The provider revokes a grant this way when a refresh token is presented twice (reuse detection): the agent_grant behind it ends too, so
+  -- the access tokens already issued stop at once, not when they expire.
+  UPDATE crove_kernel.agent_grant g SET revoked_at = pg_catalog.clock_timestamp() WHERE g.oauth_grant_id = p_grant_id AND g.revoked_at IS NULL;
   RETURN v_count;
 END $$;
 

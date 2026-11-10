@@ -69,11 +69,11 @@ const tooManyRequests = (c: Context, retryAfterSeconds: number) => {
 // request and response (its body parser reads the stream itself, so nothing may read the body first). Mounted BEFORE the edge's global middleware:
 // the provider has written its answer by the time a handler returns, and a middleware that then touched the response would write it twice. The consent
 // page's own calls (/oauth/interaction/...) are not the provider's: they go on to the routes of mountMcp, and the page itself to the SPA.
-export function mountOauthProvider(app: Hono<any>, deps: Pick<McpDeps, 'oauth' | 'clientKey' | 'now'>): void {
+export function mountOauthProvider(app: Hono<any>, deps: Pick<McpDeps, 'oauth' | 'clientKey' | 'now'> & { registerPerMinute: number; registerGlobalPerMinute: number }): void {
   const callback = deps.oauth.provider.callback();
   const addressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
-  const registerLimiter = new RateLimiter({ perMinute: 10, ...(deps.now ? { now: deps.now } : {}) });
-  const registerGlobalLimiter = new RateLimiter({ perMinute: 120, ...(deps.now ? { now: deps.now } : {}) });
+  const registerLimiter = new RateLimiter({ perMinute: deps.registerPerMinute, ...(deps.now ? { now: deps.now } : {}) });
+  const registerGlobalLimiter = new RateLimiter({ perMinute: deps.registerGlobalPerMinute, ...(deps.now ? { now: deps.now } : {}) });
   const delegate = async (c: Context, rewriteTo?: string) => {
     const { incoming, outgoing } = c.env as unknown as NodeBindings;
     if (rewriteTo) incoming.url = rewriteTo;

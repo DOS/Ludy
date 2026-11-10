@@ -18,6 +18,11 @@ const DEFAULT_LIFETIME_SECONDS = 30 * 24 * 3600;
 
 export const keyHash = (id: string): Buffer => createHash('sha256').update(id, 'utf8').digest();
 
+// The models whose id IS a bearer secret (an authorization code, a refresh token, an access token, a registration token): the provider also puts that id in the
+// payload as `jti`, which would store the secret in clear beside its hash. The payload keeps no `jti` for them; `find` puts the id back, as it is the key asked for.
+// A session or an interaction id authorizes nothing but the interaction in progress (15 and 10 minutes), and the provider looks those up by uid too, so they keep theirs.
+const SECRET_ID_MODELS: ReadonlySet<string> = new Set(['AccessToken', 'AuthorizationCode', 'RefreshToken', 'RegistrationAccessToken', 'InitialAccessToken', 'ClientCredentials', 'DeviceCode', 'BackchannelAuthenticationRequest', 'PushedAuthorizationRequest']);
+
 type RunDb = <O>(fn: (db: Db) => Promise<O>) => Promise<O>;
 
 interface Row {
@@ -44,7 +49,8 @@ class OauthAdapter implements Adapter {
     const lifetime = typeof expiresIn === 'number' && expiresIn > 0 ? expiresIn : DEFAULT_LIFETIME_SECONDS;
     const grantId = typeof payload.grantId === 'string' ? payload.grantId : null;
     const uid = typeof payload.uid === 'string' ? payload.uid : null;
-    const { consumed: _consumed, ...stored } = payload;
+    const { consumed: _consumed, ...rest } = payload;
+    const stored = SECRET_ID_MODELS.has(this.#model) ? Object.fromEntries(Object.entries(rest).filter(([key]) => key !== 'jti')) : rest;
     try {
       await this.#run((db) =>
         sql`SELECT crove_kernel.oauth_record_upsert(${this.#model}::text, ${keyHash(id)}::bytea, ${JSON.stringify(stored)}::jsonb, ${grantId}::text, ${uid}::text,
@@ -57,7 +63,8 @@ class OauthAdapter implements Adapter {
 
   async find(id: string): Promise<AdapterPayload | undefined> {
     const { rows } = await this.#run((db) => sql<Row>`SELECT payload, consumed_at FROM crove_kernel.oauth_record_find(${this.#model}::text, ${keyHash(id)}::bytea)`.execute(db));
-    return withConsumed(rows[0]);
+    const found = withConsumed(rows[0]);
+    return found && SECRET_ID_MODELS.has(this.#model) ? { ...found, jti: id } : found;
   }
 
   async findByUid(uid: string): Promise<AdapterPayload | undefined> {

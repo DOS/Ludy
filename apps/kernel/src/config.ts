@@ -333,6 +333,9 @@ const schema = z.object({
   // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
   MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
+  OAUTH_REGISTER_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(10),
+  OAUTH_REGISTER_GLOBAL_PER_MINUTE: z.coerce.number().int().min(1).max(100_000).default(120),
   // The offline sandbox channel (Social plan §3.5): connect and publish without any platform account.
   CHANNEL_SANDBOX: z.enum(['true', 'false']).default('true'),
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a

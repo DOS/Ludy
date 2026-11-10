@@ -30,6 +30,8 @@ const SESSION_SECONDS = 900;
 const INTERACTION_SECONDS = 600;
 const GRANT_SECONDS = 90 * 24 * 3600;
 
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 type RunDb = <O>(fn: (db: Db) => Promise<O>) => Promise<O>;
 
 // The claims the access token carries beyond the standard ones: the live grant it belongs to and its org.
@@ -97,6 +99,22 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
     clientAuthMethods: ['none'],
     clientDefaults: { grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', id_token_signed_response_alg: 'ES256' },
     pkce: { required: () => true },
+    // The registration policy of this deployment, run for every client at registration (the provider's own rules for web and native clients stay): no wildcard in
+    // a redirect URI, no user information, plain http only on a loopback address of a native client. The property it hangs on is one no client sets.
+    extraClientMetadata: {
+      properties: ['ludy_policy'],
+      validator: (_ctx, key, value, metadata) => {
+        if (value !== undefined) throw new errors.InvalidClientMetadata(`${key} is not a client property`);
+        const uris = Array.isArray(metadata.redirect_uris) ? (metadata.redirect_uris as unknown[]) : [];
+        for (const uri of uris) {
+          const parsed = typeof uri === 'string' ? URL.parse(uri) : null;
+          if (!parsed || (uri as string).includes('*') || parsed.username !== '' || parsed.password !== '') throw new errors.InvalidRedirectUri('redirect_uris must be exact addresses, with no wildcard or user information');
+          if (parsed.protocol === 'http:' && !(metadata.application_type === 'native' && LOOPBACK_HOSTS.has(parsed.hostname))) {
+            throw new errors.InvalidRedirectUri('redirect_uris must use https, or http on a loopback address for a native client');
+          }
+        }
+      },
+    },
     features: {
       devInteractions: { enabled: false },
       introspection: { enabled: false },

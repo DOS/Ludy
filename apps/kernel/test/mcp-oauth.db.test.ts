@@ -159,7 +159,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const { code } = await codeOf(c);
     const t = await tokens(c, code);
     expect(t.status).toBe(200);
-    return { ...c, access: String(t.body.access_token), refresh: String(t.body.refresh_token) };
+    return { ...c, code, access: String(t.body.access_token), refresh: String(t.body.refresh_token) };
   }
 
   const modernHeaders = (access: string, method: string, name?: string) => ({
@@ -211,6 +211,8 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       OAUTH_JWKS: JSON.stringify({ keys: [jwk] }),
       OAUTH_COOKIE_KEYS: 'test-cookie-key-0123456789-abcdefghij-0123',
       MCP_GRANT_PER_MINUTE: '60',
+      OAUTH_REGISTER_PER_MINUTE: '1000',
+      OAUTH_REGISTER_GLOBAL_PER_MINUTE: '1000',
     });
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands],
@@ -261,6 +263,8 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(c.details.status).toBe(200);
     expect(c.details.body).toMatchObject({ client: { name: 'Test MCP client', redirectHost: '127.0.0.1:39999', selfDeclared: true }, scopes: ['ludy.read'] });
     expect(c.access.split('.')).toHaveLength(3);
+    // Whatever scope a client asks for, the token's is the one the grant has.
+    expect(JSON.parse(Buffer.from(c.access.split('.')[1] as string, 'base64url').toString())).toMatchObject({ scope: 'ludy.read', aud: resource, client_id: c.clientId, iss: base });
     const about = await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
     expect(about.status).toBe(200);
     expect(about.body?.result?.structuredContent).toMatchObject({ clientName: 'Test MCP client', scopes: ['ludy.read'] });
@@ -268,5 +272,202 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     // The audit row says it came over MCP, from which grant and client.
     const rows = await admin((client) => client.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' ORDER BY id DESC LIMIT 1`));
     expect(rows.rows[0].detail).toMatchObject({ via: 'mcp', tool: 'ludy_about', result: 'ok', mcpClientName: 'Test MCP client' });
+  });
+
+  const refreshWith = async (clientId: string, refresh: string) => {
+    const response = await fetch(`${base}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId, resource }).toString(),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+  const grantsOf = async (name = 'owner') => (await rpc('mcp/grant/list', await asBrowser(name), {})).body as unknown as Array<{ id: string; clientName: string; revokedAt: string | null }>;
+  const aboutStatus = async (access: string) => (await mcpModern(access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about')).status;
+
+  it('answers a request with a Supabase browser token, a garbage token and a token of another audience with 401, and refuses an MCP token on /api', async () => {
+    const browser = await jwt('owner');
+    expect(await aboutStatus(browser)).toBe(401);
+    expect(await aboutStatus('not-a-token')).toBe(401);
+    const c = await connect();
+    // The MCP access token is not a browser session: /api/rpc refuses it.
+    const onApi = await fetch(`${base}/api/rpc/me/get`, { method: 'POST', headers: { authorization: `Bearer ${c.access}`, 'content-type': 'application/json' }, body: '{}' });
+    expect(onApi.status).toBe(401);
+  });
+
+  it('stores no authorization code, refresh token or access token in clear', async () => {
+    const c = await connect();
+    const dump = await admin(async (client) => (await client.query<{ blob: string }>(`SELECT pg_catalog.string_agg(payload::text || encode(key_hash, 'hex') || coalesce(grant_id, '') || coalesce(uid, ''), ' ') AS blob FROM crove_kernel.oauth_record`)).rows[0]?.blob ?? '');
+    for (const secret of [c.refresh, c.access, c.code]) expect(dump).not.toContain(secret);
+    const hashed = await admin(async (client) => (await client.query(`SELECT 1 FROM crove_kernel.oauth_record WHERE model = 'RefreshToken' AND key_hash = $1`, [createHash('sha256').update(c.refresh).digest()])).rowCount);
+    expect(hashed).toBe(1);
+  });
+
+  it('rotates the refresh token and, on a reused one, ends the grant at once', async () => {
+    const c = await connect();
+    const next = await refreshWith(c.clientId, c.refresh);
+    expect(next.status).toBe(200);
+    expect(String(next.body.refresh_token)).not.toBe(c.refresh);
+    expect(await aboutStatus(String(next.body.access_token))).toBe(200);
+    const replay = await refreshWith(c.clientId, c.refresh);
+    expect(replay.status).toBe(400);
+    // The replay revoked the whole grant: the token issued from the rotation and its refresh token stop too.
+    expect(await aboutStatus(String(next.body.access_token))).toBe(401);
+    expect((await refreshWith(c.clientId, String(next.body.refresh_token))).status).toBe(400);
+  });
+
+  it('closes access at once when the owner revokes the grant, and a refresh after it fails', async () => {
+    const c = await connect();
+    expect(await aboutStatus(c.access)).toBe(200);
+    const mine = (await grantsOf()).filter((g) => g.clientName === 'Test MCP client' && !g.revokedAt);
+    expect(mine.length).toBeGreaterThan(0);
+    for (const g of mine) expect((await rpc('mcp/grant/revoke', await asBrowser('owner'), { grantId: g.id })).status).toBe(200);
+    expect(await aboutStatus(c.access)).toBe(401);
+    expect((await refreshWith(c.clientId, c.refresh)).status).toBe(400);
+  });
+
+  it('closes access at once when the consenting user loses the owner or admin role', async () => {
+    // A second owner consents; the role is lowered in the database; the next call is refused.
+    const second = 'second-owner';
+    await jwt(second);
+    const email = accounts.get(second)?.email;
+    const invited = await rpc('org/invite', await asBrowser('owner'), { email, role: 'admin' });
+    expect(invited.status).toBe(200);
+    const accepted = await rpc('invites/accept', await asBrowser(second, null), { token: String(invited.body.acceptPath).split('#')[1] });
+    expect(accepted.status).toBe(200);
+    const c = await connect(second);
+    expect(await aboutStatus(c.access)).toBe(200);
+    await admin((client) => client.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = (SELECT id FROM crove_kernel.user_account WHERE email = $2)`, [orgId, email]));
+    expect(await aboutStatus(c.access)).toBe(401);
+    expect((await refreshWith(c.clientId, c.refresh)).status).toBe(400);
+  });
+
+  it('refuses a consent by a member who is not an owner or admin, and a consent for an org the user is not in', async () => {
+    const member = 'plain-member';
+    await jwt(member);
+    const email = accounts.get(member)?.email;
+    const invited = await rpc('org/invite', await asBrowser('owner'), { email, role: 'member' });
+    expect(invited.status).toBe(200);
+    expect((await rpc('invites/accept', await asBrowser(member, null), { token: String(invited.body.acceptPath).split('#')[1] })).status).toBe(200);
+    const refused = await consent(member);
+    expect(refused.consentStatus).toBe(403);
+    const stranger = await consent('stranger-with-no-org', orgId);
+    expect(stranger.consentStatus).toBe(403);
+    // Neither made a grant.
+    expect((await grantsOf()).some((g) => g.clientName === 'Test MCP client' && g.id === undefined)).toBe(false);
+  });
+
+  it('closes access at once under the org\'s "Dung AI" and the deployment\'s AI switch, and opens it again when they are released', async () => {
+    const c = await connect();
+    expect(await aboutStatus(c.access)).toBe(200);
+    const owner = accounts.get('owner')?.subject;
+    await admin((client) => client.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, owner]));
+    expect(await aboutStatus(c.access)).toBe(401);
+    await admin((client) => client.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [orgId]));
+    expect(await aboutStatus(c.access)).toBe(200);
+    await admin((client) => client.query(`SELECT crove_kernel.global_kill_switch_set('ai', true, 'test', 'test')`));
+    expect(await aboutStatus(c.access)).toBe(401);
+    await admin((client) => client.query(`SELECT crove_kernel.global_kill_switch_set('ai', false, 'test', 'test')`));
+    expect(await aboutStatus(c.access)).toBe(200);
+  });
+
+  it('speaks the revisions of real clients: initialize without a session id, the version header, and the spec errors', async () => {
+    const c = await connect();
+    const post = (headers: Record<string, string>, body: unknown) => fetch(`${base}/mcp`, { method: 'POST', headers: { authorization: `Bearer ${c.access}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers }, body: JSON.stringify(body) });
+    for (const version of ['2025-06-18', '2025-11-25']) {
+      const init = await post({}, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: version, capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+      expect(init.status).toBe(200);
+      expect(init.headers.get('mcp-session-id')).toBeNull();
+      expect(((await init.json()) as any).result.protocolVersion).toBe(version);
+      const initialized = await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', method: 'notifications/initialized' });
+      expect(initialized.status).toBe(202);
+      const list = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as any;
+      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about']);
+      expect(list.result.tools[0].annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+      const called = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', arguments: {} } })).json()) as any;
+      expect(called.result.structuredContent.clientName).toBe('Test MCP client');
+      expect(called.result.resultType).toBeUndefined();
+    }
+    // Ignores a session id a client sends, never echoes one.
+    const withSession = await post({ 'mcp-protocol-version': '2025-11-25', 'mcp-session-id': 'abc' }, { jsonrpc: '2.0', id: 4, method: 'tools/list' });
+    expect(withSession.status).toBe(200);
+    expect(withSession.headers.get('mcp-session-id')).toBeNull();
+    // An unknown version: 400 with the versions it supports. A modern request whose header and body disagree: 400 HeaderMismatch. No version header: 400.
+    const unknown = await post({ 'mcp-protocol-version': '1900-01-01' }, { jsonrpc: '2.0', id: 5, method: 'tools/list' });
+    expect(unknown.status).toBe(400);
+    expect(((await unknown.json()) as any).error).toMatchObject({ code: -32022, data: { supported: ['2026-07-28', '2025-11-25', '2025-06-18'], requested: '1900-01-01' } });
+    const mismatch = await post({ 'mcp-protocol-version': '2026-07-28', 'mcp-method': 'tools/list' }, { jsonrpc: '2.0', id: 6, method: 'tools/list', params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2025-11-25' } } });
+    expect(mismatch.status).toBe(400);
+    expect(((await mismatch.json()) as any).error.code).toBe(-32020);
+    expect((await post({}, { jsonrpc: '2.0', id: 7, method: 'tools/list' })).status).toBe(400);
+    const discover = await mcpModern(c.access, 'server/discover');
+    expect(discover.body?.result).toMatchObject({ resultType: 'complete', supportedVersions: ['2026-07-28', '2025-11-25', '2025-06-18'], cacheScope: 'public' });
+    const unknownMethod = await mcpModern(c.access, 'resources/list');
+    expect(unknownMethod.status).toBe(404);
+    expect(unknownMethod.body?.error.code).toBe(-32601);
+    // A batch and an Origin outside the list are refused; a tool takes no arguments.
+    expect((await post({ 'mcp-protocol-version': '2025-11-25' }, [{ jsonrpc: '2.0', id: 8, method: 'tools/list' }])).status).toBe(400);
+    expect((await post({ origin: 'https://evil.example.com', 'mcp-protocol-version': '2025-11-25' }, { jsonrpc: '2.0', id: 9, method: 'tools/list' })).status).toBe(403);
+    const withArgs = (await (await post({ 'mcp-protocol-version': '2025-11-25' }, { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'ludy_about', arguments: { x: 1 } } })).json()) as any;
+    expect(withArgs.error.code).toBe(-32602);
+  });
+
+  it('accepts only the registrations the rules allow: no wildcard or plain http redirect on the web, no secret, no other grant', async () => {
+    const attempt = (body: Record<string, unknown>) => fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'x', token_endpoint_auth_method: 'none', application_type: 'web', ...body }) });
+    expect((await attempt({ redirect_uris: ['http://app.example.com/cb'] })).status).toBe(400);
+    expect((await attempt({ redirect_uris: ['https://app.example.com/*'] })).status).toBe(400);
+    expect((await attempt({ redirect_uris: ['https://app.example.com/cb'], token_endpoint_auth_method: 'client_secret_basic' })).status).toBe(400);
+    expect((await attempt({ redirect_uris: ['https://app.example.com/cb'], grant_types: ['client_credentials'] })).status).toBe(400);
+    const good = await attempt({ redirect_uris: ['https://app.example.com/cb'] });
+    expect(good.status).toBe(201);
+  });
+
+  it('refuses a request with no PKCE challenge, the plain method, a wrong resource and a redirect that is not registered', async () => {
+    const reg = await register();
+    const clientId = String(reg.body.client_id);
+    const verifier = randomBytes(32).toString('base64url');
+    const ask = async (overrides: Record<string, string | undefined>) => {
+      const params: Record<string, string> = { client_id: clientId, response_type: 'code', redirect_uri: reg.redirect, scope: 'ludy.read', resource, code_challenge: challengeOf(verifier), code_challenge_method: 'S256', state: 's' };
+      for (const [k, v] of Object.entries(overrides)) {
+        if (v === undefined) delete params[k];
+        else params[k] = v;
+      }
+      const response = await fetch(`${base}/oauth/authorize?${new URLSearchParams(params)}`, { redirect: 'manual' });
+      return { status: response.status, location: response.headers.get('location') ?? '' };
+    };
+    const noPkce = await ask({ code_challenge: undefined, code_challenge_method: undefined });
+    expect(noPkce.location).toContain('error=invalid_request');
+    const plain = await ask({ code_challenge_method: 'plain' });
+    expect(plain.location).toContain('error=invalid_request');
+    const wrongResource = await ask({ resource: 'https://other.example.com/mcp' });
+    expect(wrongResource.location).toContain('error=invalid_target');
+    const otherRedirect = await ask({ redirect_uri: 'http://127.0.0.1:1/other' });
+    expect(otherRedirect.location).not.toContain('code=');
+    expect(otherRedirect.location).not.toContain('127.0.0.1:1/other');
+  });
+
+  it('does not fetch a client metadata document from a private, loopback or link-local address', async () => {
+    for (const clientId of ['https://127.0.0.1/client.json', 'https://localhost/client.json', 'https://169.254.169.254/client.json', 'https://10.0.0.5/client.json', 'http://example.com/client.json']) {
+      const response = await fetch(`${base}/oauth/authorize?${new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: 'http://127.0.0.1:39999/callback', scope: 'ludy.read', resource, code_challenge: challengeOf('x'.repeat(43)), code_challenge_method: 'S256' })}`, { redirect: 'manual' });
+      expect(response.status, clientId).toBeGreaterThanOrEqual(400);
+      expect(response.headers.get('location') ?? '').not.toContain('/oauth/interaction/');
+    }
+  });
+
+  it('writes an audit row for every call that names the grant, the client and the tool, and says it came over MCP', async () => {
+    const c = await connect();
+    await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
+    const rows = await admin(async (client) => (await client.query(`SELECT actor_type, actor_id, command, detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'Test MCP client' ORDER BY id DESC LIMIT 1`)).rows);
+    expect(rows[0]).toMatchObject({ actor_type: 'system', actor_id: null, command: 'kernel.mcp.call' });
+    expect(rows[0].detail).toMatchObject({ via: 'mcp', tool: 'ludy_about', result: 'ok' });
+    expect(rows[0].detail.mcpGrant).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.stringify(rows[0].detail)).not.toContain(c.access);
+  });
+
+  it('answers 429 once a grant spends its minute, before any query runs', async () => {
+    const c = await connect();
+    let limited = 0;
+    for (let i = 0; i < 90; i += 1) if ((await aboutStatus(c.access)) === 429) limited += 1;
+    expect(limited).toBeGreaterThan(0);
   });
 });

@@ -536,7 +536,14 @@ export function createHttpApp(deps: HttpDeps) {
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
   // The authorization server's own routes (ADR-0032, #2975), before the global middleware below: the provider writes its answer on the Node response itself.
-  if (deps.oauth) mountOauthProvider(app, { oauth: deps.oauth, clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)) });
+  if (deps.oauth) {
+    mountOauthProvider(app, {
+      oauth: deps.oauth,
+      clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
+      registerPerMinute: config.OAUTH_REGISTER_PER_MINUTE,
+      registerGlobalPerMinute: config.OAUTH_REGISTER_GLOBAL_PER_MINUTE,
+    });
+  }
 
   // A request id per request (#2175): in every log line the request makes (JSON logs), and in the `x-request-id` answer
   // header, so a report ("the upload failed at 10:42") can be matched to its lines. Always generated here: an id a caller
