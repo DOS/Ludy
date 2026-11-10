@@ -503,7 +503,13 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
-  TRANSCRIBE_BASE_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // https only: the audio and the key travel to it. Plain http is accepted for a provider on this machine (localhost, 127.0.0.1), for development and tests (#2863).
+  TRANSCRIBE_BASE_URL: optional.pipe(
+    z
+      .url({ protocol: /^https?$/ })
+      .refine((v) => new URL(v).protocol === 'https:' || ['localhost', '127.0.0.1'].includes(new URL(v).hostname), 'TRANSCRIBE_BASE_URL must be https (http only for localhost or 127.0.0.1)')
+      .optional(),
+  ),
   TRANSCRIBE_API_KEY: optional,
   TRANSCRIBE_MODEL: optional,
   AI_PRICE_AUDIO_PER_MIN: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),

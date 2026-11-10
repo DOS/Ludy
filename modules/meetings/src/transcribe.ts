@@ -23,6 +23,14 @@ export function setTranscribeEnabled(enabled: boolean): void {
   transcribeEnabled = enabled;
 }
 
+// Whether the deployment can open the media key and the provider's credentials (a credential key is set). Without it the worker never takes the job
+// (it registers the transcription queue only with a broker), so a run started here would sit until it expires: refused at the start instead (#2863 item 2).
+// True until set, so a test that does not care is unaffected; the kernel sets it from the config at start-up.
+let transcribeBroker = true;
+export function setTranscribeBroker(configured: boolean): void {
+  transcribeBroker = configured;
+}
+
 const FEATURE = 'meetings.transcribe';
 // The most a result row holds (member_vy_result.body, a database check). A transcript longer than this is a failed run, never a cut one.
 export const TRANSCRIPT_RESULT_MAX = 100_000;
@@ -87,6 +95,7 @@ function build() {
       const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
       if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can start its transcription');
       if (!transcribeEnabled) throw new DomainError('TRANSCRIBE_OFF', 422, 'Transcription is not turned on here; the meeting works as it did');
+      if (!transcribeBroker) throw new DomainError('TRANSCRIBE_NO_BROKER', 503, 'Transcription needs the deployment credential key (CREDENTIAL_KEY or CREDENTIAL_KEY_FILE); ask the operator');
       // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger) instead of
       // leaving an empty failed result row behind.
       await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
