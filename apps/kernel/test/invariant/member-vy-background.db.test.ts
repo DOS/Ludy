@@ -226,13 +226,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     return { agentId, runId };
   }
   // The result row of a run, inserted as the superuser with its triggers on, for the member the run belongs to.
-  const addResult = (runId: string, member: string, status = "running") =>
+  const addResult = (runId: string, member: string, status = "running", subjectId: string = randomUUID()) =>
     admin(async (c) => {
       const id = randomUUID();
       await c.query(
         `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
          VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, $6, CASE WHEN $6 = 'ready' THEN 'x' END, true, true, now() + interval '30 minutes')`,
-        [orgId, id, member, runId, randomUUID(), status],
+        [orgId, id, member, runId, subjectId, status],
       );
       return id;
     });
@@ -1094,9 +1094,16 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         );
       // The audit row of this agent and run with ids, enums and numbers passes (the positive control): the real command, a 64-hex hash and a
       // detail of known shapes. Text anywhere else, in any column or key, never does, not even an ASCII slug a person could have typed.
+      // The ids it names are the run's own: the run, the result row of the run and that result's subject. The write guard binds them to the run
+      // (#2822), so a fixture that names another id would be refused; these pass whether or not the guard checks them yet.
+      const ownSubject = randomUUID();
+      const ownResult = await addResult(run.runId, users.vyUser, "running", ownSubject);
       const goodDetail = {
         agentRun: run.runId,
-        resultId: randomUUID(),
+        runId: run.runId,
+        resultId: ownResult,
+        subjectId: ownSubject,
+        subjectType: "note",
         feature: "notes.summary",
         status: "ready",
         bodyLength: 120,
@@ -1488,11 +1495,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             `INSERT INTO crove_kernel.outbox_pending DEFAULT VALUES`,
           ),
           // The run's own key: ids and a hash pass (the control); text in the key, the command, the hash or the response never does.
+          // This run has no result row, so the response names no result id (the guard accepts only the id of the run's own result, #2822).
           keyOk: await key(
             randomUUID(),
             "kernel.member_vy.result.store",
             HASH,
-            { resultId: randomUUID() },
+            { status: "ready", bodyLength: 3 },
           ),
           keyHex: await key(HASH, "kernel.member_vy.result.store", HASH, null),
           keySlug: await key(
