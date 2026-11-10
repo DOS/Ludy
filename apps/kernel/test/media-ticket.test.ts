@@ -171,12 +171,12 @@ describe('one ticket, one spelling (#2965)', () => {
     const variants: Record<string, string> = {
       'an extra field': text.replace(/}$/, ',"extra":1}'),
       'a repeated field': text.replace(/}$/, `,"exp":${p.exp}}`),
-      'a repeated field with another value first': text.replace('{', `{"exp":${p.exp + 1},`),
+      'a repeated field with another value first': `{"exp":${p.exp + 1},${text.slice(1)}`,
       'reordered fields': JSON.stringify({ exp: p.exp, ...JSON.parse(text) }),
-      'a space': text.replace(',', ', '),
+      'a space': `${text.slice(0, text.indexOf(',') + 1)} ${text.slice(text.indexOf(',') + 1)}`,
       'a newline': `${text}\n`,
-      'an escaped letter': text.replace('"keyId"', '"\\u006beyId"'),
-      'an escaped slash in a value': text.replace(p.keyId, p.keyId.replace(/(.)$/, '\\$1')),
+      'an escaped letter': `{"\\u006beyId"${text.slice('{"keyId"'.length)}`,
+      'an escaped slash in a value': `${text.slice(0, text.indexOf(p.keyId))}${p.keyId.slice(0, -1)}\\${p.keyId.slice(-1)}${text.slice(text.indexOf(p.keyId) + p.keyId.length)}`,
     };
     for (const [name, value] of Object.entries(variants)) expect(verifyMediaTicket(sign(value), KEY, NOW), name).toBeNull();
   });
