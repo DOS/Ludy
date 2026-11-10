@@ -1937,4 +1937,25 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     );
     expect(kept, "the accepted result as the member left it").toEqual({ body: "x", tainted: false, status: "ready" });
   });
+
+  // The Platform PO's ruling (#2822): after the member accepted a result, the run may still replace it, but only by a rewrite that puts the mark back (tainted = true): the new
+  // text is the model's again and reads as suggested, never as accepted. This pins that behaviour; "no rewrite after accept at all" would be a different design.
+  it("accepts a rewrite of an accepted result only when it sets the taint again, and the row then reads as tainted", async () => {
+    if (!has.entry || !has.kind) return;
+    const run = await liveRun("vyUser");
+    const mine = await addResult(run.runId, users.vyUser, "ready");
+    await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`, [mine]));
+    for (const url of [workerUrl, adminUrl]) {
+      const who = url === workerUrl ? "the worker login" : "the superuser";
+      const out = await inContext(url, memberEnter(run.agentId, run.runId), async (c) => {
+        await c.query("SAVEPOINT s");
+        const rewritten = await c.query<{ body: string | null; tainted: boolean }>(`UPDATE crove_kernel.member_vy_result SET body = 'Bản viết lại của Vy', tainted = true WHERE id = $1 RETURNING body, tainted`, [mine]);
+        await c.query("ROLLBACK TO SAVEPOINT s");
+        return rewritten.rows;
+      });
+      expect(out, `${who}: a rewrite that sets the taint again is accepted, and the row is tainted`).toEqual([{ body: "Bản viết lại của Vy", tainted: true }]);
+    }
+    const kept = await admin((c) => c.query<{ body: string | null; tainted: boolean }>(`SELECT body, tainted FROM crove_kernel.member_vy_result WHERE id = $1`, [mine]));
+    expect(kept.rows[0], "the probes were rolled back: the accepted result is as the member left it").toEqual({ body: "x", tainted: false });
+  });
 });

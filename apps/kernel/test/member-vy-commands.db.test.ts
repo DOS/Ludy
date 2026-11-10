@@ -123,6 +123,19 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await query(users.alice, 'kernel.member_vy.result.get', { runId: failing.runId })).toMatchObject({ status: 'failed', errorCode: 'MODEL_ERROR', body: null });
   });
 
+  // #2822: the store of an accepted result of a finished run is refused: the run closed when it stored, so a second store (a replay, a late retry) finds no live run.
+  it('refuses to store again into the accepted result of a finished run', async () => {
+    await resetRuns();
+    const run = await start(users.alice);
+    expect(await store(users.alice, run.runId, { status: 'ready', body: 'Bản đầu' })).toEqual({ stored: true, status: 'ready' });
+    expect(await runStatus(run.runId), 'the member\'s own store closes the run').toBe('succeeded');
+    // The member accepts it (the taint goes): as the superuser here, outside any context.
+    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE org_id = $1 AND run_id = $2`, [orgId, run.runId]);
+    await expect(store(users.alice, run.runId, { status: 'ready', body: 'Bản thay' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
+    const after = await query<{ body: string | null; tainted: boolean }>(users.alice, 'kernel.member_vy.result.get', { runId: run.runId });
+    expect(after).toMatchObject({ body: 'Bản đầu', tainted: false });
+  });
+
   it('asks vy.use at the start and the store, and a viewer holds it only through a grant', async () => {
     await resetRuns();
     await expect(start(users.viewer)).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
