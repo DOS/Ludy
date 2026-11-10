@@ -21,6 +21,15 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   English, with no em dashes.
 - agent_account: every runtime posts as the JOY GitHub account, so
   Assignees stay empty; the claim comment is the lock (AGENTS.md).
+- Owner decision 2026-11-10 (Platform PO chat, relayed by the Platform PO to
+  this record): "Tại sao phải chờ tao? Tao có biết code đâu mà chờ?" (Why
+  wait for me? I do not know the code.) A PO merges its line's PRs itself
+  once its own review passes and CI is green on the final head, and does not
+  ask JOY first, a Vy hardening PR included. Unchanged: Production, secret
+  and credential steps still need JOY's own approval in the coordinator's
+  chat, one approval per run (AGENTS.md), for example granting a bucket key a
+  new permission such as `s3:PutObjectTagging` or applying a lifecycle rule
+  to a real bucket. A sub-session still does not merge.
 
 ## Board
 
