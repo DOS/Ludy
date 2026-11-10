@@ -5,14 +5,15 @@
 --   * outcome 'denied' only, a registered-command-shaped name (lower-case dotted words) and no target or a slug target type;
 --   * the detail has the keys code, rule and agentRun and no other, each with the shapes member_vy_audit_detail_ok already enforces (a code from
 --     the runtime's own list, a rule from the known list, the run's own id): never text;
---   * a bound: at most 20 denied rows for one run in 10 minutes (member mode does not count refusals in the tally, so the bound lives here). A row
---     past the bound is refused, and the runtime logs the loss and notes it in security_event.
+--   * a bound: at most 20 denied rows for one run in 10 minutes (member mode does not count refusals in the tally, so the bound lives here), counted under
+--     an advisory lock per run so concurrent transactions of the run cannot all pass the count (exactly 20 are kept). A row past the bound is refused, and the
+--     runtime logs the loss and notes it in security_event.
 -- The name is not checked against the command registry here: only the runtime writes this row, with the name of a command it has registered.
 -- Idempotent; applied files stay untouched. agent_write_guard is restated from 20261213000000 with the one alternative added.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_denied_audit_ok(p_org uuid, p_agent uuid, p_run uuid, p_outcome text, p_command text, p_target text, p_detail jsonb)
-RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF p_outcome IS DISTINCT FROM 'denied' OR p_command IS NULL OR p_command !~ '^[a-z][a-z0-9_]{0,40}(\.[a-z0-9_]{1,40}){1,4}$' OR pg_catalog.length(p_command) > 100 THEN
     RETURN false;
@@ -24,6 +25,9 @@ BEGIN
      OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(p_detail) k WHERE k NOT IN ('agentRun', 'code', 'rule')) THEN
     RETURN false;
   END IF;
+  -- The bound counts rows other transactions of the same run may be inserting right now, so the count and the insert are made one at a time per run: a lock
+  -- held until the end of this transaction, taken before the count. The next transaction of the run waits here, then counts this one's row (READ COMMITTED).
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('member_vy_denied_audit:' || p_run::text, 0));
   RETURN (SELECT pg_catalog.count(*) FROM crove_kernel.audit_event a
           WHERE a.org_id = p_org AND a.occurred_at > pg_catalog.now() - interval '10 minutes'
             AND a.actor_type = 'agent' AND a.actor_id = p_agent AND a.outcome = 'denied' AND a.detail ->> 'agentRun' = p_run::text) < 20;

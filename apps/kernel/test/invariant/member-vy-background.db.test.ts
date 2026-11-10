@@ -1387,6 +1387,33 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     });
   });
 
+  it("keeps exactly twenty denied refusal rows of a run when thirty transactions of it insert at once (the bound is counted under a lock)", async () => {
+    const run = await liveRun("vyUser");
+    const denied = { agentRun: run.runId, code: "AGENT_FORBIDDEN", rule: "member_vy_context" };
+    const results = await Promise.all(
+      Array.from({ length: 30 }, () =>
+        outcome(
+          inContext(
+            workerUrl,
+            memberEnter(run.agentId, run.runId),
+            (c) =>
+              c.query(
+                `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail) VALUES ($1, 'agent', $2, 'kernel.task.create', $3, 'denied', $4, $5::jsonb)`,
+                [orgId, run.agentId, randomUUID(), HASH, JSON.stringify(denied)],
+              ),
+            true,
+          ),
+        ),
+      ),
+    );
+    expect(results.filter((r) => r.ok).length, "the transactions that kept their row").toBe(20);
+    expect(results.filter((r) => !r.ok).map((r) => (r as { code?: string }).code), "the ten that were refused").toEqual(Array(10).fill("42501"));
+    const kept = await admin((c) =>
+      c.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND actor_id = $2 AND outcome = 'denied' AND detail ->> 'agentRun' = $3`, [orgId, run.agentId, run.runId]),
+    );
+    expect(kept.rows[0].n, "denied rows kept for the run").toBe(20);
+  });
+
   it("lets a member-mode context emit no event and keep no idempotency text: outbox_pending, emit() and an own-run key (AGENT_FORBIDDEN)", async () => {
     if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
