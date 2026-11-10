@@ -44,3 +44,13 @@ describe('TRANSCRIBE_API_MODE', () => {
     }
   });
 });
+
+// MEETINGS_VIDEO_STREAMS_MAX (#2965): the process-wide cap of meeting videos streamed at once.
+describe('MEETINGS_VIDEO_STREAMS_MAX', () => {
+  it('defaults to 64 and takes a whole number from 1 to 4096', () => {
+    expect(loadConfig({ ...BASE }).MEETINGS_VIDEO_STREAMS_MAX).toBe(64);
+    expect(loadConfig({ ...BASE, MEETINGS_VIDEO_STREAMS_MAX: '' }).MEETINGS_VIDEO_STREAMS_MAX).toBe(64);
+    expect(loadConfig({ ...BASE, MEETINGS_VIDEO_STREAMS_MAX: '200' }).MEETINGS_VIDEO_STREAMS_MAX).toBe(200);
+    for (const bad of ['0', '-1', '4097', '1.5', 'many']) expect(() => loadConfig({ ...BASE, MEETINGS_VIDEO_STREAMS_MAX: bad }), bad).toThrow(/MEETINGS_VIDEO_STREAMS_MAX/);
+  });
+});
