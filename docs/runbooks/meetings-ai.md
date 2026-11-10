@@ -28,7 +28,7 @@ This is a production step. No team lead or worker runs it. The coordinator shows
 |---|---|---|---|
 | S1 | In the host's env file, set `MEETINGS_SUMMARY=on` | `docker compose config` shows it on the `api` service | set it back to `off` |
 | S2 | Redeploy the running release (`deploy.yml`, action `deploy`, the same tag) | the smoke test passes; `/readyz` is 200 | `deploy.yml`, action `rollback` |
-| S3 | Smoke test in the pilot org with a test meeting (no real customer data): paste a short transcript, click "Nhờ Vy tóm tắt", then "Chép vào bản nháp của tôi" | the draft shows the review note; "Chia sẻ cho người dự họp" is refused; after "Tôi đã đọc" it works | S1 rollback, then S2 |
+| S3 | Smoke test in the pilot org with a test meeting (no real customer data): paste a short transcript, click "Nhờ Vy tóm tắt", then "Chép vào bản nháp của tôi" | the draft shows the review note; "Chia sẻ cho người dự họp" is refused; after "Tôi đã đọc" it works. On the pilot, also upload one test video near the cap (about 1 GB, no customer data) and confirm it measures (the meeting shows its length) without `crove-media` being OOM-killed (`docker compose ps crove-media` shows it up, not restarted; `docker inspect` says `OOMKilled` false); if it is killed, lower `MEDIA_MAX_INPUT_BYTES` or raise `MEDIA_MEM_LIMIT` (P3b) | S1 rollback, then S2 |
 | S4 | Check the AI meter | the call appears against the recorder's Vy with its token count | none needed |
 
 ## Extra steps: transcription (option B)
