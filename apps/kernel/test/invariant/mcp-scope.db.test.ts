@@ -254,7 +254,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     await refusal(runtime.execute('kernel.org.set_approval_preset', { preset: 'x' }, { actor: mcp(users.ownerA, grant), orgId: orgA }));
     const rows = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2`, [orgA, grant]));
     expect(rows.rowCount).toBeGreaterThan(0);
-    expect(rows.rows[0].detail).toMatchObject({ via: 'mcp', mcpGrant: grant, mcpClient: 'client-1', mcpClientName: 'Test client' });
+    expect(rows.rows[0].detail).toMatchObject({ mcpCall: true, mcpGrant: grant, mcpClient: 'client-1', mcpClientName: 'Test client' });
   });
 
   it('lets the API login reach the grant tables and the authorization storage only through the definers, and the worker not at all', async () => {

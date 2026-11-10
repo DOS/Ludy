@@ -279,7 +279,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(about.body?.result?.resultType).toBe('complete');
     // The audit row says it came over MCP, from which grant and client.
     const rows = await admin((client) => client.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' ORDER BY id DESC LIMIT 1`));
-    expect(rows.rows[0].detail).toMatchObject({ via: 'mcp', tool: 'ludy_about', result: 'ok', mcpClientName: 'Test MCP client' });
+    expect(rows.rows[0].detail).toMatchObject({ mcpCall: true, tool: 'ludy_about', result: 'ok', mcpClientName: 'Test MCP client' });
   });
 
   const refreshWith = async (clientId: string, refresh: string) => {
@@ -467,7 +467,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
     const rows = await admin(async (client) => (await client.query(`SELECT actor_type, actor_id, command, detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'Test MCP client' ORDER BY id DESC LIMIT 1`)).rows);
     expect(rows[0]).toMatchObject({ actor_type: 'system', actor_id: null, command: 'kernel.mcp.call' });
-    expect(rows[0].detail).toMatchObject({ via: 'mcp', tool: 'ludy_about', result: 'ok' });
+    expect(rows[0].detail).toMatchObject({ mcpCall: true, tool: 'ludy_about', result: 'ok' });
     expect(rows[0].detail.mcpGrant).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(rows[0].detail)).not.toContain(c.access);
   });

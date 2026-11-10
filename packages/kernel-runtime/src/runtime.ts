@@ -684,7 +684,7 @@ function sessionDetail(actor: UserActor): Record<string, unknown> {
 }
 
 function mcpDetail(mcp: McpGrant): Record<string, unknown> {
-  return { via: 'mcp', mcpGrant: mcp.grantId, mcpClient: mcp.clientId, mcpClientName: mcp.clientName };
+  return { mcpCall: true, mcpGrant: mcp.grantId, mcpClient: mcp.clientId, mcpClientName: mcp.clientName };
 }
 
 // A user actor made from an MCP grant reaches a query only when it declares a scope the grant holds. A command is closed to it whatever it
@@ -709,7 +709,7 @@ function authorizeExtension(access: ExtensionAccess | undefined, actor: Actor): 
 // session and, for a refusal caught by ctx.tryRun, the command that ran it. A command's own facts (DomainError audit)
 // never set them, also when the error names no rule, the actor is a system actor, which has no session, or the
 // refusal was not caught by ctx.tryRun.
-const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'extensionToken', 'via', 'mcpGrant', 'mcpClient', 'mcpClientName', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
+const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'extensionToken', 'mcpCall', 'mcpGrant', 'mcpClient', 'mcpClientName', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
 
 // The statuses a refused command is audited for once its org was entered (executeIn, ctx.tryRun).
 const AUDITED_REFUSAL_STATUSES: ReadonlySet<number> = new Set([403, 404, 409, 422]);
@@ -740,7 +740,7 @@ export function isNeverRecovered(code: string): boolean {
 
 // Keys of an audit row only the runtime writes (a ctx.tryRun refusal's parent command, a proposal's link from a
 // command run under it, #1706), so ctx.audit never sets them.
-const RESERVED_OK_KEYS = ['extensionToken', 'via', 'mcpGrant', 'mcpClient', 'mcpClientName', 'parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
+const RESERVED_OK_KEYS = ['extensionToken', 'mcpCall', 'mcpGrant', 'mcpClient', 'mcpClientName', 'parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
 
 // A JSON copy of an error's details or audit facts, frozen all the way down (what the audit row stores is JSON), or
 // null when the value has no JSON form (a cycle, a BigInt).

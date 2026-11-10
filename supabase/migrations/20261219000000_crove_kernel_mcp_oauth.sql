@@ -299,7 +299,7 @@ $$;
 
 -- The audit row of one MCP call or refusal, written by the endpoint (the API login has no system context to run a command in). It is the
 -- system's row and says so: actor 'system', command kernel.mcp.call, and a detail that names the grant, the client and the tool and says
--- `via: mcp`, so it never reads as the person's own click. Ids and names only: no argument, no answer. Raises MCP_INVALID (22023) for
+-- `mcpCall: true`, so it never reads as the person's own click. Ids and names only: no argument, no answer. Raises MCP_INVALID (22023) for
 -- anything that is not a grant of that org or for a tool or outcome outside the allowed words.
 CREATE OR REPLACE FUNCTION crove_kernel.mcp_call_audit(
   p_org_id uuid, p_grant_id uuid, p_tool text, p_request_id text, p_outcome text)
@@ -319,7 +319,7 @@ BEGIN
   INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
   VALUES (p_org_id, 'system', NULL, 'kernel.mcp.call', crove_kernel.uuid_v7(), CASE WHEN p_outcome = 'ok' THEN 'ok' ELSE 'denied' END, 'agent_grant', p_grant_id,
           pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_request_id, 'UTF8')), 'hex'),
-          pg_catalog.jsonb_build_object('via', 'mcp', 'mcpGrant', p_grant_id, 'mcpClient', v_grant.client_id, 'mcpClientName', v_grant.client_name,
+          pg_catalog.jsonb_build_object('mcpCall', true, 'mcpGrant', p_grant_id, 'mcpClient', v_grant.client_id, 'mcpClientName', v_grant.client_name,
                                         'tool', p_tool, 'requestId', p_request_id, 'result', p_outcome));
 END $$;
 
