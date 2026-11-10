@@ -88,6 +88,19 @@ describe('the won deal with no sales invoice rule (Vy C4)', () => {
     expect(await run({ ...crm, [FINANCE_SALES_SIGNALS_READ]: 'x' })).toEqual([]);
   });
 
+  it('reads an empty finance answer as "no invoice exists" and a refusal as "cannot see": the contract makes finance refuse when the member cannot see every invoice of the parties (no finance role, or a legal-entity scope narrower than the org)', async () => {
+    const crm = { [CRM_WON_DEALS_SIGNALS_READ]: [deal()] };
+    // A member who sees all the invoices and finds none: the flag.
+    expect(await run({ ...crm, [FINANCE_SALES_SIGNALS_READ]: [] })).toHaveLength(1);
+    // A stub finance read that refuses a member with a narrower scope, with each refusal a line can give: no flag, never a false "no invoice".
+    for (const code of ['FORBIDDEN', 'ENTITY_SCOPE_NARROWER', 'NOT_A_MEMBER']) {
+      const refusing = () => {
+        throw new DomainError(code, 403, 'refused');
+      };
+      expect(await run({ ...crm, [FINANCE_SALES_SIGNALS_READ]: refusing }), code).toEqual([]);
+    }
+  });
+
   it('gives no item for a deal the member cannot open (the CRM read does not list it), and asks finance nothing then', async () => {
     const asked: string[] = [];
     expect(await run({ [CRM_WON_DEALS_SIGNALS_READ]: [], [FINANCE_SALES_SIGNALS_READ]: [] }, { asked })).toEqual([]);

@@ -24,7 +24,12 @@ const zSignalDate = z
 
 // Accounting's side: `finance.signals.sales`. Its input is the parties to look at, the ones of the won deals the CRM side listed (ids only, so no cut can hide
 // an invoiced customer behind a row cap). Its answer is one row per asked party that has at least one sales invoice the caller can open: the date of the
-// latest one and how many there are. A party it does not list has no invoice the caller can see.
+// latest one and how many there are.
+//
+// An EMPTY answer means "no sales invoice exists for these parties", never "you cannot see them": the composition reads it as no invoice and raises the
+// flag. So the read REFUSES (throws a DomainError, as a role its read does not list does) whenever the caller cannot see all of the asked parties' sales
+// invoices: no finance role at all, or a legal-entity scope narrower than the org. A read that answers with the rows it can see and leaves the rest out
+// turns a hidden invoice into a false flag. The composition treats a refusal, a missing read and an answer outside the contract alike: no item.
 export const zFinanceSalesSignalsInput = z.strictObject({ partyIds: z.array(z.uuid()).min(1).max(SIGNALS_MAX_CRM) });
 export type FinanceSalesSignalsInput = z.infer<typeof zFinanceSalesSignalsInput>;
 export const zFinanceSalesSignal = z.strictObject({
