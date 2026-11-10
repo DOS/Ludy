@@ -257,4 +257,27 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
     await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, second]));
     expect((await stateOf(done.runId)).rows[0]?.results).toBe('0');
   });
+
+  // #2951: a row that names a Vy run is the model's text, so it is born tainted. An insert with a source_run_id and no taint is refused, whoever writes it; the copy commands write
+  // exactly tainted rows with their run, and the later review keeps the run on the row.
+  it('refuses an insert that names a Vy run without the taint, and accepts the tainted copy', async () => {
+    const run = randomUUID();
+    // One draft result a meeting: the earlier tests' draft is set aside so each insert below is judged by the taint rule alone (each insert is rolled back).
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    const cases = [
+      { table: 'meeting_result', cols: `(org_id, id, meeting_id, summary, feature, stage, tainted, source_run_id) VALUES ($1, $2, $3, 'Từ Vy', 'meetings.summary', 'draft', %T, %R)` },
+      { table: 'action_item', cols: `(org_id, id, meeting_id, title, stage, tainted, source_run_id) VALUES ($1, $2, $3, 'Việc từ Vy', 'draft', %T, %R)` },
+    ];
+    for (const who of ['recorder', 'superuser'] as const) {
+      for (const c of cases) {
+        const insert = (tainted: boolean, runId: string | null) =>
+          attempt(who, `INSERT INTO crove_meetings.${c.table} ${c.cols.replace('%T', String(tainted)).replace('%R', runId ? `'${runId}'` : 'NULL')}`, [orgId, randomUUID(), meetingId]);
+        const bare = await insert(false, run);
+        expect(bare.code, `${who}: ${c.table} with a run and no taint`).toBe('42501');
+        expect(bare.message).toMatch(/MEETINGS_TAINT_FORBIDDEN/);
+        expect((await insert(true, run)).code, `${who}: the tainted copy of a run into ${c.table}`).toBeNull();
+        expect((await insert(false, null)).code, `${who}: what the recorder typed into ${c.table} (no run)`).toBeNull();
+      }
+    }
+  });
 });

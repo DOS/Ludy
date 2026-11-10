@@ -260,4 +260,21 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const ended = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
     expect(ended).toMatchObject({ runId: run.runId, state: 'failed', errorCode: 'RUN_ENDED' });
   });
+
+  // #2951: the two run queries are a person's own view of their own runs. A non-user caller (the system actor) is refused, whatever the input.
+  it('refuses a non-user caller on the two run queries', async () => {
+    const system = { type: 'system' as const, component: 'kernel.member_vy' };
+    const refusals: unknown[] = [];
+    for (const [name, input] of [
+      ['kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }],
+      ['kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }],
+    ] as const) {
+      refusals.push(await runtime.query(name, input, { actor: system, orgId }).then(() => 'ANSWERED', (error: { code?: string }) => error.code));
+    }
+    expect(refusals).toEqual(['FORBIDDEN', 'FORBIDDEN']);
+    // They declare no memberVy access, so the runtime refuses them to the member's own background Vy too (a declared one is the only door into a member-mode context).
+    const declared = kernelQueries({ inboundDomain: 'in.test' }).filter((q) => q.name === 'kernel.member_vy.run.live' || q.name === 'kernel.member_vy.run.latest');
+    expect(declared.map((q) => q.name).sort()).toEqual(['kernel.member_vy.run.latest', 'kernel.member_vy.run.live']);
+    for (const q of declared) expect((q as { memberVy?: unknown }).memberVy ?? null, q.name).toBeNull();
+  });
 });
