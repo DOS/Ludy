@@ -4,7 +4,7 @@
 
 ## Vy là ai với người dùng
 
-- **Một đồng nghiệp, không bao giờ là "trợ lý".** Vy là tổng quản AI, làm việc trên mọi ứng dụng và trong Ludy Notes. Tổ chức đổi được tên Vy; tên chỉ nằm ở một chỗ trong mã.
+- **Vừa là đồng nghiệp, vừa là trợ lý** (anh quyết ngày 2026-11-10: "Vy là đồng nghiệp và trợ lý luôn"). Chỉ Vy được gọi là trợ lý; Ly, Dy, Uy vẫn chỉ là đồng nghiệp. Tên quyền vẫn là "Làm việc với Vy". Vy là tổng quản AI, làm việc trên mọi ứng dụng và trong Ludy Notes. Tổ chức đổi được tên Vy; tên chỉ nằm ở một chỗ trong mã.
 - **Vy và Ly, Dy, Uy.** Theo DESIGN.md: Vy điều phối trên mọi ứng dụng, và mỗi ứng dụng có đồng nghiệp riêng. Ly làm Ludy Kế toán; Dy làm Hộp thư, khách hàng và bán hàng của Ludy Engage; Uy làm marketing (đăng bài, quảng cáo) của Ludy Engage; Hy để dành, chưa hiện ở đâu. Quy tắc gọi tên: việc trong một ứng dụng thì gọi tên đồng nghiệp của ứng dụng đó (Ly soạn thư nhắc nợ, Dy soạn câu trả lời khách); việc trải qua nhiều ứng dụng thì gọi Vy (bản tin buổi sáng, câu hỏi về cả doanh nghiệp, biến một ghi chú thành việc cho nhiều nơi).
 - **Một Vy, hai cách làm việc** (theo ADR-0049, "ADR" là bản ghi quyết định kỹ thuật):
   - **làm cho cả công ty**: Vy giữ một vị trí trong sơ đồ tổ chức như một nhân viên AI; không bao giờ đọc dữ liệu riêng của ai;

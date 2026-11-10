@@ -4,7 +4,7 @@
 
 ## 1. What Vy is to the user
 
-- **One coworker, never an "assistant".** Vy is the general manager (tổng quản, key `gm`) across every app and Ludy Notes (DESIGN.md 1.1). The word "assistant" (trợ lý) appears in no copy. The app reads the name from the `{gm}` placeholder, filled from `packages/kernel-contract/src/coworkers.ts`, so an org that renames Vy changes one value.
+- **A coworker and an assistant.** Vy is the general manager (tổng quản, key `gm`) across every app and Ludy Notes (DESIGN.md 1.1), and both a coworker and an assistant ("trợ lý"; owner, 2026-11-10: "Vy là đồng nghiệp và trợ lý luôn"). Only Vy is called an assistant; Ly, Dy and Uy stay coworkers. The app reads the name from the `{gm}` placeholder, filled from `packages/kernel-contract/src/coworkers.ts`, so an org that renames Vy changes one value.
 - **Vy and the other coworkers.** DESIGN.md 1 and 1.1 say both things at once, and this plan keeps both: "A general manager (Vy) coordinates across every app; each app has its own coworker". Ly works in Ludy Kế toán (`finance`), Dy in Ludy Engage's Inbox and its customers and sales (`sales`), Uy in Ludy Engage's marketing, publishing and Ads (`marketing`); Hy (`system`) is reserved and shown nowhere. The copy rule decides who is named: "Copy names the coworker wherever it is the one acting, in its own area, and names the general manager for work that spans apps." So:
   - inside one app, the app's coworker acts and is named (Ly drafts the payment reminder, Dy drafts the reply, Uy drafts the campaign);
   - work that spans apps, and Ludy Notes, is Vy's (the Home list and brief, a question about the whole business, turning a note or a meeting into work for several apps, routing work to the right coworker).
