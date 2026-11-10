@@ -29,6 +29,7 @@ export { approvalPolicies, decideAgentApproval, decideApproval, eligibleApprover
 export { ROLE_LABELS } from './roles.ts';
 export { MEMBER_VY_FEATURES, MEMBER_VY_RUN_ERROR_CODES } from './member-vy.ts';
 export type { MemberVyRunErrorCode } from './member-vy.ts';
+export { MEMBER_VY_SINKS, MEMBER_VY_KNOWN_CONSUMERS } from './member-vy-sinks.ts';
 export * from './archives.ts';
 export { PARTY_KIND_HOLDERS, PARTY_NAME_MAX_LENGTH, checkPartyFields, duplicateHints, nameCore, nameSimilarity, phoneKey, type DuplicateHint, type HintParty, type PartyFieldsCheck } from './parties.ts';
 export { isArchiveType } from './files.ts';

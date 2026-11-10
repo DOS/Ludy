@@ -1115,6 +1115,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         edge.ok || edge.message,
         "a known code, a rule and a number at the bound",
       ).toBe(true);
+      // The two member-mode commands and the one target type they use pass (the controls for the enumerated names).
+      for (const [why, cols] of [
+        ["the store command with its run as the target", { command: "kernel.member_vy.result.store", target: "kernel.ai_run" }],
+        ["the audio command with no target", { command: "kernel.member_vy.meeting_audio.open" }],
+      ] as const) {
+        const ok = await audit(goodDetail, cols);
+        expect(ok.ok || ok.message, why).toBe(true);
+      }
       const clean = await audit(goodDetail);
       expect(
         clean.ok || clean.message,
@@ -1182,6 +1190,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           { command: "kernel.task.create" },
         ],
         ["text in target_type", goodDetail, { target: "Tóm tắt riêng" }],
+        // Shape-valid but not listed (#2822 part 3): the names are enumerated, so a command or a target type nobody declared for member mode is refused.
+        [
+          "a kernel.member_vy command that is not a member-mode command",
+          goodDetail,
+          { command: "kernel.member_vy.memory.save" },
+        ],
+        ["a slug target type that is not listed", goodDetail, { target: "kernel.task" }],
         [
           "text in input_sha256",
           goodDetail,
@@ -1337,6 +1352,36 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         "an entity-limited member's Vy",
       ).toEqual([]);
     });
+  });
+
+  it("reads the private Vy rows from no SQL function outside the frozen list (the prosrc scan of the sinks invariant, #2822)", async () => {
+    // The SQL functions whose body names member_vy_result or member_vy_memory when the list was made. Frozen: a function not here that names them fails, so the list
+    // changes only by an owner decision. The match is case-sensitive: the error code MEMBER_VY_RESULT_RUN_MISMATCH is not a table name (the source half is test/invariant/member-vy-sinks.test.ts).
+    const FROZEN = [
+      "crove_kernel.agent_write_guard",
+      "crove_kernel.member_vy_former_members_due",
+      "crove_kernel.member_vy_member_data_purge",
+      "crove_kernel.member_vy_private_counts",
+      "crove_kernel.member_vy_result_bind",
+      "crove_kernel.member_vy_results_due",
+      "crove_kernel.member_vy_results_expire",
+      "crove_kernel.member_vy_run_finish",
+      "crove_kernel.member_vy_runs_cancel",
+      "crove_kernel.org_purge",
+      "crove_meetings.audio_for_member_vy",
+      "crove_meetings.meeting_discard_transcribe",
+      "crove_meetings.member_vy_media_files",
+    ];
+    const found = await admin((c) =>
+      c.query<{ fn: string }>(
+        `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname LIKE 'crove\\_%' AND (p.prosrc ~ 'member_vy_(result|memory)' OR p.prosrc ~ $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
+      ),
+    );
+    const names = [...new Set(found.rows.map((r) => r.fn))];
+    expect(names.filter((n) => !FROZEN.includes(n)), "SQL functions that read the private Vy rows and are not on the frozen list").toEqual([]);
+    // Each entry still reads them: a function that no longer does is removed from the list in the change that makes it so.
+    expect(FROZEN.filter((n) => !names.includes(n)), "frozen entries that no longer read them").toEqual([]);
   });
 
   it("lets a member-mode context emit no event and keep no idempotency text: outbox_pending, emit() and an own-run key (AGENT_FORBIDDEN)", async () => {
