@@ -463,7 +463,7 @@ export interface WorkerDeps {
   // unset: none.
   aiPrice?: { inputPerMTok: string; outputPerMTok: string; audioPerMinute?: string; defaultMonthlyBudget?: string | null };
   // Transcription of a meeting as the recorder's own Vy (#2578, M4b): the provider's endpoint. Unset: no job is queued or worked (the module works with it off).
-  meetingsTranscribe?: { provider: MeetingsTranscribeDeps['provider'] };
+  meetingsTranscribe?: { provider: MeetingsTranscribeDeps['provider']; measurer: MeetingsTranscribeDeps['measurer'] };
   // Back-pressure (#894): above this outbox lag the agent, bulk mail, archive and retention queues stop fetching
   // (default DEFAULT_OUTBOX_LAG_PAUSE_SECONDS).
   outboxLagPauseSeconds?: number;
@@ -1117,6 +1117,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       store: deps.store,
       broker: deps.channels.broker,
       provider: deps.meetingsTranscribe.provider,
+      measurer: deps.meetingsTranscribe.measurer,
       price: { inputPerMTok: deps.aiPrice?.inputPerMTok ?? '0', outputPerMTok: deps.aiPrice?.outputPerMTok ?? '0', audioPerMinute: deps.aiPrice?.audioPerMinute ?? '0' },
     };
     await boss.work<MeetingsTranscribeJob>(QUEUES.meetingsTranscribe, { batchSize: 1 }, async ([job]) => {
