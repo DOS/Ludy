@@ -287,9 +287,10 @@ services:
       CREDENTIAL_KEY_PREVIOUS: ${CREDENTIAL_KEY_PREVIOUS:-}
       CREDENTIAL_KEY_FILE: /data/keys/credential.key
       CHANNEL_SANDBOX: ${CHANNEL_SANDBOX:-true}
-      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-true}
+      # Empty means unset: the kernel turns the sandboxes on for a local PUBLIC_URL and off for a public one.
+      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-}
       BANK_FEED_SANDBOX: ${BANK_FEED_SANDBOX:-false}
-      ADS_SANDBOX: ${ADS_SANDBOX:-true}
+      ADS_SANDBOX: ${ADS_SANDBOX:-}
       BANK_FEED_SANDBOX_WEBHOOK_SECRET: ${BANK_FEED_SANDBOX_WEBHOOK_SECRET:-}
       CHANNEL_BLUESKY: ${CHANNEL_BLUESKY:-true}
       CHANNEL_TELEGRAM: ${CHANNEL_TELEGRAM:-true}
