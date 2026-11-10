@@ -185,6 +185,12 @@ export const vi = {
       signals: {
         wonDealNoInvoice: 'Deal đã thắng {days, plural, other {# ngày}} trước mà chưa có hóa đơn bán hàng cho khách này',
         wonDealNoInvoiceMore: '{count, plural, other {# deal khác}} đã thắng mà chưa có hóa đơn bán hàng',
+        overdueReceivableOpenDeal: 'Khách này có công nợ quá hạn {days, plural, other {# ngày}} mà vẫn còn deal đang mở',
+        overdueReceivableOpenDealMore: '{count, plural, other {# khách khác}} có công nợ quá hạn mà vẫn còn deal đang mở',
+        supplierBankChanged: 'Nhà cung cấp đã đổi tài khoản ngân hàng {days, plural, other {# ngày}} trước, và có {count, plural, other {# khoản thanh toán}} đang chờ: kiểm tra lại tài khoản trước khi trả',
+        supplierBankChangedMore: '{count, plural, other {# nhà cung cấp khác}} đã đổi tài khoản ngân hàng và có khoản thanh toán đang chờ',
+        supplierBankChangedUnchecked: '{count, plural, other {# nhà cung cấp}} đã đổi tài khoản ngân hàng gần đây; chưa kiểm tra được các khoản thanh toán đang chờ của họ, hãy tự xem trước khi trả',
+        supplierBankChangedPartial: 'Bạn chỉ xem được một phần dữ liệu nhà cung cấp, nên chưa kiểm tra đủ việc đổi tài khoản ngân hàng: hãy tự xem các khoản thanh toán đang chờ trước khi trả',
       },
       crm: {
         noActivity: 'Nhắc: deal này đã {days, plural, other {# ngày}} chưa có cập nhật',
@@ -10420,6 +10426,8 @@ export const vi = {
       },
       signals: {
         deal_without_invoice: 'Xem các deal đã thắng mà chưa có hóa đơn bán hàng',
+        receivable_with_open_deal: 'Xem các khách có công nợ quá hạn mà vẫn còn deal đang mở',
+        supplier_bank_changed: 'Xem các nhà cung cấp đổi tài khoản ngân hàng khi còn khoản thanh toán đang chờ',
       },
       subject_key: {
         reseal: 'Mã hóa lại khóa dữ liệu của người đã niêm phong sau khi đổi khóa',

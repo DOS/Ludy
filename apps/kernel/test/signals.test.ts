@@ -4,9 +4,19 @@
 // the day rule and its near misses, the fail-closed paths, and that nothing but ids, dates and amounts crosses.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CRM_WON_DEALS_SIGNALS_READ, FINANCE_SALES_SIGNALS_READ, WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@crove/kernel-contract';
+import {
+  CRM_OPEN_DEALS_SIGNALS_READ,
+  CRM_WON_DEALS_SIGNALS_READ,
+  FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ,
+  FINANCE_SALES_SIGNALS_READ,
+  FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ,
+  FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ,
+  OVERDUE_RECEIVABLE_MIN_DAYS,
+  SIGNAL_PARTIAL_VIEW_CODE,
+  SUPPLIER_BANK_CHANGE_DAYS,
+  WON_DEAL_NO_INVOICE_DAYS, sortTodayItems, zCrmWonDealSignal, zCrmWonDealSignals, zFinanceSalesSignal, zTodayItems } from '@crove/kernel-contract';
 import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, SIGNAL_ITEMS_MAX, dealWithoutInvoiceQuery } from '@crove/kernel';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SIGNAL_ITEMS_MAX, SUPPLIER_BANK_CHANGED_READ, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from '@crove/kernel';
 
 // 00:30 on 2026-11-20 in Vietnam, still 2026-11-19 in UTC: the days are counted on the Vietnam calendar.
 const NOW = new Date('2026-11-19T17:30:00Z');
@@ -172,5 +182,214 @@ describe('the won deal with no sales invoice rule (Vy C4)', () => {
   it('lets a database error through, since the transaction may be unusable', async () => {
     const crm = { [CRM_WON_DEALS_SIGNALS_READ]: [deal()] };
     await expect(run({ ...crm, [FINANCE_SALES_SIGNALS_READ]: () => { throw new Error('connection lost'); } })).rejects.toThrow('connection lost');
+  });
+});
+
+// ---- V5: the second and third rules ------------------------------------------------------------------------------------------------------------------
+
+const openDeal = (over: Record<string, unknown> = {}) => ({ dealId: randomUUID(), partyId: party, ...over });
+const overdue = (over: Record<string, unknown> = {}) => ({ partyId: party, oldestDueOn: '2026-11-10', amount: '2500000', count: 1, ...over });
+
+const runReceivable = (reads: Reads, options: { absent?: readonly string[]; asked?: string[]; inputs?: Record<string, unknown> } = {}) =>
+  receivableWithOpenDealQuery({ now: () => NOW }).handler(contextOf(reads, options.absent, options.asked, options.inputs), {});
+
+describe('the overdue receivable with an open deal rule (Vy C4, V5)', () => {
+  it('is a registered kernel read, and an overdue receivable is one that is a day past its due date', () => {
+    expect(receivableWithOpenDealQuery().name).toBe(RECEIVABLE_WITH_OPEN_DEAL_READ);
+    expect(OVERDUE_RECEIVABLE_MIN_DAYS).toBe(1);
+  });
+
+  it('flags a party with a receivable 10 days overdue and an open deal, once however many deals it has, with days, total and a link only', async () => {
+    const inputs: Record<string, unknown> = {};
+    const items = await runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal(), openDeal()], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue()] }, { inputs });
+    expect(items).toEqual([
+      {
+        kind: 'flag',
+        app: 'crm',
+        id: `signal:overdue-receivable-open-deal:${party}`,
+        title: { key: 'signals.overdueReceivableOpenDeal', params: { days: 10 } },
+        amount: '2500000',
+        currency: 'VND',
+        severity: 'warn',
+        dueAt: '2026-11-10T00:00:00+07:00',
+        href: '/deals',
+      },
+    ]);
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+    // Finance is asked about the parties of the open deals only, each once.
+    expect(inputs[FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]).toEqual({ partyIds: [party] });
+  });
+
+  it('does not fire on its near misses: due today, no open deal for the party, an overdue party that is not in an open deal', async () => {
+    const deals = { [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()] };
+    expect(await runReceivable({ ...deals, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ oldestDueOn: '2026-11-20' })] })).toHaveLength(0); // due today
+    expect(await runReceivable({ ...deals, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ oldestDueOn: '2026-11-19' })] })).toHaveLength(1); // a day over
+    expect(await runReceivable({ ...deals, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [] })).toHaveLength(0); // nothing overdue
+    expect(await runReceivable({ ...deals, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ partyId: other })] })).toHaveLength(0); // another party
+    expect(await runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue()] })).toHaveLength(0); // no open deal
+  });
+
+  it('fails closed: no item when the CRM or the finance side is unregistered, off, refusing or outside the contract, and no text crosses', async () => {
+    const crm = { [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()] };
+    expect(await runReceivable(crm)).toEqual([]);
+    expect(await runReceivable(crm, { absent: ['finance'] })).toEqual([]);
+    expect(await runReceivable({ ...crm, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: () => { throw new DomainError('FORBIDDEN', 403, 'no'); } })).toEqual([]);
+    expect(await runReceivable({ ...crm, [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ partyName: 'Công ty A' })] })).toEqual([]);
+    expect(await runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal({ title: 'Hợp đồng' })], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue()] })).toEqual([]);
+    expect(await runReceivable({}, { absent: ['crm'] })).toEqual([]);
+  });
+
+  it('reads a repeated party in the overdue answer as outside the contract (no guessing which row is right), orders the longest overdue first, and caps at 20 with one grouped item', async () => {
+    const twice = await runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ oldestDueOn: '2026-11-15' }), overdue({ oldestDueOn: '2026-11-05' })] });
+    expect(twice).toEqual([]);
+    const parties = Array.from({ length: 23 }, () => randomUUID());
+    const items = await runReceivable({
+      [CRM_OPEN_DEALS_SIGNALS_READ]: parties.map((partyId) => openDeal({ partyId })),
+      [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: parties.map((partyId, i) => overdue({ partyId, oldestDueOn: `2026-10-${String(1 + (i % 9)).padStart(2, '0')}` })),
+    });
+    expect(items).toHaveLength(SIGNAL_ITEMS_MAX + 1);
+    expect(items[SIGNAL_ITEMS_MAX]).toMatchObject({ id: 'signal:overdue-receivable-open-deal:more', count: 3 });
+    const home = sortTodayItems(items);
+    expect(home.at(-1)?.id).toBe('signal:overdue-receivable-open-deal:more');
+    const days = home.slice(0, SIGNAL_ITEMS_MAX).map((i) => (i.title.params as { days: number }).days);
+    expect(days).toEqual([...days].sort((x, y) => y - x));
+  });
+
+  it('counts the days on the Vietnam calendar and lets a database error through', async () => {
+    // NOW is 2026-11-20 in Vietnam: due 11-19 is one day over, whatever the UTC date says.
+    const items = await runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: [overdue({ oldestDueOn: '2026-11-19' })] });
+    expect(items[0]?.title.params).toEqual({ days: 1 });
+    await expect(runReceivable({ [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()], [FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ]: () => { throw new Error('connection lost'); } })).rejects.toThrow('connection lost');
+  });
+});
+
+const change = (over: Record<string, unknown> = {}) => ({ partyId: party, changedOn: '2026-11-17', ...over });
+const waiting = (over: Record<string, unknown> = {}) => ({ partyId: party, count: 2, amount: '30000000', ...over });
+const refuse = () => {
+  throw new DomainError('FORBIDDEN', 403, 'a partial view');
+};
+
+const runBank = (reads: Reads, options: { absent?: readonly string[]; asked?: string[]; inputs?: Record<string, unknown>; errors?: string[] } = {}) =>
+  supplierBankChangedQuery({ now: () => NOW, log: { error: (m: string) => void options.errors?.push(m) } }).handler(contextOf(reads, options.absent, options.asked, options.inputs), {});
+
+describe('the supplier bank account changed with a payment waiting rule (Vy C4, V5)', () => {
+  it('is a registered kernel read, and a change counts for 30 days', () => {
+    expect(supplierBankChangedQuery().name).toBe(SUPPLIER_BANK_CHANGED_READ);
+    expect(SUPPLIER_BANK_CHANGE_DAYS).toBe(30);
+  });
+
+  it('gives a block item for a supplier that changed its account 3 days ago and has payments waiting, with the count, the total and a link', async () => {
+    const inputs: Record<string, unknown> = {};
+    const items = await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] }, { inputs });
+    expect(items).toEqual([
+      {
+        kind: 'flag',
+        app: 'finance',
+        id: `signal:supplier-bank-changed:${party}`,
+        title: { key: 'signals.supplierBankChanged', params: { days: 3, count: 2 } },
+        count: 2,
+        amount: '30000000',
+        currency: 'VND',
+        severity: 'block',
+        href: '/inbox',
+      },
+    ]);
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+    expect(inputs[FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]).toEqual({ partyIds: [party] });
+  });
+
+  it('does not fire on its near misses: no payment waiting, a payment of another supplier, a change older than 30 days, no change at all (and a future-dated change still counts)', async () => {
+    const payments = (rows: unknown[]) => ({ [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: rows });
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], ...payments([]) })).toEqual([]);
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], ...payments([waiting({ partyId: other })]) })).toEqual([]);
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-10-20' })], ...payments([waiting()]) })).toEqual([]); // 31 days
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-10-21' })], ...payments([waiting()]) })).toHaveLength(1); // 30 days
+    // A change dated in the future (a clock a little ahead, an effective date) counts as today: the rule must not fail open on it.
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-11-25' })], ...payments([waiting()]) })).toHaveLength(1);
+    const asked: string[] = [];
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [], ...payments([waiting()]) }, { asked })).toEqual([]);
+    expect(asked).toEqual([FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]); // no change, so payments are not even asked
+  });
+
+  it('gives nothing to a member who cannot see the bank changes (refused, unregistered or finance off): they cannot see the change either', async () => {
+    const payments = { [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] };
+    expect(await runBank(payments)).toEqual([]);
+    expect(await runBank(payments, { absent: ['finance'] })).toEqual([]);
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: refuse, ...payments })).toEqual([]);
+  });
+
+  it('never drops it silently: a changed account with payments the member cannot fully see (refusal, partial view, unregistered read) is one visible warn item, not an empty list', async () => {
+    const changes = { [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change(), change({ partyId: other })] };
+    for (const reads of [{ ...changes, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: refuse }, changes]) {
+      const items = await runBank(reads);
+      expect(items).toEqual([
+        {
+          kind: 'flag',
+          app: 'finance',
+          id: 'signal:supplier-bank-changed:unchecked',
+          title: { key: 'signals.supplierBankChangedUnchecked', params: { count: 2 } },
+          count: 2,
+          severity: 'warn',
+          href: '/inbox',
+        },
+      ]);
+      expect(zTodayItems.safeParse(items).success).toBe(true);
+    }
+    expect(await runBank(changes, { absent: ['finance'] })).toEqual([]); // the module off: there is nothing to pay from
+  });
+
+  it('never reads a broken answer as "all clear": either read answering outside its contract is logged and fails the read, which Home counts as failed', async () => {
+    const errors: string[] = [];
+    const good = { [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] };
+    await expect(runBank({ ...good, [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ supplierName: 'Công ty A' })] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    await expect(runBank({ ...good, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: 'x' }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    await expect(runBank({ ...good, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting({ amount: '-1' })] }, { errors })).rejects.toBeInstanceOf(DomainError);
+    expect(errors).toHaveLength(3);
+    expect(errors.every((e) => e.startsWith('[signals]') && !/Công ty/.test(e))).toBe(true);
+  });
+
+  it('reads a repeated supplier in either answer as a broken contract, and caps at 20 with one grouped block item, most recent change first', async () => {
+    const errors: string[] = [];
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change({ changedOn: '2026-11-02' }), change({ changedOn: '2026-11-18' })], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting(), waiting({ amount: '1' })] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    expect(errors).toHaveLength(2);
+    const parties = Array.from({ length: 23 }, () => randomUUID());
+    const items = await runBank({
+      [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: parties.map((partyId, i) => change({ partyId, changedOn: `2026-11-${String(1 + (i % 9)).padStart(2, '0')}` })),
+      [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: parties.map((partyId) => waiting({ partyId })),
+    });
+    expect(items).toHaveLength(SIGNAL_ITEMS_MAX + 1);
+    expect(items[SIGNAL_ITEMS_MAX]).toMatchObject({ id: 'signal:supplier-bank-changed:more', severity: 'block', count: 3 });
+    expect(items.every((i) => i.severity === 'block')).toBe(true);
+  });
+
+  it('tells a partial view apart from no right at all: a partial refusal of the changes or of the payments read is a visible warn item, no right gives nothing', async () => {
+    const partial = () => {
+      throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'only part of the supplier data is visible');
+    };
+    // The changes themselves are only partly visible: a "could not fully check" item without a count.
+    const items = await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: partial, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] });
+    expect(items).toEqual([{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:partial', title: { key: 'signals.supplierBankChangedPartial' }, severity: 'warn', href: '/inbox' }]);
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+    // The payments are only partly visible: the unchecked item with the number of changed suppliers.
+    const unchecked = await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: [change()], [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: partial });
+    expect(unchecked).toMatchObject([{ id: 'signal:supplier-bank-changed:unchecked', severity: 'warn', count: 1 }]);
+    // No finance right at all (an ordinary refusal): nothing, as for a member who cannot see the suppliers.
+    expect(await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: refuse, [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [waiting()] })).toEqual([]);
+  });
+
+  it('cuts no supplier: 500 changed suppliers are all asked about, 501 in the answer is outside the contract and fails the read visibly', async () => {
+    const some = (n: number) => Array.from({ length: n }, () => randomUUID());
+    const inputs: Record<string, unknown> = {};
+    const five = some(500);
+    await runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: five.map((partyId) => change({ partyId })), [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [] }, { inputs });
+    expect((inputs[FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ] as { partyIds: string[] }).partyIds).toHaveLength(500);
+    const errors: string[] = [];
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: some(501).map((partyId) => change({ partyId })), [FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ]: [] }, { errors })).rejects.toMatchObject({ code: 'SIGNAL_CONTRACT_BROKEN' });
+    expect(errors).toHaveLength(1);
+  });
+
+  it('lets a database error through', async () => {
+    await expect(runBank({ [FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ]: () => { throw new Error('connection lost'); } })).rejects.toThrow('connection lost');
   });
 });
