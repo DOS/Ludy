@@ -31,6 +31,18 @@
 - **Tóm tắt cuộc họp và việc cần làm từ cuộc họp** đã xây, đang tắt chờ #2822.
 - **Ly, Dy, Uy** đã có trong sơ đồ tổ chức dưới dạng nhân viên AI chạy theo quy tắc, chưa dùng mô hình AI (#259 còn mở). Vy chưa có vị trí trong sơ đồ.
 
+## Hai nguyên tắc cho mọi app, và cách Vy chạy với các nền tảng AI bên ngoài (anh quyết ngày 2026-11-10)
+
+1. **Ludy là một hệ điều hành, chạy được độc lập, không bị khóa vào một dịch vụ trả phí của bên thứ ba.** Giống Supabase: mã nguồn mở, tự cài được, có thêm bản dịch vụ. Mỗi dịch vụ bên ngoài đứng sau một "cổng" thay được, và luôn có lựa chọn miễn phí hoặc tự cài.
+2. **Tích hợp sâu vào hệ sinh thái DOS:** DOS ID, DOS.AI và các agent của DOS dùng được ngay khi tổ chức chọn dùng.
+
+Với Vy, nghĩa là:
+- **Một cổng nhỏ, nhiều bộ nối.** Gọi mô hình AI qua một chuẩn chung (kiểu OpenAI), nên OpenAI, Anthropic, Google, mô hình chạy tại chỗ (Ollama) hay DOS.AI đều chỉ cần cấu hình, không sửa mã. Không tính năng nào gọi thẳng thư viện của một hãng.
+- **Nền tảng agent bên ngoài** (Claude, OpenAI, Google, OpenClaw...) điều khiển Vy qua MCP hoặc API, bằng một "giấy phép" gắn với tổ chức và đúng vị trí của Vy. Ludy vẫn giữ quyền quyết định: mọi thao tác đi qua cùng một cửa, cùng mức rủi ro, cùng người duyệt, ngân sách và nút dừng. Dữ liệu riêng của một người chỉ ra ngoài khi Vy làm cho đúng người đó.
+- **Gọn nhất:** mỗi tổ chức có một máy chủ MCP, cung cấp đúng các lệnh mà app đang dùng, lọc theo giấy phép. Không làm thêm API thứ hai.
+- **Lựa chọn nhanh với DOS Claw:** ghép Vy với agent của DOS trong một bước, ví dụ mở Cài đặt lấy một mã ghép rồi nhập vào DOS Claw. Cách ghép này dùng chung cho mọi agent; với DOS thì điền sẵn địa chỉ và đăng nhập bằng DOS ID.
+- **Kiểm thử:** CI chạy với AI giả và agent giả. Hệ thống phải chạy được cả khi tắt AI và khi chỉ có mô hình chạy tại chỗ.
+
 ## Vy sẽ làm được gì (sáu ứng viên)
 
 1. **Bản tin buổi sáng trên mọi ứng dụng** (đã có một phần). Thêm: ghi rõ đồng nghiệp nào chuẩn bị việc nào ("Ly đã chuẩn bị 5 đề xuất"), thêm việc trễ của dự án và kết quả cuộc họp, thêm dòng "từ hôm qua các đồng nghiệp AI đã chuẩn bị gì". Không lưu gì, AI chỉ thấy con số. Giống bản tin của QuickBooks và Digits.
@@ -80,6 +92,8 @@ Bốn chỗ **cần bản ghi quyết định mới trước khi xây**:
 | 4 | Cho Vy làm tổng quản trong sơ đồ tổ chức, đứng trên Ly, Dy, Uy: bây giờ hay sau thí điểm? | Sau thí điểm | Để trong danh sách chờ |
 | 5 | Tình hình tuần: chỉ trên trang chủ, hay gửi cả thư có số liệu? | Chỉ trang chủ; thư vẫn chỉ có số đếm và đường dẫn | Chỉ trang chủ |
 | 6 | Trên trang chủ, ghi tên Ly, Dy, Uy cho từng việc, và Vy cho câu tóm tắt? | Có | Các việc không ghi tên |
+| 7 | DOS Claw là gì, và ghép với Vy theo cách nào (mã ghép, đăng nhập DOS ID, hay cách khác)? | Mã ghép trong Cài đặt, dùng chung cho mọi agent | Chưa làm phần DOS Claw |
+| 8 | Phần nối với DOS (DOS Claw, DOS.AI điền sẵn) nằm trong mã nguồn mở dưới dạng tùy chọn, hay chỉ trong bản Ludy Cloud riêng như AGENTS.md đang ghi? | Trong mã nguồn mở, tắt mặc định | Theo AGENTS.md: chỉ trong Cloud |
 
 ## Nhóm nào làm phần nào
 

@@ -52,6 +52,22 @@ What does not exist: any question-answering over the org's data, any retrieval i
 - **AI part, named.** Each capability below names what Vy reads, what it may write and how the review stays short.
 - **Proportionate security.** No guard is weakened. Section 7 lists the three points that need a decision record before they are built.
 
+## 4b. Two rules for every app, and how Vy runs on outside agent platforms (owner, 2026-11-10)
+
+The owner set two rules for every module and app, with Vy as the example:
+
+1. **Ludy is an OS: it runs on its own and is never locked to one paid third party.** Supabase is the model: open source, self-hostable, with a hosted option. Every outside service sits behind a port with a free or self-hosted default (AGENTS.md: `docker compose up` with no DOS service).
+2. **Ludy is deeply integrated with the DOS ecosystem**: DOS ID, DOS.AI and DOS's own agents work out of the box when an org uses them.
+
+For Vy this means:
+
+- **One small runtime port, many adapters.** ADR-0029 decision 8 (runtimes are adapters) and ADR-0049 decision 9 (the provider ports) already split Vy's brain from the kernel. The plan keeps that split and makes it the only way in:
+  - **Model calls**: one OpenAI-compatible chat port (`@crove/agent`, `AI_BASE_URL`), so OpenAI, Anthropic and Google (through their compatible endpoints or a thin adapter), a local model (Ollama, vLLM) and the DOS.AI gateway all work by configuration. No feature imports a vendor SDK (A8 already tests this).
+  - **Outside agent platforms** (Claude Code, OpenAI Agents, Google agents, OpenClaw and the like): they drive Vy's org-chart position through MCP or the API with an `agent_grant` bound to `(org, client_id, agent_id)` (ADR-0029 §8). The kernel stays the source of truth: every write goes through `Runtime.execute`, the same risk tiers, approvals, budget and kill switches apply, and a member's private data reaches an outside runtime only in member mode and only what that member could read (ADR-0049).
+  - **The smallest useful surface**: one MCP server per org exposing the same commands and queries the app uses, filtered by the grant. No second API.
+- **A quick DOS option.** An org that uses DOS can pair Vy with a DOS agent (DOS Claw) in one step, for example a pairing code shown in Settings that the DOS agent enters, which creates the `agent_grant`. The pairing flow is generic (any MCP client can pair the same way); the DOS default only pre-fills the endpoint and the DOS ID sign-in. **Open question for the owner (Q7, Q8 below):** what DOS Claw is exactly, and whether its preset lives in the open core as an optional adapter or only in the private Cloud layer, as AGENTS.md says today for anything DOS-specific.
+- **Tests that keep it honest**: a fake provider and a fake MCP client in CI; the stack must pass with no outside AI configured (AI off) and with only a local model.
+
 ## 5. Candidate capabilities
 
 Mode follows ADR-0049: **member's request** means the member's own request context with no private input (no member-mode run needed); **member mode** means a `kernel.member_vy.run.*` run; **company mode** means an org-chart agent run. "Writes" never includes a posting, a send or a spend.
@@ -184,6 +200,8 @@ C1, C3 and C4 need no new record: C1 and C4 read in the member's own request and
 | Q4 | Vy as an AI general manager in the org chart above Ly, Dy and Uy, now or after the pilot? | After the pilot | A one-person company does not need routing between AI coworkers yet | Phase 3 stays in the Icebox |
 | Q5 | The weekly status: on Home only, or also by mail with figures? | Home only; the mail keeps counts and a link | Figures in a mail leave Ludy and need per-recipient rights | Home only |
 | Q6 | On Home, name the app's coworker on each item (Ly, Dy, Uy) and Vy on the summary? | Yes | It follows DESIGN.md 1.1's copy rule | Every item stays unnamed |
+- **Q7.** What exactly is DOS Claw, and how should it pair with Vy (a pairing code in Settings, DOS ID sign-in, or something else)? Proposed: a pairing code, the same flow for every MCP client, with a DOS preset.
+- **Q8.** Does the DOS preset (DOS Claw, DOS.AI pre-filled) live in the open core as an optional adapter that is off by default, or only in the private Cloud layer, as AGENTS.md says today for anything DOS-specific? Proposed: the open core, off by default, so self-hosters can pair with DOS too.
 
 ## 9. Line ownership
 
