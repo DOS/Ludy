@@ -320,6 +320,22 @@ const schema = z.object({
   CREDENTIAL_KEY: optional,
   CREDENTIAL_KEY_FILE: optional,
   CREDENTIAL_KEY_PREVIOUS: optional,
+  // The MCP endpoint and its embedded OAuth 2.1 authorization server (ADR-0051 decision 2, ADR-0032, #2975). Off by default. On: OAUTH_JWKS is the
+  // private key set (a JSON Web Key Set with at least one ES256 key that has a `kid`) the access tokens are signed with, OAUTH_COOKIE_KEYS signs the
+  // authorization server's short-lived cookies (one or more secrets of 32 characters or more, comma separated, the first signs), and APP_URL, when set,
+  // is PUBLIC_URL's own origin (the consent page and the interaction cookie share the API's origin in this step). Nothing is generated at boot.
+  OAUTH_SERVER: z.enum(['on', 'off']).default('off'),
+  OAUTH_JWKS: optional,
+  OAUTH_COOKIE_KEYS: optional,
+  // Origins a browser-based MCP client may call from (comma separated, each an origin). Unset: none; a client that sends no Origin header (every
+  // desktop and server client) is not affected. A request with an Origin outside the list is refused with 403 (the MCP transport rule against DNS rebinding).
+  MCP_ALLOWED_ORIGINS: optional,
+  // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
+  MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
+  MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
+  OAUTH_REGISTER_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(10),
+  OAUTH_REGISTER_GLOBAL_PER_MINUTE: z.coerce.number().int().min(1).max(100_000).default(120),
   // The offline sandbox channel (Social plan §3.5): connect and publish without any platform account.
   CHANNEL_SANDBOX: z.enum(['true', 'false']).default('true'),
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
@@ -845,6 +861,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
     throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
+  }
+  if (config.OAUTH_SERVER === 'on') {
+    if (config.OAUTH_JWKS === undefined) throw new Error('OAUTH_SERVER=on needs OAUTH_JWKS, the private JSON Web Key Set (ES256) the access tokens are signed with');
+    let keys: unknown;
+    try {
+      keys = (JSON.parse(config.OAUTH_JWKS) as { keys?: unknown }).keys;
+    } catch {
+      throw new Error('OAUTH_JWKS is not valid JSON');
+    }
+    const usable = Array.isArray(keys) && keys.length > 0 && keys.every((k) => {
+      const key = k as { kty?: unknown; crv?: unknown; kid?: unknown; d?: unknown } | null;
+      return key !== null && typeof key === 'object' && key.kty === 'EC' && key.crv === 'P-256' && typeof key.kid === 'string' && key.kid.length > 0 && typeof key.d === 'string';
+    });
+    if (!usable) throw new Error('OAUTH_JWKS must be a JSON Web Key Set of ES256 private keys (kty EC, crv P-256, with kid and d)');
+    const cookieKeys = (config.OAUTH_COOKIE_KEYS ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+    if (cookieKeys.length === 0 || cookieKeys.some((k) => k.length < 32)) throw new Error('OAUTH_SERVER=on needs OAUTH_COOKIE_KEYS: one or more secrets of at least 32 characters, comma separated');
+    if (config.APP_URL !== undefined && new URL(config.APP_URL).origin !== new URL(config.PUBLIC_URL).origin) {
+      throw new Error('OAUTH_SERVER=on needs APP_URL to be PUBLIC_URL\'s own origin: the consent page and the interaction cookie share the API origin in this step');
+    }
+  }
+  if (config.MCP_ALLOWED_ORIGINS !== undefined) {
+    for (const origin of config.MCP_ALLOWED_ORIGINS.split(',').map((o) => o.trim())) {
+      if (!URL.canParse(origin) || new URL(origin).origin !== origin) throw new Error('MCP_ALLOWED_ORIGINS lists origins only (scheme, host, optional port), comma separated');
+    }
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {

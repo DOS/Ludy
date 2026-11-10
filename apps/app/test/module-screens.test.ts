@@ -101,6 +101,7 @@ describe('module screens against the router (#1652)', () => {
       '/clients',
       '/login',
       '/mfa',
+      '/oauth/interaction/$uid',
       '/onboarding',
       '/reset-password',
     ]);

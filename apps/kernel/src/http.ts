@@ -146,6 +146,8 @@ import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
+import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
+import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
@@ -206,6 +208,8 @@ const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 export interface HttpDeps {
   config: Config;
+  // The MCP endpoint's authorization server (ADR-0051, #2975), made when OAUTH_SERVER=on: its routes and POST /mcp exist only then.
+  oauth?: OauthServer;
   // /readyz fails while a live worker runs a build older than this one (#1952, plan §3.5); off for the "all" process.
   workerBuildCheck?: boolean;
   runtime: Runtime;
@@ -531,6 +535,17 @@ export function createHttpApp(deps: HttpDeps) {
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
+  // The authorization server's own routes (ADR-0032, #2975), before the global middleware below: the provider writes its answer on the Node response itself.
+  if (deps.oauth) {
+    mountOauthProvider(app, {
+      oauth: deps.oauth,
+      clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
+      registerPerMinute: config.OAUTH_REGISTER_PER_MINUTE,
+      registerGlobalPerMinute: config.OAUTH_REGISTER_GLOBAL_PER_MINUTE,
+      allowedOrigins: (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0),
+    });
+  }
+
   // A request id per request (#2175): in every log line the request makes (JSON logs), and in the `x-request-id` answer
   // header, so a report ("the upload failed at 10:42") can be matched to its lines. Always generated here: an id a caller
   // sent is never trusted or logged. The access line carries the method, the matched route pattern (never the path, which
@@ -605,12 +620,27 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // The MCP endpoint and its authorization server (ADR-0051 decision 2, #2975): POST /mcp, the metadata, the /oauth routes and the consent page's two calls.
+  // They sit outside /api: they take no browser session (an access token of the embedded authorization server, or the signed-in user's own bearer on the consent calls).
+  if (deps.oauth) {
+    mountMcp(app, {
+      config,
+      runtime,
+      oauth: deps.oauth,
+      authenticate,
+      clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
+      serverVersion: config.CROVE_BUILD ?? 'dev',
+    });
+  }
+
   const allowedExtensionIds = config.EXTENSION_IDS ?? [...DEFAULT_EXTENSION_IDS];
   app.get('/api/config', (c) =>
     c.json({
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
       aiEnabled: deps.aiEnabled,
+      // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
+      mcpEnabled: deps.oauth !== undefined,
       // presigned: the app uploads to a staging key and downloads from the bucket (plan §7.6); direct: through the kernel.
       uploads: store.direct ? 'presigned' : 'direct',
       // The store can sign a short-lived URL for a platform that fetches media (Zalo OA, Instagram, Threads), also when

@@ -107,6 +107,7 @@ export * from './hr-declarations.ts';
 export * from './hr-bank-template.ts';
 export * from './notes.ts';
 export * from './extension.ts';
+export * from './mcp.ts';
 export * from './meetings.ts';
 export * from './ads.ts';
 export * from './ads-campaign.ts';

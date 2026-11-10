@@ -49,6 +49,8 @@ const NOT_SHOWN: Record<string, string> = {
   PORTAL_CALL_DONE: 'portal sync',
   // Home's cross-app rules (Vy plan C4, kernel.today): a line's signals read answered outside its contract. kernel.today catches it and counts it in `failed`; the SPA never gets it.
   SIGNAL_CONTRACT_BROKEN: 'home signals',
+  // The MCP endpoint (ADR-0051, #2975) answers programs: a grant no longer in good standing is a 401 to the client, never a message in the app.
+  MCP_GRANT_INVALID: 'mcp endpoint',
   // The inbound mail endpoint answers the mail relay, not a browser.
   EMPTY_MESSAGE: 'inbound mail',
   UNKNOWN_RECIPIENT: 'inbound mail',

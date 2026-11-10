@@ -2094,6 +2094,12 @@ export function createRpcHandler(
           : inOrg(context, (orgId, actor) => runtime.execute('kernel.session.revoke', input, { actor, orgId })),
       ),
     },
+    mcp: {
+      grant: {
+        list: os.mcp.grant.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.grant.list', {}, { actor, orgId }))),
+        revoke: os.mcp.grant.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.grant.revoke', input, { actor, orgId }))),
+      },
+    },
     extension: {
       tokens: {
         list: os.extension.tokens.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.extension.token.list', {}, { actor, orgId }))),

@@ -160,6 +160,12 @@ services:
       SUPPORT_URL: ${SUPPORT_URL:-}
       # The browser extension ids that may sign in (#2740); empty keeps the store's id (none until the listing exists).
       EXTENSION_IDS: ${EXTENSION_IDS:-}
+      # The MCP endpoint and its OAuth 2.1 authorization server (ADR-0051, #2975): off unless OAUTH_SERVER=on, which needs OAUTH_JWKS and OAUTH_COOKIE_KEYS
+      # (docs/runbooks/mcp-endpoint.md) and APP_URL, when set, to be PUBLIC_URL's own origin.
+      OAUTH_SERVER: ${OAUTH_SERVER:-off}
+      OAUTH_JWKS: ${OAUTH_JWKS:-}
+      OAUTH_COOKIE_KEYS: ${OAUTH_COOKIE_KEYS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       TERMS_URL: ${TERMS_URL:-}
       PRIVACY_URL: ${PRIVACY_URL:-}
       # The public status page PUBLIC_URL/status (#678): the prober's last result, on the shared `status` volume.

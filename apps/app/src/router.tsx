@@ -24,6 +24,8 @@ import { OverviewPage } from './routes/overview.tsx';
 import { ReportsPage } from './routes/reports.tsx';
 import { InvitePage } from './routes/invite.tsx';
 import { ExtensionConnectPage } from './routes/extension-connect.tsx';
+import { OauthConsentPage } from './routes/oauth-consent.tsx';
+import { pendingInteraction, rememberInteraction, wellFormedUid } from './lib/oauth-consent.ts';
 import { JournalPage } from './routes/journal.tsx';
 import { NotificationsPage } from './routes/notifications.tsx';
 import { LedgerPage } from './routes/ledger.tsx';
@@ -193,6 +195,9 @@ const indexRoute = createRoute({
     if (pendingInvite()) throw redirect({ to: '/-/invite' });
     // So is the Ludy extension's sign-in (#2582), opened in a window before the member signed in.
     if (pendingConnect(getConfig().extensionIds ?? [])) throw redirect({ to: CONNECT_PATH });
+    // So is an MCP client's consent page (#2975), opened before the person signed in.
+    const waitingConsent = pendingInteraction();
+    if (waitingConsent) throw redirect({ to: '/oauth/interaction/$uid', params: { uid: waitingConsent } });
     // So is a page shared before signing in (#1235), where social runs; elsewhere it is dropped.
     if (pendingShare()) {
       if (outsideInstalled(getConfig().modules, SHARE_PATH)) throw redirect({ to: SHARE_PATH });
@@ -277,6 +282,22 @@ const extensionConnectRoute = createRoute({
     await requireAuth();
   },
   component: ExtensionConnectPage,
+});
+
+// The consent page of an MCP client (#2975, ADR-0051 decision 2): the authorization server redirects the browser to /oauth/interaction/<uid> on this origin. The
+// interaction id is kept in this tab while the person signs in (it is the path, so it survives /login and /mfa through the index route), then the page asks the
+// server for the client's details and sends the answer.
+const oauthConsentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/oauth/interaction/$uid',
+  beforeLoad: async ({ params }) => {
+    if (wellFormedUid(params.uid)) rememberInteraction(params.uid);
+    await requireAuth();
+  },
+  component: function OauthConsentRoutePage() {
+    const { uid } = oauthConsentRoute.useParams();
+    return <OauthConsentPage uid={uid} />;
+  },
 });
 
 // A page shared into a new Social draft (#1235): the share target's query, already moved to the fragment by
@@ -579,6 +600,7 @@ const routeTree = rootRoute.addChildren([
   socialPlanPrintRoute,
   inviteRoute,
   extensionConnectRoute,
+  oauthConsentRoute,
   mfaRoute,
   resetPasswordRoute,
   onboardingRoute,
