@@ -1891,7 +1891,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   const OWN_RULE = ["crove_kernel.activity", "crove_kernel.ai_run"];
 
   it("puts a00_member_vy_forbid on every table the write guard leaves alone but ai_run and activity, read from the catalog, first of its row triggers", async () => {
-    if (!has.entry || !has.kind) return;
     const unguarded = await unguardedTables();
     const names = unguarded.map((r) => r.name);
     // The known exempt tables are all found (the enumeration has teeth), and the catalog and agent_write_exempt agree on each.
@@ -1966,7 +1965,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses refusal_tally_note, the worker-granted tally definer, in a member-mode context (a00 on refusal_tally, AGENT_FORBIDDEN)", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const before = await admin(
       async (c) =>
@@ -2010,7 +2008,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses moving its own result to another run on the row itself, as the superuser so the column grant cannot stand in (AGENT_FORBIDDEN)", async () => {
-    if (!has.entry || !has.kind) return;
     // An earlier run of the same member with no result of its own, so no unique key stands in for the guard either.
     const earlier = await liveRun("vyUser");
     const run = await liveRun("vyUser");
@@ -2053,7 +2050,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("refuses rewriting its own result after the member accepted it (taint already false): the row must stay tainted", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser, "ready");
     // The member's acceptance clears the taint in the member's own context; here as the superuser outside any context.
@@ -2095,7 +2091,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   // The Platform PO's ruling (#2822): after the member accepted a result, the run may still replace it, but only by a rewrite that puts the mark back (tainted = true): the new
   // text is the model's again and reads as suggested, never as accepted. This pins that behaviour; "no rewrite after accept at all" would be a different design.
   it("accepts a rewrite of an accepted result only when it sets the taint again, and the row then reads as tainted", async () => {
-    if (!has.entry || !has.kind) return;
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser, "ready");
     await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`, [mine]));
