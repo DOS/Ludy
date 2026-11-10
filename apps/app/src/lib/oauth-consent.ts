@@ -3,7 +3,6 @@
 // redirects the browser to /oauth/interaction/<uid>, a page of this app on the API's own origin. The person signs in as usual (the uid is kept in this tab while
 // they do), chooses the org and answers; the page asks the server for the client's details and sends the answer, and the server says where the browser goes
 // next (the client's redirect address with its one-time code, or the refusal).
-export const OAUTH_PATH_PREFIX = '/oauth/interaction/';
 // The provider's interaction ids: 43 URL-safe characters; kept loose enough to follow a library change, tight enough to be a path segment.
 const UID = /^[A-Za-z0-9_-]{16,128}$/;
 const KEY = 'crove-pending-oauth-interaction';
@@ -11,7 +10,6 @@ const KEY = 'crove-pending-oauth-interaction';
 export const PENDING_OAUTH_TTL_MS = 10 * 60 * 1000;
 
 export const wellFormedUid = (value: string): boolean => UID.test(value);
-export const consentPath = (uid: string): string => `${OAUTH_PATH_PREFIX}${uid}`;
 
 interface Stored {
   uid: string;
