@@ -45,6 +45,13 @@ const cmd = (
     ...def,
   }) as CommandDef<unknown, unknown>;
 const memberVy = { taint: "propagate" as const };
+// Handlers of the commands and queries a member-mode run must be refused before: each counts its runs, so a refusal is shown to come before
+// the handler, not from it (#2822).
+const handled: Record<string, number> = {};
+const counted = (name: string) => () => {
+  handled[name] = (handled[name] ?? 0) + 1;
+  return Promise.resolve({ ok: true });
+};
 const COMMANDS = [
   // The audit row of a member-mode command names a command from a short list (#2822 part 3a), so the two commands that succeed here carry the names of the
   // two real member-mode commands; this one audits ids too, which the audit test below reads.
@@ -63,12 +70,18 @@ const COMMANDS = [
   cmd(
     "kernel.member_vy.t_owner_only",
     { access: ["owner"], memberVy },
-    async () => ({ ok: true }),
+    counted("kernel.member_vy.t_owner_only"),
+  ),
+  // A role list that admits no member role at all: member mode never runs it, whatever the member's role.
+  cmd(
+    "kernel.member_vy.t_no_role",
+    { access: [], memberVy },
+    counted("kernel.member_vy.t_no_role"),
   ),
   cmd(
     "kernel.member_vy.meeting_audio.open",
     { access: ["owner", "admin", "member"], memberVy },
-    async () => ({ ok: true }),
+    counted("kernel.member_vy.meeting_audio.open"),
   ),
   cmd("kernel.member_vy.t_audit_text", { memberVy }, async (ctx) => {
     ctx.audit({ summary: "Tóm tắt riêng: khách đề nghị giảm giá 12%" });
@@ -90,6 +103,12 @@ const query = (
   }) as QueryDef<unknown, unknown>;
 const QUERIES = [
   query("kernel.member_vy.t_q", { memberVy: {} }),
+  // A declared query whose access leaves the member's role out (#2822): the same rule as for commands.
+  query("kernel.member_vy.t_q_owner_only", {
+    access: ["owner"],
+    memberVy: {},
+    handler: counted("kernel.member_vy.t_q_owner_only"),
+  }),
   query("kernel.member_vy.t_q_undeclared", {}),
   query("kernel.member_vy.t_q_iso", {
     memberVy: {},
@@ -313,6 +332,45 @@ suite("member-scoped agent actor in the runtime", () => {
       await refused(run("viewer").execute("kernel.member_vy.result.store", {})),
       "a viewer on a command open to viewers",
     ).toBe("ran");
+  });
+
+  it("refuses a declared command or query whose access does not admit the member's own role, before its handler runs (#2822)", async () => {
+    const refused = (p: Promise<unknown>) =>
+      p.then(
+        () => "ran",
+        (e: { code?: string; details?: { rule?: string } }) =>
+          `${e.code}:${e.details?.rule}`,
+      );
+    for (const name of Object.keys(handled)) delete handled[name];
+    // Commands: an owner-only one for a member and a viewer, an empty role list for both, and a list without viewer for the viewer.
+    for (const [who, name] of [
+      ["member", "kernel.member_vy.t_owner_only"],
+      ["viewer", "kernel.member_vy.t_owner_only"],
+      ["member", "kernel.member_vy.t_no_role"],
+      ["viewer", "kernel.member_vy.t_no_role"],
+      ["viewer", "kernel.member_vy.meeting_audio.open"],
+    ] as const) {
+      expect(await refused(run(who).execute(name, {})), `the ${who}'s Vy running ${name}`).toBe(
+        "FORBIDDEN:member_vy_role",
+      );
+    }
+    // The control: a declared command whose list holds the member's role runs, and its handler counts (a real member-mode command name, since
+    // the audit row of a member-mode command names a listed command).
+    expect(
+      await refused(run("member").execute("kernel.member_vy.meeting_audio.open", {})),
+      "the member's Vy running a command whose access admits members (the control)",
+    ).toBe("ran");
+    // Queries: an owner-only declared query for a member and a viewer.
+    for (const who of ["member", "viewer"] as const) {
+      expect(
+        await refused(run(who).query("kernel.member_vy.t_q_owner_only", {})),
+        `the ${who}'s Vy reading an owner-only query`,
+      ).toBe("FORBIDDEN:member_vy_access");
+    }
+    // No refused handler ran; only the control did, once.
+    expect(handled, "the handlers that ran").toEqual({
+      "kernel.member_vy.meeting_audio.open": 1,
+    });
   });
 
   it("reads only a query that declares memberVy", async () => {
@@ -568,5 +626,70 @@ suite("member-scoped agent actor in the runtime", () => {
         outcome: { status: "ready", body: "lần hai" },
       }),
     ).rejects.toMatchObject({ code: "VY_RUN_NOT_LIVE" });
+  });
+
+  it("sends the stream hints of a member-mode run to its member alone: the real background store sends none, and a member's own hint is heard (#2822)", async () => {
+    // A listener on the stream channel, as the kernel's LISTEN connection is. Notifications are delivered in commit order, so a marker sent
+    // after a step and heard back closes that step: every hint the step sent arrived before it.
+    const listener = new pg.Client({ connectionString: adminUrl });
+    await listener.connect();
+    const heard: string[] = [];
+    listener.on("notification", (n) => {
+      if (n.channel === "crove_stream") heard.push(n.payload ?? "");
+    });
+    await listener.query("LISTEN crove_stream");
+    const settle = async () => {
+      const marker = `marker ${randomUUID()}`;
+      await admin((c) => c.query("SELECT pg_notify('crove_stream', $1)", [marker]));
+      const deadline = Date.now() + 10_000;
+      while (!heard.includes(marker)) {
+        if (Date.now() > deadline) throw new Error("the stream marker never arrived");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const before = heard.slice(0, heard.indexOf(marker));
+      heard.length = 0;
+      return before;
+    };
+    try {
+      const member = users.member as string;
+      const started = await app.execute<{ runId: string; resultId: string }>(
+        "kernel.member_vy.run.start",
+        { feature: "notes.summary", subjectType: "note", subjectId: randomUUID() },
+        { actor: { type: "user", userId: member, aal: "aal1" }, orgId },
+      );
+      const agentId = await admin(
+        async (c) =>
+          (
+            await c.query<{ agent_id: string }>("SELECT agent_id FROM crove_kernel.ai_run WHERE id = $1", [started.runId])
+          ).rows[0]?.agent_id as string,
+      );
+      await settle();
+      // The member-mode part: the background store of the run's result, through the real command and the worker login.
+      const stored = await memberVyRuntime(realWorker, orgId, { agentId, runId: started.runId }).execute<{ stored: boolean; status: string }>(
+        "kernel.member_vy.result.store",
+        { runId: started.runId, outcome: { status: "ready", body: "Tóm tắt riêng của thành viên" } },
+      );
+      expect(stored, "the store ran (the positive control of the write)").toEqual({ stored: true, status: "ready" });
+      const fromRun = await settle();
+      // The rule: any hint the run sends is addressed to its member (a member's own rows carry " @<user>", as the note, to-do and
+      // notification hints do), never org-wide and never to another member.
+      expect(
+        fromRun.filter((h) => !h.startsWith(`${orgId} `) || !h.split("+")[0]?.endsWith(` @${member}`)),
+        "hints of the member-mode run not addressed to its member alone",
+      ).toEqual([]);
+      // Today the run's writes (its result; its audit row) send none at all: a hint added later is reviewed here.
+      expect(fromRun, "the hints of the member-mode store").toEqual([]);
+      // The control: a member's own row does send a hint, addressed to that member, and this listener hears it.
+      const noteId = randomUUID();
+      await admin((c) =>
+        c.query(
+          `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Của tôi', 'riêng', '{}')`,
+          [orgId, noteId, member],
+        ),
+      );
+      expect(await settle(), "a member's own note hint (the control)").toEqual([`${orgId} note ${noteId} @${member}`]);
+    } finally {
+      await listener.end();
+    }
   });
 });
