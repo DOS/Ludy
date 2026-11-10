@@ -21,6 +21,10 @@ export function assertRange(start: number, end: number): void {
   }
 }
 
+export interface BlobDeleteOptions {
+  retention?: 'expire';
+}
+
 export interface BlobStore {
   // An org key must end in the sha256 of the bytes (a content address); any other key is refused.
   // Writes are create-only: a key that already holds the same bytes is accepted (a re-upload dedupes), and a key
@@ -35,8 +39,11 @@ export interface BlobStore {
   get(key: string, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
   // Reads a byte slice [start, end] (inclusive) of the blob.
   getRange?(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
-  // Removes the blob; a missing key is not an error.
-  delete(key: string): Promise<void>;
+  // Removes the blob; a missing key is not an error. With `retention: 'expire'` (a retention job removing data that must
+  // really leave, such as a marketplace original after 90 days) a store on a versioned bucket first tags the object, so
+  // a lifecycle rule scoped to the tag can expire the noncurrent version the delete leaves behind (#2789). It fails
+  // closed: when the tag cannot be set nothing is deleted, and the caller's next run tries again.
+  delete(key: string, options?: BlobDeleteOptions): Promise<void>;
   // Starts a write whose bytes arrive in pieces and whose content address is known only at the end (sealed meeting
   // media: the key is the sha256 of the ciphertext). Memory is bounded by a piece (local disk) or a multipart part (S3),
   // not by the blob. `directory` is the key's directory, org/<org_id>. A store without it is written through
