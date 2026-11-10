@@ -738,7 +738,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             usageLimits: usageLimits(config),
             securityAlerts: alerts,
             aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, audioPerMinute: config.AI_PRICE_AUDIO_PER_MIN, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
-            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string } } } : {}),
+            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string, mode: config.TRANSCRIBE_API_MODE } } } : {}),
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
           }),

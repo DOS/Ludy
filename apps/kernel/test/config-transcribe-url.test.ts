@@ -28,3 +28,19 @@ describe('TRANSCRIBE_BASE_URL', () => {
     expect(() => loadConfig({ ...BASE, TRANSCRIBE_BASE_URL: 'http://whisper:8000/v1', TRANSCRIBE_ALLOW_INSECURE_HTTP: 'yes' })).toThrow(/TRANSCRIBE_ALLOW_INSECURE_HTTP/);
   });
 });
+
+// TRANSCRIBE_API_MODE (#2972): how a chunk is sent; the default is today's /audio/transcriptions.
+describe('TRANSCRIBE_API_MODE', () => {
+  it('defaults to audio_transcriptions and takes chat_input_audio', () => {
+    expect(loadConfig({ ...BASE }).TRANSCRIBE_API_MODE).toBe('audio_transcriptions');
+    expect(loadConfig({ ...BASE, TRANSCRIBE_API_MODE: '' }).TRANSCRIBE_API_MODE).toBe('audio_transcriptions');
+    expect(loadConfig({ ...BASE, TRANSCRIBE_API_MODE: 'audio_transcriptions' }).TRANSCRIBE_API_MODE).toBe('audio_transcriptions');
+    expect(loadConfig({ ...BASE, TRANSCRIBE_API_MODE: 'chat_input_audio' }).TRANSCRIBE_API_MODE).toBe('chat_input_audio');
+  });
+
+  it('refuses any other value, so a typo does not silently send to the wrong endpoint', () => {
+    for (const mode of ['chat', 'audio', 'Chat_Input_Audio', 'whisper']) {
+      expect(() => loadConfig({ ...BASE, TRANSCRIBE_API_MODE: mode }), mode).toThrow(/TRANSCRIBE_API_MODE/);
+    }
+  });
+});
