@@ -313,6 +313,10 @@ export const KERNEL_ERROR_CODES = [
   'INVALID_READER',
   'INVALID_MEDIA_CONTAINER',
   'VIDEO_NOT_ENABLED',
+  'MEDIA_KEY_SHREDDED',
+  'MEDIA_KEY_UNAVAILABLE',
+  'AUDIO_NOT_FOUND',
+  'INVALID_PURPOSE',
   // Retention (#2579).
   'MEDIA_RETENTION_PASSED',
   'MEETING_SETTINGS_INVALID',
@@ -1007,8 +1011,9 @@ export const KERNEL_ERROR_RULES = {
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;
 
-// Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale.
-const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR']);
+// Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale. The English media answers of the meeting player (its retention and key
+// refusals, #2703) are among them, so a Vietnamese screen shows the Vietnamese message, not the kernel's English one.
+const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'AUDIO_NOT_FOUND']);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
   return (KERNEL_ERROR_CODES as readonly string[]).includes(code);
