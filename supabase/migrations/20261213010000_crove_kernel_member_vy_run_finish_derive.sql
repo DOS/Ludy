@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- ADR-0049 clean-up, part 3b (#2822): how a member's background run is closed, tightened without changing its signature. Idempotent; applied files
 -- stay untouched.
---   member_vy_run_error_code_ok(code)   the fixed words an ai_run.error may hold (the failures a background run records, enumerated: a code a
---                                       caller invents is refused, and a new one is added here, in a migration, with its invariant case first)
+--   member_vy_run_error_code_ok(code)   the fixed words an ai_run.error may hold (exactly the codes the callers emit, the same list as MEMBER_VY_RUN_ERROR_CODES in
+--                                       packages/kernel/src/member-vy.ts, which a unit test ties to this one; a code a caller invents is refused, and a new
+--                                       one is added in both places, with its invariant case first)
 --   member_vy_run_finish(run, status, error_code)   restated from 20261201000000: status may be NULL, and is then DERIVED from the result (a ready
 --                                       result closes the run as succeeded, anything else as failed); an explicit status is still checked against
 --                                       the result, and 'cancelled' stays the caller's to say. The error code must be on the list.
@@ -10,7 +11,7 @@ SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_run_error_code_ok(p_code text) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
-  SELECT p_code = ANY (ARRAY['ADAPTER_ERROR', 'AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'AUDIO_NOT_FOUND', 'BUDGET_EXHAUSTED', 'INTERNAL', 'KILL_SWITCH_ON', 'RUN_CANCELLED', 'TRANSCRIBE_FAILED', 'WORKER_LOST'])
+  SELECT p_code = ANY (ARRAY['AGENT_RUN_NOT_LIVE', 'AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'AUDIO_NOT_FOUND', 'FORBIDDEN', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'MEETING_NO_AUDIO', 'MEETING_NOT_FOUND', 'MEMBER_NOT_ACTIVE', 'RUN_CANCELLED', 'TRANSCRIBE_AUTH', 'TRANSCRIBE_FAILED', 'TRANSCRIBE_INVALID_REQUEST', 'TRANSCRIBE_INVALID_RESPONSE', 'TRANSCRIBE_NETWORK', 'TRANSCRIBE_RATE_LIMIT', 'TRANSCRIBE_TIMEOUT', 'TRANSCRIBE_UNAVAILABLE', 'TRANSCRIPT_EMPTY', 'TRANSCRIPT_RESULT_INVALID', 'TRANSCRIPT_TOO_LONG', 'VY_NOT_ALLOWED'])
 $$;
 REVOKE ALL ON FUNCTION crove_kernel.member_vy_run_error_code_ok(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
