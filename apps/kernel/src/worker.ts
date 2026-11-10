@@ -42,7 +42,7 @@ import { runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
-import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
+import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -1169,7 +1169,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (results > 0 || former > 0) console.log(`[member-vy-sweep] removed ${results} expired results and ${former} rows of former members`);
     if (failure) throw failure;
   });
-  await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once' });
+  await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEMBER_VY_SWEEP_EXPIRE_SECONDS });
 
   // Bank feeds (ADR-0039, #2044): a connection's sync, queued by the relay above and, once a day, for every active
   // bank feed connection of an active org. The adapters are the deployment's; with none on, the sweep queues nothing.
