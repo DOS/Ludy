@@ -6,13 +6,13 @@
 //   tokens of the one it replaces. It is not a procedure of the contract (the route is the only caller) and no MCP grant reaches it.
 // - kernel.mcp.grant.list and kernel.mcp.grant.revoke: an owner or admin sees the org's grants and cuts one off; the consenting user may cut
 //   off their own.
-// - kernel.mcp.call.audit: the audit row of one MCP call or refusal, written by the endpoint as the system actor, so a row never reads as the
-//   person's own click: it names the grant, the client and the tool (ids and names only, never an argument or an answer).
+// The audit row of one MCP call or refusal is not a command: the endpoint writes it through crove_kernel.mcp_call_audit (the API login has no
+// system context), as the system, naming the grant, the client and the tool, so it never reads as the person's own click.
 // - kernel.mcp.about: the one read of this step, `ludy_about`: the org's name, the grant and its scope. It holds no business data.
 // No command declares `mcp`: an MCP grant reaches no write (a test pins it).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, zMcpGrantRevoke, zId, type McpGrantView } from '@crove/kernel-contract';
+import { MCP_SCOPE_IDS, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 
@@ -123,31 +123,6 @@ export const mcpGrantList = defineQuery({
   },
 });
 
-// What one MCP call or refusal records. The tool is a name from the endpoint's own list, the outcome one of a few words; no argument, no answer.
-export const zMcpCallAudit = z.strictObject({
-  grantId: zId,
-  clientId: z.string().min(1).max(512),
-  clientName: z.string().min(1).max(120),
-  tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-  requestId: z.string().min(1).max(100),
-  outcome: z.enum(['ok', 'refused', 'rate_limited', 'failed']),
-});
-
-export const mcpCallAudit = defineCommand({
-  name: 'kernel.mcp.call.audit',
-  input: zMcpCallAudit,
-  risk: 'R0',
-  sideEffect: 'internal',
-  access: 'system',
-  writes: [],
-  handler: async (ctx, input) => {
-    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận lượt gọi MCP');
-    // The row says it came over MCP, from which grant and client, and that it is not the person's own click.
-    ctx.audit({ via: 'mcp', mcpGrant: input.grantId, mcpClient: input.clientId, mcpClientName: input.clientName, tool: input.tool, requestId: input.requestId, outcome: input.outcome });
-    return { recorded: true as const };
-  },
-});
-
 export const zMcpAbout = z.strictObject({
   orgName: z.string(),
   clientName: z.string(),
@@ -171,5 +146,5 @@ export const mcpAbout = defineQuery({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpCallAudit];
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke];
 export const mcpQueries = [mcpGrantList, mcpAbout];

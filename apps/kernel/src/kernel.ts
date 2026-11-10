@@ -91,6 +91,7 @@ import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
 import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
+import { createOauthServer } from './oauth-server.ts';
 import { createHttpApp, type StreamDeps } from './http.ts';
 import { createLogProvider, createMailer, messageIdDomain, type MailProvider } from './mail.ts';
 import { MAIL_TEMPLATES } from './mail-templates.ts';
@@ -647,8 +648,11 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         }
         if (config.TAX_PORTAL_SYNC === 'true' && config.TAX_PORTAL_URL) console.warn(`[api] TAX_PORTAL_URL points the tax portal sync at ${new URL(config.TAX_PORTAL_URL).origin}, not the real portal`);
         const conversationSecrets = metaConversationSecrets(config);
+        // The MCP endpoint's authorization server (ADR-0051 decision 2, #2975), only when the deployment turned it on (OAUTH_SERVER=on, keys and cookie secrets checked at load).
+        const oauth = config.OAUTH_SERVER === 'on' ? await createOauthServer(config, (fn) => runtime.orgless(fn)) : null;
         const app = createHttpApp({
           config,
+          ...(oauth ? { oauth } : {}),
           runtime,
           store,
           authenticate,

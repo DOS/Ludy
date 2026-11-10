@@ -17,6 +17,7 @@
 --                      removed, a disabled user, an org stopped, the org's "Dung AI" or the deployment's AI switch applies
 --                      to the next statement, not only to the next request.
 --   mcp_grant_list     the grants of the org in context (owner and admin only), never a token.
+--   mcp_call_audit     the endpoint writes the audit row of one call or refusal as the system, naming the grant, the client and the tool.
 --   mcp_grant_revoke   an owner or admin revokes any grant of the org, the consenting user revokes their own; the
 --                      authorization server's refresh tokens and codes of that grant are destroyed with it.
 -- A grant is void when its consenting user is no longer an owner or admin of the org (read live, never copied): it never
@@ -242,7 +243,7 @@ BEGIN
   INSERT INTO crove_kernel.agent_grant (org_id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
   VALUES (v_org, v_user, p_client_id, v_name, v_host, v_scopes, p_oauth_grant_id, pg_catalog.clock_timestamp(), p_expires_at, v_user)
   RETURNING id INTO v_id;
-  UPDATE crove_kernel.oauth_record o SET expires_at = pg_catalog.greatest(o.expires_at, pg_catalog.clock_timestamp() + interval '400 days')
+  UPDATE crove_kernel.oauth_record o SET expires_at = GREATEST(o.expires_at, pg_catalog.clock_timestamp() + interval '400 days')
   WHERE o.model = 'Client' AND o.key_hash = pg_catalog.sha256(pg_catalog.convert_to(p_client_id, 'UTF8'));
   RETURN v_id;
 END $$;
@@ -280,6 +281,43 @@ BEGIN
   IF p_grant_id IS NULL OR p_user_id IS NULL OR p_org_id IS NULL OR NOT crove_kernel.mcp_grant_standing(p_grant_id, p_org_id, p_user_id) THEN
     RAISE EXCEPTION 'MCP_GRANT_INVALID' USING ERRCODE = '28000';
   END IF;
+END $$;
+
+-- The live grant of an authorization grant, for the access token the authorization server is about to sign: its id, org and
+-- user, or none when the grant is revoked, expired, stopped or its user is no longer an owner or admin. The token then is not issued,
+-- so a refresh after a revoke fails here too, besides the destroyed refresh token.
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_grant_for_oauth(p_oauth_grant_id text)
+RETURNS TABLE (grant_id uuid, org_id uuid, user_id uuid, client_id text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT g.id, g.org_id, g.user_id, g.client_id
+  FROM crove_kernel.agent_grant g
+  WHERE g.oauth_grant_id = p_oauth_grant_id AND crove_kernel.mcp_grant_standing(g.id, g.org_id, g.user_id)
+$$;
+
+-- The audit row of one MCP call or refusal, written by the endpoint (the API login has no system context to run a command in). It is the
+-- system's row and says so: actor 'system', command kernel.mcp.call, and a detail that names the grant, the client and the tool and says
+-- `via: mcp`, so it never reads as the person's own click. Ids and names only: no argument, no answer. Raises MCP_INVALID (22023) for
+-- anything that is not a grant of that org or for a tool or outcome outside the allowed words.
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_call_audit(
+  p_org_id uuid, p_grant_id uuid, p_tool text, p_request_id text, p_outcome text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_grant crove_kernel.agent_grant%ROWTYPE;
+BEGIN
+  IF p_tool IS NULL OR (p_tool <> '-' AND p_tool !~ '^[a-z][a-z0-9_]{0,63}$')
+     OR p_request_id IS NULL OR pg_catalog.char_length(p_request_id) NOT BETWEEN 1 AND 100
+     OR p_outcome IS NULL OR p_outcome NOT IN ('ok', 'refused', 'rate_limited', 'failed') THEN
+    RAISE EXCEPTION 'MCP_INVALID' USING ERRCODE = '22023';
+  END IF;
+  SELECT g.* INTO v_grant FROM crove_kernel.agent_grant g WHERE g.org_id = p_org_id AND g.id = p_grant_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MCP_INVALID' USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
+  VALUES (p_org_id, 'system', NULL, 'kernel.mcp.call', crove_kernel.uuid_v7(), CASE WHEN p_outcome = 'ok' THEN 'ok' ELSE 'denied' END, 'agent_grant', p_grant_id,
+          pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_request_id, 'UTF8')), 'hex'),
+          pg_catalog.jsonb_build_object('via', 'mcp', 'mcpGrant', p_grant_id, 'mcpClient', v_grant.client_id, 'mcpClientName', v_grant.client_name,
+                                        'tool', p_tool, 'requestId', p_request_id, 'result', p_outcome));
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -352,6 +390,8 @@ REVOKE ALL ON FUNCTION
   crove_kernel.mcp_grant_standing(uuid, uuid, uuid),
   crove_kernel.mcp_grant_approve(text, text, text, text[], text, timestamptz),
   crove_kernel.mcp_grant_verify(uuid, text),
+  crove_kernel.mcp_grant_for_oauth(text),
+  crove_kernel.mcp_call_audit(uuid, uuid, text, text, text),
   crove_kernel.mcp_grant_check(uuid, uuid, uuid),
   crove_kernel.mcp_grant_list(),
   crove_kernel.mcp_grant_revoke(uuid)
@@ -367,7 +407,7 @@ BEGIN
       'crove_kernel.oauth_record_consume(text, bytea), crove_kernel.oauth_record_destroy(text, bytea), '
       'crove_kernel.oauth_record_revoke_by_grant(text), crove_kernel.mcp_grant_standing(uuid, uuid, uuid), '
       'crove_kernel.mcp_grant_approve(text, text, text, text[], text, timestamptz), crove_kernel.mcp_grant_verify(uuid, text), '
-      'crove_kernel.mcp_grant_check(uuid, uuid, uuid), crove_kernel.mcp_grant_list(), crove_kernel.mcp_grant_revoke(uuid) FROM %I',
+      'crove_kernel.mcp_grant_for_oauth(text), crove_kernel.mcp_call_audit(uuid, uuid, text, text, text), crove_kernel.mcp_grant_check(uuid, uuid, uuid), crove_kernel.mcp_grant_list(), crove_kernel.mcp_grant_revoke(uuid) FROM %I',
       r.rolname);
   END LOOP;
 END $$;
@@ -381,6 +421,8 @@ GRANT EXECUTE ON FUNCTION
   crove_kernel.mcp_grant_standing(uuid, uuid, uuid),
   crove_kernel.mcp_grant_approve(text, text, text, text[], text, timestamptz),
   crove_kernel.mcp_grant_verify(uuid, text),
+  crove_kernel.mcp_grant_for_oauth(text),
+  crove_kernel.mcp_call_audit(uuid, uuid, text, text, text),
   crove_kernel.mcp_grant_check(uuid, uuid, uuid),
   crove_kernel.mcp_grant_list(),
   crove_kernel.mcp_grant_revoke(uuid)
