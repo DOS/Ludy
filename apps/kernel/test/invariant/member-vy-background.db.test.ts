@@ -1385,7 +1385,6 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   it("binds the ids in a member-mode audit row to the run's own result: runId, resultId, subjectId and subjectType, in an audit row, a cached response and a denied row (#2822)", async () => {
-    if (!has.entry || !has.kind) return;
     const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN" };
     // The audit row of the agent and run in context, tried in a savepoint (as the guard sees any writer).
     const tryAudit = async (
