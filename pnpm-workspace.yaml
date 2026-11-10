@@ -66,6 +66,7 @@ catalog:
   zod: 4.6.7
   oidc-provider: 9.12.2
   '@types/oidc-provider': 9.13.1
+  '@modelcontextprotocol/sdk': 1.32.2
 
 minimumReleaseAgeExclude:
   - '@oxlint/binding-android-arm-eabi@1.88.0'

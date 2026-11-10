@@ -189,8 +189,9 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     const call = (actor: UserActor, orgId = orgA) => runtime.query('kernel.mcp.about', {}, { actor, orgId });
     await call(mcp(users.ownerA, grant));
     // Another org's id, another user's id: 401, as for an unknown grant.
-    for (const refused of [call(mcp(users.ownerA, grant), orgB), call(mcp(users.adminA, grant)), call(mcp(users.ownerA, randomUUID()))]) {
-      const error = await refusal(refused);
+    // Each call starts when its turn comes: a rejected promise nobody awaits yet is an unhandled rejection.
+    for (const refused of [() => call(mcp(users.ownerA, grant), orgB), () => call(mcp(users.adminA, grant)), () => call(mcp(users.ownerA, randomUUID()))]) {
+      const error = await refusal(refused());
       expect(error.status).toBe(401);
       expect(error.code).toBe('MCP_GRANT_INVALID');
     }
@@ -255,6 +256,11 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     const rows = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2`, [orgA, grant]));
     expect(rows.rowCount).toBeGreaterThan(0);
     expect(rows.rows[0].detail).toMatchObject({ mcpCall: true, mcpGrant: grant, mcpClient: 'client-1', mcpClientName: 'Test client' });
+    // The org's audit log reads those rows as the AI app, never as the owner's own action (#2975).
+    const log = await runtime.query<{ items: Array<{ command: string; via: { kind: string; clientName: string } | null }> }>('kernel.audit.list', {}, { actor: { type: 'user', userId: users.ownerA, aal: 'aal1' }, orgId: orgA });
+    const viaRows = log.items.filter((i) => i.via !== null);
+    expect(viaRows.length).toBeGreaterThan(0);
+    for (const row of viaRows) expect(row.via).toEqual({ kind: 'mcp', clientName: 'Test client' });
   });
 
   it('lets the API login reach the grant tables and the authorization storage only through the definers, and the worker not at all', async () => {
