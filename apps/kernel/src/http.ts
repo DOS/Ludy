@@ -1472,15 +1472,28 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/meetings/:id/video/stream', async (c) => {
     for (const [name, value] of Object.entries(VIDEO_TICKET_RESPONSE_HEADERS)) c.header(name, value);
     const client = clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS));
-    const budget = videoTicketFailures.peek(client);
+    // A refusal costs the client one token of the failure budget, and its check awaits the database. So the token is reserved here, before
+    // anything is awaited, and given back when the request is not refused: parallel requests cannot all pass a peek before the first
+    // refusal is charged (#2965), and a valid request costs nothing in the end.
+    const budget = videoTicketFailures.take(client);
     if (!budget.allowed) {
       c.header('retry-after', String(budget.retryAfterSeconds));
       return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: budget.retryAfterSeconds }, 429);
     }
+    const outcome = { refused: false };
+    try {
+      return await streamByTicket(c, outcome);
+    } finally {
+      if (!outcome.refused) videoTicketFailures.refund(client);
+    }
+  });
+
+  // The checks of a ticket request and, once they pass, the answer. A refusal marks the outcome, so its reserved token stays spent.
+  async function streamByTicket(c: Context, outcome: { refused: boolean }): Promise<Response> {
     // The same answer for every refusal, and a failure against the client's budget.
     const refused = () => {
       warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-      videoTicketFailures.take(client);
+      outcome.refused = true;
       return c.json({ code: 'VIDEO_TICKET_INVALID' }, 401);
     };
     const ticket = c.req.query('ticket');
@@ -1490,7 +1503,7 @@ export function createHttpApp(deps: HttpDeps) {
     if (!key) return refused();
     const payload = verifyMediaTicket(ticket, key, Math.floor(Date.now() / 1000));
     key.fill(0);
-    const meetingId = c.req.param('id');
+    const meetingId = c.req.param('id') ?? '';
     if (!payload || payload.purpose !== MEDIA_TICKET_PURPOSE || payload.meetingId !== meetingId.toLowerCase()) return refused();
     // The request limit of the user the ticket proves, as the bearer routes have.
     const decision = limiter?.take(payload.userId);
@@ -1530,7 +1543,7 @@ export function createHttpApp(deps: HttpDeps) {
       onFinished: release,
       fail,
     });
-  });
+  }
 
   // The Ludy extension trades the one-time code the signed-in member approved in the app for its token (issue #2582,
   // ADR-0047 point 10). Public by necessity: the extension holds no session, and the credential is the code, 256 random

@@ -46,7 +46,7 @@ describe('meeting video ticket', () => {
   it('round-trips and names its key id before it is verified', () => {
     const p = payload({ aal: 'aal2', mfaAt: NOW - 30 });
     const ticket = signMediaTicket(KEY, p);
-    expect(ticket).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+    expect(ticket).toMatch(/^v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
     expect(wellFormedMediaTicket(ticket)).toBe(true);
     expect(peekMediaTicketKeyId(ticket)).toBe('k1');
     expect(verifyMediaTicket(ticket, KEY, NOW)).toEqual(p);
@@ -102,7 +102,7 @@ describe('meeting video ticket', () => {
     }
     // Signed JSON that is not an object, and an object missing fields.
     const signRaw = (value: unknown) => {
-      const signed = `v1.${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
+      const signed = `v2.${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
       return `${signed}.${createHmac('sha256', KEY).update(signed).digest().toString('base64url')}`;
     };
     for (const value of [null, 7, 'x', [], {}, { keyId: 'k1' }]) expect(verifyMediaTicket(signRaw(value), KEY, NOW)).toBeNull();
@@ -114,22 +114,23 @@ describe('meeting video ticket', () => {
     for (const bad of [
       '',
       'v1',
-      'v1.',
-      'v1..',
-      `v2.${body}.${mac}`,
+      'v2.',
+      'v2..',
+      // The version before the canonical rule: refused, so the player asks for a new ticket.
+      `v1.${body}.${mac}`,
       `${body}.${mac}`,
-      `v1.${body}`,
-      `v1.${body}.${mac}.extra`,
-      `v1.${body}.${mac.slice(1)}`,
-      `v1.${body}.${mac}A`,
-      `v1.${body}!.${mac}`,
-      `v1.${'A'.repeat(2000)}.${mac}`,
-      'v1.e30.' + 'A'.repeat(43),
-      `v1.bm90LWpzb24.${mac}`,
+      `v2.${body}`,
+      `v2.${body}.${mac}.extra`,
+      `v2.${body}.${mac.slice(1)}`,
+      `v2.${body}.${mac}A`,
+      `v2.${body}!.${mac}`,
+      `v2.${'A'.repeat(2000)}.${mac}`,
+      'v2.e30.' + 'A'.repeat(43),
+      `v2.bm90LWpzb24.${mac}`,
     ]) {
       expect(verifyMediaTicket(bad, KEY, NOW), bad.slice(0, 30)).toBeNull();
     }
-    for (const bad of [undefined, null, 7, '', 'v1', `v1.${body}`, 'x'.repeat(5000)]) expect(wellFormedMediaTicket(bad)).toBe(false);
+    for (const bad of [undefined, null, 7, '', 'v1', `v2.${body}`, 'x'.repeat(5000)]) expect(wellFormedMediaTicket(bad)).toBe(false);
     expect(peekMediaTicketKeyId('garbage')).toBeNull();
   });
 });
@@ -147,3 +148,76 @@ describe('CORS on the ticket stream', () => {
     expect(other.headers.get('access-control-allow-origin')).toBe('https://app.example.com');
   });
 });
+
+describe('one ticket, one spelling (#2965)', () => {
+  const sign = (text: string) => {
+    const signed = `v2.${Buffer.from(text, 'utf8').toString('base64url')}`;
+    return `${signed}.${createHmac('sha256', KEY).update(signed).digest().toString('base64url')}`;
+  };
+  const canonical = (p: MediaTicketPayload) =>
+    JSON.stringify({ keyId: p.keyId, orgId: p.orgId, userId: p.userId, sessionId: p.sessionId, aal: p.aal, mfaAt: p.mfaAt, meetingId: p.meetingId, fileId: p.fileId, purpose: p.purpose, iat: p.iat, exp: p.exp });
+
+  it('signs the payload in one field order whatever order the caller built it in', () => {
+    const a = payload();
+    const reordered = Object.fromEntries(Object.entries(a).reverse()) as unknown as MediaTicketPayload;
+    expect(signMediaTicket(KEY, reordered)).toBe(signMediaTicket(KEY, a));
+    expect(verifyMediaTicket(signMediaTicket(KEY, reordered), KEY, NOW)).toEqual(a);
+  });
+
+  it('accepts only the canonical text, even when the signature covers another: extra, repeated, reordered and spaced fields, escapes', () => {
+    const p = payload();
+    const text = canonical(p);
+    expect(verifyMediaTicket(sign(text), KEY, NOW)).toEqual(p);
+    const variants: Record<string, string> = {
+      'an extra field': text.replace(/}$/, ',"extra":1}'),
+      'a repeated field': text.replace(/}$/, `,"exp":${p.exp}}`),
+      'a repeated field with another value first': text.replace('{', `{"exp":${p.exp + 1},`),
+      'reordered fields': JSON.stringify({ exp: p.exp, ...JSON.parse(text) }),
+      'a space': text.replace(',', ', '),
+      'a newline': `${text}\n`,
+      'an escaped letter': text.replace('"keyId"', '"\\u006beyId"'),
+      'an escaped slash in a value': text.replace(p.keyId, p.keyId.replace(/(.)$/, '\\$1')),
+    };
+    for (const [name, value] of Object.entries(variants)) expect(verifyMediaTicket(sign(value), KEY, NOW), name).toBeNull();
+  });
+
+  it('refuses every other spelling of the signature: the four values of the unused low bits of its last character', () => {
+    const good = signMediaTicket(KEY, payload());
+    const [version, body, mac] = good.split('.') as [string, string, string];
+    expect(mac).toHaveLength(43);
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    // The last character holds 4 bits of the signature and 2 that decode to nothing: 4 characters share the same bytes.
+    const last = alphabet.indexOf(mac.slice(-1));
+    const sameBytes = [0, 1, 2, 3].map((low) => alphabet[(last & ~3) | low]!);
+    expect(sameBytes).toContain(mac.slice(-1));
+    for (const c of sameBytes) {
+      const spelled = `${version}.${body}.${mac.slice(0, -1)}${c}`;
+      expect(Buffer.from(spelled.split('.')[2]!, 'base64url').equals(Buffer.from(mac, 'base64url'))).toBe(true);
+      expect(verifyMediaTicket(spelled, KEY, NOW) !== null, `${c}`).toBe(c === mac.slice(-1));
+    }
+  });
+
+  it('refuses another spelling of the body, even re-signed', () => {
+    const text = canonical(payload());
+    const body = Buffer.from(text, 'utf8').toString('base64url');
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = alphabet.indexOf(body.slice(-1));
+    const spare = body.length % 4 === 0 ? 0 : body.length % 4 === 2 ? 4 : 2;
+    if (spare === 0) return;
+    const mask = (1 << (spare === 4 ? 4 : 2)) - 1;
+    for (let low = 0; low <= mask; low += 1) {
+      const c = alphabet[(last & ~mask) | low]!;
+      const respelled = `${body.slice(0, -1)}${c}`;
+      const signed = `v2.${respelled}`;
+      const ticket = `${signed}.${createHmac('sha256', KEY).update(signed).digest().toString('base64url')}`;
+      expect(verifyMediaTicket(ticket, KEY, NOW) !== null, `${c}`).toBe(c === body.slice(-1));
+    }
+  });
+
+  it('refuses a version 1 ticket', () => {
+    const body = Buffer.from(canonical(payload()), 'utf8').toString('base64url');
+    const signed = `v1.${body}`;
+    expect(verifyMediaTicket(`${signed}.${createHmac('sha256', KEY).update(signed).digest().toString('base64url')}`, KEY, NOW)).toBeNull();
+  });
+});
+
