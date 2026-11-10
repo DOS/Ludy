@@ -249,13 +249,15 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     });
     expect(await dueOrgs(), 'an offboarding org is listed again').toContain(closed);
     expect(await formerOrgs(), 'with its former members').toContain(closed);
+    // And the sweeps can work in it: its system context opens, and its expired results are removed.
+    expect(await sweepMemberVyResults({ runtime: workerRuntime, workerDb }), 'the sweep removes the offboarding org\'s expired result (and the others\')').toBeGreaterThanOrEqual(1);
+    expect(await dueOrgs(), 'nothing of the offboarding org is left due').not.toContain(closed);
   });
 
   it('pages the due orgs by keyset: a second page reads the orgs after the last id of the first', async () => {
-    await dueOrg('active');
-    await dueOrg('active');
+    for (let i = 0; i < 4; i += 1) await dueOrg('active');
     const all = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
-    expect(all.length, 'at least three orgs are due').toBeGreaterThanOrEqual(3);
+    expect(all.length, 'at least four orgs are due').toBeGreaterThanOrEqual(4);
     expect(all, 'in org id order').toEqual([...all].sort());
     const first = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(2)')).rows.map((r) => r.org_id);
     expect(first).toEqual(all.slice(0, 2));

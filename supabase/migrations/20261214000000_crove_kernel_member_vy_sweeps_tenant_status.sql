@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- ADR-0049 clean-up, PR 4 (#2822, from the review of #2920): the two sweep lists, restated in full from 20261212100000 (same signatures, owners and grants; the applied
--- file is not edited) with one more filter: only an org a system context can enter, tenant.status IN ('active', 'offboarding'). A closed org had its data purged and no
--- context to run the sweep commands in, so listing it made the worker ask for it every night and fail. Idempotent.
+-- file is not edited) with one more filter: only an org a system context can enter, tenant.status IN ('active', 'offboarding'). Defensive: a closed org has no context
+-- to run the sweep commands in (the org purge empties both tables before it closes the org, so a closed org is listed only after a manual close). Idempotent.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_results_due(p_limit integer, p_after uuid DEFAULT NULL)

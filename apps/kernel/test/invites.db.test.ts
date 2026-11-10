@@ -290,7 +290,7 @@ suite('member invite flows on PostgreSQL', () => {
   });
 
   // #2822: two accepts of one link at the same moment (a double click, two tabs): the invite is taken once, the membership is made once, one accept is recorded.
-  it('takes an invite once when two accepts race', async () => {
+  it('takes an invite once when three accepts race on the invite row', async () => {
     const owner = await signIn('owner');
     const invitee = await signIn('invitee');
     const org = await orgOf(owner);
@@ -298,7 +298,26 @@ suite('member invite flows on PostgreSQL', () => {
     const token = tokenOf(created.body?.acceptPath);
     const bearer = await tokenFor(invitee);
     const before = (await rows(org.orgId, 'audit_event', "command = 'kernel.member.invite.accept'")).length;
-    const answers = await Promise.all([rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null)]);
+    // The overlap is made certain: the invite row is held by another connection until all three accepts are waiting on it, then released.
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    let answers: Awaited<ReturnType<typeof rpc>>[];
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM crove_kernel.member_invite WHERE org_id = $1 AND id = $2 FOR UPDATE', [org.orgId, created.body?.inviteId]);
+      const racing = Promise.all([rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null)]);
+      let waiting = 0;
+      for (let i = 0; i < 100 && waiting < 3; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        waiting = Number((await holder.query(`SELECT count(*)::text AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`)).rows[0]?.n ?? 0);
+      }
+      expect(waiting, 'all three accepts wait on the invite row').toBeGreaterThanOrEqual(3);
+      await holder.query('COMMIT');
+      answers = await racing;
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      await holder.end();
+    }
     expect(answers.filter((a) => a.status === 200), 'exactly one accept wins').toHaveLength(1);
     for (const lost of answers.filter((a) => a.status !== 200)) expect(lost).toMatchObject({ status: 409, body: { code: 'INVITE_USED' } });
     const members = await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [org.orgId, invitee.userId])).rows);
