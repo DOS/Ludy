@@ -74,7 +74,8 @@ export function MeetingOwnerDeletion({ nameOf }: { nameOf: (userId: string) => s
       ) : list.error ? (
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : items.length === 0 ? (
-        <Empty title={t('empty')} />
+        // An emptied later page is not an empty organization: only the first-page button shows.
+        pages.length === 0 ? <Empty title={t('empty')} /> : null
       ) : (
         <DataTable head={[t('columns.startedAt'), t('columns.recorder'), t('columns.visibility'), t('columns.status'), t('columns.retention'), t('columns.actions')]}>
           {items.map((m) => (
