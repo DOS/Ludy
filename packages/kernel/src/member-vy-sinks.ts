@@ -6,16 +6,10 @@
 // neither list. A sink is a confirm command (a person's click), keeps what it copies tainted and carries a source_ref to the run it came from; the
 // invariant checks the command's source for both.
 
-// The sinks. Ships empty: Meetings moves its commands here in its own change (#2941), each with taint and a source_ref to the run.
-export const MEMBER_VY_SINKS: readonly string[] = [];
+// The sinks: Meetings' two copies of a finished Vy result into the recorder's draft (#2941), each with taint on what it writes and a source_ref to the run.
+export const MEMBER_VY_SINKS: readonly string[] = ['meetings.summary.copy_result', 'meetings.transcript.copy_result'];
 
 // The consumers that existed before the list did, and are not yet sinks (#2941): each is on this list only until Meetings moves it to MEMBER_VY_SINKS.
 // The list can only shrink: the invariant fails for an entry the baseline in the test does not name, for one that is no longer a command, and
 // for one that is also a sink. Do not add to it; add a sink, or do not read the private rows.
-export const MEMBER_VY_KNOWN_CONSUMERS: readonly string[] = [
-  'meetings.draft.review', // #2941
-  'meetings.summary.copy_result', // #2941
-  'meetings.summary.start', // #2941
-  'meetings.transcript.copy_result', // #2941
-  'meetings.transcript.start', // #2941
-];
+export const MEMBER_VY_KNOWN_CONSUMERS: readonly string[] = [];
