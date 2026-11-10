@@ -6,6 +6,7 @@ import {
   aiCost,
   chatAnswerToTranscription,
   inputAudioFormat,
+  withoutCodeFence,
   AiBudgetExhaustedError,
   AiMeterMissingError,
   DEFAULT_SPEAKER,
@@ -373,6 +374,25 @@ describe('the chat_input_audio mode (fake provider)', () => {
     expect(await run(a.config, chunk(0))).toEqual(await run({ ...b.config, mode: 'audio_transcriptions' }, chunk(0)));
     expect(a.seen[0]!.url).toBe('http://stt.test/v1/audio/transcriptions');
     expect(b.seen[0]!.url).toBe('http://stt.test/v1/audio/transcriptions');
+  });
+
+  it('strips a code fence in linear time, whatever the reply holds (it is untrusted)', () => {
+    expect(withoutCodeFence('```json\n{"a":1}\n```')).toBe('{"a":1}');
+    expect(withoutCodeFence('```\n{"a":1}```')).toBe('{"a":1}');
+    expect(withoutCodeFence('  {"a":1}  ')).toBe('{"a":1}');
+    expect(withoutCodeFence('```{"a":1}```')).toBe('{"a":1}');
+    for (const reply of ['```' + ' '.repeat(100_000) + 'x', '```' + ' '.repeat(100_000) + '```' + ' '.repeat(100_000) + 'x', '```json' + '\n'.repeat(100_000) + 'x', '```a' + ' \n'.repeat(50_000)]) {
+      const started = performance.now();
+      withoutCodeFence(reply);
+      expect(performance.now() - started).toBeLessThan(200);
+    }
+  });
+
+  it('refuses a reply the provider cut or filtered, even when it holds parseable JSON', async () => {
+    for (const finish_reason of ['length', 'content_filter']) {
+      const error = (await run(chatProvider([{ content: segmentsJson, extra: { finish_reason } }]).config, chunk(0)).catch((e: unknown) => e)) as TranscriptionError;
+      expect(error.kind, finish_reason).toBe('invalid_response');
+    }
   });
 
   it('exposes the answer reader as a pure function over the chat completion shape', () => {

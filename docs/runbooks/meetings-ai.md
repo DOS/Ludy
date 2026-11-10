@@ -56,7 +56,7 @@ TRANSCRIBE_API_MODE=chat_input_audio
 AI_PRICE_AUDIO_PER_MIN=<the price of one minute of audio in the unit of the other AI_PRICE_* settings>
 ```
 
-The `input_audio` part names the audio's format by the extension of its type (`wav`, `mp3`, `ogg`, `m4a`, ...); a type the provider does not accept is refused by the provider and the run ends with a `TRANSCRIBE_INVALID_REQUEST` code. T3 (the two-minute test recording) is what proves a given format works with the provider.
+The `input_audio` part names the audio's format by the extension of its type (`wav`, `mp3`, `ogg`, `m4a`, ...); a type with no such name (`audio/x-m4a`, `audio/aac`) is refused by Ludy before any audio is sent, and a type the provider does not accept is refused by the provider; either way the run ends with a `TRANSCRIBE_INVALID_REQUEST` code. T3 (the two-minute test recording) is what proves a given format works with the provider.
 
 ## Rollback at any time
 

@@ -251,23 +251,37 @@ export function inputAudioFormat(mimeType: string): string | null {
   return extension ?? null;
 }
 
+// The text without a Markdown code fence a model may wrap its JSON in: string operations only, so a reply of any length (it is
+// untrusted) takes linear time, where a regex with neighbouring whitespace runs would backtrack.
+export function withoutCodeFence(text: string): string {
+  let t = text.trim();
+  if (!t.startsWith('```')) return t;
+  t = t.slice(3);
+  // The language tag on the opening line (`json`) is dropped with the rest of that line.
+  const newline = t.indexOf('\n');
+  const firstLine = newline === -1 ? t : t.slice(0, newline);
+  if (/^[a-zA-Z]*\s*$/.test(firstLine) && newline !== -1) t = t.slice(newline + 1);
+  t = t.trim();
+  if (t.endsWith('```')) t = t.slice(0, -3);
+  return t.trim();
+}
+
 // The JSON a chat model wrote as its answer (the message content, a string or text parts), without the code fence a model may
 // add, as the object parseTranscription reads. Not JSON, or JSON that is neither an object nor a list of segments, is refused.
 export function chatAnswerToTranscription(raw: unknown): Record<string, unknown> {
   if (!isRecord(raw) || !Array.isArray(raw.choices) || raw.choices.length === 0) throw invalid();
   const choice: unknown = raw.choices[0];
   if (!isRecord(choice) || !isRecord(choice.message)) throw invalid();
-  // A reply cut by the provider's length limit is not a whole transcript.
-  if (choice.finish_reason === 'length') throw invalid();
+  // A reply cut by the provider's length limit, or stopped by its content filter, is not a whole transcript.
+  if (choice.finish_reason === 'length' || choice.finish_reason === 'content_filter') throw invalid();
   const content = choice.message.content;
   let text: string;
   if (typeof content === 'string') text = content;
   else if (Array.isArray(content)) text = content.map((part) => (isRecord(part) && typeof part.text === 'string' ? part.text : '')).join('');
   else throw invalid();
-  const fenced = /^\s*```[a-zA-Z]*\s*([\s\S]*?)\s*```\s*$/.exec(text);
   let parsed: unknown;
   try {
-    parsed = JSON.parse((fenced ? fenced[1]! : text).trim());
+    parsed = JSON.parse(withoutCodeFence(text));
   } catch {
     throw invalid();
   }
@@ -318,7 +332,7 @@ async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput)
       temperature: 0,
       messages: [
         { role: 'system', content: chatInstruction(input.language) },
-        { role: 'user', content: [{ type: 'input_audio', input_audio: { data: Buffer.from(input.audio).toString('base64'), format } }] },
+        { role: 'user', content: [{ type: 'input_audio', input_audio: { data: Buffer.from(input.audio.buffer, input.audio.byteOffset, input.audio.byteLength).toString('base64'), format } }] },
       ],
     });
     const raw = await postJson(config, `${base}/chat/completions`, body, { 'content-type': 'application/json' });
