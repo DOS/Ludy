@@ -464,6 +464,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const asked = authUrl as URL;
     expect(asked.searchParams.get('resource')).toBe(resource);
     expect(asked.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(asked.searchParams.get('scope'), 'the client asks for the scope the resource metadata advertises').toBe('ludy.read');
     // The person's part: the consent page, answered as the owner.
     const started = await fetch(asked, { redirect: 'manual' });
     expect(started.status).toBe(303);
@@ -478,7 +479,10 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(typeof saved?.access_token).toBe('string');
     // A fresh client over a fresh transport, with the saved token.
     const client = new McpClient({ name: 'sdk-test', version: '1.0.0' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(resource), { authProvider: provider }));
+    const second = new StreamableHTTPClientTransport(new URL(resource), { authProvider: provider });
+    await client.connect(second);
+    expect(second.protocolVersion, 'the newest revision this SDK knows').toBe('2025-11-25');
+    expect(second.sessionId, 'the server never mints a session').toBeUndefined();
     expect(client.getServerVersion()?.name).toBe('ludy');
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     const listed = await client.listTools();

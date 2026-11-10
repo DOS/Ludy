@@ -168,7 +168,7 @@ export function auditVia(detail: unknown): AuditEntry['via'] {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const d = raw as Record<string, unknown>;
   if (d.mcpCall !== true) return null;
-  return { kind: 'mcp', clientName: typeof d.mcpClientName === 'string' && d.mcpClientName !== '' ? cleanValue(d.mcpClientName) : '?' };
+  return { kind: 'mcp', clientName: typeof d.mcpClientName === 'string' && d.mcpClientName.replace(/\p{Cf}/gu, '') !== '' ? cleanValue(d.mcpClientName.replace(/\p{Cf}/gu, '')) : '?' };
 }
 
 function entry(r: AuditRow, names: ReadonlyMap<string, string>): AuditEntry {

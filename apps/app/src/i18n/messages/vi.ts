@@ -5328,6 +5328,7 @@ export const vi = {
     agent: 'Tác tử AI',
     former: 'Thành viên cũ',
     viaMcp: 'Qua {name} (MCP)',
+    viaMcpOf: 'Theo quyền của {name}',
     viaMcpNote: 'Ứng dụng AI tự khai tên; việc này không phải người trong tổ chức bấm',
     filterCommand: 'Lệnh',
     anyCommand: 'Tất cả lệnh',

@@ -178,6 +178,7 @@ function AuditLog({ search }: { search: AuditSearch }) {
                 <TableCell className="px-4 py-3 whitespace-nowrap text-muted-foreground">{f.dateTime(r.at)}</TableCell>
                 <TableCell className="px-4 py-3 text-foreground">
                   {r.via ? t('viaMcp', { name: r.via.clientName }) : r.actorType === 'system' ? t('system') : (r.actorName ?? t('former'))}
+                  {r.via && r.actorType === 'user' && r.actorName && <p className="text-xs text-subtle-foreground">{t('viaMcpOf', { name: r.actorName })}</p>}
                   {r.via && <p className="text-xs text-subtle-foreground">{t('viaMcpNote')}</p>}
                   {r.actorType === 'agent' && <p className="text-xs text-subtle-foreground">{t('agent')}</p>}
                 </TableCell>

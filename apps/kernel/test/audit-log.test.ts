@@ -57,6 +57,9 @@ describe('audit CSV', () => {
     expect(auditVia({ mcpCall: true, mcpGrant: 'g', mcpClient: 'c', mcpClientName: 'Claude\nDesktop' })).toEqual({ kind: 'mcp', clientName: 'Claude Desktop' });
     expect(auditVia(JSON.stringify({ mcpCall: true, mcpClientName: 'X' }))).toEqual({ kind: 'mcp', clientName: 'X' });
     expect(auditVia({ mcpCall: true })).toEqual({ kind: 'mcp', clientName: '?' });
+    // Bidi overrides and zero-width characters of a self-declared name are dropped, so the name cannot reorder the label around it.
+    expect(auditVia({ mcpCall: true, mcpClientName: 'A\u202eB\u200bC' })).toEqual({ kind: 'mcp', clientName: 'ABC' });
+    expect(auditVia({ mcpCall: true, mcpClientName: '\u202e\u200b' })).toEqual({ kind: 'mcp', clientName: '?' });
   });
 
   it('reads nothing as MCP unless the row says mcpCall: true', () => {

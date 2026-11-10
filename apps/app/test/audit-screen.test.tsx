@@ -84,8 +84,20 @@ describe('AuditPage MCP rows (#2975)', () => {
     const vi = render('vi', [mcpRow('m')]);
     expect(vi).toContain('Qua Claude Desktop (MCP)');
     expect(vi).toContain('Ứng dụng AI tự khai tên');
-    expect(vi).not.toContain('Theo hệ thống');
-    expect(render('en', [mcpRow('m')])).toContain('Via Claude Desktop (MCP)');
+    // The actor cell itself (the filter also has the word "Hệ thống"): not the bare system label, not a person.
+    expect(vi).not.toMatch(/<td[^>]*>Hệ thống/);
+    expect(vi).not.toContain('Lan');
+    const en = render('en', [mcpRow('m')]);
+    expect(en).toContain('Via Claude Desktop (MCP)');
+    expect(en).not.toMatch(/<td[^>]*>System/);
+  });
+
+  it('keeps the person whose grant was used on a refusal row, under the AI app, never as their own click', () => {
+    const refused: AuditEntry = { ...row('r', 'kernel.org.set_approval_preset'), outcome: 'denied', via: { kind: 'mcp', clientName: 'Claude Desktop' } };
+    const vi = render('vi', [refused]);
+    expect(vi).toContain('Qua Claude Desktop (MCP)');
+    expect(vi).toContain('Theo quyền của Lan');
+    expect(render('en', [refused])).toContain('Under the grant of Lan');
   });
 });
 
