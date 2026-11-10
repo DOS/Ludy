@@ -398,11 +398,9 @@ services:
   # Media processing sandbox for AI Meeting Notes (plan §6, ADR-0047, #2577). Bytes in, normalized Opus and segments out;
   # only the worker calls it. No credentials on purpose: it refuses to start with any variable outside its allowlist.
   # Its only network is `media`, which has no route out, and no port is published.
-  # Profile 'media': `docker compose --profile media up`. The kernel (API and worker) measures every meeting recording in it (#2985), so a
-  # deployment that runs the Meetings module starts it; deploy.sh ignores the profile until the deploy image override lands.
+  # In the default stack: the kernel (API and worker) measures every meeting recording in it (#2985), so without it the Meetings module
+  # could store no recording. compose.pilot.yml keeps it behind the `media` profile until the release pipeline publishes its image.
   crove-media:
-    profiles:
-      - media
     build:
       context: .
       dockerfile: apps/media/Dockerfile

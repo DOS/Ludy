@@ -21,9 +21,6 @@ services:
       # The assisted tax portal sync (#325) against the fake portal below, never the real one.
       TAX_PORTAL_SYNC: 'true'
       TAX_PORTAL_URL: http://tax-portal:30000/api
-  # The media sandbox runs in this stack: the kernel measures every meeting recording in it (#2985), so the recording test needs it.
-  crove-media:
-    profiles: !reset []
   # A fake of the tax portal's lookup API (e2e/fake-tax-portal, #325): synthetic invoices, no network beyond the stack.
   # Paths are relative to the first compose file (the repository root).
   tax-portal:
