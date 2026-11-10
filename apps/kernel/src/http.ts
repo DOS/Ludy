@@ -218,8 +218,6 @@ export interface HttpDeps {
   broker?: CredentialBroker;
   // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
   mediaMeasurer?: MediaMeasurer;
-  // Meeting uploads in flight toward crove-media, over all orgs and per org (#2989). Unset: 4 in all, 2 per org.
-  mediaSlots?: ConcurrencyLimiter;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -2079,10 +2077,6 @@ export function createHttpApp(deps: HttpDeps) {
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
   const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
-  // The sandbox runs one measure at a time with a short queue, shared by every org (#2989): an upload holds one of these slots from the first byte
-  // to the end of its measure, and one org holds at most two of the four, so a single recorder cannot fill the queue and have other orgs'
-  // recordings (read, sealed and then refused) turned away. A full limiter refuses at once, before a byte is read, with 503 and Retry-After.
-  const mediaSlots = deps.mediaSlots ?? new ConcurrencyLimiter({ total: 4, perKey: 2 });
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
   const playbackAudited = new Map<string, number>();
   // What the two playback routes share (the bearer route and the ticket route, #2703): the range handling, the audit window,
@@ -2475,13 +2469,10 @@ export function createHttpApp(deps: HttpDeps) {
       let wrapSubkey = null as Buffer | null;
       let stagingKeyToDelete: string | null = null;
       let releaseJsonVideo: (() => void) | null = null;
-      let releaseMediaSlot: (() => void) | null = null;
 
       try {
         // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
         if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
-        releaseMediaSlot = mediaSlots.tryAcquire(orgId);
-        if (!releaseMediaSlot) throw busy(c);
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
@@ -2689,7 +2680,6 @@ export function createHttpApp(deps: HttpDeps) {
           await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
         }
         releaseJsonVideo?.();
-        releaseMediaSlot?.();
         dataKey?.fill(0);
         wrapSubkey?.fill(0);
         release();

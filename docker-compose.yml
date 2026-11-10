@@ -410,7 +410,8 @@ services:
     read_only: true
     # Where a recording sits decrypted while it is measured (#2989): memory, never a disk. A killed or removed container leaves nothing behind. Sized for
     # the largest measure (a 2 GB video, MEDIA_MAX_INPUT_BYTES) plus slack; it counts against the memory limit below while a recording is there.
-    # The user is the image's `node` (uid 1000). Lower both with the recordings the host accepts.
+    # The user is the image's `node` (uid 1000). The size and the memory limit scale with MEDIA_CONCURRENCY times the largest recording. A route that
+    # keeps two copies (`/repackage-video`, no caller yet) needs twice the room.
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
       - /data/scratch:size=${MEDIA_SCRATCH_SIZE:-2304m},mode=0700,uid=1000,gid=1000,noexec,nosuid
