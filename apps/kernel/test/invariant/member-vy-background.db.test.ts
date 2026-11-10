@@ -1857,4 +1857,254 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       },
     );
   });
+
+  // ---- #2822, from the Platform PO's review of #2800 ----------------------------------------------------------------------------------
+  // A refusal with its code, message and DETAIL (the trigger names its table there), so a case can tell which trigger refused.
+  const refusal = <T>(p: Promise<T>) =>
+    p.then(
+      () => ({ ok: true as const, code: "", message: "", detail: "" }),
+      (error: { code?: string; message: string; detail?: string }) => ({
+        ok: false as const,
+        code: error.code ?? "",
+        message: error.message,
+        detail: error.detail ?? "",
+      }),
+    );
+  // The tables the write guard leaves alone, read from the catalog (no enabled agent_write_guard row trigger), so a table that drops out
+  // of the guard later is in this list without anyone adding it.
+  const unguardedTables = () =>
+    admin(
+      async (c) =>
+        (
+          await c.query<{ name: string; exempt: boolean }>(
+            `SELECT n.nspname || '.' || c.relname AS name, crove_kernel.agent_write_exempt(c.oid::regclass) AS exempt
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+               AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'agent_write_guard' AND NOT t.tgisinternal
+                                 AND t.tgenabled IN ('O', 'A') AND t.tgfoid = 'crove_kernel.agent_write_guard()'::regprocedure)
+             ORDER BY 1`,
+          )
+        ).rows,
+    );
+  // ai_run keeps its own-run rule (the guard's catalog branch, through its own trigger) and activity its stamp (AGENT_FORBIDDEN in
+  // activity_stamp_agent); every other table the guard leaves alone refuses a member-mode context outright, before any other trigger.
+  const OWN_RULE = ["crove_kernel.activity", "crove_kernel.ai_run"];
+
+  it("puts a00_member_vy_forbid on every table the write guard leaves alone but ai_run and activity, read from the catalog, first of its row triggers", async () => {
+    const unguarded = await unguardedTables();
+    const names = unguarded.map((r) => r.name);
+    // The known exempt tables are all found (the enumeration has teeth), and the catalog and agent_write_exempt agree on each.
+    expect(names, "the exempt tables of 20261019010000").toEqual(
+      expect.arrayContaining([
+        "crove_kernel.activity",
+        "crove_kernel.ai_run",
+        "crove_kernel.outbox_event",
+        "crove_kernel.refusal_tally",
+        "crove_kernel.task",
+        "crove_kernel.task_comment",
+      ]),
+    );
+    expect(
+      unguarded.filter((r) => !r.exempt).map((r) => r.name),
+      "tables without the guard that agent_write_exempt does not exempt",
+    ).toEqual([]);
+    const forbidTables = names.filter((n) => !OWN_RULE.includes(n));
+    const triggers = await admin(
+      async (c) =>
+        (
+          await c.query<{ name: string; tgname: string; tgtype: number; tgenabled: string; fn: string }>(
+            `SELECT n.nspname || '.' || c.relname AS name, t.tgname, t.tgtype::int AS tgtype, t.tgenabled::text AS tgenabled,
+                    t.tgfoid::regprocedure::text AS fn
+             FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE NOT t.tgisinternal AND n.nspname || '.' || c.relname = ANY ($1::text[])
+             ORDER BY 1, t.tgname COLLATE "C"`,
+            [forbidTables],
+          )
+        ).rows,
+    );
+    // tgtype 31: ROW (1) | BEFORE (2) | INSERT (4) | DELETE (8) | UPDATE (16), with no column list, enabled, the forbid function.
+    for (const table of forbidTables) {
+      const own = triggers.filter((t) => t.name === table);
+      expect(
+        own.filter((t) => t.tgname === "a00_member_vy_forbid").map((t) => [t.tgtype, ["O", "A"].includes(t.tgenabled), t.fn]),
+        `${table}: a00_member_vy_forbid, BEFORE INSERT OR UPDATE OR DELETE FOR EACH ROW, enabled, member_vy_forbid()`,
+      ).toEqual([[31, true, "crove_kernel.member_vy_forbid()"]]);
+      // Row triggers fire in name order: no BEFORE row trigger may run ahead of it (and refuse or rewrite with another rule first).
+      expect(
+        own.filter((t) => (t.tgtype & 3) === 3)[0]?.tgname,
+        `${table}: the first BEFORE row trigger`,
+      ).toBe("a00_member_vy_forbid");
+    }
+    // And each one refuses: an insert in a member-mode context, as the superuser so no grant or RLS stands in, is refused by a00 itself
+    // (its DETAIL names the table) before any NOT NULL, rule or other trigger of the table.
+    const run = await liveRun("vyUser");
+    const probes = await admin(async (c) => {
+      const found: Array<[string, unknown]> = [];
+      await c.query("BEGIN");
+      try {
+        await memberEnter(run.agentId, run.runId)(c);
+        for (const table of forbidTables) {
+          const [schema, name] = table.split(".") as [string, string];
+          await c.query("SAVEPOINT probe");
+          found.push([table, await refusal(c.query(`INSERT INTO ${schema}."${name}" DEFAULT VALUES`))]);
+          await c.query("ROLLBACK TO SAVEPOINT probe");
+        }
+      } finally {
+        await c.query("ROLLBACK");
+      }
+      return found;
+    });
+    for (const [table, o] of probes) {
+      expect(o, `${table}: an insert in member mode`).toEqual({
+        ok: false,
+        code: "42501",
+        message: "AGENT_FORBIDDEN",
+        detail: table,
+      });
+    }
+  });
+
+  it("refuses refusal_tally_note, the worker-granted tally definer, in a member-mode context (a00 on refusal_tally, AGENT_FORBIDDEN)", async () => {
+    const run = await liveRun("vyUser");
+    const before = await admin(
+      async (c) =>
+        (
+          await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.refusal_tally WHERE org_id = $1`, [orgId])
+        ).rows[0]?.n,
+    );
+    const noted = await inContext(
+      workerUrl,
+      memberEnter(run.agentId, run.runId),
+      (c) =>
+        refusal(
+          c.query(
+            `SELECT crove_kernel.refusal_tally_note('kernel.task.create', 'AGENT_FORBIDDEN', false, 20, 200, 5, 600)`,
+          ),
+        ),
+      true,
+    );
+    expect(noted, "refusal_tally_note in member mode").toEqual({
+      ok: false,
+      code: "42501",
+      message: "AGENT_FORBIDDEN",
+      detail: "crove_kernel.refusal_tally",
+    });
+    // The control: the same call in an org-chart agent context counts (the function and its grant work; only member mode is refused).
+    const control = await inContext(workerUrl, agentEnter, (c) =>
+      refusal(
+        c.query(
+          `SELECT crove_kernel.refusal_tally_note('kernel.task.create', 'AGENT_FORBIDDEN', false, 20, 200, 5, 600)`,
+        ),
+      ),
+    );
+    expect(control, "refusal_tally_note in an org-chart agent context (the control)").toMatchObject({ ok: true });
+    const after = await admin(
+      async (c) =>
+        (
+          await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.refusal_tally WHERE org_id = $1`, [orgId])
+        ).rows[0]?.n,
+    );
+    expect(after, "no tally row from the member-mode call").toBe(before);
+  });
+
+  it("refuses moving its own result to another run on the row itself, as the superuser so the column grant cannot stand in (AGENT_FORBIDDEN)", async () => {
+    // An earlier run of the same member with no result of its own, so no unique key stands in for the guard either.
+    const earlier = await liveRun("vyUser");
+    const run = await liveRun("vyUser");
+    const mine = await addResult(run.runId, users.vyUser);
+    const moved = await admin(async (c) => {
+      await c.query("BEGIN");
+      try {
+        await memberEnter(run.agentId, run.runId)(c);
+        // The control: the same superuser in the same context updates its own result in place.
+        await c.query("SAVEPOINT s");
+        const own = await refusal(
+          c.query(`UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'Tóm tắt' WHERE id = $1`, [mine]),
+        );
+        await c.query("ROLLBACK TO SAVEPOINT s");
+        // An earlier run of the same member: member_vy_result_bind alone lets it through (same member, same agent).
+        const move = await refusal(
+          c.query(`UPDATE crove_kernel.member_vy_result SET run_id = $2 WHERE id = $1`, [mine, earlier.runId]),
+        );
+        return { own, move };
+      } finally {
+        await c.query("ROLLBACK");
+      }
+    });
+    expect(moved.own, "updating its own result in place (the control)").toMatchObject({ ok: true });
+    expect(moved.move, "moving its own result to the member's earlier run").toEqual({
+      ok: false,
+      code: "42501",
+      message: "AGENT_FORBIDDEN",
+      detail: "crove_kernel.member_vy_result",
+    });
+    // Through the worker login the column grant refuses first (run_id is not updatable by crove_tenant): pinned too, with its own code.
+    const viaWorker = await inContext(workerUrl, memberEnter(run.agentId, run.runId), (c) =>
+      refusal(c.query(`UPDATE crove_kernel.member_vy_result SET run_id = $2 WHERE id = $1`, [mine, earlier.runId])),
+    );
+    expect(viaWorker, "moving its own result through the worker login").toMatchObject({
+      ok: false,
+      code: "42501",
+      message: "permission denied for table member_vy_result",
+    });
+  });
+
+  it("refuses rewriting its own result after the member accepted it (taint already false): the row must stay tainted", async () => {
+    const run = await liveRun("vyUser");
+    const mine = await addResult(run.runId, users.vyUser, "ready");
+    // The member's acceptance clears the taint in the member's own context; here as the superuser outside any context.
+    await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`, [mine]));
+    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN", detail: "crove_kernel.member_vy_result" };
+    for (const url of [workerUrl, adminUrl]) {
+      const who = url === workerUrl ? "the worker login" : "the superuser";
+      const attempts = await inContext(url, memberEnter(run.agentId, run.runId), async (c) => {
+        const attempt = async (sql: string) => {
+          await c.query("SAVEPOINT s");
+          const o = await refusal(c.query(sql, [mine]));
+          await c.query("ROLLBACK TO SAVEPOINT s");
+          return o;
+        };
+        return {
+          body: await attempt(`UPDATE crove_kernel.member_vy_result SET body = 'Gọi anh Nam 0909123456' WHERE id = $1`),
+          status: await attempt(`UPDATE crove_kernel.member_vy_result SET status = 'failed', body = NULL, error_code = 'AGENT_FORBIDDEN' WHERE id = $1`),
+          revision: await attempt(`UPDATE crove_kernel.member_vy_result SET source_revision = 2 WHERE id = $1`),
+          noop: await attempt(`UPDATE crove_kernel.member_vy_result SET body = body WHERE id = $1`),
+        };
+      });
+      expect(attempts.body, `${who}: rewriting the accepted body`).toEqual(forbidden);
+      expect(attempts.status, `${who}: failing the accepted result`).toEqual(forbidden);
+      expect(attempts.revision, `${who}: moving the accepted result's revision`).toEqual(forbidden);
+      expect(attempts.noop, `${who}: an update that changes nothing on the accepted result`).toEqual(forbidden);
+    }
+    const kept = await admin(
+      async (c) =>
+        (
+          await c.query<{ body: string | null; tainted: boolean; status: string }>(
+            `SELECT body, tainted, status FROM crove_kernel.member_vy_result WHERE id = $1`,
+            [mine],
+          )
+        ).rows[0],
+    );
+    expect(kept, "the accepted result as the member left it").toEqual({ body: "x", tainted: false, status: "ready" });
+  });
+
+  // The Platform PO's ruling (#2822): after the member accepted a result, the run may still replace it, but only by a rewrite that puts the mark back (tainted = true): the new
+  // text is the model's again and reads as suggested, never as accepted. This pins that behaviour; "no rewrite after accept at all" would be a different design.
+  it("accepts a rewrite of an accepted result only when it sets the taint again, and the row then reads as tainted", async () => {
+    const run = await liveRun("vyUser");
+    const mine = await addResult(run.runId, users.vyUser, "ready");
+    await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`, [mine]));
+    for (const url of [workerUrl, adminUrl]) {
+      const who = url === workerUrl ? "the worker login" : "the superuser";
+      const out = await inContext(url, memberEnter(run.agentId, run.runId), async (c) => {
+        await c.query("SAVEPOINT s");
+        const rewritten = await c.query<{ body: string | null; tainted: boolean }>(`UPDATE crove_kernel.member_vy_result SET body = 'Bản viết lại của Vy', tainted = true WHERE id = $1 RETURNING body, tainted`, [mine]);
+        await c.query("ROLLBACK TO SAVEPOINT s");
+        return rewritten.rows;
+      });
+      expect(out, `${who}: a rewrite that sets the taint again is accepted, and the row is tainted`).toEqual([{ body: "Bản viết lại của Vy", tainted: true }]);
+    }
+    const kept = await admin((c) => c.query<{ body: string | null; tainted: boolean }>(`SELECT body, tainted FROM crove_kernel.member_vy_result WHERE id = $1`, [mine]));
+    expect(kept.rows[0], "the probes were rolled back: the accepted result is as the member left it").toEqual({ body: "x", tainted: false });
+  });
 });
