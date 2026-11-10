@@ -288,4 +288,21 @@ suite('member invite flows on PostgreSQL', () => {
     expect((await rpc('invites/accept', await tokenFor(invitee), { token }, null)).status).toBe(200);
     expect(await rpc('invites/peek', await tokenFor(invitee), { token }, null)).toMatchObject({ status: 409, body: { code: 'INVITE_USED' } });
   });
+
+  // #2822: two accepts of one link at the same moment (a double click, two tabs): the invite is taken once, the membership is made once, one accept is recorded.
+  it('takes an invite once when two accepts race', async () => {
+    const owner = await signIn('owner');
+    const invitee = await signIn('invitee');
+    const org = await orgOf(owner);
+    const created = await rpc('org/invite', await tokenFor(owner, { mfa: true }), { email: invitee.email, role: 'member' }, org.slug);
+    const token = tokenOf(created.body?.acceptPath);
+    const bearer = await tokenFor(invitee);
+    const before = (await rows(org.orgId, 'audit_event', "command = 'kernel.member.invite.accept'")).length;
+    const answers = await Promise.all([rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null), rpc('invites/accept', bearer, { token }, null)]);
+    expect(answers.filter((a) => a.status === 200), 'exactly one accept wins').toHaveLength(1);
+    for (const lost of answers.filter((a) => a.status !== 200)) expect(lost).toMatchObject({ status: 409, body: { code: 'INVITE_USED' } });
+    const members = await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [org.orgId, invitee.userId])).rows);
+    expect(members, 'one membership').toHaveLength(1);
+    expect((await rows(org.orgId, 'audit_event', "command = 'kernel.member.invite.accept'")).length - before, 'one accept recorded').toBe(1);
+  });
 });

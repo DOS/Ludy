@@ -28,6 +28,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
   let apiRuntime: Runtime;
   let workerRuntime: Runtime;
   let workerDb: ReturnType<typeof createDb>;
+  let appDbOf: ReturnType<typeof createDb>;
   const users = { owner: '', member: '', gone: '', recent: '', old: '' };
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
@@ -55,19 +56,19 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table} WHERE org_id = $1${user ? ' AND member_user_id = $2' : ''}`, user ? [orgId, user] : [orgId])).rows[0]?.n));
 
   // A member's Vy agent, a run, a result (live or expired) and a memory entry, seeded as the superuser with the binding set aside.
-  async function seed(userId: string, expired: boolean) {
+  async function seed(userId: string, expired: boolean, org: string = orgId) {
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       const agentId = randomUUID();
       const runId = randomUUID();
-      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, userId]);
-      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
+      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [org, agentId, userId]);
+      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [org, runId, agentId]);
       await c.query(
         `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
          VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : "now(), now() + interval '30 days'"})`,
-        [orgId, randomUUID(), userId, runId, randomUUID()],
+        [org, randomUUID(), userId, runId, randomUUID()],
       );
-      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`, [orgId, randomUUID(), userId]);
+      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`, [org, randomUUID(), userId]);
     });
   }
 
@@ -94,6 +95,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     pools.push(appPool, workerPool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] };
     const appDb = createDb(appPool);
+    appDbOf = appDb;
     workerDb = createDb(workerPool);
     apiRuntime = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registered);
     workerRuntime = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registered);
@@ -207,8 +209,59 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
   });
 
   it('refuses the sweep commands to a user and to an input with extra keys', async () => {
-    await expect(apiRuntime.execute('kernel.vy_data.results.expire', {}, { actor: asMfa(users.owner), orgId })).rejects.toBeDefined();
-    await expect(apiRuntime.execute('kernel.vy_data.member_data.purge', { userId: users.old }, { actor: asMfa(users.owner), orgId })).rejects.toBeDefined();
-    await expect(workerRuntime.execute('kernel.vy_data.results.expire', { orgId }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId })).rejects.toBeDefined();
+    await expect(apiRuntime.execute('kernel.vy_data.results.expire', {}, { actor: asMfa(users.owner), orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(apiRuntime.execute('kernel.vy_data.member_data.purge', { userId: users.old }, { actor: asMfa(users.owner), orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(workerRuntime.execute('kernel.vy_data.results.expire', { orgId }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId })).rejects.toMatchObject({ code: 'VALIDATION' });
+  });
+
+  // Two more orgs with an expired result each, for the lists below: one closed (no context can be entered), one active.
+  async function dueOrg(status: 'active' | 'closed'): Promise<string> {
+    const owner = await upsertIdentity(appDbOf, { issuer: 'member-vy-sweeps', subject: `owner-${randomUUID()}`, email: `${randomUUID()}@member-vy-sweeps.test`, name: null });
+    const org = (await createOrg(apiRuntime, { type: 'user', userId: owner, aal: 'aal1' }, 'Vy dọn thêm')).orgId;
+    await seed(owner, true, org);
+    // A user who is no member of the org holds Vy data there (a former member with no removal in the audit trail).
+    await seed(users.gone, false, org);
+    if (status === 'closed') {
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [org]);
+        await c.query('COMMIT');
+      });
+    }
+    return org;
+  }
+
+  it('leaves a closed org out of both lists, and lists an org that is offboarding (#2822 PR 4)', async () => {
+    const closed = await dueOrg('closed');
+    const open = await dueOrg('active');
+    const dueOrgs = async () => (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
+    const formerOrgs = async () => (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_former_members_due(1000)')).rows.map((r) => r.org_id);
+    expect(await dueOrgs(), 'a closed org is not due').not.toContain(closed);
+    expect(await formerOrgs(), 'a closed org\'s former members are not listed').not.toContain(closed);
+    expect(await dueOrgs(), 'an active org is due').toContain(open);
+    expect(await formerOrgs(), 'and its former members are listed').toContain(open);
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [closed]);
+      await c.query('COMMIT');
+    });
+    expect(await dueOrgs(), 'an offboarding org is listed again').toContain(closed);
+    expect(await formerOrgs(), 'with its former members').toContain(closed);
+  });
+
+  it('pages the due orgs by keyset: a second page reads the orgs after the last id of the first', async () => {
+    await dueOrg('active');
+    await dueOrg('active');
+    const all = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(1000)')).rows.map((r) => r.org_id);
+    expect(all.length, 'at least three orgs are due').toBeGreaterThanOrEqual(3);
+    expect(all, 'in org id order').toEqual([...all].sort());
+    const first = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(2)')).rows.map((r) => r.org_id);
+    expect(first).toEqual(all.slice(0, 2));
+    const second = (await asWorker<{ org_id: string }>('SELECT * FROM crove_kernel.member_vy_results_due(2, $1::uuid)', [first[1]])).rows.map((r) => r.org_id);
+    expect(second).toEqual(all.slice(2, 4));
+    const last = all[all.length - 1] as string;
+    expect((await asWorker('SELECT * FROM crove_kernel.member_vy_results_due(2, $1::uuid)', [last])).rows, 'nothing is due after the last id').toEqual([]);
   });
 });
