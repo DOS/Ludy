@@ -26,6 +26,7 @@ export const KERNEL_ERROR_CODES = [
   'EXTENSION_CODE_INVALID',
   'EXTENSION_TOKEN_INVALID',
   'EXTENSION_TOKEN_NOT_FOUND',
+  'MCP_GRANT_NOT_FOUND',
   'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',

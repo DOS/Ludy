@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -55,10 +56,10 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   });
 
   it('refuses at register() a command that declares `mcp`, and a query that is sensitive or open to member mode with it', () => {
-    const base = { name: 'kernel.test.x', input: (kernelCommands[0] as { input: never }).input, risk: 'R1', sideEffect: 'internal', access: ['owner'] };
+    const base = { name: 'kernel.test.x', input: z.strictObject({}), risk: 'R1', sideEffect: 'internal', access: ['owner'] };
     const rt = new Runtime({} as never, { manifests: TEST_MANIFESTS });
     expect(() => rt.register({ commands: [{ ...base, mcp: { scope: 'ludy.read' }, handler: async () => ({}) } as never], queries: [] })).toThrow();
-    const q = { name: 'kernel.test.q', input: (kernelCommands[0] as { input: never }).input, access: ['owner'], mcp: { scope: 'ludy.read' }, handler: async () => ({}) };
+    const q = { name: 'kernel.test.q', input: z.strictObject({}), access: ['owner'], mcp: { scope: 'ludy.read' }, handler: async () => ({}) };
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, sensitive: true } as never] })).toThrow(/MCP grant/);
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, memberVy: { reads: [] }, name: 'kernel.member_vy.q' } as never] })).toThrow(/MCP grant/);
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, mcp: { scope: 'ludy.write' } } as never] })).toThrow(/scope/);

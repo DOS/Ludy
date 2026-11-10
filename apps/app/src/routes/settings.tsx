@@ -4,6 +4,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { OrgExtensionDevices } from '../components/org-extension-devices.tsx';
+import { OrgMcpGrants } from '../components/org-mcp-grants.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -1253,6 +1254,10 @@ export function SettingsPage() {
         {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
         {getConfig().modules.includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
           <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />
+        )}
+        {/* The AI apps connected over MCP (#2975), when the deployment runs the endpoint; owners and admins. */}
+        {getConfig().mcpEnabled === true && canManage && org.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
+          <OrgMcpGrants key={`org-mcp-grants:${org.data.slug}`} members={org.data.members} />
         )}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}
       </div>

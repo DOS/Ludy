@@ -638,6 +638,8 @@ export function createHttpApp(deps: HttpDeps) {
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
       aiEnabled: deps.aiEnabled,
+      // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
+      mcpEnabled: deps.oauth !== undefined,
       // presigned: the app uploads to a staging key and downloads from the bucket (plan §7.6); direct: through the kernel.
       uploads: store.direct ? 'presigned' : 'direct',
       // The store can sign a short-lived URL for a platform that fetches media (Zalo OA, Instagram, Threads), also when
