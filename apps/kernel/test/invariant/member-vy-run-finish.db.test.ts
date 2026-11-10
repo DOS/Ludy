@@ -353,15 +353,16 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     const waiting = await runWith("running");
     expect((await finish(waiting, null, "TRANSCRIBE_FAILED")).ok, "derived failed over a running result").toBe(true);
     expect(await runRow(waiting)).toMatchObject({ status: "failed", error: "TRANSCRIBE_FAILED" });
-    // Refused: derived succeeded with a code, derived failed with none, and a code shaped like one but not on the list.
+    // Refused: derived succeeded with a code, derived failed with none, and a code shaped like one but not on the list. Each run is checked right after its
+    // refusals: making the next run cancels the agent's other running runs (runWith), so a run is never checked after another is made.
     const shown = await runWith("ready");
     expect(await finish(shown, null, "AI_STOPPED"), "a ready result with a code").toMatchObject({ ok: false, code: "22023" });
+    expect(await runRow(shown)).toMatchObject({ status: "running" });
     const open = await runWith("running");
     expect(await finish(open, null, null), "failed with no code").toMatchObject({ ok: false, code: "22023" });
     expect(await finish(open, "failed", "SOMETHING_ELSE_ENTIRELY"), "a well-formed code that is not listed").toMatchObject({ ok: false, code: "22023" });
     expect(await finish(open, null, "SOMETHING_ELSE_ENTIRELY"), "a derived status with a code that is not listed").toMatchObject({ ok: false, code: "22023" });
     expect(await runRow(open)).toMatchObject({ status: "running" });
-    expect(await runRow(shown)).toMatchObject({ status: "running" });
   });
 
   it("refuses a status that disagrees with the result, a code with text, and answers false for a run that is no longer running", async () => {
