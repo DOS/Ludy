@@ -1695,6 +1695,10 @@ export class Runtime {
           throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so Vy in member mode may not run it (P04: it asks for a proposal instead)`);
         }
       }
+      // An MCP grant runs no command (ADR-0051 decision 2): a definition that declares `mcp` is a mistake, whatever the type says.
+      if ((c as { mcp?: unknown }).mcp !== undefined) {
+        throw new Error(`command ${c.name}: an MCP grant runs no command, so a command cannot declare mcp (ADR-0051 decision 2)`);
+      }
       if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
         throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
       }
