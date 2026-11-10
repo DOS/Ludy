@@ -404,7 +404,7 @@ export const memberVyMeterRecord = defineCommand({
 });
 
 // The fixed words a background run of a member's Vy may close under (ai_run.error): the codes its callers emit and nothing else (#2822 part 3b). The database
-// holds the same list (crove_kernel.member_vy_run_error_code_ok, migration 20261213010000) and refuses any other; a unit test ties the two together. A caller maps a
+// holds the same list (crove_kernel.member_vy_run_error_code_ok, migration 20261214010000) and refuses any other; a unit test ties the two together. A caller maps a
 // failure it has no word for to TRANSCRIBE_FAILED (failureCode in apps/kernel/src/meetings-transcribe.ts), never invents one.
 export const MEMBER_VY_RUN_ERROR_CODES = [
   'AGENT_RUN_NOT_LIVE',
