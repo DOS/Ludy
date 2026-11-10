@@ -56,7 +56,8 @@ const COMMANDS = [
   // The audit row of a member-mode command names a command from a short list (#2822 part 3a), so the two commands that succeed here carry the names of the
   // two real member-mode commands; this one audits ids too, which the audit test below reads.
   cmd("kernel.member_vy.result.store", { memberVy }, async (ctx) => {
-    ctx.audit({ resultId: randomUUID(), status: "ready", bodyLength: 3 });
+    // No id of a result: this run has none, and the write guard accepts the id of the run's own result only (#2822).
+    ctx.audit({ status: "ready", bodyLength: 3 });
     return {
       actor: ctx.actor,
       member: ctx.memberVy,
