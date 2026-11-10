@@ -8,7 +8,7 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 - **Fit:** it serves a task a small business does at least monthly. Enterprise models (several entities, SSO, agency consoles and the like) go to the Icebox. When fit is unclear, the owner decides.
 - **Smallest slice:** one person can use it with the defaults and no setup.
 - **AI part named:** the acceptance says what the AI coworker does in that screen. Model calls go through the AI budget meter, the core works with AI off, and a person approves money, messages and spend.
-- **AI is a coworker, never an "assistant":** Vy leads across the apps, and each app has its own coworker (DESIGN.md 1.1).
+- **AI is a coworker; Vy is also an assistant:** Vy leads across the apps and is both a coworker and an assistant (trợ lý); each app has its own coworker, never called an assistant (DESIGN.md 1.1, owner 2026-11-10).
 
 ## Rules
 
