@@ -80,7 +80,6 @@ export function MeetingDetailPage() {
       setVideoError(null);
       apiFetch(`/api/meetings/${meeting.id}/video`)
         .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.blob();
         })
         .then((blob) => {
@@ -102,7 +101,6 @@ export function MeetingDetailPage() {
       setAudioError(null);
       apiFetch(`/api/meetings/${meeting.id}/audio`)
         .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.blob();
         })
         .then((blob) => {

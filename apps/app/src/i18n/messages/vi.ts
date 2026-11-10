@@ -8843,7 +8843,7 @@ export const vi = {
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
       INVALID_MEDIA_CONTAINER: 'Tệp này không phải định dạng âm thanh hoặc video được hỗ trợ.',
       VIDEO_NOT_ENABLED: 'Cuộc họp này không được đặt để giữ video.',
-      MEDIA_KEY_SHREDDED: 'Bản ghi âm và video của cuộc họp này đã hết thời hạn lưu và đã bị xóa.',
+      MEDIA_KEY_SHREDDED: 'Bản ghi của cuộc họp này đã hết thời hạn lưu và đã bị xóa.',
       MEDIA_KEY_UNAVAILABLE: 'Hệ thống chưa mở được bản ghi của cuộc họp này. Hãy báo người quản trị hệ thống.',
       AUDIO_NOT_FOUND: 'Cuộc họp này chưa có bản ghi âm.',
       INVALID_PURPOSE: 'Tệp này không thể tải lên cho mục đích đã chọn.',
