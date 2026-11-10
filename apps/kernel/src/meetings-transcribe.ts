@@ -25,6 +25,7 @@ import {
   type Runtime,
   type SystemActor,
 } from '@crove/kernel-runtime';
+import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@crove/kernel';
 import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
 
 export interface MeetingsTranscribeJob {
@@ -48,7 +49,6 @@ const SYSTEM: SystemActor = { type: 'system', component: 'meetings.transcribe' }
 const SEGMENT_CIPHERTEXT_MAX = 64 * 1024 * 1024;
 // About what a 100000 character result row holds (an hour and a half of speech); longer meetings are refused before any call.
 export const TRANSCRIPT_MAX_SECONDS = 90 * 60;
-const CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 interface RunAudio {
   language: string;
@@ -88,16 +88,18 @@ class RunMeter implements AiMeter {
   }
 }
 
-// The fixed code a failure is stored under: a word, never the error's text.
-export function failureCode(error: unknown): string {
-  if (error instanceof AiBudgetExhaustedError) return 'AI_BUDGET_EXHAUSTED';
-  if (error instanceof TranscriptionError) return `TRANSCRIBE_${error.kind.toUpperCase()}`;
-  if (error instanceof DomainError) {
-    if (error.code === 'KILL_SWITCH_ON') return 'AI_STOPPED';
-    if (error.code === 'BUDGET_EXHAUSTED') return 'AI_BUDGET_EXHAUSTED';
-    if (CODE.test(error.code)) return error.code;
+// The fixed code a failure is stored under: a word from the kernel's list (MEMBER_VY_RUN_ERROR_CODES, the same one the database checks), never the error's text. A failure
+// with no word of its own on the list is TRANSCRIBE_FAILED, so a run is always closed and never left running by a code the database would refuse.
+export function failureCode(error: unknown): MemberVyRunErrorCode {
+  let code: string = 'TRANSCRIBE_FAILED';
+  if (error instanceof AiBudgetExhaustedError) code = 'AI_BUDGET_EXHAUSTED';
+  else if (error instanceof TranscriptionError) code = `TRANSCRIBE_${error.kind.toUpperCase()}`;
+  else if (error instanceof DomainError) {
+    if (error.code === 'KILL_SWITCH_ON') code = 'AI_STOPPED';
+    else if (error.code === 'BUDGET_EXHAUSTED') code = 'AI_BUDGET_EXHAUSTED';
+    else code = error.code;
   }
-  return 'TRANSCRIBE_FAILED';
+  return (MEMBER_VY_RUN_ERROR_CODES as readonly string[]).includes(code) ? (code as MemberVyRunErrorCode) : 'TRANSCRIBE_FAILED';
 }
 
 // One chunk of the recording, fetched and decrypted. The audio door is opened again for every chunk: it re-checks the whole gate (the meeting still exists, its key is
@@ -160,7 +162,7 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     // Best effort: when the context itself is refused (the member left, a switch is on) there is nothing to write and the finish below fails the result.
     await vy.execute('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'failed', errorCode: code } }).catch(() => undefined);
   }
-  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, status: code === null ? 'succeeded' : 'failed', errorCode: code }, { actor: SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
+  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, errorCode: code }, { actor: SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
     console.error(`[meetings-transcribe] org ${job.orgId.slice(0, 8)} could not close run ${job.runId.slice(0, 8)}`, error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
   });
   console.log(`[meetings-transcribe] org ${job.orgId.slice(0, 8)} run ${job.runId.slice(0, 8)} ${code === null ? 'succeeded' : `failed ${code}`}`);
