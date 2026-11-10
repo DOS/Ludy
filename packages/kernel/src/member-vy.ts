@@ -315,6 +315,61 @@ export const memberVyResultGet = defineQuery({
   },
 });
 
+// Whether the caller has a run of this feature going (and, with a subject, for that subject): a feature that must not cut off a paid run asks this instead of
+// reading the private result rows itself (#2941). The caller's own rows only (the user's own member id is the filter and the rows are sealed to it); no text, no
+// id, no subject comes back.
+export const memberVyRunLive = defineQuery({
+  name: 'kernel.member_vy.run.live',
+  input: z.object({ feature: z.enum(FEATURE_KEYS), subjectId: zId.optional() }),
+  access: MEMBER_ROLES,
+  handler: async (ctx: QueryContext, input): Promise<{ live: boolean }> => {
+    const userId = requireUser(ctx);
+    let query = ctx.trx
+      .selectFrom('crove_kernel.member_vy_result as v')
+      .innerJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .select('v.id')
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.member_user_id', '=', userId)
+      .where('v.feature', '=', input.feature)
+      .where('v.status', '=', 'running')
+      .where('r.status', '=', 'running')
+      .where('r.expires_at', '>', new Date());
+    if (input.subjectId !== undefined) query = query.where('v.subject_id', '=', input.subjectId);
+    return { live: (await query.executeTakeFirst()) !== undefined };
+  },
+});
+
+// The state of the caller's latest run of a feature for one subject, for a screen (#2941): the run id, its state, the fixed error word and when it expires, and
+// nothing else (never a body, never a subject). A run that was left running when its run ended or expired shows as failed with RUN_ENDED, never as running for ever.
+export const memberVyRunLatest = defineQuery({
+  name: 'kernel.member_vy.run.latest',
+  input: z.object({ feature: z.enum(FEATURE_KEYS), subjectType: z.string().min(1).max(40), subjectId: zId }),
+  access: MEMBER_ROLES,
+  handler: async (ctx: QueryContext, input): Promise<{ runId: string; state: 'running' | 'ready' | 'failed'; errorCode: string | null; expiresAt: string } | null> => {
+    const userId = requireUser(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.member_vy_result as v')
+      .leftJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .select(['v.run_id', 'v.status', 'v.error_code', 'v.expires_at', 'r.status as run_status', 'r.expires_at as run_expires_at'])
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.member_user_id', '=', userId)
+      .where('v.feature', '=', input.feature)
+      .where('v.subject_type', '=', input.subjectType)
+      .where('v.subject_id', '=', input.subjectId)
+      .orderBy('v.created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    if (!row || !['running', 'ready', 'failed'].includes(row.status)) return null;
+    const dead = row.status === 'running' && (row.run_status !== 'running' || (row.run_expires_at !== null && row.run_expires_at <= new Date()));
+    return {
+      runId: row.run_id,
+      state: dead ? 'failed' : (row.status as 'running' | 'ready' | 'failed'),
+      errorCode: dead ? 'RUN_ENDED' : row.error_code,
+      expiresAt: row.expires_at.toISOString(),
+    };
+  },
+});
+
 export const memberVyMemoryList = defineQuery({
   name: 'kernel.member_vy.memory.list',
   input: z.object({}),
@@ -576,4 +631,4 @@ export const memberVyMemberDataPurge = defineCommand({
 });
 
 export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
-export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck];
+export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

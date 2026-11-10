@@ -199,6 +199,10 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect((await drafts()).rows[0]?.n).toBe('0');
     const copied = await app.execute<{ stored: number }>('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('recorder'), orgId });
     expect(copied.stored).toBe(4);
+    // The copied rows are the model's text: born tainted, and each names the run it came from (#2941); nothing but the recorder's review clears either.
+    const born = await admin((c) => c.query<{ tainted: boolean; source_run_id: string | null }>(`SELECT tainted, source_run_id FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    expect(born.rows).toHaveLength(4);
+    expect(born.rows.every((r) => r.tainted && r.source_run_id === runId)).toBe(true);
     const transcript = await app.query<{ stage: string; segments: Array<{ text: string; startSeconds: number }> }>('meetings.transcript.get', { meetingId }, { actor: asUser('recorder'), orgId });
     expect(transcript.stage).toBe('draft');
     expect(transcript.segments.map((s) => s.startSeconds)).toEqual([0, 5, 600, 605]);

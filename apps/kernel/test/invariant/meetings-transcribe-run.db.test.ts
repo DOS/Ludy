@@ -341,5 +341,9 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect((await drafts()).rows[0]?.n).toBe('0');
     await app.execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }, { actor: asUser('recorder'), orgId });
     expect((await drafts()).rows[0]?.n).toBe('1');
+    // The copy is a sink (#2941): what it wrote is the model's text, born tainted, and names the run it came from.
+    const born = await sqlAdmin(`SELECT tainted, source_run_id FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+    expect(born.rows.length).toBeGreaterThan(0);
+    expect(born.rows.every((r: { tainted: boolean; source_run_id: string | null }) => r.tainted && r.source_run_id === fresh.runId)).toBe(true);
   });
 });

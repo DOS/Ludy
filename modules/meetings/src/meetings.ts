@@ -4,9 +4,11 @@ import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
-import { transcribeCommandList, transcribeQueryList } from './transcribe.ts';
+import { transcribeCommandList } from './transcribe.ts';
+import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { resultCommands, resultQueries } from './results.ts';
-import { summaryCommands, summaryQueries } from './summary.ts';
+import { summaryCommands } from './summary.ts';
+import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -879,9 +881,11 @@ export const meetingsCommands = [
   meetingMediaDiscard,
   transcriptDraftStore,
   transcriptCorrect,
+  ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
   ...summaryCommands,
+  ...summaryRunCommands,
 ];
 
 export const meetingsQueries = [
@@ -894,7 +898,7 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingMediaOrphanKeys,
   transcriptGet,
-  ...transcribeQueryList,
+  ...transcribeRunQueries,
   ...resultQueries,
-  ...summaryQueries,
+  ...summaryRunQueries,
 ];

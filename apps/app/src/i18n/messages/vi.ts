@@ -10266,6 +10266,8 @@ export const vi = {
         run: {
           check: 'Kiểm tra lượt Vy làm việc cho bạn có được tiếp tục không',
           finish: 'Đóng một lượt Vy làm việc cho bạn',
+          latest: 'Xem lần chạy gần nhất của Vy của tôi cho mục này',
+          live: 'Xem Vy của tôi có đang chạy cho mục này không',
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
       },

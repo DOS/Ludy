@@ -10269,6 +10269,8 @@ export const en = {
         run: {
           check: 'Check that a run of Vy working for you may go on',
           finish: 'Close a run of Vy working for you',
+          latest: "See my Vy's latest run for this item",
+          live: 'Check whether my Vy is running for this item',
           start: 'Start a run of Vy working for you',
         },
       },

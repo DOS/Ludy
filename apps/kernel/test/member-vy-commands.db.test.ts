@@ -231,4 +231,33 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await exec(users.owner, 'kernel.member_vy.memory.delete', { id: saved.id }), 'another member deleting it').toEqual({ deleted: false });
     expect(await exec(users.alice, 'kernel.member_vy.memory.delete', { id: saved.id })).toEqual({ deleted: true });
   });
+
+  // #2941: a feature that must not cut off a paid run, or that shows a run's state, asks the kernel instead of reading the private result rows. Both read the caller's own rows.
+  it('answers whether the caller has a live run, from their own rows only', async () => {
+    const subjectId = randomUUID();
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'nothing yet').toEqual({ live: false });
+    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' })).toEqual({ live: true });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId })).toEqual({ live: true });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId: randomUUID() }), 'another subject').toEqual({ live: false });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.summary' }), 'another feature').toEqual({ live: false });
+    expect(await query(users.owner, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId }), 'another member\'s run is invisible').toEqual({ live: false });
+    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'a run that ended').toEqual({ live: false });
+  });
+
+  it('answers the state of the caller\'s latest run for a subject, and nothing else of it', async () => {
+    const subjectId = randomUUID();
+    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'no run').toBeNull();
+    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    const latest = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(Object.keys(latest ?? {}).sort(), 'only the run id, the state, the error word and the expiry').toEqual(['errorCode', 'expiresAt', 'runId', 'state']);
+    expect(latest).toMatchObject({ runId: run.runId, state: 'running', errorCode: null });
+    expect(await query(users.owner, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'another member sees nothing of it').toBeNull();
+    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }), 'another subject').toBeNull();
+    // A run that ended while its result stayed running shows as failed with the fixed word RUN_ENDED, never as running for ever.
+    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    const ended = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(ended).toMatchObject({ runId: run.runId, state: 'failed', errorCode: 'RUN_ENDED' });
+  });
 });
