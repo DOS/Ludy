@@ -1585,6 +1585,24 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // ADR-0029 Phase 1 (#79): agents in the org chart. An agent row needs a template; every factory that needs an agent
   // adds a fresh one, since an agent runs once at a time and has at most one pending wake-up.
   'crove_kernel.agent': { make: (o) => ({ row: agentRow(o) }) },
+  // #2975: the grant an owner or admin gave an MCP client (ADR-0051). Definer-only, in MACHINERY.
+  'crove_kernel.agent_grant': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        client_id: `client-${randomUUID()}`,
+        client_name: 'Example MCP client',
+        client_host: 'client.example.com',
+        scopes: '{ludy.read}',
+        max_risk: 'R0',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-12-30T00:00:00Z',
+        created_by: o.owner,
+      },
+    }),
+  },
   'crove_kernel.agent_wakeup': {
     make: (o) => {
       const agent = agentRow(o);
@@ -1839,24 +1857,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         device_name: 'Chrome on macOS',
         created_at: '2026-10-01T00:00:00Z',
         expires_at: '2026-10-01T00:05:00Z',
-      },
-    }),
-  },
-  // #2975: the grant an owner or admin gave an MCP client (ADR-0051). Definer-only, in MACHINERY.
-  'crove_kernel.agent_grant': {
-    make: (o) => ({
-      row: {
-        org_id: o.id,
-        id: randomUUID(),
-        user_id: o.owner,
-        client_id: `client-${randomUUID()}`,
-        client_name: 'Example MCP client',
-        client_host: 'client.example.com',
-        scopes: '{ludy.read}',
-        max_risk: 'R0',
-        created_at: '2026-10-01T00:00:00Z',
-        expires_at: '2026-12-30T00:00:00Z',
-        created_by: o.owner,
       },
     }),
   },
