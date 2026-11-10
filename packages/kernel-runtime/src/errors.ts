@@ -139,6 +139,10 @@ export function toDomainError(error: unknown): DomainError {
       if (pg.message === 'EXTENSION_TOKEN_INVALID') {
         return new DomainError('EXTENSION_TOKEN_INVALID', 401, 'Mã của tiện ích Ludy không còn hiệu lực, hãy đăng nhập lại tiện ích');
       }
+      // crove_kernel.mcp_grant_check (issue #2975): the MCP grant is revoked, expired, stopped, or its consenting user is no longer an owner or admin.
+      if (pg.message === 'MCP_GRANT_INVALID') {
+        return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực');
+      }
       return new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập đã hết hiệu lực, hãy đăng nhập lại');
     case '55000':
       if (pg.message?.includes('AUTH_GRANTS_MISSING')) {
