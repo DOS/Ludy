@@ -28,6 +28,7 @@ const KERNEL_FILES: Record<string, string[]> = {
   'packages/kernel/src/personal-data.ts': ['kernel.personal_data.'],
   'packages/kernel/src/manifest.ts': [],
   'packages/db/src/schema.ts': [],
+  'packages/db/src/generated/database.ts': [],
   'apps/kernel/src/member-vy-ports.ts': [],
   'apps/kernel/src/member-vy-worker.ts': [],
 };
@@ -39,9 +40,38 @@ const IMPORTERS: Record<string, string[]> = {
   'apps/kernel/src/member-vy-worker.ts': ['apps/kernel/src/worker.ts'],
   'modules/meetings/src/summary.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'modules/meetings/src/transcribe.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
+  'packages/db/src/schema.ts': ['packages/db/src/cells.ts', 'packages/db/src/index.ts'],
+  'packages/db/src/generated/database.ts': ['packages/db/src/schema.ts'],
+  'packages/kernel/src/manifest.ts': [
+    'packages/kernel/src/agents.ts',
+    'packages/kernel/src/inbox-items.ts',
+    'packages/kernel/src/index.ts',
+    'packages/kernel/src/legal-entities.ts',
+    'packages/kernel/src/member-vy.ts',
+    'packages/kernel/src/org-address.ts',
+    'packages/kernel/src/parties.ts',
+    'packages/kernel/src/subject-key-reseal.ts',
+    'packages/kernel/src/tax-code.ts',
+  ],
+  'packages/kernel/src/member-vy.ts': ['packages/kernel/src/agents.ts', 'packages/kernel/src/commands.ts', 'packages/kernel/src/index.ts', 'packages/kernel/src/queries.ts', 'packages/kernel/src/roles.ts'],
+  'packages/kernel/src/personal-data.ts': ['packages/kernel/src/commands.ts', 'packages/kernel/src/index.ts', 'packages/kernel/src/notifications.ts'],
 };
 
-const PRIVATE_ROWS = /member_vy_result|member_vy_memory|kernel\.member_vy\.result\.get|kernel\.member_vy\.memory\.list|member_vy_['"`]\s*\+/;
+// The package entries (barrels) that re-export a reader file, with the files that import them: frozen like the others.
+// Only the meetings entry is listed: the @crove/kernel and @crove/db entries are imported by nearly every file, and what they export of the Vy files is the kernel's own
+// namespaces (member_vy.*, vy_data.*, personal_data.*), which the importers lists above and the namespace check already pin.
+const BARREL_IMPORTERS: Record<string, string[]> = {
+  'modules/meetings/src/index.ts': ['apps/kernel/src/kernel.ts', 'apps/kernel/src/media-seal.ts', 'apps/kernel/src/meetings-transcribe.ts'],
+};
+
+const PRIVATE_ROWS =
+  /member_vy_result|member_vy_memory|\bvy_(?:result|memory)|kernel\.member_vy\.result\.get|kernel\.member_vy\.memory\.list|member_vy_(?:['"`]\s*[+,)]|\$\{)|kernel\.member_vy\.[\w.]*\$\{/;
+// A name split over string literals ('member' + '_vy_result') is joined before the match; one split over a computed value is caught by the fragments above.
+const joinLiterals = (text: string): string => text.replace(/(['"`])\s*\+\s*(['"`])/g, '');
+const namesPrivateRow = (text: string): boolean => {
+  const s = scrub(text, true);
+  return PRIVATE_ROWS.test(s) || PRIVATE_ROWS.test(joinLiterals(s));
+};
 
 // Blanks comments and, unless keepStrings, the inside of strings, template text and regular expressions, keeping every character's position and the line breaks.
 export function scrub(text: string, keepStrings: boolean): string {
@@ -170,12 +200,15 @@ export function sinkProblems(block: string): string[] {
   return problems;
 }
 
-function sources(dir: string): string[] {
+// Everything inside a src folder is scanned, tests and generated code included (a folder named test or generated inside src hides nothing). Only a package's own
+// test and build folders beside src, and installed or built output, are skipped.
+function sources(dir: string, inSrc = false): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
-    if (name === 'node_modules' || name === 'test' || name === 'dist' || name === '.next' || name === 'generated') continue;
+    if (name === 'node_modules' || name === 'dist' || name === '.next') continue;
+    if (!inSrc && (name === 'test' || name === 'tests')) continue;
     const path = join(dir, name);
-    if (statSync(path).isDirectory()) out.push(...sources(path));
+    if (statSync(path).isDirectory()) out.push(...sources(path, inSrc || name === 'src'));
     else if (/\.(ts|tsx|mts)$/.test(name)) out.push(path);
   }
   return out;
@@ -183,7 +216,36 @@ function sources(dir: string): string[] {
 
 const rel = (path: string) => relative(ROOT, path).replace(/\\/g, '/');
 const files = SCANNED.flatMap((dir) => sources(join(ROOT, dir))).map((path) => ({ path: rel(path), abs: path, text: readFileSync(path, 'utf8') }));
-const readers = files.filter((f) => PRIVATE_ROWS.test(scrub(f.text, true)));
+// Workspace packages by name, so an import of '@crove/mod-meetings' or '@crove/kernel/x' resolves to the file it enters (a barrel's importers are not missed).
+const packageEntries: Record<string, string> = {};
+const packageNames: Record<string, string[]> = {};
+for (const group of ['apps', 'modules', 'packages']) {
+  if (!existsSync(join(ROOT, group))) continue;
+  for (const dir of readdirSync(join(ROOT, group))) {
+    const pj = join(ROOT, group, dir, 'package.json');
+    if (!existsSync(pj)) continue;
+    const pkg = JSON.parse(readFileSync(pj, 'utf8')) as { name?: string; exports?: Record<string, unknown> | string };
+    if (!pkg.name) continue;
+    const exp = typeof pkg.exports === 'string' ? { '.': pkg.exports } : (pkg.exports ?? {});
+    for (const [sub, target] of Object.entries(exp)) {
+      if (typeof target !== 'string') continue;
+      const file = rel(resolve(join(ROOT, group, dir), target));
+      packageEntries[sub === '.' ? pkg.name : `${pkg.name}/${sub.replace(/^\.\//, '')}`] = file;
+      (packageNames[file] ??= []).push(pkg.name);
+    }
+  }
+}
+// The repository files a source imports or re-exports: relative paths and workspace package names, from import, export ... from, import() and require().
+function importedFiles(f: { abs: string; text: string }): string[] {
+  const out: string[] = [];
+  for (const m of scrub(f.text, true).matchAll(/(?:from|import|require)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+    const spec = m[1] as string;
+    if (spec.startsWith('.')) out.push(rel(resolve(dirname(f.abs), spec.replace(/\.js$/, '.ts'))));
+    else if (packageEntries[spec]) out.push(packageEntries[spec] as string);
+  }
+  return out;
+}
+const readers = files.filter((f) => namesPrivateRow(f.text));
 
 describe('what a member’s Vy wrote is named only by the files that may, and read only by sinks and known consumers', () => {
   it('the scan reads the sources and finds the reader files', () => {
@@ -216,13 +278,18 @@ describe('what a member’s Vy wrote is named only by the files that may, and re
     }
   });
 
-  it('the files that import a reader file are the frozen ones', () => {
-    for (const [target, importers] of Object.entries(IMPORTERS)) {
-      const found = files
-        .filter((f) => [...scrub(f.text, true).matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]*)['"]/g)].some((m) => resolve(dirname(f.abs), (m[1] as string).replace(/\.js$/, '.ts')) === join(ROOT, target)))
-        .map((f) => f.path)
-        .sort();
-      expect(found, `importers of ${target}`).toEqual([...importers].sort());
+  it('the files that import a reader file, by a relative path or by its package name, are the frozen ones (all reader files, a barrel included)', () => {
+    const found: Record<string, string[]> = {};
+    for (const f of files) {
+      for (const target of importedFiles(f)) if (READER_FILES.includes(target) && target !== f.path) (found[target] ??= []).push(f.path);
+    }
+    for (const path of READER_FILES) expect([...new Set(found[path] ?? [])].sort(), `importers of ${path}`).toEqual([...(IMPORTERS[path] ?? [])].sort());
+    // A package entry that re-exports a reader file is a way in too: the files that import that package by name are frozen as well.
+    for (const [entry, importers] of Object.entries(BARREL_IMPORTERS)) {
+      const names = packageNames[entry] ?? [];
+      expect(names.length, `${entry} is a package entry`).toBeGreaterThan(0);
+      const via = files.filter((f) => importedFiles(f).includes(entry) && f.path !== entry).map((f) => f.path);
+      expect([...new Set(via)].sort(), `importers of ${entry}`).toEqual([...importers].sort());
     }
   });
 
@@ -256,8 +323,13 @@ describe('the scan recognizes what it must', () => {
       `const y = defineCommand<I, O>({ name: 'a.b.d', handler: async (ctx) => { await ctx.trx.selectFrom('crove_kernel.member_vy_result as v').execute(); } });`,
       `const T = 'member_vy_result';`,
       "const t = 'member_vy_' + kind;",
-    ]) expect(PRIVATE_ROWS.test(scrub(text, true)), text).toBe(true);
-    expect(PRIVATE_ROWS.test(scrub('// member_vy_result\n/* member_vy_memory */ const a = 1;', true))).toBe(false);
+      'const u = `member_vy_${kind}`;',
+      "const v = `kernel.member_vy.${what}.get`;",
+      "const w = 'member' + '_vy_result';",
+      "const x = 'member_vy' + '_memory';",
+      "const z = ['member', 'vy_result'].join('');",
+    ]) expect(namesPrivateRow(text), text).toBe(true);
+    expect(namesPrivateRow('// member_vy_result\n/* member_vy_memory */ const a = 1;')).toBe(false);
   });
 
   it('matches braces correctly around a } or a { in a string, a template, a regular expression and a comment', () => {

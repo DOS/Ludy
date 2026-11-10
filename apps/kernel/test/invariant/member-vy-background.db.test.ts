@@ -1341,16 +1341,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   it("reads the private Vy rows from no SQL function outside the frozen list (the prosrc scan of the sinks invariant, #2822)", async () => {
     // The SQL functions whose body names member_vy_result or member_vy_memory when the list was made. Frozen: a function not here that names them fails, so the list
-    // changes only by an owner decision (the source half is test/invariant/member-vy-sinks.test.ts).
+    // changes only by an owner decision. The match is case-sensitive: the error code MEMBER_VY_RESULT_RUN_MISMATCH is not a table name (the source half is test/invariant/member-vy-sinks.test.ts).
     const FROZEN = [
       "crove_kernel.agent_write_guard",
-      // Names the error code MEMBER_VY_RESULT_RUN_MISMATCH in its list of allowed words (case-insensitive match); it reads no row.
-      "crove_kernel.member_vy_audit_detail_ok",
       "crove_kernel.member_vy_former_members_due",
       "crove_kernel.member_vy_member_data_purge",
       "crove_kernel.member_vy_private_counts",
       "crove_kernel.member_vy_result_bind",
-      "crove_kernel.member_vy_result_inherit_flag",
       "crove_kernel.member_vy_results_due",
       "crove_kernel.member_vy_results_expire",
       "crove_kernel.member_vy_run_finish",
@@ -1363,7 +1360,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) =>
       c.query<{ fn: string }>(
         `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname LIKE 'crove\\_%' AND (p.prosrc ~* 'member_vy_(result|memory)' OR p.prosrc ~* $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
+         WHERE n.nspname LIKE 'crove\\_%' AND (p.prosrc ~ 'member_vy_(result|memory)' OR p.prosrc ~ $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
       ),
     );
     const names = [...new Set(found.rows.map((r) => r.fn))];
