@@ -4,7 +4,8 @@
 -- copy commands write exactly tainted rows with their run, so nothing legitimate is refused). The rule is for the INSERT only: draft_review clears the mark later and the row keeps
 -- the run it came from. The three trigger functions are restated in full from their newest definitions (20261203100000 for meeting_result and action_item, 20261216100000 for
 -- transcript_segment; the applied files are not edited); the update rules are unchanged, and meeting_result and action_item, which had an UPDATE trigger only, now fire on INSERT too.
--- Idempotent.
+-- The same two rules as transcript_segment already had are given to meeting_result and action_item (the reviewer's findings): source_run_id never changes after the insert, and a
+-- published row is never inserted tainted. Idempotent.
 SET LOCAL lock_timeout = '2s';
 
 
@@ -12,10 +13,17 @@ CREATE OR REPLACE FUNCTION crove_meetings.meeting_result_taint() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
+    IF NEW.stage = 'published' AND NEW.tainted THEN
+      RAISE EXCEPTION 'MEETINGS_DRAFT_NOT_REVIEWED' USING ERRCODE = '42501';
+    END IF;
     IF NEW.source_run_id IS NOT NULL AND NOT NEW.tainted THEN
       RAISE EXCEPTION 'MEETINGS_TAINT_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
+  END IF;
+  -- The run a row came from never changes after the insert, for anybody: an update could not give an untainted row a run, nor hide the run of a copy.
+  IF NEW.source_run_id IS DISTINCT FROM OLD.source_run_id THEN
+    RAISE EXCEPTION 'MEETINGS_TAINT_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
   IF NEW.tainted IS DISTINCT FROM OLD.tainted AND (NEW.tainted OR current_user IS DISTINCT FROM (SELECT pg_catalog.pg_get_userbyid(p.proowner) FROM pg_catalog.pg_proc p WHERE p.oid = 'crove_meetings.draft_review(uuid,uuid,uuid[])'::pg_catalog.regprocedure)) THEN
     RAISE EXCEPTION 'MEETINGS_TAINT_FORBIDDEN' USING ERRCODE = '42501';
@@ -34,10 +42,17 @@ CREATE OR REPLACE FUNCTION crove_meetings.action_item_taint() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
+    IF NEW.stage = 'published' AND NEW.tainted THEN
+      RAISE EXCEPTION 'MEETINGS_DRAFT_NOT_REVIEWED' USING ERRCODE = '42501';
+    END IF;
     IF NEW.source_run_id IS NOT NULL AND NOT NEW.tainted THEN
       RAISE EXCEPTION 'MEETINGS_TAINT_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
+  END IF;
+  -- The run a row came from never changes after the insert, for anybody: an update could not give an untainted row a run, nor hide the run of a copy.
+  IF NEW.source_run_id IS DISTINCT FROM OLD.source_run_id THEN
+    RAISE EXCEPTION 'MEETINGS_TAINT_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
   IF NEW.tainted IS DISTINCT FROM OLD.tainted AND (NEW.tainted OR current_user IS DISTINCT FROM (SELECT pg_catalog.pg_get_userbyid(p.proowner) FROM pg_catalog.pg_proc p WHERE p.oid = 'crove_meetings.draft_review(uuid,uuid,uuid[])'::pg_catalog.regprocedure)) THEN
     RAISE EXCEPTION 'MEETINGS_TAINT_FORBIDDEN' USING ERRCODE = '42501';

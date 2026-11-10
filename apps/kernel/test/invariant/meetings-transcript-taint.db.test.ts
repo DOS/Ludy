@@ -229,7 +229,9 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     await SEGMENT(draft, meetingId, false, null);
     await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, text, stage, tainted) VALUES ($1, $2, $3, 0, 5, 'Đã chia sẻ', 'published', false)`, [orgId, published, meetingId]));
     // The files that define the trigger function: the migration of the backfill, then the later one that restated it (#2951), in order, as a deploy would leave them.
-    const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith('_crove_meetings_transcript_taint.sql') || f.endsWith('_crove_meetings_taint_insert_rule.sql')).sort();
+    const files = readdirSync(MIGRATIONS)
+      .filter((f) => /crove_meetings\.(transcript_segment_taint|draft_review)\(/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && /CREATE OR REPLACE FUNCTION crove_meetings\.(transcript_segment_taint|draft_review)/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && f >= '20261216100000')
+      .sort();
     await admin(async (c) => {
       await c.query('BEGIN');
       try {
