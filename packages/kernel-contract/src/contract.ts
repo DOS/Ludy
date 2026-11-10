@@ -358,6 +358,7 @@ import {
   zSummaryCopy,
 } from './meetings.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
+import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -536,6 +537,14 @@ export const contract = {
   },
   // The member's connected extension devices in the org of the request (issue #2582, ADR-0047 point 10): their tokens'
   // standing, never a hash, and a revoke of one. Only the member's own; the extension itself cannot reach either.
+  // The grants an owner or admin gave MCP clients (ADR-0051, #2975): the org's list (never a token) and the revoke of one. The consent itself is an
+  // HTTP route of the authorization server, not a procedure.
+  mcp: {
+    grant: {
+      list: oc.input(z.strictObject({})).output(z.array(zMcpGrantView)),
+      revoke: oc.input(zMcpGrantRevoke).output(zMcpGrantRevoked),
+    },
+  },
   extension: {
     tokens: {
       list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
