@@ -12,6 +12,9 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
+// Message keys cannot hold a dot, so a scope id has its own key.
+const SCOPE_KEY = { 'ludy.read': 'ludy_read' } as const;
+
 export interface GrantMember {
   userId: string;
   displayName: string | null;
@@ -61,7 +64,7 @@ export function OrgMcpGrants({ members }: { members: readonly GrantMember[] }) {
                 <span className="truncate font-medium">{r.clientName}</span>
                 <span className="truncate text-muted-foreground">{r.clientHost}</span>
                 {r.scopes.map((s) => (
-                  <Badge key={s}>{t(`scope.${s}`)}</Badge>
+                  <Badge key={s}>{t(`scope.${SCOPE_KEY[s]}`)}</Badge>
                 ))}
               </p>
               <p className="text-xs text-subtle-foreground">

@@ -5587,7 +5587,7 @@ export const vi = {
     title: 'Ứng dụng AI đã kết nối',
     intro: 'Các ứng dụng AI (Claude, ChatGPT, agent của bạn…) được chủ sở hữu hoặc quản trị viên cho đọc dữ liệu tổ chức này. Ngắt kết nối thì ứng dụng bị từ chối ngay từ yêu cầu tiếp theo. Tên hiển thị do ứng dụng tự đặt.',
     none: 'Chưa có ứng dụng AI nào kết nối.',
-    scope: { 'ludy.read': 'Chỉ đọc' },
+    scope: { ludy_read: 'Chỉ đọc' },
     givenBy: 'Do {name} cho phép',
     lastUsed: 'dùng gần nhất {at}',
     neverUsed: 'chưa dùng lần nào',

@@ -5592,7 +5592,7 @@ export const en = {
     title: 'Connected AI apps',
     intro: 'AI apps (Claude, ChatGPT, your own agent…) that an owner or admin let read this organization’s data. Disconnect one and it is refused from its next request. The name shown is the one the app gave itself.',
     none: 'No AI app is connected.',
-    scope: { 'ludy.read': 'Read only' },
+    scope: { ludy_read: 'Read only' },
     givenBy: 'Allowed by {name}',
     lastUsed: 'last used {at}',
     neverUsed: 'never used',
