@@ -33,6 +33,10 @@ export interface MediaClient {
   probe(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult>;
   // The same probe with the media sent as it is produced (a decrypting reader), so the caller never holds the file whole.
   probeStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult>;
+  // The probe with the length read from the stream itself (the end of what it holds), not from what the container declares: the only length
+  // a meter may charge (#2985). `measure` takes the bytes, `measureStream` the pieces as they are produced.
+  measure(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult>;
+  measureStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult>;
   normalize(bytes: Uint8Array, options?: { bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaNormalizeResult>;
   split(bytes: Uint8Array, options?: { maxSegmentSeconds?: number; bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaSplitResult>;
   repackageVideo(bytes: Uint8Array, options?: { dropAudio?: boolean }, signal?: AbortSignal): Promise<Uint8Array>;
@@ -161,6 +165,14 @@ export function createMediaClient(baseUrl: string): MediaClient {
 
     async probeStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult> {
       return call('/probe', chunks, zMediaProbeResult, signal);
+    },
+
+    async measure(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult> {
+      return call('/measure', bytes, zMediaProbeResult, signal);
+    },
+
+    async measureStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult> {
+      return call('/measure', chunks, zMediaProbeResult, signal);
     },
 
     async normalize(bytes: Uint8Array, options?: { bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaNormalizeResult> {

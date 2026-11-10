@@ -89,7 +89,9 @@ function accepted(kind: 'audio' | 'video', probe: MediaProbeResult): number {
   if (kind === 'audio' && !probe.hasAudio) throw failed('audio');
   if (kind === 'video' && !probe.hasVideo) throw failed('video');
   if (probe.durationSeconds > MEDIA_LIMITS.maxDurationSeconds) throw tooLong();
-  return Math.max(1, Math.ceil(probe.durationSeconds));
+  // A stream that reached no time at all has no length to charge: never one second for it.
+  if (!(probe.durationSeconds > 0)) throw failed('media');
+  return Math.ceil(probe.durationSeconds);
 }
 
 export function createMediaMeasurer(client: MediaClient): MediaMeasurer {
@@ -98,7 +100,7 @@ export function createMediaMeasurer(client: MediaClient): MediaMeasurer {
     async measure(kind, source) {
       let probe: MediaProbeResult;
       try {
-        probe = await client.probeStream(source);
+        probe = await client.measureStream(source);
       } catch (error) {
         throw refusal(error);
       }
@@ -107,7 +109,7 @@ export function createMediaMeasurer(client: MediaClient): MediaMeasurer {
     async measureBytes(kind, bytes) {
       let probe: MediaProbeResult;
       try {
-        probe = await client.probe(bytes);
+        probe = await client.measure(bytes);
       } catch (error) {
         throw refusal(error);
       }

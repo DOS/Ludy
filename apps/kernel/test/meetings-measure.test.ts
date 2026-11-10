@@ -32,11 +32,13 @@ function client(answer: () => Promise<MediaProbeResult>): MediaClient & { draine
   };
   return {
     drained,
-    probe: async (bytes) => {
+    probe: fail,
+    probeStream: fail,
+    measure: async (bytes) => {
       drained.push(bytes);
       return answer();
     },
-    probeStream: async (chunks) => {
+    measureStream: async (chunks) => {
       for await (const piece of chunks) drained.push(piece);
       return answer();
     },
@@ -100,8 +102,9 @@ describe('createMediaMeasurer', () => {
     expect(await createMediaMeasurer(client(async () => probe({ durationSeconds: 59.2 }))).measureBytes('audio', new Uint8Array([1]))).toBe(60);
   });
 
-  it('counts a length under a second as one second, so a row is never zero long', async () => {
+  it('counts a length under a second as one second, but never charges a stream of no length as one', async () => {
     expect(await createMediaMeasurer(client(async () => probe({ durationSeconds: 0.2 }))).measureBytes('audio', new Uint8Array([1]))).toBe(1);
+    await expect(createMediaMeasurer(client(async () => probe({ durationSeconds: 0 }))).measureBytes('audio', new Uint8Array([1]))).rejects.toMatchObject({ code: 'MEDIA_PROBE_FAILED', status: 422 });
   });
 
   it('refuses a recording longer than the plan allows', async () => {

@@ -221,6 +221,25 @@ describe('crove-media HTTP server & client SDK', () => {
     expect(received).toBe(5);
   });
 
+  it('measures bytes and a stream through /measure, not /probe (#2985)', async () => {
+    const sizes: number[] = [];
+    const baseUrl = await startServer({
+      runProbe: async () => ({ ...mockProbe, durationSeconds: 1 }),
+      runMeasure: async (bytes) => {
+        sizes.push(bytes.byteLength);
+        return { ...mockProbe, durationSeconds: 90 };
+      },
+    });
+    const client = createMediaClient(baseUrl);
+    expect((await client.measure(new Uint8Array([1, 2, 3]))).durationSeconds).toBe(90);
+    async function* pieces() {
+      yield new Uint8Array([1, 2]);
+      yield new Uint8Array([3, 4]);
+    }
+    expect((await client.measureStream(pieces())).durationSeconds).toBe(90);
+    expect(sizes).toEqual([3, 4]);
+  });
+
   it('stops reading a stream the server refuses (#2985)', async () => {
     const baseUrl = await startServer({ maxInputBytes: 4 });
     const client = createMediaClient(baseUrl);

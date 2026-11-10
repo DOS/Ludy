@@ -21,6 +21,7 @@ import {
 import {
   createTempDir,
   MediaExecutionError,
+  measureFile,
   normalizeAudioFile,
   probeFile,
   processMediaFile,
@@ -38,6 +39,7 @@ export interface MediaAppOptions {
 
   // Custom runners for testing HTTP/concurrency layers independently of ffmpeg
   runProbe?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<MediaProbeResult>;
+  runMeasure?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<MediaProbeResult>;
   runNormalize?: (bytes: Uint8Array, signal?: AbortSignal, options?: { bitrateKbps?: number }) => Promise<MediaNormalizeResult>;
   runSplit?: (bytes: Uint8Array, signal?: AbortSignal, options?: { maxSegmentSeconds?: number; bitrateKbps?: number }) => Promise<MediaSplitResult>;
   runRepackageVideo?: (bytes: Uint8Array, signal?: AbortSignal, options?: { dropAudio?: boolean }) => Promise<{ durationSeconds: number; format: string; hasAudio: boolean }>;
@@ -274,6 +276,17 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
         return options.runProbe(bytes, signal);
       }
       return probeFile(inputPath, { signal, timeoutMs: processTimeoutMs });
+    }),
+  );
+
+  // The probe, with the length read from the stream itself rather than from what the container says (#2985).
+  app.post('/measure', (c) =>
+    handleOperation(c, maxInputBytes, async (inputPath, _dir, signal) => {
+      if (options.runMeasure) {
+        const bytes = readFileSync(inputPath);
+        return options.runMeasure(bytes, signal);
+      }
+      return measureFile(inputPath, { signal, timeoutMs: processTimeoutMs });
     }),
   );
 
