@@ -38,7 +38,7 @@ export const summaryStart = defineCommand({
     await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     // The member has one Vy run at a time and the kernel's start supersedes a live one: a transcription of any meeting that is still going (paid for) is not cut off.
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: 'meetings.transcribe' });
-    if (live.status === 'ok' && live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'A transcription of yours is still running; wait for it to finish');
+    if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'A transcription of yours is still running; wait for it to finish');
     const any = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
     if (!any) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to summarize yet');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });

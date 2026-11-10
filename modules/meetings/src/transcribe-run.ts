@@ -68,7 +68,7 @@ export const transcriptStart = defineCommand({
     // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. (Another use of Vy by the
     // recorder, a note summary for one, also supersedes a live run: the member has one run at a time, ADR-0049 decision 1; the screen then shows the run as ended.)
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: FEATURE, subjectId: input.meetingId });
-    if (live.status === 'ok' && live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is already being transcribed');
+    if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is already being transcribed');
     // The kernel's start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget (AI_BUDGET_EXHAUSTED), and makes the
     // member's Vy and this run (a result row in status running, the subject this meeting).
     const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
@@ -84,7 +84,6 @@ export const transcriptStart = defineCommand({
     return { meetingId: input.meetingId, runId: started.runId };
   },
 });
-
 
 export const transcriptStatus = defineQuery({
   name: 'meetings.transcript.status',
@@ -105,7 +104,6 @@ export const transcriptStatus = defineQuery({
     return { meetingId: input.meetingId, enabled: transcribeEnabled && transcribeBroker, state: latest.value.state, runId: latest.value.runId, errorCode: latest.value.errorCode };
   },
 });
-
 
 export const transcribeRunCommands = [transcriptStart];
 export const transcribeRunQueries = [transcriptStatus];

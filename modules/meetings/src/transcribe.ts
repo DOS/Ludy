@@ -84,5 +84,4 @@ export const transcriptCopyResult = defineCommand({
   },
 });
 
-
 export const transcribeCommandList = [transcriptCopyResult];
