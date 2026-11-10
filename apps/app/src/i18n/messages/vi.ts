@@ -10418,6 +10418,9 @@ export const vi = {
       sessions: {
         list: 'Xem các phiên đăng nhập',
       },
+      signals: {
+        deal_without_invoice: 'Xem các deal đã thắng mà chưa có hóa đơn bán hàng',
+      },
       subject_key: {
         reseal: 'Mã hóa lại khóa dữ liệu của người đã niêm phong sau khi đổi khóa',
       },

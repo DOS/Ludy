@@ -10421,6 +10421,9 @@ export const en = {
       sessions: {
         list: 'List sessions',
       },
+      signals: {
+        deal_without_invoice: 'Read the won deals that have no sales invoice',
+      },
       subject_key: {
         reseal: 'Wrap subject keys again under the current key after a key rotation',
       },
