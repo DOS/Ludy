@@ -167,7 +167,8 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   sizeBytes: z.number().int().positive(),
   sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
   contentType: z.string().min(1).max(64),
-  lengthSeconds: z.number().int().positive().optional(),
+  // Measured by crove-media at upload (#2985), never the client's value: the upload route is the only caller.
+  lengthSeconds: z.number().int().positive(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
 

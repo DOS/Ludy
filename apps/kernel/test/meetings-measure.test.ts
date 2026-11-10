@@ -141,3 +141,13 @@ describe('mediaMeasurerFor', () => {
     expect(mediaMeasurerFor('http://crove-media:8095').configured).toBe(true);
   });
 });
+
+describe('MEDIA_URL', () => {
+  it('is optional and must be an http(s) URL', async () => {
+    const { loadConfig } = await import('../src/config.ts');
+    const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth' };
+    expect(loadConfig({ ...base, MEDIA_URL: 'http://crove-media:8095' }).MEDIA_URL).toBe('http://crove-media:8095');
+    expect(loadConfig(base).MEDIA_URL).toBeUndefined();
+    expect(() => loadConfig({ ...base, MEDIA_URL: 'ftp://x' })).toThrow();
+  });
+});

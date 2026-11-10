@@ -117,7 +117,7 @@ export function createMediaClient(baseUrl: string): MediaClient {
     const streaming = !(bytes instanceof Uint8Array);
     const init: RequestInit & { duplex?: 'half' } = {
       method: 'POST',
-      body: (streaming ? streamOf(bytes) : bytes) as unknown as BodyInit,
+      body: (streaming ? streamOf(bytes) : bytes) as unknown as RequestInit['body'],
       headers: {
         'content-type': 'application/octet-stream',
       },
@@ -189,7 +189,7 @@ export function createMediaClient(baseUrl: string): MediaClient {
       const url = `${base}/repackage-video${q}`;
       const init: RequestInit = {
         method: 'POST',
-        body: bytes as unknown as BodyInit,
+        body: bytes as unknown as RequestInit['body'],
         headers: {
           'content-type': 'application/octet-stream',
         },

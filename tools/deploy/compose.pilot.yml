@@ -33,6 +33,7 @@ services:
       EXTRACT_URL: !reset null
     networks: !override
       - default
+      - media
 
   # Outbox relay, jobs, the archive and the extraction client. It opens no port; the image's healthcheck probes the API
   # port, so it is off here.
