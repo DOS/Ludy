@@ -874,6 +874,9 @@ importers:
       '@crove/extract-contract':
         specifier: workspace:*
         version: link:../extract-contract
+      '@crove/media':
+        specifier: workspace:*
+        version: link:../../apps/media
 
   packages/bank-feed: {}
 
