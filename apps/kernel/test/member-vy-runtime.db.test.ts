@@ -121,6 +121,8 @@ suite("member-scoped agent actor in the runtime", () => {
   let orgId = "";
   let owner = "";
   let worker: Runtime;
+  // The worker with the real kernel commands only, for the test that runs the real member-mode store.
+  let realWorker: Runtime;
   let app: Runtime;
   const users: Record<string, string> = {};
   const vy: Record<string, { agentId: string; runId: string }> = {};
@@ -199,6 +201,9 @@ suite("member-scoped agent actor in the runtime", () => {
       commands: [...COMMANDS, ...kernelCommands.filter((c) => !TEST_NAMES.has(c.name))],
       queries: QUERIES,
     });
+    realWorker = new Runtime(createDb(workerPool), {
+      manifests: TEST_MANIFESTS,
+    }).register({ commands: [...kernelCommands], queries: [] });
     app = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands],
       queries: [],
@@ -473,7 +478,7 @@ suite("member-scoped agent actor in the runtime", () => {
           )
         ).rows[0]?.agent_id as string,
     );
-    const facade = memberVyRuntime(worker, orgId, {
+    const facade = memberVyRuntime(realWorker, orgId, {
       agentId,
       runId: started.runId,
     });
