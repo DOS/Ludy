@@ -29,7 +29,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
   let workerRuntime: Runtime;
   let workerDb: ReturnType<typeof createDb>;
   let appDbOf: ReturnType<typeof createDb>;
-  const users = { owner: '', member: '', gone: '', recent: '', old: '' };
+  const users = { owner: '', member: '', gone: '', recent: '', old: '', rejoined: '' };
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -56,7 +56,8 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table} WHERE org_id = $1${user ? ' AND member_user_id = $2' : ''}`, user ? [orgId, user] : [orgId])).rows[0]?.n));
 
   // A member's Vy agent, a run, a result (live or expired) and a memory entry, seeded as the superuser with the binding set aside.
-  async function seed(userId: string, expired: boolean, org: string = orgId) {
+  async function seed(userId: string, expired: boolean, org: string = orgId, ageDays = 0) {
+    const born = ageDays > 0 ? `now() - interval '${ageDays} days'` : 'now()';
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       const agentId = randomUUID();
@@ -65,10 +66,10 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [org, runId, agentId]);
       await c.query(
         `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : "now(), now() + interval '30 days'"})`,
+         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : `${born}, now() + interval '30 days'`})`,
         [org, randomUUID(), userId, runId, randomUUID()],
       );
-      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`, [org, randomUUID(), userId]);
+      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body, created_at, updated_at) VALUES ($1, $2, $3, 'Gọi khách là anh', ${born}, ${born})`, [org, randomUUID(), userId]);
     });
   }
 
@@ -103,20 +104,23 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
       users[key] = await upsertIdentity(appDb, { issuer: 'member-vy-sweeps', subject: key, email: `${key}@member-vy-sweeps.test`, name: null });
     }
     orgId = (await createOrg(apiRuntime, { type: 'user', userId: users.owner, aal: 'aal1' }, 'Vy dọn')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.member, users.recent, users.old]));
+    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.member, users.recent, users.old, users.rejoined]));
     // Two members removed through the command: one now, one 31 days ago by the audit trail (append-only, so its trigger is set aside for the statement).
-    for (const user of [users.recent, users.old]) await apiRuntime.execute('kernel.member.remove', { userId: user }, { actor: asMfa(users.owner), orgId });
+    for (const user of [users.recent, users.old, users.rejoined]) await apiRuntime.execute('kernel.member.remove', { userId: user }, { actor: asMfa(users.owner), orgId });
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [orgId, users.old]);
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = ANY ($2::uuid[])`, [orgId, [users.old, users.rejoined]]);
       await c.query('COMMIT');
     });
     // The active member (an expired result and a live one is made below), a former member with no removal in the audit trail, the two removed ones.
     await seed(users.member, true);
     await seed(users.gone, false);
     await seed(users.recent, false);
-    await seed(users.old, false);
+    // The data of `old` was made before its removal (40 days ago, the removal 31): its latest exit is recorded. `rejoined` was removed 31 days ago too, then
+    // was a member again and made data now, and is gone without a second removal: its data is newer than its only removal, so its latest exit is not recorded.
+    await seed(users.old, false, orgId, 40);
+    await seed(users.rejoined, false);
   }, 300_000);
 
   afterAll(async () => {
@@ -181,19 +185,21 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
 
   it('lists the former members with whether their removal is recorded, recorded first, and never a member or a removal younger than 30 days', async () => {
     const due = (await asWorker<{ org_id: string; user_id: string; recorded: boolean }>('SELECT * FROM crove_kernel.member_vy_former_members_due(10)')).rows;
-    expect(due, 'a recorded removal older than 30 days first, then one with no removal in the audit trail').toEqual([
-      { org_id: orgId, user_id: users.old, recorded: true },
-      { org_id: orgId, user_id: users.gone, recorded: false },
-    ]);
+    expect(due[0], 'a recorded exit older than 30 days first').toEqual({ org_id: orgId, user_id: users.old, recorded: true });
+    expect(
+      due.slice(1).sort((a, b) => a.user_id.localeCompare(b.user_id)),
+      'then the ones whose latest exit is not recorded: none in the audit trail, and one removed long ago but with data newer than that removal',
+    ).toEqual([users.gone, users.rejoined].sort().map((user_id) => ({ org_id: orgId, user_id, recorded: false })));
   });
 
   it('purges a recorded former member and keeps the rest: a member, a removal younger than 30 days, and a membership that ended with no recorded removal', async () => {
     const rowsOf = async (user: string) => (await count('member_vy_result', user)) + (await count('member_vy_memory', user));
-    const before = { old: await rowsOf(users.old), gone: await rowsOf(users.gone), recent: await rowsOf(users.recent), member: await rowsOf(users.member) };
+    const before = { old: await rowsOf(users.old), gone: await rowsOf(users.gone), rejoined: await rowsOf(users.rejoined), recent: await rowsOf(users.recent), member: await rowsOf(users.member) };
     expect(before.old, 'a result and a memory entry').toBe(2);
     expect(await sweepMemberVyFormerMembers({ runtime: workerRuntime, workerDb }), 'what the pass removed').toBe(before.old);
     expect(await rowsOf(users.old), 'the recorded former member is purged').toBe(0);
     expect(await rowsOf(users.gone), 'no recorded removal: kept').toBe(before.gone);
+    expect(await rowsOf(users.rejoined), 'a removal older than 30 days but the data is newer than it, so the latest exit is not recorded: kept').toBe(before.rejoined);
     expect(await rowsOf(users.recent), 'removed less than 30 days ago: kept').toBe(before.recent);
     expect(await rowsOf(users.member), 'a member: kept').toBe(before.member);
     expect(await sweepMemberVyFormerMembers({ runtime: workerRuntime, workerDb }), 'a second pass has nothing to do').toBe(0);
@@ -201,6 +207,35 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     const memberPurge = await workerRuntime.execute<{ removed: number }>('kernel.vy_data.member_data.purge', { userId: users.member }, { actor: { type: 'system', component: 'kernel.member_vy' }, orgId });
     expect(memberPurge.removed, 'a member is never purged').toBe(0);
     expect(await rowsOf(users.member), 'the member still holds their rows').toBe(before.member);
+  });
+
+  it('the definer itself purges nothing for a user whose latest exit is not recorded, whoever asks (#2822, from the review of #2920)', async () => {
+    const system = { actor: { type: 'system' as const, component: 'kernel.member_vy' }, orgId };
+    const rowsOf = async (user: string) => (await count('member_vy_result', user)) + (await count('member_vy_memory', user));
+    for (const user of [users.rejoined, users.gone]) {
+      const before = await rowsOf(user);
+      expect(before, 'the user holds rows').toBeGreaterThan(0);
+      expect((await workerRuntime.execute<{ removed: number }>('kernel.vy_data.member_data.purge', { userId: user }, system)).removed, 'nothing removed').toBe(0);
+      expect(await rowsOf(user), 'the rows are all still there').toBe(before);
+    }
+  });
+
+  it('logs the orgs holding unrecorded former members once per process, not every night', async () => {
+    const reported = new Set<string>();
+    const lines: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    try {
+      await sweepMemberVyFormerMembers({ runtime: workerRuntime, workerDb, reported });
+      await sweepMemberVyFormerMembers({ runtime: workerRuntime, workerDb, reported });
+      await sweepMemberVyFormerMembers({ runtime: workerRuntime, workerDb, reported });
+    } finally {
+      console.warn = warn;
+    }
+    const noted = lines.filter((l) => l.includes('latest exit is not recorded'));
+    expect(noted.length, 'one line for three nightly passes').toBe(1);
+    expect(noted[0], 'the org by its prefix').toContain(orgId.slice(0, 8));
+    expect(noted[0], 'no user id or text').not.toContain(users.gone.slice(0, 8));
   });
 
   it('maps no RPC route to the sweep commands (the router names each command it exposes)', () => {
