@@ -34,11 +34,29 @@ This is a production step. No team lead or worker runs it. The coordinator shows
 
 | Step | Action | Check | Rollback |
 |---|---|---|---|
-| T1 | Put the provider key into the host's secret store as `TRANSCRIBE_API_KEY` (a person does this; the value never goes into a chat, an issue or the repository). Set `TRANSCRIBE_BASE_URL` (https), `TRANSCRIBE_MODEL` and `AI_PRICE_AUDIO_PER_MIN` | `docker compose config` shows the names set on both `api` and `worker`; the kernel refuses to start on an `http://` URL unless `TRANSCRIBE_ALLOW_INSECURE_HTTP=1`, which must stay `0` for a provider on the internet | remove the values |
+| T1 | Put the provider key into the host's secret store as `TRANSCRIBE_API_KEY` (a person does this; the value never goes into a chat, an issue or the repository). Set `TRANSCRIBE_BASE_URL` (https), `TRANSCRIBE_MODEL`, `TRANSCRIBE_API_MODE` (see below) and `AI_PRICE_AUDIO_PER_MIN` | `docker compose config` shows the names set on both `api` and `worker`; the kernel refuses to start on an `http://` URL unless `TRANSCRIBE_ALLOW_INSECURE_HTTP=1`, which must stay `0` for a provider on the internet | remove the values |
 | T2 | Set `MEETINGS_TRANSCRIBE=on` on `api` and `worker`; redeploy as in S2 | the smoke test passes; the meeting screen offers "Nhờ Vy ghi lời" | set it to `off`, redeploy |
 | T3 | Smoke test with a two-minute Vietnamese test recording made for the purpose, with the consent step filled in | the run ends; "Chép vào bản nháp của tôi" fills a draft transcript with the review note; the meter shows the audio minutes | T2 rollback |
 
-The provider must speak the OpenAI-compatible `/audio/transcriptions` API (AGENTS.md: AI calls go through an OpenAI-compatible endpoint). A provider that does not needs a new adapter in `packages/agent` first, which is a separate change and an owner decision.
+The provider must speak an OpenAI-compatible API (AGENTS.md: AI calls go through an OpenAI-compatible endpoint). `TRANSCRIBE_API_MODE` says which request the adapter makes:
+
+| Mode | Request | For |
+|---|---|---|
+| `audio_transcriptions` (default) | the chunk as a file to `${TRANSCRIBE_BASE_URL}/audio/transcriptions`, `verbose_json` answer | a Whisper-class model, hosted or local |
+| `chat_input_audio` | the chunk as an `input_audio` part to `${TRANSCRIBE_BASE_URL}/chat/completions`, with a fixed instruction asking for JSON segments (start, end, speaker, text) in the recorder's language | a provider with no transcription endpoint, such as Gemini's OpenAI-compatible one |
+
+In both modes the answer is untrusted data: times are clamped to the chunk, text is cut to a stated length, a label is a short plain string, and a reply that is not usable JSON is refused. The audio and the key go only to `TRANSCRIBE_BASE_URL` over https, a redirect is never followed, and nothing of the audio or the text is logged.
+
+Example values for Gemini 3.5 Transcribe (the key is set by a person as in T1, never written here):
+
+```
+TRANSCRIBE_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+TRANSCRIBE_MODEL=gemini-3.5-transcribe
+TRANSCRIBE_API_MODE=chat_input_audio
+AI_PRICE_AUDIO_PER_MIN=<the price of one minute of audio in the unit of the other AI_PRICE_* settings>
+```
+
+The `input_audio` part names the audio's format by the extension of its type (`wav`, `mp3`, `ogg`, `m4a`, ...); a type the provider does not accept is refused by the provider and the run ends with a `TRANSCRIBE_INVALID_REQUEST` code. T3 (the two-minute test recording) is what proves a given format works with the provider.
 
 ## Rollback at any time
 
@@ -50,5 +68,5 @@ The provider must speak the OpenAI-compatible `/audio/transcriptions` API (AGENT
 ## Cost (fill in before the owner approves)
 
 - **Summary:** about `<tokens per hour of meeting>` tokens per hour of meeting, at the deployment's AI price.
-- **Transcription:** `AI_PRICE_AUDIO_PER_MIN` × 60 per hour of audio, at the chosen provider's price.
+- **Transcription:** `AI_PRICE_AUDIO_PER_MIN` × 60 per hour of audio, at the chosen provider's price. For Gemini 3.5 Transcribe, Google's page (read 2026-11-10, via web sources) lists $2 per million audio input tokens plus $12 per million text output tokens, about $0.005 per audio minute, so about $0.30 per hour of meeting; confirm it on the provider's price page before the owner approves. A request is limited to 15 minutes of audio with timestamps and speakers, and Ludy's 10-minute chunks fit.
 - **Limit:** the org's AI budget caps both; a spent budget refuses before the call.

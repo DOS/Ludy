@@ -509,6 +509,9 @@ const schema = z.object({
   TRANSCRIBE_ALLOW_INSECURE_HTTP: optional.pipe(z.enum(['0', '1']).default('0')),
   TRANSCRIBE_API_KEY: optional,
   TRANSCRIBE_MODEL: optional,
+  // How a chunk is sent (#2972): `audio_transcriptions` posts the file to /audio/transcriptions (Whisper-class, the default); `chat_input_audio` posts it to
+  // /chat/completions as an input_audio part, for a provider that offers no transcription endpoint (Gemini's OpenAI-compatible one).
+  TRANSCRIBE_API_MODE: optional.pipe(z.enum(['audio_transcriptions', 'chat_input_audio']).default('audio_transcriptions')),
   AI_PRICE_AUDIO_PER_MIN: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   // Outbound mail (invites, issue #129), the same SMTP settings the bundled Supabase Auth uses. Unset SMTP_HOST: mail
   // is off, and the inviter passes the link on. Port 465 is implicit TLS; with SMTP_USER and SMTP_PASS on any other
