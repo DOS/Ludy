@@ -48,7 +48,7 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
         if (key) {
           // An object another file row also names is left; only this file's original is marked gone.
           if (!key.shared) {
-            await deps.store.delete(key.storageKey);
+            await deps.store.delete(key.storageKey, { retention: 'expire' });
             run.objects += 1;
           }
           const out = await deps.runtime.execute<{ applied: boolean; versions: number }>('finance.marketplace_retention.apply', { fileId: row.file_id }, options);
@@ -58,7 +58,7 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
             progress += 1;
             // The same bytes uploaded between the first delete and the marker are stored under the same key (the file was still unmarked, so nothing cleared or refused it): deleting once more
             // after the marker closes that window. From here on a duplicate upload clears the marker (file_original_restore) and the next run deletes it again.
-            if (!key.shared) await deps.store.delete(key.storageKey);
+            if (!key.shared) await deps.store.delete(key.storageKey, { retention: 'expire' });
           }
         }
       } catch (error) {

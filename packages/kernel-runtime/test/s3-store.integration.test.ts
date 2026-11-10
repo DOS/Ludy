@@ -8,6 +8,9 @@ import {
   CreateBucketCommand,
   DeleteObjectCommand,
   GetObjectRetentionCommand,
+  GetObjectTaggingCommand,
+  ListObjectVersionsCommand,
+  PutBucketLifecycleConfigurationCommand,
   HeadObjectCommand,
   PutBucketVersioningCommand,
   PutObjectCommand,
@@ -20,6 +23,8 @@ import {
   BlobNotFoundError,
   BlobStoreVersioningError,
   BlobTooLargeError,
+  RETENTION_TAG_KEY,
+  RETENTION_TAG_VALUE,
   S3BlobStore,
   UPLOAD_TTL_SECONDS,
   createS3Client,
@@ -397,6 +402,38 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
     await again.write(bytes);
     await expect(again.commit(({ sha256 }) => fileKey(orgId, sha256), 'video/webm')).resolves.toEqual({ ...stored, created: false });
   }, 120_000);
+
+  it('tags the version a retention delete leaves behind, and the bucket takes the runbook lifecycle rules (#2789)', async () => {
+    const key = fileKey(orgId, sha256Hex(encode('retention original')));
+    const store = S3BlobStore.connect(options);
+    const bytesIn = encode('retention original');
+    await store.put(key, bytesIn, 'application/octet-stream');
+    await store.delete(key, { retention: 'expire' });
+    // The object reads as gone, a delete marker is current, and the one version left is noncurrent and carries the tag.
+    await expect(store.get(key)).rejects.toBeInstanceOf(BlobNotFoundError);
+    const listed = await client.send(new ListObjectVersionsCommand({ Bucket: options.bucket, Prefix: key }));
+    expect(listed.DeleteMarkers?.filter((m) => m.Key === key && m.IsLatest)).toHaveLength(1);
+    const versions = (listed.Versions ?? []).filter((v) => v.Key === key);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]?.IsLatest).toBe(false);
+    const tags = await client.send(new GetObjectTaggingCommand({ Bucket: options.bucket, Key: key, VersionId: versions[0]?.VersionId }));
+    expect(tags.TagSet).toEqual([{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }]);
+    // A second retention delete (the job deletes again after its marker) finds nothing current to tag and still succeeds.
+    await expect(store.delete(key, { retention: 'expire' })).resolves.toBeUndefined();
+    // The lifecycle rules of docs/runbooks/provision-pilot.md for this: the server must accept the tag filter (with the noncurrent expiry) and the marker rule (no tag filter,
+    // which S3 does not allow with ExpiredObjectDeleteMarker). The expiry itself runs on the server's clock, in days, so it is checked by the drill, not here.
+    await client.send(
+      new PutBucketLifecycleConfigurationCommand({
+        Bucket: options.bucket,
+        LifecycleConfiguration: {
+          Rules: [
+            { ID: 'crove-retention-expired', Status: 'Enabled', Filter: { Tag: { Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE } }, NoncurrentVersionExpiration: { NoncurrentDays: 1 } },
+            { ID: 'crove-org-markers', Status: 'Enabled', Filter: { Prefix: 'org/' }, Expiration: { ExpiredObjectDeleteMarker: true } },
+          ],
+        },
+      }),
+    );
+  });
 
   it('opens a staged object as a stream, and refuses one larger than the cap before reading', async () => {
     const { randomBytes } = await import('node:crypto');

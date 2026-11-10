@@ -70,10 +70,10 @@ Then the deploy user, its SSH key for the workflow, the stack directory `/opt/cr
 
 Create the bucket in the region of the server, private, with versioning on **before the first write** (ADR-0013: Ludy refuses a write that comes back without an object version) and **Object Lock enabled**, so that the worker can hold the original file of every posted invoice for 10 years (`EVIDENCE_LOCK_DAYS`, [evidence-holds.md](evidence-holds.md)). Do not set a default retention on the bucket: Ludy holds only posted files. Give Ludy its own access key, limited to this bucket:
 
-- on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload`, `s3:GetObjectRetention`, `s3:PutObjectRetention` (never `s3:BypassGovernanceRetention`). Meeting media is written as a multipart upload to `staging/` and copied to its content address: `s3:PutObject` covers the parts and the copy, `s3:GetObject` the copy's source, and `s3:AbortMultipartUpload` the cleanup after a refused or failed write. Without it the cleanup fails silently and the incomplete upload stays until the lifecycle rule below removes it;
+- on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload`, `s3:GetObjectRetention`, `s3:PutObjectRetention`, `s3:PutObjectTagging` (never `s3:BypassGovernanceRetention`; nothing else for tagging: no `s3:GetObjectTagging`, no `s3:DeleteObjectTagging`, no `s3:PutObjectVersionTagging`). `s3:PutObjectTagging` is for one thing: a retention delete (the marketplace originals, 90 days after the decision, ADR-0045 point 8) first tags the object `ludy-retention=expired`, so the rule `crove-retention-expired` below can remove the version the delete leaves. If the tag cannot be set, Ludy deletes nothing and the job retries on its next run (it alerts), so a missing permission stops that deletion instead of leaving a readable copy. Meeting media is written as a multipart upload to `staging/` and copied to its content address: `s3:PutObject` covers the parts and the copy, `s3:GetObject` the copy's source, and `s3:AbortMultipartUpload` the cleanup after a refused or failed write. Without it the cleanup fails silently and the incomplete upload stays until the lifecycle rule below removes it;
 - on the bucket: `s3:ListBucket`, `s3:ListBucketVersions`, `s3:GetBucketObjectLockConfiguration`. `s3:ListBucketVersions` also serves the WORM archive bucket when `ARCHIVE_STORE=s3` uses this key: its nightly verifier reads each key's versions (#2020, [worm-archive.md](worm-archive.md)), and fails with `AccessDenied` without it.
 
-Ludy never deletes object versions, so three lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket: without it the noncurrent version stays), and one more removes abandoned browser uploads. The `AbortIncompleteMultipartUpload` action of the `crove-staging` rule below is **required**, not optional: a crash in the middle of a meeting upload leaves an incomplete multipart upload under `staging/`, which the daily staging sweep cannot see (listing objects never lists incomplete uploads) and only this rule removes. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
+Ludy never deletes object versions, so lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket: without it the noncurrent version stays; the `ludy-retention=expired` tag rule does the same for the marketplace originals under `org/`, whose delete marker rule is separate because S3 allows `ExpiredObjectDeleteMarker` only without a tag filter), and one more removes abandoned browser uploads. The `AbortIncompleteMultipartUpload` action of the `crove-staging` rule below is **required**, not optional: a crash in the middle of a meeting upload leaves an incomplete multipart upload under `staging/`, which the daily staging sweep cannot see (listing objects never lists incomplete uploads) and only this rule removes. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
 
 ```bash
 aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
@@ -93,7 +93,11 @@ cat > lifecycle.json <<'EOF'
     { "ID": "crove-export-deleted", "Status": "Enabled", "Filter": { "Prefix": "export/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
     { "ID": "crove-conversation-deleted", "Status": "Enabled", "Filter": { "Prefix": "conversation/" },
-      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } }
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
+    { "ID": "crove-retention-expired", "Status": "Enabled", "Filter": { "Tag": { "Key": "ludy-retention", "Value": "expired" } },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 } },
+    { "ID": "crove-org-markers", "Status": "Enabled", "Filter": { "Prefix": "org/" },
+      "Expiration": { "ExpiredObjectDeleteMarker": true } }
   ]
 }
 EOF
@@ -109,9 +113,17 @@ aws s3api put-bucket-cors --bucket <bucket> --cors-configuration file://cors.jso
 | Prefix | What it holds | The rule |
 |---|---|---|
 | `org/` | documents and attachments, the evidence | none: Ludy never deletes them, and their versions are the record. The worker holds the original file of every posted invoice with Object Lock in GOVERNANCE mode for `EVIDENCE_LOCK_DAYS` from its posting (#1009, [evidence-holds.md](evidence-holds.md)) |
+| `org/` with the tag `ludy-retention=expired` | a marketplace original after its 90 days (#2789): Ludy tags the object, then deletes it | `crove-retention-expired`: the noncurrent version goes 1 day after the delete. An Object Lock hold on a version still wins until its retain-until date; a version Ludy never tagged is untouched. `crove-org-markers` then removes the delete marker, and only once no version of the key is left |
 | `staging/` | browser uploads before the server checks them (5 minutes) | expire after a day, with their old versions and delete markers |
 | `inbound/` | raw inbound mail until it is filed (the worker deletes it after 30 days at most) | delete old versions 7 days after Ludy deleted the object |
 | `export/` | sealed org exports (`EXPORT_RETENTION_DAYS`, then the worker deletes them) | the same, 7 days |
+
+**Applying the retention rules to a bucket that is already in use is a production step: the owner approves it, and the Platform PO runs it.** Checklist for that step:
+
+- [ ] the access key has `s3:PutObjectTagging` on the objects (and nothing more for tagging), added by the account that owns the bucket policy;
+- [ ] `put-bucket-lifecycle-configuration` replaces the whole configuration: start from `get-bucket-lifecycle-configuration`, keep every existing rule, and add `crove-retention-expired` and `crove-org-markers`;
+- [ ] a drill object: put a file under `org/`, delete it through a retention run, read `list-object-versions` and see the noncurrent version carry the tag `ludy-retention=expired` (`get-object-tagging --version-id`), and a day after the rule first runs see it gone, while a version under Object Lock is still there;
+- [ ] the rule stays off any version without the tag: `org/` evidence is never tagged by Ludy, and no browser upload can set the tag (the upload form names no tagging field, and the copy to the content address replaces the tags).
 
 The CORS rule lets the browser post files straight to the bucket (`S3_PRESIGNED_URLS=true`, the default) and download them. MinIO has no per-bucket CORS: it answers every origin unless `MINIO_API_CORS_ALLOW_ORIGIN` narrows it to `https://<your domain>`. On Cloudflare R2, which has neither versioning nor presigned POST, set `S3_VERSIONING=off` and `S3_PRESIGNED_URLS=false` instead and skip the CORS rule (`.env.example` explains the trade-off).
 
