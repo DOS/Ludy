@@ -262,7 +262,7 @@ suite('meeting video tickets (#2703)', () => {
     const ok = await issue('attendee', meetingId);
     expect(ok.res.status).toBe(200);
     expect(ok.res.headers.get('cache-control')).toBe('no-store');
-    expect(ok.body.ticket).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+    expect(ok.body.ticket).toMatch(/^v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
     // The bearer token lives 15 minutes, so the ten minute cap decides.
     expect(ok.body.expiresInSeconds).toBe(600);
     // A member who is not a reader, and a viewer, get nothing; a request with no token reaches no handler.
@@ -598,6 +598,37 @@ suite('meeting video tickets (#2703)', () => {
       expect(ok.status).toBe(206);
       await ok.arrayBuffer();
     }
+  });
+
+  it('reserves a failure token before the checks, so parallel refusals cannot overshoot the budget, and gives it back to a request that is not refused (#2965)', async () => {
+    const meetingId = await videoMeeting(mp4(3000));
+    const { body } = await issue('attendee', meetingId);
+    const session = accounts.get('attendee')!.session;
+    revokedSessions.add(session);
+    try {
+      // A budget of 2 refusals: 8 requests at once with a ticket whose session is revoked. The token is taken before the database is asked, so
+      // only 2 are checked (and refused, and charged) and the other 6 are told to retry, where a peek-then-charge would have checked all 8.
+      const bounded = createHttpApp({ ...deps, videoTicketFailures: new RateLimiter({ perMinute: 2 }) });
+      const statuses = (await Promise.all(Array.from({ length: 8 }, () => stream(meetingId, body.ticket!, {}, bounded)))).map((r) => r.status).sort();
+      expect(statuses).toEqual([401, 401, 429, 429, 429, 429, 429, 429]);
+      expect((await stream(meetingId, body.ticket!, {}, bounded)).status).toBe(429);
+    } finally {
+      revokedSessions.delete(session);
+    }
+    // A request that is not refused gets its token back: on a budget of 2, many valid requests one after the other, and several at once, all pass.
+    const small = createHttpApp({ ...deps, videoTicketFailures: new RateLimiter({ perMinute: 2 }) });
+    const valid = await issue('recorder', meetingId, small);
+    for (let i = 0; i < 6; i += 1) {
+      const res = await stream(meetingId, valid.body.ticket!, { headers: { range: `bytes=${i}-${i + 3}` } }, small);
+      expect(res.status).toBe(206);
+      await res.arrayBuffer();
+    }
+    const results = await Promise.all([0, 1].map((i) => stream(meetingId, valid.body.ticket!, { headers: { range: `bytes=${i}-${i + 3}` } }, small)));
+    expect(results.map((r) => r.status)).toEqual([206, 206]);
+    for (const r of results) await r.arrayBuffer();
+    // And after all of them the budget still holds both tokens: two refusals are charged, the third is told to retry.
+    const bad = [await stream(meetingId, 'garbage', {}, small), await stream(meetingId, 'garbage', {}, small), await stream(meetingId, 'garbage', {}, small)];
+    expect(bad.map((r) => r.status)).toEqual([401, 401, 429]);
   });
 
   it('takes the global stream cap from MEETINGS_VIDEO_STREAMS_MAX: past it a stream of another member is told to retry, and a slot frees on cancel (#2965)', async () => {
