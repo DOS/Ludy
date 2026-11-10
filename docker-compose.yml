@@ -408,20 +408,23 @@ services:
     image: crove-media:local
     restart: unless-stopped
     read_only: true
+    # Where a recording sits decrypted while it is measured (#2989): memory, never a disk. A killed or removed container leaves nothing behind. Sized for
+    # the largest measure (a 2 GB video, MEDIA_MAX_INPUT_BYTES) plus slack; it counts against the memory limit below while a recording is there.
+    # The user is the image's `node` (uid 1000). Lower both with the recordings the host accepts.
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
-    volumes:
-      - media-scratch:/data/scratch
+      - /data/scratch:size=${MEDIA_SCRATCH_SIZE:-2304m},mode=0700,uid=1000,gid=1000,noexec,nosuid
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 2g
-    memswap_limit: 2g
+    mem_limit: ${MEDIA_MEM_LIMIT:-4g}
+    memswap_limit: ${MEDIA_MEM_LIMIT:-4g}
     cpus: 1
     pids_limit: 128
     environment:
       MEDIA_CONCURRENCY: ${MEDIA_CONCURRENCY:-1}
+      MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-2147483648}
       MEDIA_TIMEOUT_MS: ${MEDIA_TIMEOUT_MS:-300000}
       MEDIA_BODY_TIMEOUT_MS: ${MEDIA_BODY_TIMEOUT_MS:-300000}
     networks:
@@ -542,4 +545,3 @@ volumes:
   keys:
   # The prober's last result for the status page (#678): written by the prober, read by the API.
   status:
-  media-scratch:

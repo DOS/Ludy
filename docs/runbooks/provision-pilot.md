@@ -17,7 +17,7 @@ How to set up the one server that runs the pilot (backlog item M1-5, issue #306)
 
 | | Pilot (5 to 20 orgs) |
 |---|---|
-| CPU, memory | 4 vCPU, 8 GB (PostgreSQL, Supabase Auth, the kernel, `crove-extract`, which alone may take 1 GB, and `crove-media`, up to 2 GB while it measures a recording: it always runs, and the Meetings module is why) |
+| CPU, memory | 4 vCPU, 8 GB (PostgreSQL, Supabase Auth, the kernel, `crove-extract`, which alone may take 1 GB, and `crove-media`, up to 4 GB while it measures a long video, its scratch included: it always runs, and the Meetings module is why; lower `MEDIA_MEM_LIMIT` with `MEDIA_SCRATCH_SIZE` on a smaller host) |
 | Disk | 80 GB SSD: the database, Docker images, logs and local backup runs; the files live in the bucket |
 | OS | Ubuntu Server 24.04 LTS (any current Linux with Docker Engine works; the commands below are for Ubuntu) |
 | Region | as decided in #122 |

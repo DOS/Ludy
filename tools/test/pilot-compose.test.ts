@@ -98,6 +98,10 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(pinned?.build).toBeUndefined();
     expect(config(['docker-compose.yml'])['crove-media']?.profiles).toBeUndefined();
     expect(services['crove-media']?.profiles).toBeUndefined();
+    // Where a recording sits decrypted while it is measured is a tmpfs, not a volume, so a killed container leaves nothing on the host (#2989).
+    const media = config(['docker-compose.yml', 'compose.pilot.yml'])['crove-media'] as (Service & { tmpfs?: string[]; volumes?: unknown[]; mem_limit?: unknown }) | undefined;
+    expect(media?.tmpfs?.some((t) => t.startsWith('/data/scratch'))).toBe(true);
+    expect(media?.volumes ?? []).toEqual([]);
     // Only the API opens a port.
     expect(api?.ports).toHaveLength(1);
     expect(worker?.ports).toBeUndefined();

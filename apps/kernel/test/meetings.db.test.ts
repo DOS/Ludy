@@ -919,6 +919,33 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(segments).toBe(0);
   });
 
+  it('15. a full sandbox queue turns an upload away before a byte is read, and one org cannot fill it (#2989)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Sandbox queue', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('queue-'.repeat(100))]);
+    const slots = new ConcurrencyLimiter({ total: 4, perKey: 2 });
+    const limited = createHttpApp({ ...deps, mediaMeasurer: fakeMediaMeasurer(), mediaSlots: slots });
+    const send = async () => {
+      const form = new FormData();
+      form.append('kind', 'audio');
+      form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
+      return limited.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    };
+    // This org already has two uploads waiting on the sandbox: its next one is refused at once, with a retry hint, and nothing is stored.
+    const held = [slots.tryAcquire(orgId), slots.tryAcquire(orgId)];
+    expect(held.every((r) => r !== null)).toBe(true);
+    const objectsBefore = store.storage.size;
+    const refused = await send();
+    expect(refused.status).toBe(503);
+    expect(((await refused.json()) as { code?: string }).code).toBe('UPLOAD_BUSY');
+    expect(refused.headers.get('retry-after')).not.toBeNull();
+    expect(store.storage.size).toBe(objectsBefore);
+    // Another org still has room (two of the four slots are free), and once the slots are freed this org uploads again.
+    expect(slots.tryAcquire(randomUUID())).not.toBeNull();
+    for (const release of held) release?.();
+    expect((await send()).status).toBe(200);
+  });
+
   it('12. a long playback stops when the meeting is deleted after its first window', async () => {
     const createRes = await rpc('meetings/create', 'recorder', { title: 'Delete During Playback', visibility: 'attendees', consentMethod: 'told_at_start' });
     const meetingId = String(createRes.body.meetingId);
