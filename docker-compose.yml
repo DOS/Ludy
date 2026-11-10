@@ -150,6 +150,8 @@ services:
       TRANSCRIBE_ALLOW_INSECURE_HTTP: ${TRANSCRIBE_ALLOW_INSECURE_HTTP:-0}
       TRANSCRIBE_API_KEY: ${TRANSCRIBE_API_KEY:-}
       TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-}
+      # audio_transcriptions (default, a Whisper-class /audio/transcriptions endpoint) or chat_input_audio (/chat/completions with the audio as input_audio, for Gemini's OpenAI-compatible endpoint).
+      TRANSCRIBE_API_MODE: ${TRANSCRIBE_API_MODE:-audio_transcriptions}
       AI_PRICE_AUDIO_PER_MIN: ${AI_PRICE_AUDIO_PER_MIN:-0}
       AI_VISION: ${AI_VISION:-false}
       # The product name users see in the app and in mails (#1040); empty keeps "Ludy".
@@ -293,9 +295,10 @@ services:
       CREDENTIAL_KEY_PREVIOUS: ${CREDENTIAL_KEY_PREVIOUS:-}
       CREDENTIAL_KEY_FILE: /data/keys/credential.key
       CHANNEL_SANDBOX: ${CHANNEL_SANDBOX:-true}
-      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-true}
+      # Empty means unset: the kernel turns the sandboxes on for a local PUBLIC_URL and off for a public one.
+      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-}
       BANK_FEED_SANDBOX: ${BANK_FEED_SANDBOX:-false}
-      ADS_SANDBOX: ${ADS_SANDBOX:-true}
+      ADS_SANDBOX: ${ADS_SANDBOX:-}
       BANK_FEED_SANDBOX_WEBHOOK_SECRET: ${BANK_FEED_SANDBOX_WEBHOOK_SECRET:-}
       CHANNEL_BLUESKY: ${CHANNEL_BLUESKY:-true}
       CHANNEL_TELEGRAM: ${CHANNEL_TELEGRAM:-true}

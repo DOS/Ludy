@@ -68,13 +68,13 @@ describe('configuration guards', () => {
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/BANK_FEED_SANDBOX/);
     // The sandbox ad platform (ADR-0040): made-up ad spend next to the real books, never on a deployment others reach that
-    // runs the ads module. docker compose falls back to true, so a public deployment sets false, or leaves the module out.
+    // runs the ads module. Unset, it is off on a public URL.
     const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
     expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/ADS_SANDBOX/);
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' })).toThrow(/ADS_SANDBOX/);
     // The sandbox e-invoice provider (ADR-0044 point 8, #2502): it issues made-up sales invoices into the books, so a deployment others reach that runs the finance module
-    // sets it to false (docker compose falls back to true), or leaves the module out.
+    // does not set it to true, or leaves the module out.
     // Left out, it is on for a local URL and off for a public one.
     expect(loadConfig({ ...base }).EINVOICE_SANDBOX).toBe('true');
     expect(loadConfig({ ...base, ...publicUrl }).EINVOICE_SANDBOX).toBe('false');
@@ -86,6 +86,20 @@ describe('configuration guards', () => {
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false' })).not.toThrow();
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', EINVOICE_SANDBOX: 'false', CROVE_MODULES: 'finance' })).not.toThrow();
     expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', EINVOICE_SANDBOX: 'false' })).not.toThrow();
+  });
+
+  // The pilot v0.3.0 deploy failed with "crove-api is unhealthy": compose handed the API EINVOICE_SANDBOX=true and ADS_SANDBOX=true
+  // for an unset one, which a public deployment with finance and ads refuses at boot. Compose now passes them through empty.
+  it('boots on a public PUBLIC_URL with finance and ads on and the compose defaults (empty sandbox switches)', () => {
+    const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    const composeDefaults = { EINVOICE_SANDBOX: '', ADS_SANDBOX: '', BANK_FEED_SANDBOX: 'false', CHANNEL_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' };
+    const config = loadConfig({ ...base, ...publicUrl, ...composeDefaults });
+    expect(config.EINVOICE_SANDBOX).toBe('false');
+    expect(config.ADS_SANDBOX).toBe('false');
+    // An empty value on a local URL keeps the development defaults.
+    const local = loadConfig({ ...base, ...composeDefaults });
+    expect(local.EINVOICE_SANDBOX).toBe('true');
+    expect(local.ADS_SANDBOX).toBe('true');
   });
 
   // #2118: docker-compose.yml falls back to published passwords for an unset one; on a public URL the kernel refuses them.

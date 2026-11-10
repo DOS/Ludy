@@ -340,7 +340,7 @@ const schema = z.object({
   CHANNEL_SANDBOX: z.enum(['true', 'false']).default('true'),
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
-  EINVOICE_SANDBOX: z.enum(['true', 'false']).optional(),
+  EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
@@ -348,9 +348,9 @@ const schema = z.object({
   // the sandbox takes no notices. At least 32 characters.
   BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
   // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
-  // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
+  // platform account. Left out, it is on for a local PUBLIC_URL and off for a public one (compose passes it through empty). Its figures
   // reach no books: the ads screen only shows them beside the ledger's total.
-  ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
+  ADS_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
   // Whether the worker may create the objects of an approved campaign at Meta (#2296, W2-3: a campaign, an ad set, a creative and an ad, every one PAUSED; nothing
   // un-pauses). Off by default: with it off a launch on a Meta account stays queued, untouched. It is for the owner's own live check on a stack the owner runs;
   // a public deployment refuses it until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are on main.
@@ -525,6 +525,9 @@ const schema = z.object({
   TRANSCRIBE_ALLOW_INSECURE_HTTP: optional.pipe(z.enum(['0', '1']).default('0')),
   TRANSCRIBE_API_KEY: optional,
   TRANSCRIBE_MODEL: optional,
+  // How a chunk is sent (#2972): `audio_transcriptions` posts the file to /audio/transcriptions (Whisper-class, the default); `chat_input_audio` posts it to
+  // /chat/completions as an input_audio part, for a provider that offers no transcription endpoint (Gemini's OpenAI-compatible one).
+  TRANSCRIBE_API_MODE: optional.pipe(z.enum(['audio_transcriptions', 'chat_input_audio']).default('audio_transcriptions')),
   AI_PRICE_AUDIO_PER_MIN: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   // Outbound mail (invites, issue #129), the same SMTP settings the bundled Supabase Auth uses. Unset SMTP_HOST: mail
   // is off, and the inviter passes the link on. Port 465 is implicit TLS; with SMTP_USER and SMTP_PASS on any other
@@ -652,10 +655,11 @@ const schema = z.object({
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX'> & {
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> & {
   AUTH_ISSUER: string;
   AUTH_SESSION_CHECK: SessionCheckMode;
   EINVOICE_SANDBOX: 'true' | 'false';
+  ADS_SANDBOX: 'true' | 'false';
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -673,6 +677,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
     EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
+    // Same rule as EINVOICE_SANDBOX: compose passes it through empty, so a public URL never inherits a sandbox default.
+    ADS_SANDBOX: raw.ADS_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
