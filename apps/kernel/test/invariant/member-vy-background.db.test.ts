@@ -1495,11 +1495,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             `INSERT INTO crove_kernel.outbox_pending DEFAULT VALUES`,
           ),
           // The run's own key: ids and a hash pass (the control); text in the key, the command, the hash or the response never does.
+          // This run has no result row, so the response names no result id (the guard accepts only the id of the run's own result, #2822).
           keyOk: await key(
             randomUUID(),
             "kernel.member_vy.result.store",
             HASH,
-            { resultId: randomUUID() },
+            { status: "ready", bodyLength: 3 },
           ),
           keyHex: await key(HASH, "kernel.member_vy.result.store", HASH, null),
           keySlug: await key(
