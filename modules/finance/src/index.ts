@@ -1,3 +1,5 @@
+import { mcpFinanceQueries } from './mcp.ts';
+export { zMcpInvoicesInput } from './mcp.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
 import { categorizationCommands, categorizationQueries } from './categorization.ts';
@@ -173,6 +175,7 @@ export { type FinancialStatements, type StatementLine, type UnmappedRow } from '
 
 export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands];
 export const financeQueries = [
+  ...mcpFinanceQueries,
   payrollSettlement,
   ...fixedAssetQueries,
   ...bankFeedQueries,

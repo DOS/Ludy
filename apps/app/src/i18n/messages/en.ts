@@ -9935,6 +9935,9 @@ export const en = {
       legal_entities: {
         list: 'List legal entities for the finance screens',
       },
+      mcp: {
+        invoices: 'Show an AI app the list of recorded invoices',
+      },
       misa_goods_code: {
         remove: 'Remove a MISA item code',
         set: 'Set a MISA item code',
@@ -10464,6 +10467,7 @@ export const en = {
           list: 'See the connected AI apps',
           revoke: 'Disconnect an AI app',
         },
+        parties: 'Show an AI app the list of customers and suppliers',
       },
       session: {
         revoke: 'Revoke a session',

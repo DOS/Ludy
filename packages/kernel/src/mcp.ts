@@ -146,5 +146,61 @@ export const mcpAbout = defineQuery({
   },
 });
 
+// What a person typed or an import brought, as one plain line for a reader outside the org: control characters (line breaks included) become a space,
+// the ends are trimmed, and it is cut at `max` characters. The text is data for the client, never an instruction, and says so in the tool's description.
+const plain = (value: string, max: number): string => [...value.replace(/\p{Cc}+/gu, ' ').trim()].slice(0, max).join('');
+
+export const MCP_LIST_DEFAULT = 25;
+export const MCP_LIST_MAX = 50;
+const zMcpLimit = z.number().int().min(1).max(MCP_LIST_MAX).default(MCP_LIST_DEFAULT).describe(`How many rows to return, newest first (1 to ${MCP_LIST_MAX}, default ${MCP_LIST_DEFAULT}).`);
+
+export const zMcpPartiesInput = z.strictObject({
+  kind: z.enum(['organization', 'person']).optional().describe('Only companies (organization) or only people (person). Leave out for both.'),
+  limit: zMcpLimit,
+});
+
+export interface McpPartyRow {
+  id: string;
+  kind: 'organization' | 'person';
+  name: string;
+  companyName: string | null;
+  createdOn: string;
+}
+export interface McpParties {
+  parties: McpPartyRow[];
+  total: number;
+  truncated: boolean;
+}
+
+// `ludy_parties_list`: the org's customers and suppliers (the party register), newest first, at most MCP_LIST_MAX. The projection is the privacy review of
+// this tool: the name of the party, whether it is a company or a person, and for a person the company they work at, and the day it was recorded.
+// Never an email, a phone number, an address or a tax code (a household business's tax code is its owner's own), never the free-text search column,
+// never the duplicate or verification state. Merged duplicates are not listed (the kept party stands for them). There is no search and no cursor:
+// a client sees the newest rows and says so (`truncated`); a way to page is a later step with its own review.
+export const mcpParties = defineQuery({
+  name: 'kernel.mcp.parties',
+  input: zMcpPartiesInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpParties> => {
+    if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
+    const kind = input.kind ?? null;
+    const found = await sql<{ id: string; kind: 'organization' | 'person'; name: string; company_name: string | null; created_on: string }>`
+      SELECT p.id, p.kind, p.name, c.name AS company_name, to_char(p.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS created_on
+      FROM crove_kernel.party p
+      LEFT JOIN crove_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id
+      LEFT JOIN crove_kernel.party c ON c.org_id = c0.org_id AND c.id = coalesce(c0.duplicate_of, c0.id)
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND (${kind}::text IS NULL OR p.kind = ${kind}::text)
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT ${input.limit}`.execute(ctx.trx);
+    const count = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM crove_kernel.party p
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND (${kind}::text IS NULL OR p.kind = ${kind}::text)`.execute(ctx.trx);
+    const total = count.rows[0]?.n ?? 0;
+    const parties = found.rows.map((r) => ({ id: r.id, kind: r.kind, name: plain(r.name, 300), companyName: r.company_name === null ? null : plain(r.company_name, 300), createdOn: r.created_on }));
+    return { parties, total, truncated: total > parties.length };
+  },
+});
+
 export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke];
-export const mcpQueries = [mcpGrantList, mcpAbout];
+export const mcpQueries = [mcpGrantList, mcpAbout, mcpParties];

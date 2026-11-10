@@ -9932,6 +9932,9 @@ export const vi = {
       legal_entities: {
         list: 'Xem pháp nhân cho màn hình kế toán',
       },
+      mcp: {
+        invoices: 'Cho ứng dụng AI xem danh sách hóa đơn đã ghi sổ',
+      },
       misa_goods_code: {
         remove: 'Xóa mã hàng MISA',
         set: 'Đặt mã hàng MISA',
@@ -10461,6 +10464,7 @@ export const vi = {
           list: 'Xem các ứng dụng AI đã kết nối',
           revoke: 'Ngắt kết nối một ứng dụng AI',
         },
+        parties: 'Cho ứng dụng AI xem danh sách khách hàng và nhà cung cấp',
       },
       session: {
         revoke: 'Đăng xuất phiên đăng nhập',
