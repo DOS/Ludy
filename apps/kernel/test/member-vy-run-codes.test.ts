@@ -9,7 +9,7 @@ import { AiBudgetExhaustedError, TranscriptionError } from '@crove/agent';
 import { DomainError } from '@crove/kernel-runtime';
 import { failureCode } from '../src/meetings-transcribe.ts';
 
-const MIGRATION = fileURLToPath(new URL('../../../supabase/migrations/20261214020000_crove_kernel_member_vy_run_finish_derive.sql', import.meta.url));
+const MIGRATION = fileURLToPath(new URL('../../../supabase/migrations/20261215020000_crove_kernel_member_vy_run_finish_derive.sql', import.meta.url));
 const KINDS = ['auth', 'rate_limit', 'unavailable', 'invalid_request', 'invalid_response', 'timeout', 'network'] as const;
 
 function databaseList(): string[] {
