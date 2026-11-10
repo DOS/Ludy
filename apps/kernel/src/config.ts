@@ -503,7 +503,10 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // https by default: the audio and the key travel to it. Plain http is accepted for localhost and 127.0.0.1, and for any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1
+  // (a speech-to-text container on the compose network is http://<service>:<port>); the check is in loadConfig below (#2863).
   TRANSCRIBE_BASE_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  TRANSCRIBE_ALLOW_INSECURE_HTTP: optional.pipe(z.enum(['0', '1']).default('0')),
   TRANSCRIBE_API_KEY: optional,
   TRANSCRIBE_MODEL: optional,
   AI_PRICE_AUDIO_PER_MIN: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
@@ -782,6 +785,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.CHANNEL_PINTEREST_APP_ID) !== Boolean(config.CHANNEL_PINTEREST_APP_SECRET)) throw new Error('set both CHANNEL_PINTEREST_APP_ID and CHANNEL_PINTEREST_APP_SECRET, or neither');
   if (config.CHANNEL_PINTEREST_APP_ID && !/^\d{4,32}$/.test(config.CHANNEL_PINTEREST_APP_ID)) throw new Error('CHANNEL_PINTEREST_APP_ID is the numeric id of the Pinterest app');
   if (config.CHANNEL_X_CLIENT_ID && !/^[A-Za-z0-9_-]{16,64}$/.test(config.CHANNEL_X_CLIENT_ID)) throw new Error('CHANNEL_X_CLIENT_ID is the OAuth 2.0 client id of the X app');
+  if (config.TRANSCRIBE_BASE_URL !== undefined) {
+    const url = new URL(config.TRANSCRIBE_BASE_URL);
+    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname) && config.TRANSCRIBE_ALLOW_INSECURE_HTTP !== '1') {
+      throw new Error('TRANSCRIBE_BASE_URL must be https (http only for localhost or 127.0.0.1, or any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1 on a private network)');
+    }
+  }
   if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET !== undefined) {
     if (config.BANK_FEED_SANDBOX !== 'true') throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET is set without BANK_FEED_SANDBOX=true');
     if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET.length < 32) throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET must be at least 32 characters');
