@@ -48,12 +48,6 @@ services:
       CROVE_MODULES: ${CROVE_MODULES:-finance}
     ports: !reset []
 
-  # The release pipeline does not publish a crove-media image yet (deploy.sh pins only the app and crove-extract), so a host cannot
-  # build it: the pilot layout keeps it behind the `media` profile (COMPOSE_PROFILES=media, once the image is published). The pilot runs
-  # the finance module, which stores no recording; a host that turns Meetings on needs it (docs/runbooks/meetings-ai.md, P3b).
-  crove-media:
-    profiles: ['media']
-
   # The prober reads the modules the deployment runs and asks Supabase Auth through the API's proxy: `crove` does not run.
   prober:
     environment:

@@ -286,7 +286,7 @@ services:
       UPLOAD_BEGIN_LIMIT_PER_MINUTE: ${UPLOAD_BEGIN_LIMIT_PER_MINUTE:-20}
       # Every PDF, XML and MIME parse happens in crove-extract (External-tenant gate T12).
       EXTRACT_URL: http://crove-extract:8090
-      # The length of every meeting recording is measured in crove-media (#2985): without it (compose profile `media`) meeting
+      # The length of every meeting recording is measured in crove-media (#2985): without it meeting
       # uploads are refused, because a recording whose length is unknown would bypass the AI meter.
       MEDIA_URL: ${MEDIA_URL:-http://crove-media:8095}
       MEDIA_CALL_TIMEOUT_MS: ${MEDIA_CALL_TIMEOUT_MS:-}
@@ -399,8 +399,8 @@ services:
   # Media processing sandbox for AI Meeting Notes (plan §6, ADR-0047, #2577). Bytes in, normalized Opus and segments out;
   # only the worker calls it. No credentials on purpose: it refuses to start with any variable outside its allowlist.
   # Its only network is `media`, which has no route out, and no port is published.
-  # In the default stack: the kernel (API and worker) measures every meeting recording in it (#2985), so without it the Meetings module
-  # could store no recording. compose.pilot.yml keeps it behind the `media` profile until the release pipeline publishes its image.
+  # In the default stack and the pilot layout: the kernel (API and worker) measures every meeting recording in it (#2985), so without it the
+  # Meetings module could store no recording. The release publishes its image and deploy.sh pins it by digest (#2988).
   crove-media:
     build:
       context: .
