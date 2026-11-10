@@ -289,6 +289,8 @@ services:
       # The length of every meeting recording is measured in crove-media (#2985): without it meeting
       # uploads are refused, because a recording whose length is unknown would bypass the AI meter.
       MEDIA_URL: ${MEDIA_URL:-http://crove-media:8095}
+      # The same value as crove-media's own: the API refuses a larger recording before it is read (#2989).
+      MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-2147483648}
       MEDIA_CALL_TIMEOUT_MS: ${MEDIA_CALL_TIMEOUT_MS:-}
       # Extract jobs the worker runs at once, and the sandbox's parser slots it never exceeds (#2119; set the same value on
       # crove-extract below). Unset worker value: 4, or the slots if fewer. AI_MAX_RETRIES: times a failing AI call is sent again.

@@ -148,5 +148,11 @@ describe('MEDIA_URL', () => {
     expect(loadConfig({ ...base, MEDIA_URL: 'http://crove-media:8095' }).MEDIA_URL).toBe('http://crove-media:8095');
     expect(loadConfig(base).MEDIA_URL).toBeUndefined();
     expect(() => loadConfig({ ...base, MEDIA_URL: 'ftp://x' })).toThrow();
+    // The cap of recordings (#2989): optional, an integer of at least 1 KiB, at most the sandbox's 2 GiB.
+    expect(loadConfig(base).MEDIA_MAX_INPUT_BYTES).toBeUndefined();
+    expect(loadConfig({ ...base, MEDIA_MAX_INPUT_BYTES: '1000000000' }).MEDIA_MAX_INPUT_BYTES).toBe(1_000_000_000);
+    expect(loadConfig({ ...base, MEDIA_MAX_INPUT_BYTES: '' }).MEDIA_MAX_INPUT_BYTES).toBeUndefined();
+    expect(() => loadConfig({ ...base, MEDIA_MAX_INPUT_BYTES: '10' })).toThrow();
+    expect(() => loadConfig({ ...base, MEDIA_MAX_INPUT_BYTES: '9999999999' })).toThrow();
   });
 });
