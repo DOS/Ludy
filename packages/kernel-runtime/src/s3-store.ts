@@ -211,6 +211,12 @@ function httpStatus(error: unknown): number | undefined {
   return (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata?.httpStatusCode;
 }
 
+// S3 answers a request for a key whose current version is a delete marker with 405 and this header.
+function isDeleteMarkerAnswer(error: unknown): boolean {
+  const response = (error as { $response?: { headers?: Record<string, string | undefined> } } | null)?.$response;
+  return httpStatus(error) === 405 && response?.headers?.['x-amz-delete-marker'] === 'true';
+}
+
 function errorName(error: unknown): string | undefined {
   return (error as { name?: string } | null)?.name;
 }
@@ -620,8 +626,9 @@ export class S3BlobStore implements BlobStore {
           new PutObjectTaggingCommand({ Bucket: this.bucket, Key: key, Tagging: { TagSet: [{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }] } }),
         );
       } catch (error) {
-        // Nothing current to tag: absent, or already behind a delete marker (S3 answers 405 for a marker), so what was there was tagged by the delete before it.
-        if (!isMissingObject(error) && httpStatus(error) !== 405) throw error;
+        // Nothing current to tag: absent, or already behind a delete marker (S3 answers 405 with x-amz-delete-marker: true), so what was there was tagged by the delete before it.
+        // A bare 405 is not that: a store that does not support tagging answers it for a live object, and deleting then would leave the version untagged for good.
+        if (!isMissingObject(error) && !isDeleteMarkerAnswer(error)) throw error;
       }
     }
     try {

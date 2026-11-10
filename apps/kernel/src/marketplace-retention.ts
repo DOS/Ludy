@@ -72,6 +72,6 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
     if (progress === 0 || listed.length < limit) break;
   }
   log.log(`${TAG} originals=${run.deleted} objects=${run.objects} versions=${run.versions} failed=${run.failed}`);
-  if (run.failed > 0) opsAlert(`${TAG} ALERT ${run.failed} original file(s) could not be removed; the next run tries again`);
+  if (run.failed > 0) opsAlert(`${TAG} ALERT ${run.failed} original file(s) could not be removed (the tag or the delete failed); the next run tries the ones not yet marked again, and for one whose second delete failed after its marker the object may remain, so check the bucket`);
   return run;
 }

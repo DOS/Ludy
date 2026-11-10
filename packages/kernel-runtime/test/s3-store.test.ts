@@ -360,14 +360,26 @@ describe('retention delete on a versioned bucket (#2789)', () => {
     }
   });
 
-  it('still deletes when there is nothing current to tag (a missing key, or a delete marker answering 405)', async () => {
-    for (const [name, status] of [['NoSuchKey', 404], ['MethodNotAllowed', 405]] as const) {
+  it('still deletes when there is nothing current to tag (a missing key, or a delete marker answering 405 with its header)', async () => {
+    const marker = Object.assign(s3Error('MethodNotAllowed', 405), { $response: { headers: { 'x-amz-delete-marker': 'true' } } });
+    for (const failure of [s3Error('NoSuchKey', 404), marker]) {
       const { store, sent } = fakeStore((c) => {
-        if (c instanceof PutObjectTaggingCommand) throw s3Error(name, status);
+        if (c instanceof PutObjectTaggingCommand) throw failure;
         return {};
       });
       await expect(store.delete(key, { retention: 'expire' })).resolves.toBeUndefined();
-      expect(names(sent), name).toEqual(['PutObjectTaggingCommand', 'DeleteObjectCommand']);
+      expect(names(sent), failure.name).toEqual(['PutObjectTaggingCommand', 'DeleteObjectCommand']);
+    }
+  });
+
+  it('fails closed on a 405 that is not a delete marker (a store without tagging answering a live object)', async () => {
+    for (const failure of [s3Error('MethodNotAllowed', 405), Object.assign(s3Error('MethodNotAllowed', 405), { $response: { headers: {} } })]) {
+      const { store, sent } = fakeStore((c) => {
+        if (c instanceof PutObjectTaggingCommand) throw failure;
+        return {};
+      });
+      await expect(store.delete(key, { retention: 'expire' })).rejects.toMatchObject({ name: 'MethodNotAllowed' });
+      expect(names(sent)).toEqual(['PutObjectTaggingCommand']);
     }
   });
 
