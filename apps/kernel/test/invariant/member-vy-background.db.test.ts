@@ -1115,6 +1115,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         edge.ok || edge.message,
         "a known code, a rule and a number at the bound",
       ).toBe(true);
+      // The two member-mode commands and the one target type they use pass (the controls for the enumerated names).
+      for (const [why, cols] of [
+        ["the store command with its run as the target", { command: "kernel.member_vy.result.store", target: "kernel.ai_run" }],
+        ["the audio command with no target", { command: "kernel.member_vy.meeting_audio.open" }],
+      ] as const) {
+        const ok = await audit(goodDetail, cols);
+        expect(ok.ok || ok.message, why).toBe(true);
+      }
       const clean = await audit(goodDetail);
       expect(
         clean.ok || clean.message,
@@ -1182,6 +1190,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           { command: "kernel.task.create" },
         ],
         ["text in target_type", goodDetail, { target: "Tóm tắt riêng" }],
+        // Shape-valid but not listed (#2822 part 3): the names are enumerated, so a command or a target type nobody declared for member mode is refused.
+        [
+          "a kernel.member_vy command that is not a member-mode command",
+          goodDetail,
+          { command: "kernel.member_vy.memory.save" },
+        ],
+        ["a slug target type that is not listed", goodDetail, { target: "kernel.task" }],
         [
           "text in input_sha256",
           goodDetail,
