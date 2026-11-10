@@ -2076,7 +2076,7 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
-  const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL);
+  const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
   const playbackAudited = new Map<string, number>();
   // What the two playback routes share (the bearer route and the ticket route, #2703): the range handling, the audit window,

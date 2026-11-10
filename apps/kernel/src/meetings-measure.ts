@@ -88,7 +88,8 @@ function refusal(error: unknown): DomainError {
 function accepted(kind: 'audio' | 'video', probe: MediaProbeResult): number {
   if (kind === 'audio' && !probe.hasAudio) throw failed('audio');
   if (kind === 'video' && !probe.hasVideo) throw failed('video');
-  if (probe.durationSeconds > MEDIA_LIMITS.maxDurationSeconds) throw tooLong();
+  // The sandbox's own tolerance for packetization and padding (60 s) is allowed: a 2 hour recording is not refused for 30 s of padding.
+  if (probe.durationSeconds > MEDIA_LIMITS.maxDurationSeconds + 60) throw tooLong();
   // A stream that reached no time at all has no length to charge: never one second for it.
   if (!(probe.durationSeconds > 0)) throw failed('media');
   return Math.ceil(probe.durationSeconds);
@@ -119,12 +120,12 @@ export function createMediaMeasurer(client: MediaClient): MediaMeasurer {
 }
 
 // The measurer of a deployment: none without MEDIA_URL, and then every call refuses as unavailable.
-export function mediaMeasurerFor(url: string | undefined): MediaMeasurer {
+export function mediaMeasurerFor(url: string | undefined, timeoutMs?: number): MediaMeasurer {
   if (!url) {
     const none = async (): Promise<never> => {
       throw unavailable();
     };
     return { configured: false, measure: none, measureBytes: none };
   }
-  return createMediaMeasurer(createMediaClient(url));
+  return createMediaMeasurer(createMediaClient(url, timeoutMs === undefined ? {} : { timeoutMs }));
 }

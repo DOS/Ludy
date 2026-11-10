@@ -276,7 +276,10 @@ export async function measureFile(filePath: string, options?: FfmpegRunOptions):
   if (!probe.hasAudio && !probe.hasVideo) throw new MediaExecutionError('malformed_media', 'The media holds no audio or video');
   const tolerance = 60;
   const cap = MEDIA_LIMITS.maxDurationSeconds + tolerance + 1;
-  const map = probe.hasAudio ? ['-map', '0:a:0', '-vn'] : ['-map', '0:v:0', '-c', 'copy'];
+  // Audio is re-timed by sample count (asetpts=N/SR/TB) before the null sink: timestamps are the sender's word too, and a stream whose
+  // timestamps wrap or restart (a WebM joined to itself, a muxer that resets them) reaches a short output time while every sample is still
+  // decoded, and still heard by a provider. Counting samples cannot be moved by a timestamp.
+  const map = probe.hasAudio ? ['-map', '0:a:0', '-vn', '-af', 'asetpts=N/SR/TB'] : ['-map', '0:v:0', '-c', 'copy'];
   const { stdout } = await runCommand(
     'ffmpeg',
     ['-v', 'error', '-nostats', '-i', filePath, ...map, '-t', String(cap), '-progress', 'pipe:1', '-f', 'null', '-'],

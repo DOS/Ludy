@@ -66,7 +66,9 @@ function streamOf(source: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array>
   });
 }
 
-export function createMediaClient(baseUrl: string): MediaClient {
+// timeoutMs: how long one call may take (the sandbox's own MEDIA_TIMEOUT_MS plus its queue and a margin); default the contract's.
+export function createMediaClient(baseUrl: string, options: { timeoutMs?: number } = {}): MediaClient {
+  const callTimeoutMs = options.timeoutMs ?? MEDIA_TIMING.processTimeoutMs + 15_000;
   let base = baseUrl;
   while (base.endsWith('/')) {
     base = base.slice(0, -1);
@@ -128,7 +130,7 @@ export function createMediaClient(baseUrl: string): MediaClient {
       redirect: 'error',
     };
     if (streaming) init.duplex = 'half';
-    init.signal = signal ?? AbortSignal.timeout(MEDIA_TIMING.processTimeoutMs + 15_000);
+    init.signal = signal ?? AbortSignal.timeout(callTimeoutMs);
     const response = await fetch(url, init);
 
     const text = await readBoundedText(response, 192 * 1024 * 1024);
@@ -207,7 +209,7 @@ export function createMediaClient(baseUrl: string): MediaClient {
         },
         redirect: 'error',
       };
-      init.signal = signal ?? AbortSignal.timeout(MEDIA_TIMING.processTimeoutMs + 15_000);
+      init.signal = signal ?? AbortSignal.timeout(callTimeoutMs);
       const response = await fetch(url, init);
 
       if (!response.ok) {

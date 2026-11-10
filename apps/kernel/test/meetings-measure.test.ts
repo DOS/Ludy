@@ -108,7 +108,7 @@ describe('createMediaMeasurer', () => {
   });
 
   it('refuses a recording longer than the plan allows', async () => {
-    await expect(createMediaMeasurer(client(async () => probe({ durationSeconds: 7201 }))).measureBytes('audio', new Uint8Array([1]))).rejects.toMatchObject({ code: 'MEDIA_TOO_LONG', status: 413 });
+    await expect(createMediaMeasurer(client(async () => probe({ durationSeconds: 7261 }))).measureBytes('audio', new Uint8Array([1]))).rejects.toMatchObject({ code: 'MEDIA_TOO_LONG', status: 413 });
   });
 
   it('refuses a file without the stream of its kind', async () => {

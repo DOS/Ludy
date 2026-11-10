@@ -504,6 +504,8 @@ const schema = z.object({
   // recording in it at upload and the worker re-measures an old one before it is transcribed. Unset: meeting uploads are refused
   // (MEDIA_PROBE_UNAVAILABLE), because a recording whose length cannot be known would bypass the AI meter.
   MEDIA_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // How long one call to crove-media may take, in ms: its own MEDIA_TIMEOUT_MS (default 300000) plus a margin. Unset: 315000. Raise both for a 2 GB video.
+  MEDIA_CALL_TIMEOUT_MS: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1000).max(2_000_000).optional()),
   // Extract jobs the worker runs at once (#2119), each one reading a file and, for a PDF or a photo, calling the AI. Unset:
   // 4, or the sandbox's slots when it has fewer. EXTRACT_CONCURRENCY is the sandbox's own setting of that name (its
   // parser slots, 1 to 8, the sandbox's own default being 1); give the worker the same value, since it cannot ask: docker

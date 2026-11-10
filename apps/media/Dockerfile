@@ -37,6 +37,8 @@ WORKDIR /app
 COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/apps/media /app/apps/media
+# apps/media re-exports the wire contract from this workspace package (a symlink in node_modules, so it must be here too).
+COPY --from=build /app/packages/media-contract /app/packages/media-contract
 
 # Marker (apps/media/src/main.ts, IMAGE_MARKER): in this image the environment allowlist always applies,
 # even when NODE_ENV is overridden. Owned by root, so the service user cannot remove it.

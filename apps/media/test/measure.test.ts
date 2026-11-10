@@ -2,7 +2,7 @@
 // The length of a recording is what its stream holds, not what its container declares (#2985): a browser's streamed WebM declares
 // none, and a header is the sender's word. Skipped where ffmpeg is not installed; the crove-media image job runs the same in the container.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -59,6 +59,23 @@ describe.skipIf(!hasFfmpeg)('measureFile', () => {
     const measured = await measureFile(lie);
     expect(measured.durationSeconds).toBeGreaterThan(8.5);
   }, 60_000);
+
+  it('is not fooled by timestamps that wrap or restart (#2985)', async () => {
+    const real = join(dir, 'long.webm');
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=30', '-ac', '1', '-c:a', 'libopus', real]);
+    // Timestamps that wrap every 5 s: the output time stalls near 5 s while all 30 s are still decoded.
+    const wrapped = join(dir, 'wrapped.webm');
+    execFileSync('ffmpeg', ['-y', '-v', 'error', '-i', real, '-c:a', 'copy', '-bsf:a', 'setts=ts=mod(PTS\\,5000)', wrapped]);
+    const wrappedSeconds = (await measureFile(wrapped)).durationSeconds;
+    expect(wrappedSeconds).toBeGreaterThan(29);
+    expect(wrappedSeconds).toBeLessThan(31);
+    // Two recordings joined end to end (a recovered MediaRecorder file can have this shape): 60 s, not 30.
+    const joined = join(dir, 'joined.webm');
+    writeFileSync(joined, Buffer.concat([readFileSync(real), readFileSync(real)]));
+    const joinedSeconds = (await measureFile(joined)).durationSeconds;
+    expect(joinedSeconds).toBeGreaterThan(59);
+    expect(joinedSeconds).toBeLessThan(61);
+  }, 120_000);
 
   it('refuses garbage as unreadable', async () => {
     const path = join(dir, 'garbage.webm');
