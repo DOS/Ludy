@@ -2,6 +2,7 @@ export * from './identity.ts';
 export * from './commands.ts';
 export * from './queries.ts';
 export * from './overview.ts';
+export * from './signals.ts';
 export * from './today.ts';
 export * from './invites.ts';
 export * from './mail.ts';

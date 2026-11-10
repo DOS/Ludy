@@ -182,6 +182,10 @@ export const vi = {
     // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
     // line adds its keys here, in both languages, with the read.
     items: {
+      signals: {
+        wonDealNoInvoice: 'Deal đã thắng {days, plural, other {# ngày}} trước mà chưa có hóa đơn bán hàng cho khách này',
+        wonDealNoInvoiceMore: '{count, plural, other {# deal khác}} đã thắng mà chưa có hóa đơn bán hàng',
+      },
       crm: {
         noActivity: 'Nhắc: deal này đã {days, plural, other {# ngày}} chưa có cập nhật',
         pastClose: 'Nhắc: deal này đã quá ngày dự kiến chốt {days, plural, other {# ngày}}',
