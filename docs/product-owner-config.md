@@ -49,7 +49,7 @@ turn on `sprint_review` with `line_scopes`.
 | Notes & CRM (notes, to-dos, bookings and calendar) | `line:notes-crm` | `b8743ac2` | `Notes & CRM Product Owner` |
 | Engage (Ludy Engage: Social in `modules/social`, Ads, Hộp thư/Help Desk and the CRM folded in, DESIGN.md 2026-11-03) | `line:social-management` | `735657ce` | `Ludy Engage Product Owner` |
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
-| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
+| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
 
 - Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
   "no for Social" (backlog review, Decision 17), and JOY confirmed on
@@ -66,6 +66,12 @@ turn on `sprint_review` with `line_scopes`.
   CI, deploy and operations. Its PO reviews the shared-core files of any
   line's PR (below); it does not review or approve the rest of another
   line's PR.
+- Owner decision 2026-11-10 (Platform PO chat): "Vy thuộc Platform nha."
+  Vy, the AI general manager across every app (DESIGN.md 1.1), belongs to
+  the Platform line: the agent core (`packages/agent`, the kernel's agents,
+  runs, metering and budgets), member-scoped Vy (ADR-0049, `vy.use`) and
+  Vy's own cross-app work. A line's feature that uses Vy (for example
+  the meeting summary, or Ly's invoice drafts) stays with that line.
 - Line POs are peers (JOY, Platform PO chat, 2026-11-07: "Tại sao PO khác
   lại phải qua mày mà ko làm việc với tao trực tiếp. Mày chỉ ngang hàng thôi
   mà", then option 1 of the PO's recommendation: "Cách 1 mày đề xuất đi").
