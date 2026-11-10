@@ -36,8 +36,8 @@ const run = (reads: Reads, options: { reads?: readonly string[]; absent?: readon
   todayQuery(options.reads ? { reads: options.reads } : {}).handler(contextOf(reads, options.absent, options.asked), {});
 
 describe('kernel.today', () => {
-  it('names the five reads the lines agreed to expose', () => {
-    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today']);
+  it('names the five reads the lines agreed to expose and the cross-app rule of the kernel', () => {
+    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice']);
   });
 
   it('shows nothing when no read is registered yet, and when the modules are off', async () => {

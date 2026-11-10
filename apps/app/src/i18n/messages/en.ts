@@ -184,6 +184,10 @@ export const en = {
     // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
     // line adds its keys here, in both languages, with the read.
     items: {
+      signals: {
+        wonDealNoInvoice: 'A deal won {days, plural, one {# day} other {# days}} ago has no sales invoice for this customer yet',
+        wonDealNoInvoiceMore: '{count, plural, one {# more deal} other {# more deals}} won with no sales invoice',
+      },
       crm: {
         noActivity: 'Reminder: this deal has had no update for {days, plural, one {# day} other {# days}}',
         pastClose: 'Reminder: this deal is {days, plural, one {# day} other {# days}} past its expected close',
@@ -10416,6 +10420,9 @@ export const en = {
       },
       sessions: {
         list: 'List sessions',
+      },
+      signals: {
+        deal_without_invoice: 'Read the won deals that have no sales invoice',
       },
       subject_key: {
         reseal: 'Wrap subject keys again under the current key after a key rotation',

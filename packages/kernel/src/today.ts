@@ -16,8 +16,8 @@ import { DomainError, defineQuery } from '@crove/kernel-runtime';
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 // The reads the lines agreed to expose (issue #2383): Accounting finance.today, Notes and CRM crm.today and
-// kernel.conversation.today, Marketing social.today and ads.today.
-export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today'];
+// kernel.conversation.today, Marketing social.today and ads.today; and the kernel's own cross-app rules (signals.ts, Vy plan C4).
+export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice'];
 
 export function todayQuery(options: { reads?: readonly string[] } = {}) {
   const reads = options.reads ?? TODAY_READS;
