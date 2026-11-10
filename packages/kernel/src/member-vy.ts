@@ -453,8 +453,8 @@ export const memberVyMeetingAudioOpen = defineCommand({
     try {
       rows = (await sql<Row>`SELECT * FROM crove_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
     } catch (error: unknown) {
-      const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
-      if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
+      const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY|AUDIO_EXPIRED)/.exec(error instanceof Error ? error.message : '')?.[0];
+      if (code === 'MEETINGS_KEY_SHREDDED' || code === 'MEETINGS_AUDIO_EXPIRED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
       if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
       throw error;
     }
@@ -494,6 +494,11 @@ export const memberVyMeetingAudioOpen = defineCommand({
 // The sweeps of a member's private Vy data (ADR-0049 decision 3, #2822), the system commands of the worker's daily member-vy-sweep job: results past
 // their expires_at, and a former member's results and memory. Both reach the rows only through definers that answer a count, never text; the audit
 // carries counts and ids. The worker finds the orgs and the users to ask about through crove_kernel.member_vy_results_due and member_vy_former_members_due.
+// The sweep commands run as the worker's system actor only: the access list already says so, and the handler says it again, so a loosened access never opens them to a person.
+function requireSystem(ctx: Pick<CommandContext, 'actor'>): void {
+  if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới dọn được dữ liệu riêng của Vy');
+}
+
 const EXPIRE_BATCH = 1000;
 // Batches one run removes at most (1,000 results each): the rest wait for the next night, so one org cannot hold the worker.
 const EXPIRE_MAX_BATCHES = 50;
@@ -505,6 +510,7 @@ export const memberVyResultsExpire = defineCommand({
   sideEffect: 'irreversible',
   access: 'system',
   handler: async (ctx): Promise<{ removed: number }> => {
+    requireSystem(ctx);
     let removed = 0;
     for (let batch = 0; batch < EXPIRE_MAX_BATCHES; batch += 1) {
       const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_results_expire(${EXPIRE_BATCH}::int) AS n`.execute(ctx.trx);
@@ -524,6 +530,7 @@ export const memberVyMemberDataPurge = defineCommand({
   sideEffect: 'irreversible',
   access: 'system',
   handler: async (ctx, input): Promise<{ removed: number }> => {
+    requireSystem(ctx);
     const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_member_data_purge(${ctx.orgId}::uuid, ${input.userId}::uuid) AS n`.execute(ctx.trx);
     const removed = Number(rows[0]?.n ?? 0);
     ctx.audit({ userId: input.userId, removed });

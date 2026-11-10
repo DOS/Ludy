@@ -76,7 +76,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
@@ -230,6 +230,8 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   // Whether the recorder may start a transcription here (#2578, M4b): MEETINGS_TRANSCRIBE=on with a provider.
   setTranscribeEnabled(transcribeEnabled(config));
+  // The worker takes a transcription job only with the credential key (a broker); without it the start is refused with its own code instead of queueing a job nobody works (#2863).
+  setTranscribeBroker(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
   setSummaryEnabled(summaryEnabled(config));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({

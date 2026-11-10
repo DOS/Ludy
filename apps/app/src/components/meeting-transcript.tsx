@@ -104,6 +104,8 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
       return t('vy.codes.AI_STOPPED');
     case 'TRANSCRIBE_OFF':
       return t('vy.codes.TRANSCRIBE_OFF');
+    case 'TRANSCRIBE_NO_BROKER':
+      return t('vy.codes.TRANSCRIBE_NO_BROKER');
     case 'TRANSCRIBE_RUNNING':
       return t('vy.codes.TRANSCRIBE_RUNNING');
     case 'MEETING_NO_AUDIO':
