@@ -11,14 +11,14 @@ const tool: ToolDescriptor = {
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   outputSchema: { type: 'object' },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  run: async () => ({ ok: true }),
+  read: async () => ({ ok: true }),
 };
 const input = (over: Partial<HandleInput>): HandleInput => ({
   body: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
   headers: { protocolVersion: '2025-11-25', method: null, name: null },
   tools: [tool],
   serverVersion: 't',
-  callTool: (t) => t.run(),
+  callTool: (t) => t.read(),
   describeError: () => ({ code: -32603, message: 'e' }),
   ...over,
 });

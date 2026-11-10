@@ -251,7 +251,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     }
     if (!grant) return challenge(c, 'invalid_token');
 
-    const audit = (tool: string, requestId: string, outcome: 'ok' | 'refused' | 'rate_limited' | 'failed') =>
+    const writeCallAudit = (tool: string, requestId: string, outcome: 'ok' | 'refused' | 'rate_limited' | 'failed') =>
       runtime.orgless((db) =>
         sql`SELECT crove_kernel.mcp_call_audit(${grant.orgId}::uuid, ${claims.grantId}::uuid, ${tool}::text, ${requestId}::text, ${outcome}::text)`.execute(db),
       );
@@ -260,7 +260,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     const rate = grantLimiter.take(claims.grantId);
     const running = inFlight.get(claims.grantId) ?? 0;
     if (!rate.allowed || running >= config.MCP_GRANT_CONCURRENCY) {
-      if (refusalAuditLimiter.take(claims.grantId).allowed) await audit('-', requestId, 'rate_limited').catch(() => undefined);
+      if (refusalAuditLimiter.take(claims.grantId).allowed) await writeCallAudit('-', requestId, 'rate_limited').catch(() => undefined);
       return tooMany(c, rate.allowed ? 1 : rate.retryAfterSeconds);
     }
     inFlight.set(claims.grantId, running + 1);
@@ -283,13 +283,13 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         callTool: async (tool) => {
           let value: Record<string, unknown>;
           try {
-            value = await tool.run();
+            value = await tool.read();
           } catch (error) {
-            await audit(tool.name, requestId, error instanceof DomainError ? 'refused' : 'failed').catch(() => undefined);
+            await writeCallAudit(tool.name, requestId, error instanceof DomainError ? 'refused' : 'failed').catch(() => undefined);
             throw error;
           }
           // The answer leaves only after its audit row is written.
-          await audit(tool.name, requestId, 'ok');
+          await writeCallAudit(tool.name, requestId, 'ok');
           return value;
         },
         describeError: (error) => {
@@ -333,7 +333,7 @@ function toolsFor(runtime: Runtime, actor: UserActor, orgId: string): ToolDescri
         required: ['orgName', 'clientName', 'scopes'],
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      run: async () => (await runtime.query<Record<string, unknown>>('kernel.mcp.about', {}, { actor, orgId })),
+      read: async () => (await runtime.query<Record<string, unknown>>('kernel.mcp.about', {}, { actor, orgId })),
     },
   ];
 }

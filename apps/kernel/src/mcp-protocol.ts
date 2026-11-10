@@ -41,7 +41,7 @@ export interface ToolDescriptor {
   // The MCP annotations mirror the risk tier of the query behind the tool: every tool of this step reads only.
   annotations: { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false };
   // The kernel query it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
-  run: () => Promise<Record<string, unknown>>;
+  read: () => Promise<Record<string, unknown>>;
 }
 
 export interface McpHeaders {
@@ -66,7 +66,7 @@ function metaOf(params: Record<string, unknown> | undefined): Record<string, unk
 export function toolList(tools: readonly ToolDescriptor[]): Array<Record<string, unknown>> {
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : 1))
-    .map(({ run: _run, ...descriptor }) => descriptor);
+    .map(({ read: _read, ...descriptor }) => descriptor);
 }
 
 // What a tool answers: structured content and a short text form of it, for clients that read only text.
