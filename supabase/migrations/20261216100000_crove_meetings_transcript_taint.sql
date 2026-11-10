@@ -8,6 +8,9 @@
 --       row is never inserted tainted; no update ever sets `tainted`, and only draft_review (compared by the owner of that function, as in 20261203100000) clears it;
 --       source_run_id never changes after the insert, for anybody. A correction of the text or the label leaves the row tainted. A draft that is still tainted is
 --       never published, whoever asks (no command publishes a transcript today; this holds for the one that will).
+--   backfill
+--       every existing DRAFT segment is marked tainted (a draft copied from a Vy result before this migration would otherwise look reviewed); the recorder clears the mark by
+--       reading the transcript (meetings.draft.review). Published segments are not touched.
 --   tainted column grant
 --       crove_tenant has no UPDATE on `tainted` or `source_run_id` at all (the column grant of 20261127300000 never named them; this states it).
 --   crove_meetings.draft_review(org, meeting, ids)
@@ -42,6 +45,10 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.transcript_segment_taint() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS transcript_segment_taint ON crove_meetings.transcript_segment;
+-- Backfill: a draft segment that exists now may have been copied from a Vy result before the marks existed, so every draft is marked as the model's text until the recorder
+-- has read it (the same review as for a summary). Run with the trigger dropped (above) and before it is created (below), so it blocks nothing; published segments are
+-- untouched; and the WHERE makes a second run change nothing that is already marked.
+UPDATE crove_meetings.transcript_segment SET tainted = true WHERE stage = 'draft' AND NOT tainted;
 CREATE TRIGGER transcript_segment_taint BEFORE INSERT OR UPDATE ON crove_meetings.transcript_segment
   FOR EACH ROW EXECUTE FUNCTION crove_meetings.transcript_segment_taint();
 

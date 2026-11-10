@@ -7,6 +7,8 @@
 // - a draft segment that is still tainted is never published, whoever asks (no command publishes a transcript today; this holds for the one that will).
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/.
 import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -218,5 +220,28 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     expect(await state(id)).toMatchObject({ stage: 'draft', tainted: true });
     await withRecorder((c) => c.query(`SELECT crove_meetings.draft_review($1::uuid, $2::uuid, $3::uuid[])`, [orgId, meetingId, [id]]));
     expect((await attempt('superuser', `UPDATE crove_meetings.transcript_segment SET stage = 'published' WHERE org_id = $1 AND id = $2`, [orgId, id])).code).toBeNull();
+  });
+
+  // #2941: a draft that existed before the migration (copied from a Vy result with no mark) comes out tainted when the migration runs; a published segment is not touched.
+  it('marks the draft segments that existed before the migration as tainted, and leaves published ones alone', async () => {
+    const draft = randomUUID();
+    const published = randomUUID();
+    await SEGMENT(draft, meetingId, false, null);
+    await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, text, stage, tainted) VALUES ($1, $2, $3, 0, 5, 'Đã chia sẻ', 'published', false)`, [orgId, published, meetingId]));
+    const file = readdirSync(MIGRATIONS).find((f) => f.endsWith('_crove_meetings_transcript_taint.sql')) as string;
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(readFileSync(join(MIGRATIONS, file), 'utf8'));
+        await c.query('COMMIT');
+      } catch (error) {
+        await c.query('ROLLBACK');
+        throw error;
+      }
+    });
+    expect(await state(draft)).toMatchObject({ tainted: true, stage: 'draft' });
+    expect(await state(published)).toMatchObject({ tainted: false, stage: 'published' });
+    // The trigger is back in place after the re-run: the rules still hold.
+    expect((await attempt('superuser', `UPDATE crove_meetings.transcript_segment SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, published])).code).toBe('42501');
   });
 });
