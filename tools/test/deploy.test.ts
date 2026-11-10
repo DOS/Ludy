@@ -16,6 +16,7 @@ const runHere = hasBash && (process.platform !== 'win32' || process.env['CROVE_D
 const digest = (c: string) => c.repeat(64);
 const image = (c: string) => `ghcr.io/example/crove@sha256:${digest(c)}`;
 const extract = (c: string) => `ghcr.io/example/crove-extract@sha256:${digest(c)}`;
+const media = (c: string) => `ghcr.io/example/crove-media@sha256:${digest(c)}`;
 const releaseDir = (release: string, c: string) => `${release}-${digest(c).slice(0, 12)}`;
 // Forward slashes: the script takes absolute paths without backslashes (Git Bash on Windows accepts C:/...).
 const slash = (p: string) => p.replaceAll('\\', '/');
@@ -49,7 +50,7 @@ function run(args: string[], env: Record<string, string> = {}, input?: string) {
 }
 
 const deploy = (release: string, c: string, env: Record<string, string> = {}) =>
-  run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--compose', compose], env);
+  run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--media-image', media(c), '--compose', compose], env);
 
 const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter((l) => l && !l.startsWith('curl ')) : []);
 const state = (name: string) => {
@@ -78,18 +79,19 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it('pulls by digest, migrates first, then rolls infrastructure, the app and the prober, and records the release', () => {
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit crove prober' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract crove-media mailpit crove prober' });
     expect(res.status, res.out).toBe(0);
     const c = calls();
     const order = [
       `pull ${image('a')}`,
       `pull ${extract('a')}`,
+      `pull ${media('a')}`,
       'compose config --quiet',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 db',
       'compose run --rm --no-TTY --no-deps migrate',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 auth',
       'compose run --rm --no-TTY --no-deps auth-grants',
-      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract mailpit',
+      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove',
       'compose port crove 8080',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 prober',
@@ -101,6 +103,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(state('previous')).toBe('');
     expect(running()).toContain(`crove: { image: '${image('a')}', build: !reset null }`);
     expect(running()).toContain(`crove-extract: { image: '${extract('a')}', build: !reset null }`);
+    expect(running()).toContain(`crove-media: { image: '${media('a')}', build: !reset null }`);
+    expect(readFileSync(`${dir}/releases/${releaseDir('v1.0.0', 'a')}/release.env`, 'utf8')).toContain(`MEDIA_IMAGE=${media('a')}`);
     expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe('name: crove\nservices: {}\n');
     expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toMatch(/deploy v1\.0\.0-a{12} ok/);
     // The script installs itself for a manual rollback.
@@ -150,6 +154,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     writeFileSync(`${root}/compose.pilot.yml`, '# release c\nservices: {}\n');
     expect(deploy('v1.2.0', 'c', { STUB_SERVICES: SPLIT }).status).toBe(0);
     expect(readFileSync(`${dir}/compose.pilot.yml`, 'utf8')).toContain('# release c');
+  });
+
+  it('rolls back to a release staged before crove-media was published: no media image to pull, none pinned (#2988)', () => {
+    expect(deploy('v1.0.0', 'a').status).toBe(0);
+    expect(deploy('v1.1.0', 'b').status).toBe(0);
+    // Release a as an earlier deploy.sh staged it: no MEDIA_IMAGE in release.env and no pin in its override.
+    const old = `${dir}/releases/${releaseDir('v1.0.0', 'a')}`;
+    writeFileSync(`${old}/release.env`, readFileSync(`${old}/release.env`, 'utf8').split('\n').filter((l) => !l.startsWith('MEDIA_IMAGE=')).join('\n'));
+    writeFileSync(`${old}/docker-compose.override.yml`, readFileSync(`${old}/docker-compose.override.yml`, 'utf8').split('\n').filter((l) => !l.includes('crove-media:')).join('\n'));
+    writeFileSync(log, '');
+    const back = run(['rollback']);
+    expect(back.status, back.out).toBe(0);
+    const c = calls();
+    expect(indexOf(c, `pull ${image('a')}`)).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, `pull ${extract('a')}`)).toBeGreaterThanOrEqual(0);
+    // Nothing was pulled for a media image: no `pull` with an empty reference, no crove-media digest.
+    expect(c.filter((line) => line.startsWith('pull') && !line.includes('@sha256:'))).toEqual([]);
+    expect(c.some((line) => line.includes('crove-media@'))).toBe(false);
+    expect(running()).not.toContain('crove-media: {');
   });
 
   it('takes the pins of api and worker out when the host goes back to one container, and from a release staged with them (#2133)', () => {
@@ -232,7 +255,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   describe('build check', () => {
     const build = (c: string) => digest(c).slice(0, 12);
     const withBuild = (release: string, c: string, env: Record<string, string> = {}) =>
-      run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--compose', compose, '--build', build(c)], env);
+      run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--media-image', media(c), '--compose', compose, '--build', build(c)], env);
     const versionCalls = () => readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('curl ') && l.endsWith('/version'));
 
     it('checks /version and records the build of the release', () => {
@@ -281,7 +304,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('refuses a build id with other characters, or an empty one', () => {
       for (const id of ["a'b", '']) {
-        const res = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--compose', compose, '--build', id]);
+        const res = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--build', id]);
         expect(res.status, id).toBe(2);
         expect(res.out).toContain('--build must match');
       }
@@ -525,7 +548,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   it('logs in with the password from stdin in a throwaway Docker config', () => {
     const res = run(
-      ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--compose', compose, '--registry', 'ghcr.io', '--registry-user', 'bot', '--registry-password-stdin'],
+      ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--registry', 'ghcr.io', '--registry-user', 'bot', '--registry-password-stdin'],
       {},
       'the-token\n',
     );
@@ -543,9 +566,11 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it.each([
-    ['a release id with shell characters', ['--release', 'v1;rm -rf /', '--image', image('a'), '--extract-image', extract('a')], '--release must match'],
-    ['an image without a digest', ['--release', 'v1', '--image', 'ghcr.io/example/crove:v1', '--extract-image', extract('a')], '--image must be pinned by digest'],
-    ['an extract image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', 'crove-extract:latest'], '--extract-image must be pinned'],
+    ['a release id with shell characters', ['--release', 'v1;rm -rf /', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a')], '--release must match'],
+    ['an image without a digest', ['--release', 'v1', '--image', 'ghcr.io/example/crove:v1', '--extract-image', extract('a'), '--media-image', media('a')], '--image must be pinned by digest'],
+    ['an extract image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', 'crove-extract:latest', '--media-image', media('a')], '--extract-image must be pinned'],
+    ['a media image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a'), '--media-image', 'crove-media:latest'], '--media-image must be pinned'],
+    ['no media image', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a')], '--media-image must be pinned'],
   ])('refuses %s before calling docker', (_name, args, message) => {
     const res = run(['deploy', ...args, '--compose', compose]);
     expect(res.status).toBe(2);

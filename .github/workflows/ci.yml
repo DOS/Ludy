@@ -688,6 +688,7 @@ jobs:
           $COMPOSE down -v
           docker tag crove:split crove:local
           docker tag crove-extract:split crove-extract:local
+          docker tag crove-media:split crove-media:local
           node tools/e2e/pilot-stack.mjs
 
       - name: Stack logs

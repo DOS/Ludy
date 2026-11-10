@@ -91,9 +91,9 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(worker?.environment?.['EXTRACT_URL']).toBe('http://crove-extract:8090');
     expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract', 'media']);
     expect(worker?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
-    // crove-media runs in the default stack and sits behind a profile in the pilot layout, whose release has no image for it yet.
+    // crove-media runs in both layouts (the release publishes and pins its image, #2988): no profile keeps it out.
     expect(config(['docker-compose.yml'])['crove-media']?.profiles).toBeUndefined();
-    expect(config(['docker-compose.yml', 'compose.pilot.yml'])['crove-media']).toBeUndefined();
+    expect(services['crove-media']?.profiles).toBeUndefined();
     // Only the API opens a port.
     expect(api?.ports).toHaveLength(1);
     expect(worker?.ports).toBeUndefined();
