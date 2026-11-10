@@ -75,6 +75,8 @@ const COMMANDS = [
     return { ok: true };
   }),
 ];
+// The two test commands that carry real names (the audit list names them) stand in for the real ones in this test's runtimes.
+const TEST_NAMES = new Set(COMMANDS.map((c) => c.name));
 const query = (
   name: string,
   def: Partial<QueryDef<unknown, unknown>>,
@@ -194,7 +196,7 @@ suite("member-scoped agent actor in the runtime", () => {
     worker = new Runtime(createDb(workerPool), {
       manifests: TEST_MANIFESTS,
     }).register({
-      commands: [...COMMANDS, ...kernelCommands],
+      commands: [...COMMANDS, ...kernelCommands.filter((c) => !TEST_NAMES.has(c.name))],
       queries: QUERIES,
     });
     app = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({
