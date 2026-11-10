@@ -4,7 +4,6 @@
 // client of @crove/media-contract (measure.ts) instead and ship none of the normalize, split or repackage calls (#2985).
 import {
   MEDIA_LIMITS,
-  MEDIA_TIMING,
   zMediaErrorResponse,
   zMediaNormalizeResult,
   zMediaProbeResult,
