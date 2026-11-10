@@ -22,6 +22,8 @@ Nghĩa là:
 
 Lý do về chi phí: agent DOS Claw tính tiền theo từng agent mỗi tháng, cộng với lượng AI dùng, nên mặc định chỉ một agent. Agent chỉ được đánh thức bởi các luật cố định của Ludy và các lịch tổ chức tự đặt, nên ngày yên ắng gần như không tốn gì. Cách đóng gói và giá là quyết định của DOS.AI và Ludy Cloud, không phải mã Ludy: mã nguồn mở không chứa giá hay phần kiểm tra gói, chỉ có giấy phép (một tiện ích là thêm một agent được ghép với giấy phép riêng).
 
+Các điều nói về DOS Claw, work.dos.ai và Paperclip trong ADR đã được Platform PO đối chiếu ngày 2026-11-10 với tài liệu của kho DOS/DOS.AI (kiến trúc DOS Claw, quyết định về trí nhớ Honcho, lộ trình, nghiên cứu Paperclip, nghiệm thu work.dos.ai đang chạy cho nhân viên DOS, thiết kế giai đoạn 3). Sự thật về các hệ thống đó thuộc về phía DOS; họ đổi thì ADR phải sửa theo.
+
 ## Ludy làm đúng ba việc
 
 1. **Một cổng MCP trong máy chủ Ludy.** Agent gọi các chức năng mà app vẫn dùng, qua đúng đường ghi duy nhất của Ludy, kèm một "giấy phép" gắn với tổ chức, loại ứng dụng khách và agent. Giấy phép có thể gắn với **một người**: khi đó agent chỉ thấy đúng những gì người đó được xem, giống quy tắc anh đã đặt cho Vy riêng từng người (ADR-0049). Việc duyệt vẫn là của **người trong Ludy**. Một lần "duyệt" ở Paperclip hay DOS Claw **không bao giờ** được tính là duyệt trong Ludy. Thu hồi giấy phép, tạm dừng agent hoặc bật công tắc dừng là agent mất quyền ngay.

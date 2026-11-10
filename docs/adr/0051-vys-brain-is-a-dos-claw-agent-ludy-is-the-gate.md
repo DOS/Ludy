@@ -12,7 +12,16 @@
 
 The Vy plan (2026-11-10, section 4b and 4c) kept Vy's reasoning inside Ludy on a model port and left a door open for outside agent platforms (Claude Code, OpenAI Agents, Google agents, OpenClaw) through an MCP endpoint, with two open questions for the owner (Q7: what DOS Claw is and how it pairs; Q8: whether the DOS preset lives in the open core). Phases 2 and 3 of the plan would have built Ask Vy, a question router and a general manager agent inside Ludy, with an agent loop of our own.
 
-DOS already runs the agent side. As the Platform PO described it from the DOS and DOS.AI repositories (this ADR does not verify them; the DOS side owns their truth):
+DOS already runs the agent side. The Platform PO checked the facts below on 2026-11-10 against these documents of the DOS/DOS.AI repository; the DOS side owns their truth and changes them:
+
+- `docs/dosclaw/DOSClaw-Architecture.md` v1.10 (a container per agent, LLM calls through api.dos.ai, `cron` denied in `tools.deny`);
+- `docs/dosclaw/memory-engine-decision.md` (Honcho adopted 2026-09-21);
+- `docs/dosclaw/DOSClaw-Roadmap.md` (P1.2 proactive deferred; P2.1 and P3.1 multi-agent not built);
+- `docs/dosclaw/paperclip/PAPERCLIP_RESEARCH.md` (heartbeats, cron and HMAC webhook routines);
+- `docs/dosclaw/paperclip/option-d/live-acceptance.md` (work.dos.ai live for DOS staff on v2026.1023.0);
+- `docs/dosclaw/paperclip/option-d/phase3-design.md` (phase 3 designed, not live).
+
+In short:
 
 - **DOS Claw** is one OpenClaw or Hermes container per agent. Its model calls go through the DOS.AI gateway (api.dos.ai). It has long-term memory (Honcho) and Telegram and Zalo channels, and the gateway manages its MCP tools with a capability token per agent. The agent is denied the `cron` tool.
 - **work.dos.ai** is a pinned Paperclip release (MIT). It provides the org chart, issues and delegation, heartbeats, and routines triggered by cron or by an HMAC-signed webhook. Its phase 3, DOS Claw agents on the chart, is designed and not live.
