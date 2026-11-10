@@ -23,7 +23,7 @@
 # old container that still answers fails the test. A deploy given --build checks the same, and so does a rollback to
 # a release that was deployed with one; a release without a build id (deployed before /version) skips that step.
 #
-# Deploy: pull both images by digest, start the database, run `migrate`, start Supabase Auth and run `auth-grants`,
+# Deploy: pull the three images by digest, start the database, run `migrate`, start Supabase Auth and run `auth-grants`,
 # start the other services, then the app: the worker before the API when they run as separate services (`worker`
 # and `api`), else the all-in-one `crove` service. It waits for /readyz (every committed migration in the ledger,
 # Supabase Auth grants in place) and runs the smoke test. When anything after the migration fails, it rolls back to
@@ -408,7 +408,8 @@ activate() {
   cp -f "$rel/docker-compose.override.yml" "$DEPLOY_DIR/docker-compose.override.yml.tmp"
   CROVE_IMAGE="$(release_field "$1" IMAGE)"
   CROVE_EXTRACT_IMAGE="$(release_field "$1" EXTRACT_IMAGE)"
-  # Empty for a release staged before crove-media was published (a rollback to it): its own compose files then build nothing and pin nothing.
+  # Empty for a release staged before crove-media was published (a rollback to it): nothing is pulled for it and its override pins none; its
+  # own compose files decide whether crove-media runs (a release from before #2988 keeps it behind the `media` profile).
   CROVE_MEDIA_IMAGE="$(release_field "$1" MEDIA_IMAGE)"
   # The pins of `api` and `worker` follow the layout of now, whatever the release was staged under: taken out of a release
   # staged in the pilot layout when the host has gone back to one container (they would define bare services), put in

@@ -4,7 +4,7 @@
 # ffmpeg and small HTTP service only: no database client, no AI SDK, no credentials.
 # Bytes in, JSON out; only the worker calls it over an internal network.
 # docker-compose.yml runs it on an internal network with no egress, a read-only root file system,
-# /tmp tmpfs, no capabilities, 1 vCPU and 1 GiB.
+# /tmp tmpfs, no capabilities, 1 vCPU and 2 GiB.
 # Base images are pinned by digest (Node 26.11.1 here); see "Updating pinned images" in AGENTS.md.
 FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
 WORKDIR /app
