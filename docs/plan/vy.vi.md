@@ -43,6 +43,30 @@ Với Vy, nghĩa là:
 - **Lựa chọn nhanh với DOS Claw:** ghép Vy với agent của DOS trong một bước, ví dụ mở Cài đặt lấy một mã ghép rồi nhập vào DOS Claw. Cách ghép này dùng chung cho mọi agent; với DOS thì điền sẵn địa chỉ và đăng nhập bằng DOS ID.
 - **Kiểm thử:** CI chạy với AI giả và agent giả. Hệ thống phải chạy được cả khi tắt AI và khi chỉ có mô hình chạy tại chỗ.
 
+## Kiến trúc và công nghệ
+
+Vy không phải một dịch vụ riêng. Vy là một phần mã trong lõi Ludy cộng một gói (`@crove/agent`), chạy trên đúng công nghệ Ludy đang dùng. Giai đoạn 1 không cần cài thêm gì.
+
+**Công nghệ (đang có trong repo):**
+- TypeScript, một repo chung. Máy chủ: Hono, oRPC, Zod. Giao diện: React, Vite.
+- Cơ sở dữ liệu PostgreSQL 17 (bản của Supabase, tự cài được), mỗi bảng có khóa theo tổ chức (RLS).
+- Việc chạy nền và lịch: pg-boss, nằm ngay trong PostgreSQL, không cần Redis hay dịch vụ trả phí.
+- Gọi AI: Vercel AI SDK qua chuẩn chung kiểu OpenAI, nên dùng được DOS.AI, OpenAI, Anthropic, Google, hoặc mô hình chạy tại chỗ (Ollama). Tắt AI thì mọi thứ vẫn chạy.
+
+**Cách ghép các phần:**
+1. **Một cửa ghi duy nhất.** Mọi việc Vy làm đều đi qua cửa lệnh chung của Ludy (`Runtime.execute`). Nhờ vậy có sẵn mức rủi ro, người duyệt, nhật ký và chống chạy trùng. Vy không tự ghi thẳng vào cơ sở dữ liệu.
+2. **Hai chế độ.** Làm cho công ty thì chạy như một nhân viên AI trong sơ đồ tổ chức, không đọc dữ liệu riêng. Làm cho một người thì chạy trong quyền của đúng người đó (ADR-0049).
+3. **Máy tính tính, AI chỉ viết câu.** Con số và việc chọn dữ liệu do mã làm. AI không có công cụ, chỉ viết câu, và câu nào có số sai thì bỏ.
+4. **Cổng thay được.** Có ba cổng: gọi mô hình, tra kiến thức, trí nhớ từng người. Mỗi cổng có bản mặc định chạy trên máy tự cài, có bản giả để kiểm thử, và đổi sang nhà cung cấp khác (DOS.AI, kho vector...) chỉ bằng cấu hình.
+5. **Ngân sách và nút dừng** cho mọi lần gọi AI.
+6. **Việc chạy nền** (bản tin, cảnh báo, tình hình tuần) là lịch của pg-boss theo từng tổ chức. Cảnh báo không dùng AI.
+7. **Nền tảng agent bên ngoài (mới):** một cổng MCP trong máy chủ Ludy, cho gọi đúng các lệnh app đang dùng, lọc theo giấy phép. DOS Claw ghép qua cùng cổng này.
+
+**Mã mới theo giai đoạn:**
+- Giai đoạn 1: thêm truy vấn và thẻ trang chủ.
+- Giai đoạn 2: phần chọn truy vấn cho "Hỏi Vy" và khung hỏi đáp.
+- Giai đoạn 3: cổng MCP và ghép nối, vị trí tổng quản, chỉ mục tìm kiếm.
+
 ## Vy sẽ làm được gì (sáu ứng viên)
 
 1. **Bản tin buổi sáng trên mọi ứng dụng** (đã có một phần). Thêm: ghi rõ đồng nghiệp nào chuẩn bị việc nào ("Ly đã chuẩn bị 5 đề xuất"), thêm việc trễ của dự án và kết quả cuộc họp, thêm dòng "từ hôm qua các đồng nghiệp AI đã chuẩn bị gì". Không lưu gì, AI chỉ thấy con số. Giống bản tin của QuickBooks và Digits.

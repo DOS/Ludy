@@ -68,6 +68,41 @@ For Vy this means:
 - **A quick DOS option.** An org that uses DOS can pair Vy with a DOS agent (DOS Claw) in one step, for example a pairing code shown in Settings that the DOS agent enters, which creates the `agent_grant`. The pairing flow is generic (any MCP client can pair the same way); the DOS default only pre-fills the endpoint and the DOS ID sign-in. **Open question for the owner (Q7, Q8 below):** what DOS Claw is exactly, and whether its preset lives in the open core as an optional adapter or only in the private Cloud layer, as AGENTS.md says today for anything DOS-specific.
 - **Tests that keep it honest**: a fake provider and a fake MCP client in CI; the stack must pass with no outside AI configured (AI off) and with only a local model.
 
+## 4c. Architecture and tech stack
+
+Vy is not a separate service. It is kernel code plus one package, on the stack Ludy already runs; nothing new to host for phase 1.
+
+**Stack (as in the repo today):**
+- TypeScript monorepo (pnpm). API and worker: `apps/kernel` (Hono, oRPC, Zod). App: `apps/app` (React, Vite, oRPC client).
+- PostgreSQL 17 (the Supabase image, self-hostable) with row-level security on every tenant table; Kysely for queries; migrations in `supabase/migrations`.
+- Jobs and schedules: pg-boss on the same database (no Redis, no paid queue).
+- Model calls: `@crove/agent` on the Vercel AI SDK (`ai`) with `@ai-sdk/openai-compatible`, pointed at `AI_BASE_URL` (DOS.AI, OpenAI, Anthropic or Google through a compatible endpoint, Ollama or vLLM locally). AI off is a supported mode.
+- Sandboxed helpers already in the stack: `apps/extract` (document parsing) and `apps/media` (audio), both with no egress.
+
+**Components:**
+
+```
+ app (React)  ──oRPC──▶  kernel API (Hono)  ──▶  Runtime.execute / query  ──▶  Postgres (RLS, audit, outbox)
+                              │                       │ ▲
+ outside agent (MCP) ─grant─▶ MCP endpoint (new)      │ │  pg-boss jobs (brief, alerts, weekly, member-mode runs)
+                                                      ▼ │
+                                      @crove/agent: metered() ─▶ model port (OpenAI-compatible)
+                                                      │
+                                      knowledge port (declared queries, member's rights) · memory port (per member)
+```
+
+1. **One write path.** Every Vy action is a command through `Runtime.execute`: risk tier, approvals (proposals), audit and idempotency for free. Vy never writes SQL.
+2. **Two contexts.** Company mode runs as Vy's org-chart agent (ADR-0029: agent context, write allowlist, no private reads). Member mode runs in the member's sealed context (ADR-0049: `enter_member_vy_context`, results in `member_vy_result`, memory in `member_vy_memory`, sinks on `MEMBER_VY_SINKS`).
+3. **Deterministic first, model second.** Code computes every number and picks the data (fixed, declared queries); the model only writes sentences or classifies, has no tools, and its output is parsed against a schema and checked (numbers must match). Today's brief already works this way (`packages/agent/src/today.ts`).
+4. **Ports, not vendors.** Model port (chat), knowledge port (retrieval over declared queries, later an index per ADR-0051), memory port (per member, must support forget). Each has a built-in default that runs on the self-hosted stack and a fake for CI. A hosted provider (DOS.AI, a vector store) is an adapter behind the same port, chosen by configuration (ADR-0030 composition root).
+5. **Metering and switches.** Every call goes through `metered()`: org, module, agent and member budgets, and the four kill switches, checked at start and at each admit.
+6. **Background work.** Briefs, alerts and the weekly status are pg-boss schedules per org (system context for counts, member-mode jobs for anything private). Alerts (C4) use no model at all.
+7. **Outside runtimes (new).** One MCP endpoint in `apps/kernel` that maps MCP tools to the same commands and queries, filtered by an `agent_grant` (org, client, agent). Pairing creates the grant; revoking it or pausing the agent closes access. DOS Claw pairs through the same flow (Q7, Q8).
+
+**Data Vy adds:** none for phase 1 (it reads existing `*.today` queries and writes proposals and tasks). Phase 2 adds no table beyond ADR-0049's. Phase 3 adds the index tables of ADR-0051 and the general-manager agent template.
+
+**What is new code, by phase:** phase 1: queries and Home cards (no model for alerts); phase 2: the knowledge port's declared-query router and the Ask Vy panel; phase 3: the MCP endpoint and pairing, the gm template, the index.
+
 ## 5. Candidate capabilities
 
 Mode follows ADR-0049: **member's request** means the member's own request context with no private input (no member-mode run needed); **member mode** means a `kernel.member_vy.run.*` run; **company mode** means an org-chart agent run. "Writes" never includes a posting, a send or a spend.
