@@ -245,6 +245,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     setTranscribeBroker(false);
     try {
       expect(await refuses(start('recorder', meetingId))).toBe('TRANSCRIBE_NO_BROKER');
+      expect(await status('recorder', meetingId)).toMatchObject({ enabled: false, state: 'none' });
     } finally {
       setTranscribeBroker(true);
     }
@@ -354,6 +355,21 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     afterFirstCall = async () => void (await admin((c) => c.query(`DELETE FROM crove_meetings.media_key WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])));
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
+    const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
+  });
+
+  // #2863 item 1: the audio's retention date ends its period from that day, before the nightly shred has run: no run starts, and a run under way ends as the shred does.
+  it('refuses to start once the audio retention date is reached, and a run under way ends with MEDIA_KEY_SHREDDED', async () => {
+    const late = await seedMeeting('recorder');
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, late]));
+    expect(await refuses(start('recorder', late))).toBe('MEDIA_KEY_SHREDDED');
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const before = providerCalls;
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls).toBe(before);
     const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
     expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
   });

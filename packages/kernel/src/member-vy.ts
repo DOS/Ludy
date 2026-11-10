@@ -454,7 +454,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
       rows = (await sql<Row>`SELECT * FROM crove_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
     } catch (error: unknown) {
       const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY|AUDIO_EXPIRED)/.exec(error instanceof Error ? error.message : '')?.[0];
-      if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
+      if (code === 'MEETINGS_KEY_SHREDDED' || code === 'MEETINGS_AUDIO_EXPIRED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
       if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
       throw error;
     }

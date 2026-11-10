@@ -14,6 +14,7 @@
 // event carry ids and counts, never text.
 import { zTranscribeRunRef, zTranscribeStart, zTranscriptCopy, zTranscriptResult, zTranscriptSegmentInput, type TranscribeStatus, type TranscriptSegmentInput } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, replaceDraft, userOf } from './transcript.ts';
 
 // Whether this deployment transcribes (MEETINGS_TRANSCRIBE=on with a provider), set at start-up from the config like the Message-ID domain: false until set.
@@ -23,9 +24,9 @@ export function setTranscribeEnabled(enabled: boolean): void {
   transcribeEnabled = enabled;
 }
 
-// Whether the deployment can open the media key and the provider's credentials (a credential key is set). Without it the worker never takes the job
-// (it registers the transcription queue only with a broker), so a run started here would sit until it expires: refused at the start instead (#2863 item 2).
-// True until set, so a test that does not care is unaffected; the kernel sets it from the config at start-up.
+// Whether the deployment has a credential key (CREDENTIAL_KEY or CREDENTIAL_KEY_FILE). Without it the worker cannot open the meeting's media key, so a run
+// started here would only fail at its first read (MEDIA_KEY_UNAVAILABLE) after it took a run slot: refused at the start instead, with its own code (#2863 item 2),
+// and the screen shows no button. True until set, so a test that does not care is unaffected; the kernel sets it from the config at start-up.
 let transcribeBroker = true;
 export function setTranscribeBroker(configured: boolean): void {
   transcribeBroker = configured;
@@ -100,6 +101,11 @@ function build() {
       // leaving an empty failed result row behind.
       await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
       if (!(await meetingHasAudio(ctx.trx, ctx.orgId, input.meetingId))) throw new DomainError('MEETING_NO_AUDIO', 422, 'This meeting has no audio to transcribe');
+      // The audio's period ends on its date, not at the nightly shred (#2579): from that day a run would only fail, so none starts (the door refuses it too, #2863 item 1).
+      const audioDay = (
+        await ctx.trx.selectFrom('crove_meetings.meeting').select('audio_retention_date').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow()
+      ).audio_retention_date;
+      if (String(audioDay) <= vnDay(ctx.now)) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
       // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. (Another use of Vy by the
       // recorder, a note summary for one, also supersedes a live run: the member has one run at a time, ADR-0049 decision 1; the screen then shows the run as ended.)
       const live = await ctx.trx
@@ -164,7 +170,7 @@ function build() {
     handler: async (ctx, input): Promise<TranscribeStatus> => {
       const userId = userOf(ctx.actor);
       const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-      const none: TranscribeStatus = { meetingId: input.meetingId, enabled: transcribeEnabled, state: 'none', runId: null, errorCode: null };
+      const none: TranscribeStatus = { meetingId: input.meetingId, enabled: transcribeEnabled && transcribeBroker, state: 'none', runId: null, errorCode: null };
       if (meeting.recorder_user_id !== userId) return none;
       // The recorder's own latest result for this meeting (the row is sealed to its member, so no other member sees one), and whether its run is still alive.
       const row = await ctx.trx
@@ -183,7 +189,7 @@ function build() {
       // A run that ended or expired without storing its result (the worker lost, the member removed and back) shows as failed, never as running for ever.
       const dead = row.status === 'running' && (row.run_status !== 'running' || (row.expires_at !== null && row.expires_at <= new Date()));
       const state = dead ? 'failed' : (row.status as 'running' | 'ready' | 'failed');
-      return { meetingId: input.meetingId, enabled: transcribeEnabled, state, runId: row.run_id, errorCode: dead ? 'RUN_ENDED' : row.error_code };
+      return { meetingId: input.meetingId, enabled: transcribeEnabled && transcribeBroker, state, runId: row.run_id, errorCode: dead ? 'RUN_ENDED' : row.error_code };
     },
   });
 

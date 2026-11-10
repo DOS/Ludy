@@ -259,8 +259,11 @@ suite('the recorder\'s transcription run (#2578)', () => {
     runs.extra = await startRun('extra', meeting);
     const until = (await sqlAdmin(`SELECT audio_retention_date::text AS d FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meeting])).rows[0]?.d as string;
     expect(await afterEntry('extra', meeting, async () => undefined), 'a control, a date still ahead').toBeNull();
-    expect(await afterEntry('extra', meeting, () => sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meeting])), 'on the date').toBe('MEETINGS_AUDIO_EXPIRED');
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meeting, until]);
+    try {
+      expect(await afterEntry('extra', meeting, () => sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meeting])), 'on the date').toBe('MEETINGS_AUDIO_EXPIRED');
+    } finally {
+      await sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meeting, until]);
+    }
     expect(await afterEntry('extra', meeting, async () => undefined), 'a control after the restore').toBeNull();
   });
 

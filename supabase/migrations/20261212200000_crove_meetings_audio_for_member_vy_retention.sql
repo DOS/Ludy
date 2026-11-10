@@ -2,7 +2,7 @@
 -- Crove meetings, M4b review follow-ups (#2863 item 1): crove_meetings.audio_for_member_vy, restated in full from 20261202000000 (same signature, owner and grants; the
 -- applied file is not edited) with one more refusal: the meeting's audio_retention_date. Once it is reached the audio is due to be shredded, and the nightly shred may not
 -- have run yet; the background run of the recorder's Vy no longer reads the audio in that window (fixed code MEETINGS_AUDIO_EXPIRED, 42501; the kernel command maps it to
--- the same FORBIDDEN as every other refusal of the door). Idempotent.
+-- MEDIA_KEY_SHREDDED, as the nightly shred and the user's own media command do for the same date). Idempotent.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_meetings.audio_for_member_vy(p_org_id uuid, p_meeting_id uuid)
@@ -70,8 +70,8 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'MEETINGS_NOT_RECORDER' USING ERRCODE = '42501';
   END IF;
-  -- The audio's own retention date (#2863 item 1): past it the audio is due to be shredded, and the nightly shred may not have run yet. media_key_read does not
-  -- check it for a user either (the window is the one between the date and the shred); a background run must not widen it, so it stops at the date.
+  -- The audio's own retention date (#2863 item 1): past it the audio is due to be shredded, and the nightly shred may not have run yet.
+  -- The period ends on its day for a user too (the meetings media command), so a background run stops at the date as well.
   IF v_audio_until IS NOT NULL AND v_audio_until <= (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date THEN
     RAISE EXCEPTION 'MEETINGS_AUDIO_EXPIRED' USING ERRCODE = '42501';
   END IF;
