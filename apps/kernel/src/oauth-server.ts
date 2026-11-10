@@ -92,9 +92,10 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
     cookies: { keys: cookieKeys },
     // Dynamic registration and metadata documents only: no client is configured here.
     clients: [],
-    // `ludy.read` is a scope of the one resource server only (getResourceServerInfo), not an OpenID scope of the provider: a request for it is read as a request for
-    // the resource, which the consent grants with addResourceScope.
-    scopes: ['openid'],
+    // `ludy.read` is the one resource server's scope (getResourceServerInfo) and is listed here too, because the provider accepts a scope in a client's
+    // registration or request only from this list, and the official MCP client registers with the scope the resource metadata advertises. The consent grants it
+    // as a resource scope and also as a scope of the provider (see mcp-endpoint.ts), so an authorization that names it does not loop back to the consent page.
+    scopes: ['openid', 'ludy.read'],
     claims: {},
     // Public clients only: a client holds no secret, so nothing to steal from its registration.
     clientAuthMethods: ['none'],

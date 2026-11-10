@@ -11,6 +11,10 @@ import { serve } from '@hono/node-server';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -418,6 +422,80 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect((await post({ origin: 'https://evil.example.com', 'mcp-protocol-version': '2025-11-25' }, { jsonrpc: '2.0', id: 9, method: 'tools/list' })).status).toBe(403);
     const withArgs = (await (await post({ 'mcp-protocol-version': '2025-11-25' }, { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'ludy_about', arguments: { x: 1 } } })).json()) as any;
     expect(withArgs.error.code).toBe(-32602);
+  });
+
+  // ADR-0032 acceptance test 2: the official MCP TypeScript client, not our own fetch calls. The client discovers the resource and the authorization server
+  // from the 401 challenge, registers itself (DCR), sends the person to the authorization URL, takes the code back and then speaks 2025-11-25 (the newest
+  // revision this SDK knows), with no session id. The consent step is the test's, in place of the person's browser.
+  it('works with the official MCP TypeScript SDK client: discovery, registration, consent, token, tools/list and a tool call', async () => {
+    const callback = 'http://127.0.0.1:39998/callback';
+    let info: { client_id: string } | undefined;
+    let saved: Record<string, unknown> | undefined;
+    let verifier = '';
+    let authUrl: URL | undefined;
+    const provider: OAuthClientProvider = {
+      get redirectUrl() {
+        return callback;
+      },
+      get clientMetadata() {
+        return { client_name: 'SDK client', redirect_uris: [callback], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', application_type: 'native' as const };
+      },
+      clientInformation: () => info as never,
+      saveClientInformation: (value) => {
+        info = value as never;
+      },
+      tokens: () => saved as never,
+      saveTokens: (value) => {
+        saved = value as never;
+      },
+      redirectToAuthorization: (url) => {
+        authUrl = url;
+      },
+      saveCodeVerifier: (value) => {
+        verifier = value;
+      },
+      codeVerifier: () => verifier,
+    };
+    const transport = new StreamableHTTPClientTransport(new URL(resource), { authProvider: provider });
+    const first = new McpClient({ name: 'sdk-test', version: '1.0.0' });
+    await expect(first.connect(transport)).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(info?.client_id, 'the client registered itself').toBeTruthy();
+    expect(authUrl, 'the client sent the person to the authorization URL').toBeDefined();
+    const asked = authUrl as URL;
+    expect(asked.searchParams.get('resource')).toBe(resource);
+    expect(asked.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(asked.searchParams.get('scope'), 'the client asks for the scope the resource metadata advertises').toBe('ludy.read');
+    // The person's part: the consent page, answered as the owner.
+    const started = await fetch(asked, { redirect: 'manual' });
+    expect(started.status).toBe(303);
+    const uid = new URL(started.headers.get('location') ?? '', base).pathname.split('/').pop() as string;
+    const headers = { ...(await asBrowser('owner', null)), cookie: cookiesOf(started) };
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify({ decision: 'approve', orgId }) });
+    expect(approved.status).toBe(200);
+    const resumed = await fetch(((await approved.json()) as { redirectTo: string }).redirectTo, { redirect: 'manual', headers: { cookie: cookiesOf(started) } });
+    const back = new URL(resumed.headers.get('location') ?? 'http://none/', base);
+    expect(back.searchParams.get('state')).toBe(asked.searchParams.get('state'));
+    await transport.finishAuth(back.searchParams.get('code') as string);
+    expect(typeof saved?.access_token).toBe('string');
+    // A fresh client over a fresh transport, with the saved token.
+    const client = new McpClient({ name: 'sdk-test', version: '1.0.0' });
+    const second = new StreamableHTTPClientTransport(new URL(resource), { authProvider: provider });
+    await client.connect(second);
+    expect(second.protocolVersion, 'the newest revision this SDK knows').toBe('2025-11-25');
+    expect(second.sessionId, 'the server never mints a session').toBeUndefined();
+    expect(client.getServerVersion()?.name).toBe('ludy');
+    expect(client.getServerCapabilities()?.tools).toBeDefined();
+    const listed = await client.listTools();
+    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about']);
+    expect(listed.tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
+    const called = await client.callTool({ name: 'ludy_about', arguments: {} });
+    expect(called.isError).toBeFalsy();
+    expect(called.structuredContent).toMatchObject({ clientName: 'SDK client', scopes: ['ludy.read'] });
+    await client.close();
+    // The tool call it made is in the audit log under its grant (a tool call is what is audited, not the handshake or the list).
+    const rows = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'SDK client'`));
+    expect(rows.rowCount).toBe(1);
+    expect(rows.rows[0].detail).toMatchObject({ mcpCall: true, tool: 'ludy_about', result: 'ok' });
   });
 
   it('accepts only the registrations the rules allow: no wildcard or plain http redirect on the web, no secret, no other grant', async () => {
