@@ -228,11 +228,14 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     const published = randomUUID();
     await SEGMENT(draft, meetingId, false, null);
     await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, text, stage, tainted) VALUES ($1, $2, $3, 0, 5, 'Đã chia sẻ', 'published', false)`, [orgId, published, meetingId]));
-    const file = readdirSync(MIGRATIONS).find((f) => f.endsWith('_crove_meetings_transcript_taint.sql')) as string;
+    // The files that define the trigger function: the migration of the backfill, then the later one that restated it (#2951), in order, as a deploy would leave them.
+    const files = readdirSync(MIGRATIONS)
+      .filter((f) => /crove_meetings\.(transcript_segment_taint|draft_review)\(/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && /CREATE OR REPLACE FUNCTION crove_meetings\.(transcript_segment_taint|draft_review)/.test(readFileSync(join(MIGRATIONS, f), 'utf8')) && f >= '20261216100000')
+      .sort();
     await admin(async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query(readFileSync(join(MIGRATIONS, file), 'utf8'));
+        for (const file of files) await c.query(readFileSync(join(MIGRATIONS, file), 'utf8'));
         await c.query('COMMIT');
       } catch (error) {
         await c.query('ROLLBACK');
@@ -243,5 +246,19 @@ suite('transcript taint on PostgreSQL (#2941, ADR-0047)', () => {
     expect(await state(published)).toMatchObject({ tainted: false, stage: 'published' });
     // The trigger is back in place after the re-run: the rules still hold.
     expect((await attempt('superuser', `UPDATE crove_meetings.transcript_segment SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, published])).code).toBe('42501');
+  });
+
+  // #2951: a segment that names a Vy run is born tainted: an insert with a source_run_id and no taint is refused, whoever writes it.
+  it('refuses a segment insert that names a Vy run without the taint', async () => {
+    const run = randomUUID();
+    const insert = (who: 'recorder' | 'superuser', tainted: boolean, runId: string | null) =>
+      attempt(who, `INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, text, stage, tainted, source_run_id) VALUES ($1, $2, $3, 0, 1, 'x', 'draft', ${tainted}, ${runId ? `'${runId}'` : 'NULL'})`, [orgId, randomUUID(), meetingId]);
+    for (const who of ['recorder', 'superuser'] as const) {
+      const bare = await insert(who, false, run);
+      expect(bare.code, `${who}: a run and no taint`).toBe('42501');
+      expect(bare.message).toMatch(/MEETINGS_TAINT_FORBIDDEN/);
+      expect((await insert(who, true, run)).code, `${who}: the tainted copy`).toBeNull();
+      expect((await insert(who, false, null)).code, `${who}: what the recorder typed`).toBeNull();
+    }
   });
 });
