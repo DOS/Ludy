@@ -242,6 +242,8 @@ async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput)
       method: 'POST',
       headers: config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {},
       body: form,
+      // A redirect is never followed: an https provider that answers 307 or 308 to an http:// URL would get the audio and the key re-sent in clear text.
+      redirect: 'error',
       signal: AbortSignal.timeout(config.timeoutMs ?? 10 * 60_000),
     });
   } catch (error: unknown) {
