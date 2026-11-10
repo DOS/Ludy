@@ -65,8 +65,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/meetings/:id/video/stream':
-    "playback of one meeting's video by a short-lived signed ticket (#2703): a `<video>` cannot send the bearer header, so POST /api/meetings/:id/video/ticket (behind authenticate(), reader-checked) issues a ticket bound to the org, user, session, meeting and purpose; the route verifies it in constant time, answers one 401 for any bad ticket, and re-checks the session and the reader's access on every range request",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
