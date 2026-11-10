@@ -65,6 +65,16 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/.well-known/oauth-protected-resource/mcp':
+    "the MCP endpoint's RFC 9728 protected resource metadata (ADR-0051 decision 2, ADR-0032 item 9, #2975): static JSON naming the resource, the issuer and the one scope; no tenant data, no state",
+  '/.well-known/oauth-authorization-server':
+    "RFC 8414 authorization server metadata of the embedded OAuth 2.1 server (ADR-0032, #2975): static JSON about the deployment's endpoints and capabilities; no tenant data",
+  '/.well-known/openid-configuration':
+    "the OpenID Connect Discovery form of the same authorization server metadata (ADR-0032, #2975): static JSON; no tenant data",
+  '/oauth/*':
+    "the embedded OAuth 2.1 authorization server (ADR-0032, #2975): authorize, token, registration, revocation and JWKS. Public by protocol: a request proves itself with PKCE (S256 only), a single-use code or a rotating refresh token stored only as a hash, is rate limited per address, and grants nothing until a signed-in owner or admin consents on the SPA through /api/rpc",
+  '/mcp':
+    "the MCP endpoint (ADR-0051 decision 2, #2975): it does not take a browser session, only an access token the embedded authorization server issued for this resource, checked at the edge (signature, issuer, audience) and again against the live grant in the request's own transaction; with no token it answers 401 with the resource metadata challenge and runs no query",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
