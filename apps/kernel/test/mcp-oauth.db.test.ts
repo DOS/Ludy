@@ -19,6 +19,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createOauthServer } from '../src/oauth-server.ts';
+import { installJsonLogs } from '../src/log.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -64,6 +65,9 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   let server: Server;
   let base = '';
   let resource = '';
+  let bootEnv: Record<string, string> = {};
+  let sharedDb: ReturnType<typeof createDb>;
+  let sharedRuntime: Runtime;
   const accounts = new Map<string, { subject: string; email: string; session: string }>();
   let slug = '';
   let orgId = '';
@@ -199,7 +203,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     resource = `${base}/mcp`;
     const pair = await generateKeyPair('ES256', { extractable: true });
     const jwk = { ...(await exportJWK(pair.privateKey)), kid: 'test-key-1', alg: 'ES256', use: 'sig' };
-    const config = loadConfig({
+    bootEnv = {
       DATABASE_URL: appUrl.toString(),
       AUTH_JWT_SECRET: SECRET,
       AUTH_ISSUER: ISSUER,
@@ -213,11 +217,15 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       MCP_GRANT_PER_MINUTE: '60',
       OAUTH_REGISTER_PER_MINUTE: '1000',
       OAUTH_REGISTER_GLOBAL_PER_MINUTE: '1000',
-    });
+      MCP_ALLOWED_ORIGINS: 'https://allowed.example.com',
+    };
+    const config = loadConfig(bootEnv);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands],
       queries: [...kernelQueries({ inboundDomain: null })],
     });
+    sharedDb = db;
+    sharedRuntime = runtime;
     const oauth = await createOauthServer(config, (fn) => runtime.orgless(fn));
     const app = createHttpApp({ config, oauth, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false });
     server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }) as unknown as Server;
@@ -469,5 +477,135 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     let limited = 0;
     for (let i = 0; i < 90; i += 1) if ((await aboutStatus(c.access)) === 429) limited += 1;
     expect(limited).toBeGreaterThan(0);
+  });
+
+  // A second server over the same database, with other limits, for the tests that need a budget they can spend.
+  async function secondServer(env: Record<string, string>) {
+    const port = await freePort();
+    const url = `http://localhost:${port}`;
+    const second = loadConfig({ ...bootEnv, ...env, PUBLIC_URL: url });
+    const oauth = await createOauthServer(second, (fn) => sharedRuntime.orgless(fn));
+    const app = createHttpApp({ config: second, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(second, sharedDb), pool, aiEnabled: false });
+    const running = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }) as unknown as Server;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return { url, close: () => running.close() };
+  }
+
+  it('gives the provider routes what the global chain gives the others: request id, security headers, CORS, body limit', async () => {
+    // Security headers and a request id on the metadata, and no-store plus the same on a token refusal.
+    for (const path of ['/.well-known/openid-configuration', '/.well-known/oauth-authorization-server', '/oauth/jwks']) {
+      const response = await fetch(`${base}${path}`);
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get('x-content-type-options'), path).toBe('nosniff');
+      expect(response.headers.get('referrer-policy'), path).toBe('no-referrer');
+      expect(response.headers.get('x-frame-options'), path).toBe('DENY');
+      expect(response.headers.get('content-security-policy'), path).toContain("frame-ancestors 'none'");
+      expect(response.headers.get('x-request-id'), path).toMatch(/^[0-9a-f-]{36}$/);
+      // No origin outside the list gets a CORS header, not even on the public metadata (the provider's own `*` is dropped).
+      expect(response.headers.get('access-control-allow-origin'), path).toBeNull();
+      expect(response.headers.get('access-control-allow-credentials'), path).toBeNull();
+    }
+    const token = await fetch(`${base}/oauth/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'grant_type=authorization_code&code=x' });
+    expect(token.status).toBeGreaterThanOrEqual(400);
+    expect(token.headers.get('cache-control')).toContain('no-store');
+    expect(token.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(token.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+    expect(token.headers.get('access-control-allow-origin')).toBeNull();
+    // The request ids are fresh per request, never taken from the caller.
+    const sent = await fetch(`${base}/oauth/jwks`, { headers: { 'x-request-id': 'attacker-chosen' } });
+    expect(sent.headers.get('x-request-id')).not.toBe('attacker-chosen');
+    // CORS: an exact allowlist, no credentials; a preflight is answered; another origin gets no header.
+    const allowed = await fetch(`${base}/.well-known/openid-configuration`, { headers: { origin: 'https://allowed.example.com' } });
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://allowed.example.com');
+    expect(allowed.headers.get('access-control-allow-credentials')).toBeNull();
+    const other = await fetch(`${base}/oauth/token`, { method: 'POST', headers: { origin: 'https://evil.example.com', 'content-type': 'application/x-www-form-urlencoded' }, body: 'grant_type=x' });
+    expect(other.headers.get('access-control-allow-origin')).toBeNull();
+    const preflight = await fetch(`${base}/oauth/token`, { method: 'OPTIONS', headers: { origin: 'https://allowed.example.com', 'access-control-request-method': 'POST' } });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('https://allowed.example.com');
+    expect(preflight.headers.get('access-control-allow-methods')).toContain('POST');
+    const badPreflight = await fetch(`${base}/oauth/token`, { method: 'OPTIONS', headers: { origin: 'https://evil.example.com' } });
+    expect(badPreflight.status).toBe(204);
+    expect(badPreflight.headers.get('access-control-allow-origin')).toBeNull();
+    // A body over 64 KB is refused before the provider reads it, with the same headers.
+    const big = await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'x'.repeat(70_000) }) });
+    expect(big.status).toBe(413);
+    expect(big.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(big.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+    const bigMcp = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer x' }, body: 'x'.repeat(70_000) });
+    expect(bigMcp.status).toBe(413);
+  });
+
+  it('logs one access line per provider request with the route pattern and never a code, token or verifier', async () => {
+    const lines: string[] = [];
+    const restore = installJsonLogs({ role: 'api', write: (_level, line) => void lines.push(line) });
+    let c: Awaited<ReturnType<typeof connect>>;
+    try {
+      c = await connect();
+    } finally {
+      restore();
+    }
+    const text = lines.join('');
+    expect(text).toContain('"route":"/oauth/token"');
+    expect(text).toContain('"route":"/oauth/authorize"');
+    for (const secret of [c.code, c.refresh, c.access, c.verifier]) expect(text).not.toContain(secret);
+  });
+
+  it('limits registrations per address and in all, and the provider routes per address, with 429 and Retry-After', async () => {
+    const s = await secondServer({ OAUTH_REGISTER_PER_MINUTE: '2', OAUTH_REGISTER_GLOBAL_PER_MINUTE: '50' });
+    try {
+      const register = () => fetch(`${s.url}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'x', redirect_uris: ['http://127.0.0.1:39999/cb'], application_type: 'native', token_endpoint_auth_method: 'none' }) });
+      const statuses: number[] = [];
+      for (let i = 0; i < 5; i += 1) statuses.push((await register()).status);
+      expect(statuses.slice(0, 2)).toEqual([201, 201]);
+      const limited = await register();
+      expect(limited.status).toBe(429);
+      expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect(limited.headers.get('x-content-type-options')).toBe('nosniff');
+    } finally {
+      s.close();
+    }
+  });
+
+  it('refuses the registrations that would make the server fetch for a stranger, or that are not OAuth 2.1, or that are big', async () => {
+    const attempt = (body: Record<string, unknown>) => fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'x', token_endpoint_auth_method: 'none', application_type: 'web', redirect_uris: ['https://app.example.com/cb'], ...body }) });
+    for (const extra of [
+      { sector_identifier_uri: 'https://big.example/x' },
+      { jwks_uri: 'https://big.example/jwks' },
+      { initiate_login_uri: 'https://app.example.com/login' },
+      { response_types: ['code id_token'], grant_types: ['implicit', 'authorization_code'] },
+      { client_name: 'n'.repeat(121) },
+      { redirect_uris: Array.from({ length: 6 }, (_, i) => `https://app.example.com/cb${i}`) },
+      { contacts: Array.from({ length: 300 }, (_, i) => `person${i}@example.com`) },
+    ]) {
+      expect((await attempt(extra)).status, JSON.stringify(extra).slice(0, 60)).toBe(400);
+    }
+    const meta = (await (await fetch(`${base}/.well-known/openid-configuration`)).json()) as Record<string, unknown>;
+    expect(meta.response_types_supported).toEqual(['code']);
+    expect(meta.grant_types_supported).toEqual(expect.not.arrayContaining(['implicit']));
+    expect(meta.pushed_authorization_request_endpoint).toBeUndefined();
+    expect(meta.end_session_endpoint).toBeUndefined();
+    expect(meta.dpop_signing_alg_values_supported).toBeUndefined();
+  });
+
+  it('answers a client that also asks for openid with a code, not with a second consent page', async () => {
+    const reg = await register();
+    const clientId = String(reg.body.client_id);
+    const verifier = randomBytes(32).toString('base64url');
+    const url = new URL(`${base}/oauth/authorize`);
+    url.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: reg.redirect, scope: 'openid ludy.read', resource, code_challenge: challengeOf(verifier), code_challenge_method: 'S256', state: 's' }).toString();
+    const started = await fetch(url, { redirect: 'manual' });
+    const uid = new URL(started.headers.get('location') ?? '', base).pathname.split('/').pop() as string;
+    const headers = { ...(await asBrowser('owner', null)), cookie: cookiesOf(started) };
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify({ decision: 'approve', orgId }) });
+    const answer = (await approved.json()) as { redirectTo: string };
+    const resumed = await fetch(answer.redirectTo, { redirect: 'manual', headers: { cookie: cookiesOf(started) } });
+    expect(new URL(resumed.headers.get('location') ?? 'http://none/', base).searchParams.get('code')).toBeTruthy();
+  });
+
+  it('gives a code and a refresh token to one request only when two race with it', async () => {
+    const c = await connect();
+    const results = await Promise.all([refreshWith(c.clientId, c.refresh), refreshWith(c.clientId, c.refresh)]);
+    expect(results.filter((r) => r.status === 200).length).toBeLessThanOrEqual(1);
   });
 });

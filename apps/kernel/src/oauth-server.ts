@@ -83,6 +83,7 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
   const privateSet = JSON.parse(config.OAUTH_JWKS ?? '{"keys":[]}') as JSONWebKeySet;
   const publicSet = await publicKeySet(privateSet);
   const verifyKeys = createLocalJWKSet(publicSet);
+  const allowedOrigins = (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0);
   const cookieKeys = (config.OAUTH_COOKIE_KEYS ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
 
   const configuration: Configuration = {
@@ -105,6 +106,14 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
       properties: ['ludy_policy'],
       validator: (_ctx, key, value, metadata) => {
         if (value !== undefined) throw new errors.InvalidClientMetadata(`${key} is not a client property`);
+        // No URL the server would fetch on a stranger's behalf (the provider reads sector_identifier_uri and jwks_uri itself, with no size bound for the first),
+        // no front-channel or back-channel hook, and a registration that stays small: an anonymous client holds a row for a day.
+        for (const field of ['sector_identifier_uri', 'jwks_uri', 'jwks', 'request_uris', 'initiate_login_uri', 'backchannel_logout_uri', 'frontchannel_logout_uri', 'post_logout_redirect_uris', 'tls_client_auth_subject_dn']) {
+          if ((metadata as Record<string, unknown>)[field] !== undefined) throw new errors.InvalidClientMetadata(`${field} is not accepted`);
+        }
+        if (JSON.stringify(metadata).length > 4096) throw new errors.InvalidClientMetadata('client metadata is too large');
+        if (typeof metadata.client_name === 'string' && metadata.client_name.length > 120) throw new errors.InvalidClientMetadata('client_name is at most 120 characters');
+        if (Array.isArray(metadata.redirect_uris) && metadata.redirect_uris.length > 5) throw new errors.InvalidClientMetadata('at most 5 redirect_uris');
         const uris = Array.isArray(metadata.redirect_uris) ? (metadata.redirect_uris as unknown[]) : [];
         for (const uri of uris) {
           const parsed = typeof uri === 'string' ? URL.parse(uri) : null;
@@ -115,7 +124,16 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
         }
       },
     },
+    // OAuth 2.1 only: the authorization code, nothing on the front channel; no sector identifier is ever fetched.
+    responseTypes: ['code'],
+    sectorIdentifierUriValidate: () => false,
+    fetchResponseBodyLimits: { clientMetadata: 5120, jwks_uri: 16_384, sector_identifier_uri: 4096 } as never,
+    // A browser page may call the token and registration endpoints only from an origin the deployment lists (MCP_ALLOWED_ORIGINS), never `*`.
+    clientBasedCORS: (_ctx, origin) => allowedOrigins.includes(origin),
     features: {
+      dPoP: { enabled: false },
+      pushedAuthorizationRequests: { enabled: false },
+      rpInitiatedLogout: { enabled: false },
       devInteractions: { enabled: false },
       introspection: { enabled: false },
       userinfo: { enabled: false },

@@ -8,13 +8,13 @@
 // may call them.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Adapter, AdapterPayload } from 'oidc-provider';
+import { errors, type Adapter, type AdapterPayload } from 'oidc-provider';
 import type { Db } from '@crove/db';
 import { toDomainError } from '@crove/kernel-runtime';
 
 // How long a record lives when the provider names no end: a registered client that never obtains a grant is gone after 30 days
 // (crove_kernel.mcp_grant_approve lifts it to 400 days when a person consents to it).
-const DEFAULT_LIFETIME_SECONDS = 30 * 24 * 3600;
+const DEFAULT_LIFETIME_SECONDS = 24 * 3600;
 
 export const keyHash = (id: string): Buffer => createHash('sha256').update(id, 'utf8').digest();
 
@@ -77,8 +77,10 @@ class OauthAdapter implements Adapter {
     return undefined;
   }
 
+  // Consumed once: a second consumer (two requests racing with one code or refresh token) gets a refusal, so a chain never forks.
   async consume(id: string): Promise<void> {
-    await this.#run((db) => sql`SELECT crove_kernel.oauth_record_consume(${this.#model}::text, ${keyHash(id)}::bytea)`.execute(db));
+    const { rows } = await this.#run((db) => sql<{ consumed: boolean }>`SELECT crove_kernel.oauth_record_consume(${this.#model}::text, ${keyHash(id)}::bytea) AS consumed`.execute(db));
+    if (rows[0]?.consumed !== true) throw new errors.InvalidGrant('the grant was already used');
   }
 
   async destroy(id: string): Promise<void> {

@@ -542,6 +542,7 @@ export function createHttpApp(deps: HttpDeps) {
       clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
       registerPerMinute: config.OAUTH_REGISTER_PER_MINUTE,
       registerGlobalPerMinute: config.OAUTH_REGISTER_GLOBAL_PER_MINUTE,
+      allowedOrigins: (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0),
     });
   }
 

@@ -381,6 +381,56 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
+-- A grant ends for good when its consenting user stops being an owner or admin of the org, is removed from it, or is disabled
+-- ---------------------------------------------------------------------------
+-- The standing check reads the role live, which already refuses a grant at once; these triggers make that permanent (as the extension tokens'
+-- lifecycle does), so restoring the role later does not revive a grant nobody consented to again: its tokens are destroyed with it.
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_grant_end_for_member(p_org uuid, p_user uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    UPDATE crove_kernel.agent_grant g SET revoked_at = pg_catalog.clock_timestamp()
+    WHERE (p_org IS NULL OR g.org_id = p_org) AND g.user_id = p_user AND g.revoked_at IS NULL
+    RETURNING g.oauth_grant_id
+  LOOP
+    PERFORM crove_kernel.oauth_record_revoke_by_grant(r.oauth_grant_id);
+  END LOOP;
+END $$;
+
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_grant_member_trigger()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'tenant_member' THEN
+    IF TG_OP = 'DELETE' THEN
+      PERFORM crove_kernel.mcp_grant_end_for_member(OLD.org_id, OLD.user_id);
+    ELSIF OLD.role IN ('owner', 'admin') AND NEW.role NOT IN ('owner', 'admin') THEN
+      PERFORM crove_kernel.mcp_grant_end_for_member(NEW.org_id, NEW.user_id);
+    END IF;
+  ELSIF NEW.disabled_at IS NOT NULL AND OLD.disabled_at IS NULL THEN
+    PERFORM crove_kernel.mcp_grant_end_for_member(NULL, NEW.id);
+  END IF;
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS mcp_grant_member_role ON crove_kernel.tenant_member;
+CREATE TRIGGER mcp_grant_member_role AFTER UPDATE OF role OR DELETE ON crove_kernel.tenant_member
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.mcp_grant_member_trigger();
+DROP TRIGGER IF EXISTS mcp_grant_user_disabled ON crove_kernel.user_account;
+CREATE TRIGGER mcp_grant_user_disabled AFTER UPDATE OF disabled_at ON crove_kernel.user_account
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.mcp_grant_member_trigger();
+REVOKE ALL ON FUNCTION crove_kernel.mcp_grant_end_for_member(uuid, uuid), crove_kernel.mcp_grant_member_trigger() FROM PUBLIC;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\_%' AND rolname <> current_user LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION crove_kernel.mcp_grant_end_for_member(uuid, uuid), crove_kernel.mcp_grant_member_trigger() FROM %I', r.rolname);
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Grants: the API's login alone. The worker never takes part in an authorization or an MCP request.
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION

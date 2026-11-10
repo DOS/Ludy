@@ -25,7 +25,7 @@ import { myOrgs } from '@crove/kernel';
 import type { AuthUser } from './auth.ts';
 import { actorOf } from './auth.ts';
 import type { Config } from './config.ts';
-import { logEvent } from './log.ts';
+import { logEvent, runWithLogContext } from './log.ts';
 import { handleMcp, RPC_INTERNAL, type McpHeaders, type ToolDescriptor } from './mcp-protocol.ts';
 import { ACCESS_TOKEN_SECONDS, MCP_SCOPE, type OauthServer } from './oauth-server.ts';
 import { RateLimiter } from './rate-limit.ts';
@@ -65,34 +65,121 @@ const tooManyRequests = (c: Context, retryAfterSeconds: number) => {
   return c.json({ error: 'too_many_requests', error_description: 'Too many requests, try again later' }, 429);
 };
 
+// What the edge's global chain gives every other route, replicated for the provider's routes (which are mounted before that chain, see below):
+//   request id + access line   a fresh id in `x-request-id` and one line (method, route pattern, status, duration; never the path, query, headers or body, which
+//                              hold codes, tokens and verifiers) with LOG_FORMAT=json;
+//   security headers           nosniff, no referrer, no framing, no content (a CSP of default-src none and frame-ancestors none), same-site resource policy,
+//                              and no-store unless the provider sets its own cache header (it does on the token and authorize answers);
+//   CORS                       an exact-origin allowlist (MCP_ALLOWED_ORIGINS), never `*`, no credentials; a preflight is answered here; an origin off the list gets none;
+//   body size                  a body over 64 KB (Content-Length) is a 413 before the provider reads a byte, and the provider's own parser caps one without it;
+//   per-address rate limit     300 a minute per address, and 10 a minute per address and 120 in all for registrations.
+// Origin and Host checks: the chain has none beyond CORS (the app is single-origin), so there is nothing more to replicate.
+const SECURITY_HEADERS: Record<string, string> = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'x-frame-options': 'DENY',
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+  'cross-origin-resource-policy': 'same-site',
+  'cache-control': 'no-store',
+};
+const MAX_OAUTH_BODY_BYTES = 64 * 1024;
+const CORS_EXPOSED = 'x-request-id, retry-after, www-authenticate';
+const CORS_ALLOWED_REQUEST_HEADERS = 'authorization, content-type';
+
+// The route pattern an access line names: never the path itself (an interaction id, a code in a resumed URL).
+function routePatternOf(path: string): string {
+  if (path.startsWith('/oauth/authorize/')) return '/oauth/authorize/:uid';
+  return ['/oauth/authorize', '/oauth/token', '/oauth/register', '/oauth/revoke', '/oauth/jwks', '/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'].includes(path) ? path : '/oauth/*';
+}
+
 // The authorization server's own routes: authorize, token, register, revoke, jwks and the two metadata documents, answered by the provider on the Node
 // request and response (its body parser reads the stream itself, so nothing may read the body first). Mounted BEFORE the edge's global middleware:
-// the provider has written its answer by the time a handler returns, and a middleware that then touched the response would write it twice. The consent
-// page's own calls (/oauth/interaction/...) are not the provider's: they go on to the routes of mountMcp, and the page itself to the SPA.
-export function mountOauthProvider(app: Hono<any>, deps: Pick<McpDeps, 'oauth' | 'clientKey' | 'now'> & { registerPerMinute: number; registerGlobalPerMinute: number }): void {
+// the provider has written its answer by the time a handler returns, and a middleware that then touched the response would write it twice (the node
+// server cannot take a response back once it was sent), so what that middleware does is done here, above. The consent page's own calls
+// (/oauth/interaction/...) are not the provider's: they go on to the routes of mountMcp, and the page itself to the SPA.
+export function mountOauthProvider(
+  app: Hono<any>,
+  deps: Pick<McpDeps, 'oauth' | 'clientKey' | 'now'> & { registerPerMinute: number; registerGlobalPerMinute: number; allowedOrigins: readonly string[] },
+): void {
   const callback = deps.oauth.provider.callback();
   const addressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
   const registerLimiter = new RateLimiter({ perMinute: deps.registerPerMinute, ...(deps.now ? { now: deps.now } : {}) });
   const registerGlobalLimiter = new RateLimiter({ perMinute: deps.registerGlobalPerMinute, ...(deps.now ? { now: deps.now } : {}) });
+
+  // The headers of every answer of these routes, ours and the provider's, set before either writes.
+  const decorate = (c: Context, requestId: string) => {
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
+    c.header('x-request-id', requestId);
+    const origin = c.req.header('origin');
+    if (origin !== undefined && deps.allowedOrigins.includes(origin)) {
+      c.header('access-control-allow-origin', origin);
+      c.header('access-control-expose-headers', CORS_EXPOSED);
+      c.header('vary', 'Origin');
+    }
+  };
+  const refuse = (c: Context, requestId: string, status: 413 | 429, body: Record<string, string>, retryAfterSeconds?: number) => {
+    decorate(c, requestId);
+    if (retryAfterSeconds !== undefined) c.header('retry-after', String(retryAfterSeconds));
+    return c.json(body, status);
+  };
+  const logRequest = (method: string, path: string, status: number, started: number) =>
+    logEvent(status >= 500 ? 'error' : 'info', 'request', { method, route: routePatternOf(path), status, durationMs: Date.now() - started });
+
   const delegate = async (c: Context, rewriteTo?: string) => {
     const { incoming, outgoing } = c.env as unknown as NodeBindings;
+    const requestId = randomUUID();
+    const started = Date.now();
+    const path = new URL(c.req.url).pathname;
+    const method = c.req.method;
+    // A preflight is answered here: the allowed origin gets its headers, any other gets a bare 204 (no CORS header, so the browser refuses it).
+    if (method === 'OPTIONS') {
+      decorate(c, requestId);
+      const origin = c.req.header('origin');
+      if (origin !== undefined && deps.allowedOrigins.includes(origin)) {
+        c.header('access-control-allow-methods', 'GET, POST, OPTIONS');
+        c.header('access-control-allow-headers', CORS_ALLOWED_REQUEST_HEADERS);
+        c.header('access-control-max-age', '600');
+      }
+      logRequest(method, path, 204, started);
+      return c.body(null, 204);
+    }
+    const length = Number(c.req.header('content-length') ?? '0');
+    if (Number.isFinite(length) && length > MAX_OAUTH_BODY_BYTES) {
+      logRequest(method, path, 413, started);
+      return refuse(c, requestId, 413, { error: 'invalid_request', error_description: 'Request body too large' });
+    }
+    // The headers go on the Node response before the provider writes (it sets its own cache and content headers over these).
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) outgoing.setHeader(name, value);
+    outgoing.setHeader('x-request-id', requestId);
+    const origin = c.req.header('origin');
+    if (origin !== undefined && deps.allowedOrigins.includes(origin)) {
+      outgoing.setHeader('access-control-allow-origin', origin);
+      outgoing.setHeader('access-control-expose-headers', CORS_EXPOSED);
+      outgoing.setHeader('vary', 'Origin');
+    }
+    // The provider answers CORS itself (the request's Origin, or `*` before it knows the client) on its token, key and metadata routes: those headers are dropped
+    // and only the allowlist's, set above, stay, so an origin the deployment did not list never gets one.
+    const setHeader = outgoing.setHeader.bind(outgoing);
+    outgoing.setHeader = ((name: string, value: unknown) => (name.toLowerCase().startsWith('access-control-') ? outgoing : setHeader(name, value as never))) as typeof outgoing.setHeader;
     if (rewriteTo) incoming.url = rewriteTo;
-    await callback(incoming, outgoing);
+    outgoing.once('finish', () => logRequest(method, path, outgoing.statusCode, started));
+    await runWithLogContext({ requestId }, () => callback(incoming, outgoing));
     return RESPONSE_ALREADY_SENT;
   };
-  app.get('/.well-known/oauth-authorization-server', (c) => delegate(c, '/.well-known/openid-configuration'));
-  app.get('/.well-known/openid-configuration', (c) => delegate(c));
+  app.on(['GET', 'OPTIONS'], '/.well-known/oauth-authorization-server', (c) => delegate(c, '/.well-known/openid-configuration'));
+  app.on(['GET', 'OPTIONS'], '/.well-known/openid-configuration', (c) => delegate(c));
   app.all('/oauth/*', async (c, next) => {
     const path = new URL(c.req.url).pathname;
     if (path.startsWith('/oauth/interaction/')) return next();
+    const requestId = randomUUID();
     const bucket = deps.clientKey(c);
     const decision = addressLimiter.take(bucket);
-    if (!decision.allowed) return tooManyRequests(c, decision.retryAfterSeconds);
-    if (path === '/oauth/register') {
+    if (!decision.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, decision.retryAfterSeconds);
+    if (path === '/oauth/register' && c.req.method === 'POST') {
       const mine = registerLimiter.take(bucket);
-      if (!mine.allowed) return tooManyRequests(c, mine.retryAfterSeconds);
+      if (!mine.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, mine.retryAfterSeconds);
       const all = registerGlobalLimiter.take('all');
-      if (!all.allowed) return tooManyRequests(c, all.retryAfterSeconds);
+      if (!all.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, all.retryAfterSeconds);
     }
     return delegate(c);
   });
@@ -178,6 +265,8 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       // The authorization grant first (the provider's own record), then ours: if ours fails the provider's is destroyed, so nothing is left half made.
       const grant = new oauth.provider.Grant({ accountId: user.userId, clientId });
       grant.addResourceScope(oauth.resource, MCP_SCOPE);
+      // A client that also asked for `openid` gets it (the consent is for the resource either way), so its authorization does not loop back to the consent page.
+      if (String(interaction.params.scope ?? '').split(' ').includes('openid')) grant.addOIDCScope('openid');
       const oauthGrantId = await grant.save();
       try {
         await runtime.execute(

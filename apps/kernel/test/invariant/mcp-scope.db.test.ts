@@ -203,12 +203,15 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
 
   it('refuses the very next call when the consenting user is no longer an owner or admin, was removed or disabled, or the org is stopped', async () => {
     const call = (actor: UserActor) => runtime.query('kernel.mcp.about', {}, { actor, orgId: orgA });
-    const grant = await insertGrant(orgA, users.adminA);
+    let grant = await insertGrant(orgA, users.adminA);
     await call(mcp(users.adminA, grant));
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
     expect((await refusal(call(mcp(users.adminA, grant)))).code).toBe('MCP_GRANT_INVALID');
-    // Restoring the role does not matter to a grant made before the role was lowered only because the role is read live: here it is restored, so it works again.
+    // The end is for good: restoring the role does not revive the grant (a trigger revoked it when the role dropped), and a new consent is needed.
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
+    expect((await refusal(call(mcp(users.adminA, grant)))).code).toBe('MCP_GRANT_INVALID');
+    expect(await admin((c) => c.query(`SELECT revoked_at FROM crove_kernel.agent_grant WHERE id = $1`, [grant]).then((r) => r.rows[0].revoked_at))).not.toBeNull();
+    grant = await insertGrant(orgA, users.adminA);
     await call(mcp(users.adminA, grant));
     // A member (never an owner or admin) cannot hold a grant: it is refused even when a row exists for them.
     const memberGrant = await insertGrant(orgA, users.memberA);
@@ -217,6 +220,9 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     await admin((c) => c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.adminA]));
     expect((await refusal(call(mcp(users.adminA, grant)))).code).toBe('MCP_GRANT_INVALID');
     await admin((c) => c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.adminA]));
+    // Re-enabling does not revive it either.
+    expect((await refusal(call(mcp(users.adminA, grant)))).code).toBe('MCP_GRANT_INVALID');
+    grant = await insertGrant(orgA, users.adminA);
     // Removed.
     await call(mcp(users.adminA, grant));
     await admin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
