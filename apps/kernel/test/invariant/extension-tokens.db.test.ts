@@ -1004,8 +1004,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       // Agent context cannot revoke member token
       expect(await safeRevoke(agentA, tokens.activeA1.id), 'agent context revoking member token must fail').toBe(false);
 
-      // The eligibility steps of the exchange test demoted, disabled and removed member A1. Whether that voided the token
-      // (revoked_at set, #2740 step 2) or only suspended it (step 1), this step needs it live: make it so for both.
+      // This step needs the token live. Since #2662 the eligibility steps of the exchange test run on their own member, so nothing before
+      // this has voided member A1's token; the reset stays as a guard (a token voided by any earlier step, #2740 step 2, would fail this one).
       await admin(async (c) => {
         await c.query(`UPDATE crove_kernel.extension_token SET revoked_at = NULL WHERE org_id = $1 AND id = $2`, [orgAId, tokens.activeA1.id]);
       });
