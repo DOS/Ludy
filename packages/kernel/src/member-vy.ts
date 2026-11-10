@@ -403,21 +403,58 @@ export const memberVyMeterRecord = defineCommand({
   },
 });
 
+// The fixed words a background run of a member's Vy may close under (ai_run.error): the codes its callers emit and nothing else (#2822 part 3b). The database
+// holds the same list (crove_kernel.member_vy_run_error_code_ok, migration 20261215020000) and refuses any other; a unit test ties the two together. A caller maps a
+// failure it has no word for to TRANSCRIBE_FAILED (failureCode in apps/kernel/src/meetings-transcribe.ts), never invents one.
+export const MEMBER_VY_RUN_ERROR_CODES = [
+  'AGENT_FORBIDDEN',
+  'AGENT_NOT_ACTIVE',
+  'AGENT_NOT_MEMBER_VY',
+  'AGENT_RUN_NOT_LIVE',
+  'AI_BUDGET_EXHAUSTED',
+  'AI_STOPPED',
+  'AUDIO_NOT_FOUND',
+  'FORBIDDEN',
+  'MEDIA_KEY_SHREDDED',
+  'MEDIA_KEY_UNAVAILABLE',
+  'MEETING_NO_AUDIO',
+  'MEETING_NOT_FOUND',
+  'MEMBER_NOT_ACTIVE',
+  'NOT_A_MEMBER',
+  'RUN_CANCELLED',
+  'TENANT_NOT_ACTIVE',
+  'TRANSCRIBE_AUTH',
+  'TRANSCRIBE_FAILED',
+  'TRANSCRIBE_INVALID_REQUEST',
+  'TRANSCRIBE_INVALID_RESPONSE',
+  'TRANSCRIBE_NETWORK',
+  'TRANSCRIBE_RATE_LIMIT',
+  'TRANSCRIBE_TIMEOUT',
+  'TRANSCRIBE_UNAVAILABLE',
+  'TRANSCRIPT_EMPTY',
+  'TRANSCRIPT_RESULT_INVALID',
+  'TRANSCRIPT_TOO_LONG',
+  'VY_NOT_ALLOWED',
+] as const;
+export type MemberVyRunErrorCode = (typeof MEMBER_VY_RUN_ERROR_CODES)[number];
+
 // The worker closes the run of a member's background Vy after the member-mode store wrote the result (the context of a member never writes ai_run):
 // the system command of the worker login, through crove_kernel.member_vy_run_finish, which refuses every other caller and answers whether it closed a
 // run that was still running. The status and the code are fixed words, never text (the definer checks the code's shape).
 export const memberVyRunFinish = defineCommand({
   name: 'kernel.member_vy.run.finish',
-  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() }),
+  // The status is left out to have it derived from the result (a ready result succeeded, anything else failed); only a cancel says so. The code is one of
+  // the definer's fixed words (crove_kernel.member_vy_run_error_code_ok), which refuses any other.
+  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']).optional(), errorCode: z.enum(MEMBER_VY_RUN_ERROR_CODES).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
   handler: async (ctx, input): Promise<{ closed: boolean }> => {
     const { rows } = await sql<{ closed: boolean }>`
-      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
+      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status ?? null}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
     const closed = rows[0]?.closed === true;
-    ctx.audit({ run_id: input.runId, status: input.status, closed });
+    ctx.audit({ run_id: input.runId, status: input.status ?? 'derived', closed });
     return { closed };
   },
 });
