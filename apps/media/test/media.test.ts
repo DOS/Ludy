@@ -221,6 +221,23 @@ describe('crove-media HTTP server & client SDK', () => {
     expect(received).toBe(5);
   });
 
+  it('does not count the wait in the queue against the time allowed for the work (#2989)', async () => {
+    // 300 ms allowed per measure, one at a time: the second waits about 200 ms and then needs 200 ms. Counted from its arrival it would be aborted.
+    const baseUrl = await startServer({
+      concurrency: 1,
+      processTimeoutMs: 300,
+      runMeasure: async (_bytes, signal) => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        // A real measure stops when its signal fires (ffmpeg is killed): so does this one.
+        if (signal?.aborted) throw new MediaExecutionError('timeout', 'Media processing timed out');
+        return { ...mockProbe, durationSeconds: 5 };
+      },
+    });
+    const client = createMediaClient(baseUrl);
+    const results = await Promise.all([client.measure(new Uint8Array([1])), client.measure(new Uint8Array([2]))]);
+    expect(results.map((r) => r.durationSeconds)).toEqual([5, 5]);
+  });
+
   it('measures bytes and a stream through /measure, not /probe (#2985)', async () => {
     const sizes: number[] = [];
     const baseUrl = await startServer({

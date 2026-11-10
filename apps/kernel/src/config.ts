@@ -504,6 +504,9 @@ const schema = z.object({
   // recording in it at upload and the worker re-measures an old one before it is transcribed. Unset: meeting uploads are refused
   // (MEDIA_PROBE_UNAVAILABLE), because a recording whose length cannot be known would bypass the AI meter.
   MEDIA_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // The most bytes crove-media accepts for one recording (its own MEDIA_MAX_INPUT_BYTES, which compose gives both with one value; #2989): a meeting upload over it is
+  // refused (413 FILE_TOO_LARGE) before it is read, and a staged grant is clamped to it, instead of after a full upload. Unset: the plan's limits only (300 MB audio, 2 GB video).
+  MEDIA_MAX_INPUT_BYTES: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1024).max(2 * 1024 * 1024 * 1024).optional()),
   // How long one call to crove-media may take, in ms: its own MEDIA_TIMEOUT_MS (default 300000) plus a margin. Unset: 315000. Raise both for a 2 GB video.
   MEDIA_CALL_TIMEOUT_MS: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1000).max(2_000_000).optional()),
   // Extract jobs the worker runs at once (#2119), each one reading a file and, for a PDF or a photo, calling the AI. Unset:
