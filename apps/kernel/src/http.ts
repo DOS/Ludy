@@ -1493,6 +1493,10 @@ export function createHttpApp(deps: HttpDeps) {
       expect: { fileId: payload.fileId, keyId: payload.keyId },
       // A player sends several overlapping ranges: the per-user cap above bounds it, not the one-slot large-transfer limiter.
       ownLimit: true,
+      recheck: async () => {
+        if (Math.floor(Date.now() / 1000) >= payload.exp) throw new DomainError('VIDEO_TICKET_INVALID', 401, 'The video ticket expired');
+        await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId: payload.orgId });
+      },
       onFinished: release,
       fail,
     });
@@ -2046,6 +2050,9 @@ export function createHttpApp(deps: HttpDeps) {
     onFinished?: () => void;
     // The caller holds its own concurrency limit, so the shared large-transfer slot is not taken.
     ownLimit?: boolean;
+    // Run before every window after the first of a stream read without a Range: it throws to end the stream (a ticket past its
+    // expiry, a revoked session), so a long answer does not outlive what let it start.
+    recheck?: () => Promise<void>;
     // The answer for any error thrown on the way.
     fail: (error: unknown) => Response;
   }
@@ -2265,6 +2272,7 @@ export function createHttpApp(deps: HttpDeps) {
             // the media key this stream holds, so the id is not compared. The file is compared: retention deletes the media
             // rows (#2579), so the segment or video the meeting names now may not be the object this stream reads.
             if (streamOffset > 0) {
+              await p.recheck?.();
               const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor, orgId });
               if (current.fileId !== media.fileId) throw new DomainError('MEDIA_REPLACED', 409, 'The meeting media changed while it was playing');
             }

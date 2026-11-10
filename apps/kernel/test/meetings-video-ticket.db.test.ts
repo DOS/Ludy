@@ -497,6 +497,52 @@ suite('meeting video tickets (#2703)', () => {
     }
   });
 
+  it('ends a long stream read without a Range when its session is revoked or its ticket expires, at the next window', async () => {
+    const meetingId = await videoMeeting(mp4(9 * 1024 * 1024 + 5));
+    const readOneWindow = async (res: Response) => {
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      return reader;
+    };
+    // Revoked: the first window was already answered, the second is not.
+    const { body } = await issue('attendee', meetingId);
+    const res = await stream(meetingId, body.ticket!, {});
+    expect(res.status).toBe(200);
+    const reader = await readOneWindow(res);
+    revokedSessions.add(accounts.get('attendee')!.session);
+    try {
+      let read = 0;
+      await expect(
+        (async () => {
+          for (;;) {
+            const next = await reader.read();
+            if (next.done) return;
+            read += next.value.byteLength;
+          }
+        })(),
+      ).rejects.toThrow();
+      expect(read).toBeLessThan(5 * 1024 * 1024);
+    } finally {
+      revokedSessions.delete(accounts.get('attendee')!.session);
+    }
+    // Expired: a ticket with two seconds left, read past its expiry.
+    const now = Math.floor(Date.now() / 1000);
+    const shortLived = await forge('attendee', meetingId, { iat: now, exp: now + 2 });
+    const second = await stream(meetingId, shortLived, {});
+    expect(second.status).toBe(200);
+    const reader2 = await readOneWindow(second);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await expect(
+      (async () => {
+        for (;;) {
+          const next = await reader2.read();
+          if (next.done) return;
+        }
+      })(),
+    ).rejects.toThrow();
+  });
+
   it('refuses once the video was re-recorded, its key changed, its retention passed or its key was shredded', async () => {
     const play = async (ticket: string) => {
       const res = await stream(meetingIdOf.current, ticket, { headers: { range: 'bytes=0-9' } });
