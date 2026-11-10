@@ -1077,10 +1077,10 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       };
       const audit = (
         detail: unknown,
-        cols: { command?: string; target?: string | null; sha?: string } = {},
+        cols: { command?: string; target?: string | null; sha?: string; outcome?: string } = {},
       ) =>
         attempt(
-          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, input_sha256, detail) VALUES ($1, 'agent', $2, $3, $4, 'ok', $5, $6, $7::jsonb)`,
+          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, input_sha256, detail) VALUES ($1, 'agent', $2, $3, $4, $8, $5, $6, $7::jsonb)`,
           [
             orgId,
             run.agentId,
@@ -1089,6 +1089,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
             cols.target === undefined ? null : cols.target,
             cols.sha ?? HASH,
             JSON.stringify(detail),
+            cols.outcome ?? "ok",
           ],
         );
       // The audit row of this agent and run with ids, enums and numbers passes (the positive control): the real command, a 64-hex hash and a
@@ -1123,6 +1124,38 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         const ok = await audit(goodDetail, cols);
         expect(ok.ok || ok.message, why).toBe(true);
       }
+      // The refusal of a command member mode may not run is audited (#2822 part 3c): outcome denied, a registered-command-shaped name, and a
+      // detail of code, rule and agentRun only. The control first, then each way out of it.
+      const denied = { agentRun: run.runId, code: "AGENT_FORBIDDEN", rule: "member_vy_context" };
+      const deniedRow = await audit(denied, { command: "kernel.task.create", target: "kernel.task", outcome: "denied" });
+      expect(deniedRow.ok || deniedRow.message, "a denied refusal row of a command outside kernel.member_vy").toBe(true);
+      for (const [why, detail, cols] of [
+        ["a denied row with a key off code, rule and agentRun", { ...denied, status: "ready" }, { command: "kernel.task.create", outcome: "denied" }],
+        ["a denied row with an id key", { ...denied, resultId: randomUUID() }, { command: "kernel.task.create", outcome: "denied" }],
+        ["a denied row with text in the code", { ...denied, code: "Gọi anh Nam 0909123456" }, { command: "kernel.task.create", outcome: "denied" }],
+        ["a denied row of another run", { ...denied, agentRun: randomUUID() }, { command: "kernel.task.create", outcome: "denied" }],
+        ["a denied row with text as the command", denied, { command: "Gọi anh Nam 0909123456", outcome: "denied" }],
+        ["a denied row with an uppercase command", denied, { command: "Kernel.Task.Create", outcome: "denied" }],
+        ["a denied row with text as the target type", denied, { command: "kernel.task.create", target: "Tóm tắt riêng", outcome: "denied" }],
+        ["a failed row of a command outside kernel.member_vy", denied, { command: "kernel.task.create", outcome: "failed" }],
+        ["an ok row of a command outside kernel.member_vy", denied, { command: "kernel.task.create", outcome: "ok" }],
+      ] as const) {
+        expect(await audit(detail, cols), why).toMatchObject(forbidden);
+      }
+      // The bound: twenty denied rows for one run (kept here, not rolled back), and the twenty-first is refused.
+      for (let i = 0; i < 20; i++) {
+        const kept = await outcome(
+          c.query(
+            `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail) VALUES ($1, 'agent', $2, 'kernel.task.create', $3, 'denied', $4, $5::jsonb)`,
+            [orgId, run.agentId, randomUUID(), HASH, JSON.stringify(denied)],
+          ),
+        );
+        expect(kept.ok || kept.message, `denied row ${i + 1} of 20`).toBe(true);
+      }
+      expect(
+        await audit(denied, { command: "kernel.task.create", outcome: "denied" }),
+        "the twenty-first denied row of the run",
+      ).toMatchObject(forbidden);
       const clean = await audit(goodDetail);
       expect(
         clean.ok || clean.message,
