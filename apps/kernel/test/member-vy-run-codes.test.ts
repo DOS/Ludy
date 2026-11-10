@@ -10,6 +10,8 @@ import { DomainError } from '@crove/kernel-runtime';
 import { failureCode } from '../src/meetings-transcribe.ts';
 
 const MIGRATION = fileURLToPath(new URL('../../../supabase/migrations/20261215020000_crove_kernel_member_vy_run_finish_derive.sql', import.meta.url));
+// The refusals of the member-mode context when a run starts to read: the member left, a switch is off, the agent is not the member's (Meetings found these fell to TRANSCRIBE_FAILED).
+const CONTEXT_CODES = ['TENANT_NOT_ACTIVE', 'AGENT_NOT_ACTIVE', 'AGENT_FORBIDDEN', 'AGENT_NOT_MEMBER_VY', 'NOT_A_MEMBER'] as const;
 const KINDS = ['auth', 'rate_limit', 'unavailable', 'invalid_request', 'invalid_response', 'timeout', 'network'] as const;
 
 function databaseList(): string[] {
@@ -28,7 +30,7 @@ describe('the codes a member Vy run closes under', () => {
     const errors: unknown[] = [
       new AiBudgetExhaustedError('org', null),
       ...KINDS.map((kind) => new TranscriptionError(kind)),
-      ...['KILL_SWITCH_ON', 'BUDGET_EXHAUSTED', 'TRANSCRIPT_EMPTY', 'TRANSCRIPT_TOO_LONG', 'AUDIO_NOT_FOUND', 'MEDIA_KEY_UNAVAILABLE', 'MEDIA_KEY_SHREDDED', 'MEETING_NOT_FOUND', 'MEETING_NO_AUDIO', 'FORBIDDEN', 'MEMBER_NOT_ACTIVE', 'VY_NOT_ALLOWED', 'AGENT_RUN_NOT_LIVE', 'TRANSCRIPT_RESULT_INVALID'].map(
+      ...['KILL_SWITCH_ON', 'BUDGET_EXHAUSTED', 'TRANSCRIPT_EMPTY', 'TRANSCRIPT_TOO_LONG', 'AUDIO_NOT_FOUND', 'MEDIA_KEY_UNAVAILABLE', 'MEDIA_KEY_SHREDDED', 'MEETING_NOT_FOUND', 'MEETING_NO_AUDIO', 'FORBIDDEN', 'MEMBER_NOT_ACTIVE', 'VY_NOT_ALLOWED', 'AGENT_RUN_NOT_LIVE', 'TRANSCRIPT_RESULT_INVALID', ...CONTEXT_CODES].map(
         (code) => new DomainError(code, 422, 'x'),
       ),
       new DomainError('SOMETHING_NOBODY_LISTED', 422, 'x'),
@@ -45,6 +47,7 @@ describe('the codes a member Vy run closes under', () => {
     expect(failureCode(new DomainError('MEDIA_KEY_SHREDDED', 422, 'x'))).toBe('MEDIA_KEY_SHREDDED');
     expect(failureCode(new DomainError('KILL_SWITCH_ON', 422, 'x'))).toBe('AI_STOPPED');
     expect(failureCode(new DomainError('BUDGET_EXHAUSTED', 422, 'x'))).toBe('AI_BUDGET_EXHAUSTED');
+    for (const code of CONTEXT_CODES) expect(failureCode(new DomainError(code, 403, 'x')), code).toBe(code);
     expect(failureCode(new TranscriptionError('rate_limit'))).toBe('TRANSCRIBE_RATE_LIMIT');
     expect(failureCode(new DomainError('SOMETHING_NOBODY_LISTED', 422, 'x'))).toBe('TRANSCRIBE_FAILED');
     expect(failureCode(new Error('free text'))).toBe('TRANSCRIBE_FAILED');
