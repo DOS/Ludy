@@ -7,6 +7,11 @@ import { translatorFor } from '../src/i18n/runtime.ts';
 const TITLES: Array<{ key: string; params: Record<string, string | number> }> = [
   { key: 'signals.wonDealNoInvoice', params: { days: 9 } },
   { key: 'signals.wonDealNoInvoiceMore', params: { count: 4 } },
+  { key: 'signals.overdueReceivableOpenDeal', params: { days: 12 } },
+  { key: 'signals.overdueReceivableOpenDealMore', params: { count: 4 } },
+  { key: 'signals.supplierBankChanged', params: { days: 3, count: 2 } },
+  { key: 'signals.supplierBankChangedMore', params: { count: 5 } },
+  { key: 'signals.supplierBankChangedUnchecked', params: { count: 3 } },
 ];
 
 type Say = (key: string, values?: Record<string, string | number>) => string;

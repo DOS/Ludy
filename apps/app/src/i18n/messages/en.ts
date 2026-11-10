@@ -187,6 +187,11 @@ export const en = {
       signals: {
         wonDealNoInvoice: 'A deal won {days, plural, one {# day} other {# days}} ago has no sales invoice for this customer yet',
         wonDealNoInvoiceMore: '{count, plural, one {# more deal} other {# more deals}} won with no sales invoice',
+        overdueReceivableOpenDeal: 'This customer has a receivable {days, plural, one {# day} other {# days}} overdue and still has an open deal',
+        overdueReceivableOpenDealMore: '{count, plural, one {# more customer has} other {# more customers have}} an overdue receivable and an open deal',
+        supplierBankChanged: 'A supplier changed its bank account {days, plural, one {# day} other {# days}} ago and {count, plural, one {# payment is} other {# payments are}} waiting: check the account before paying',
+        supplierBankChangedMore: '{count, plural, one {# more supplier} other {# more suppliers}} changed a bank account and have a payment waiting',
+        supplierBankChangedUnchecked: '{count, plural, one {# supplier} other {# suppliers}} changed a bank account recently; their waiting payments could not be checked, look before paying',
       },
       crm: {
         noActivity: 'Reminder: this deal has had no update for {days, plural, one {# day} other {# days}}',
@@ -10423,6 +10428,8 @@ export const en = {
       },
       signals: {
         deal_without_invoice: 'Read the won deals that have no sales invoice',
+        receivable_with_open_deal: 'Read the customers with an overdue receivable and an open deal',
+        supplier_bank_changed: 'Read the suppliers that changed a bank account while a payment is waiting',
       },
       subject_key: {
         reseal: 'Wrap subject keys again under the current key after a key rotation',
