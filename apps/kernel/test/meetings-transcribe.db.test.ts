@@ -351,19 +351,28 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     // The run the deletion stopped has an audit row of its own, by the system, with ids and no text (#2863, item 5).
     const audit = await admin((c) =>
       c.query<{ actor_type: string; command: string; outcome: string; target_type: string; target_id: string; detail: Record<string, unknown> }>(
-        `SELECT actor_type, command, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.transcribe.run_cancelled' AND target_id = $2`,
+        `SELECT actor_type, command, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`,
         [orgId, runId],
       ),
     );
     expect(audit.rows).toHaveLength(1);
-    expect(audit.rows[0]).toMatchObject({ actor_type: 'system', outcome: 'ok', target_type: 'ai_run', target_id: runId });
-    expect(audit.rows[0]?.detail).toEqual({ runId, meetingId, feature: 'meetings.transcribe', reason: 'MEETING_REMOVED' });
+    expect(audit.rows[0]).toMatchObject({ actor_type: 'system', outcome: 'ok', target_type: 'kernel.ai_run', target_id: runId });
+    expect(audit.rows[0]?.detail).toMatchObject({ runId, meetingId, feature: 'meetings.transcribe', reason: 'MEETING_REMOVED' });
   });
 
   it('deleting a meeting with no live run writes no cancellation audit row (#2863)', async () => {
     const meetingId = await seedMeeting('recorder');
     await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
-    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.transcribe.run_cancelled' AND detail ->> 'meetingId' = $2`, [orgId, meetingId]));
+    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail ->> 'meetingId' = $2`, [orgId, meetingId]));
+    expect(audit.rows[0]?.n).toBe('0');
+  });
+
+  it('a run that already finished is not cancelled again and writes no audit row (#2863)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
     expect(audit.rows[0]?.n).toBe('0');
   });
 
@@ -396,6 +405,9 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+    // In a user context the audit stamp names the member who deleted it (#2863).
+    const named = await admin((c) => c.query<{ actor_type: string; actor_id: string | null }>(`SELECT actor_type, actor_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
+    expect(named.rows).toEqual([{ actor_type: 'user', actor_id: users.recorder }]);
   });
 
   it('the text purge of the retention job (system context) mid-run stops the run and leaves no result row', async () => {
