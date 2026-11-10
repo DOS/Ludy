@@ -98,9 +98,27 @@ describe('createVideoTicketPlayer', () => {
     video.load();
     expect(video.currentTime).toBe(42);
     player.mediaLoaded();
+    for (let i = 0; i < MAX_ERROR_REFRESHES - 1; i++) {
+      player.mediaError();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(failures).toHaveLength(0);
+    const asked = fetchTicket.mock.calls.length;
+    player.mediaError();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchTicket.mock.calls.length).toBe(asked);
+    expect(failures).toHaveLength(1);
+    player.stop();
+  });
+
+  it('gives up on a source that loads and then fails again, within the error window', async () => {
+    const { player, video, fetchTicket, failures } = setup();
+    video.src = await player.start();
     for (let i = 0; i < MAX_ERROR_REFRESHES; i++) {
       player.mediaError();
       await vi.advanceTimersByTimeAsync(0);
+      video.load();
+      player.mediaLoaded();
     }
     expect(failures).toHaveLength(0);
     const asked = fetchTicket.mock.calls.length;

@@ -34,11 +34,14 @@ export interface VideoTicketPlayerDeps {
   onFailure: (error: unknown) => void;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  now?: () => number;
 }
 
 export const REFRESH_AT_FRACTION = 0.8;
-// Errors in a row (no metadata loaded in between) after which the player stops asking for tickets.
+// Errors in a row (no metadata loaded in between), or errors within ERROR_WINDOW_MS whatever loaded in between, after which
+// the player stops asking for tickets: a source that loads and then fails again cannot make it ask without end.
 export const MAX_ERROR_REFRESHES = 3;
+export const ERROR_WINDOW_MS = 60_000;
 
 export interface VideoTicketPlayer {
   // The first ticket: the URL to give the element.
@@ -57,6 +60,8 @@ export function createVideoTicketPlayer(deps: VideoTicketPlayerDeps): VideoTicke
   let timer: unknown = null;
   let refreshing: Promise<void> | null = null;
   let errorsInARow = 0;
+  let errorTimes: number[] = [];
+  const now = deps.now ?? (() => Date.now());
 
   const schedule = (ticket: VideoTicket) => {
     if (timer !== null) clearTimer(timer);
@@ -103,7 +108,9 @@ export function createVideoTicketPlayer(deps: VideoTicketPlayerDeps): VideoTicke
     mediaError() {
       if (stopped) return;
       errorsInARow += 1;
-      if (errorsInARow > MAX_ERROR_REFRESHES) {
+      const at = now();
+      errorTimes = [...errorTimes.filter((t) => at - t < ERROR_WINDOW_MS), at];
+      if (errorsInARow > MAX_ERROR_REFRESHES || errorTimes.length > MAX_ERROR_REFRESHES) {
         deps.onFailure(new Error('VIDEO_TICKET_INVALID'));
         return;
       }

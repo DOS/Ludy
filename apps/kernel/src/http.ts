@@ -1417,7 +1417,7 @@ export function createHttpApp(deps: HttpDeps) {
   // refusal; each one counts against a per-client budget. GET and HEAD only. The ticket is read from the query and goes to
   // no log (the access line names the route pattern); no CORS headers (a media element makes a no-cors request).
   const videoTicketFailures = deps.videoTicketFailures ?? new RateLimiter({ perMinute: STREAM_REDEEM_FAILURES_PER_MINUTE });
-  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: 1024, perKey: VIDEO_STREAMS_PER_USER });
+  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: 64, perKey: VIDEO_STREAMS_PER_USER });
   const videoTicketKey = (keyId: string): Buffer | null => {
     try {
       const broker = deps.broker ?? createCredentialBroker(config);
@@ -1433,6 +1433,9 @@ export function createHttpApp(deps: HttpDeps) {
     'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
     'content-disposition': 'inline',
+    // A <video> is a no-cors request: with the app and the API on different sites, same-site would block it. The ticket is the
+    // credential and nothing here is readable without CORS, which this route never sends.
+    'cross-origin-resource-policy': 'cross-origin',
   } as const;
   app.get('/api/meetings/:id/video/stream', async (c) => {
     for (const [name, value] of Object.entries(VIDEO_TICKET_RESPONSE_HEADERS)) c.header(name, value);
@@ -1486,6 +1489,8 @@ export function createHttpApp(deps: HttpDeps) {
       headOnly: c.req.method === 'HEAD',
       headers: { ...VIDEO_TICKET_RESPONSE_HEADERS },
       expect: { fileId: payload.fileId, keyId: payload.keyId },
+      // A player sends several overlapping ranges: the per-user cap above bounds it, not the one-slot large-transfer limiter.
+      ownLimit: true,
       onFinished: release,
       fail,
     });
@@ -2037,6 +2042,8 @@ export function createHttpApp(deps: HttpDeps) {
     expect?: { fileId: string; keyId: string };
     // Called once when the response is finished or was never started (a body read to the end, cancelled, or an error).
     onFinished?: () => void;
+    // The caller holds its own concurrency limit, so the shared large-transfer slot is not taken.
+    ownLimit?: boolean;
     // The answer for any error thrown on the way.
     fail: (error: unknown) => Response;
   }
@@ -2047,7 +2054,7 @@ export function createHttpApp(deps: HttpDeps) {
       return c.notFound();
     }
 
-    const slot = large ? large.tryAcquire(actor.userId) : () => undefined;
+    const slot = large && !p.ownLimit ? large.tryAcquire(actor.userId) : () => undefined;
     if (!slot) {
       p.onFinished?.();
       return p.fail(busy(c));

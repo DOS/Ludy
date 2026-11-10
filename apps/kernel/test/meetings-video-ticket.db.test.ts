@@ -347,6 +347,7 @@ suite('meeting video tickets (#2703)', () => {
 
     const partial = await stream(meetingId, ticket, { headers: { range: 'bytes=0-9' } });
     expect(partial.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(partial.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
     expect(partial.headers.get('cache-control')).toBe('private, no-store');
     expect(partial.headers.get('x-content-type-options')).toBe('nosniff');
     expect(partial.headers.get('content-disposition')).toBe('inline');
@@ -557,7 +558,7 @@ suite('meeting video tickets (#2703)', () => {
   it('allows three video streams per user at once, and frees a slot when one ends or is cancelled', async () => {
     const meetingId = await videoMeeting(mp4(5 * 1024 * 1024 + 123));
     const videoStreams = new ConcurrencyLimiter({ total: 10, perKey: 3 });
-    const capped = createHttpApp({ ...deps, videoStreams, largeUploads: new ConcurrencyLimiter({ total: 10, perKey: 10 }) });
+    const capped = createHttpApp({ ...deps, videoStreams });
     const { body } = await issue('recorder', meetingId, capped);
     // An unranged answer larger than one window is read piece by piece, so its slot is held until its body ends.
     const open = async () => stream(meetingId, body.ticket!, {}, capped);
