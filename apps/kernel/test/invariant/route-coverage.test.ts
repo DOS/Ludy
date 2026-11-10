@@ -39,6 +39,8 @@ const PUBLIC: Record<string, string> = {
     "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
   '/api/extension/token':
     "the Ludy extension's one-time code exchange (#2582, ADR-0047 point 10): the code (256 random bits, 5 minutes, single use, stored only as its SHA-256) is the credential and PKCE S256 binds it to the verifier only the extension holds; a body cap of 1 KB, a per-client rate limit, the code and verifier checked for shape before the database, one 400 answer for every refusal, only hashes reach SQL, and nothing of any org in the answer but for a valid exchange",
+  '/api/meetings/:id/video/stream':
+    "playback of one meeting's video by a short-lived signed ticket (#2703): a `<video>` cannot send the bearer header, so POST /api/meetings/:id/video/ticket (behind authenticate(), reader-checked) issues a ticket bound to the org, user, session, meeting and purpose; the route verifies it in constant time, answers one 401 for any bad ticket, and re-checks the session and the reader's access on every range request",
   '/api/stream': 'the event stream, opened with a one-time ticket that POST /api/stream/tickets issues after the session check',
   '/api/review/view': "Social's client review page (#589): a signed, expiring review link is the credential",
   '/api/review/media': 'the same review link, for the media of the post under review',
@@ -63,8 +65,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/meetings/:id/video/stream':
-    "playback of one meeting's video by a short-lived signed ticket (#2703): a `<video>` cannot send the bearer header, so POST /api/meetings/:id/video/ticket (behind authenticate(), reader-checked) issues a ticket bound to the org, user, session, meeting and purpose; the route verifies it in constant time, answers one 401 for any bad ticket, and re-checks the session and the reader's access on every range request",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

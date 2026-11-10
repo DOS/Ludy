@@ -315,6 +315,9 @@ export const KERNEL_ERROR_CODES = [
   'VIDEO_NOT_ENABLED',
   'MEDIA_KEY_SHREDDED',
   'MEDIA_KEY_UNAVAILABLE',
+  // The video player's ticket (#2703): one neutral wording for a ticket the stream refuses, and one for a ticket the app could not get.
+  'VIDEO_TICKET_INVALID',
+  'VIDEO_TICKET_UNAVAILABLE',
   'AUDIO_NOT_FOUND',
   'INVALID_PURPOSE',
   // Retention (#2579).

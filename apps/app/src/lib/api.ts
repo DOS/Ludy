@@ -120,6 +120,13 @@ export async function fetchStreamTicket(slug: string): Promise<string> {
   return ((await response.json()) as { ticket: string }).ticket;
 }
 
+// A ticket for the video of a meeting (#2703): a <video> cannot send the Authorization header, so it streams
+// /api/meetings/:id/video/stream with this ticket (at most ten minutes, bound to this session and the meeting).
+export async function fetchVideoTicket(meetingId: string): Promise<{ ticket: string; expiresInSeconds: number }> {
+  const response = await apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/video/ticket`, { method: 'POST' });
+  return (await response.json()) as { ticket: string; expiresInSeconds: number };
+}
+
 // A stored file's bytes. With presigned transfers the kernel hands out a short-lived URL for the exact version it
 // recorded (after the same authorization), fetched without Crove's headers; otherwise the kernel streams it.
 export async function fetchFile(fileId: string): Promise<Blob> {
