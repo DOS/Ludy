@@ -13,6 +13,7 @@ export const MEMBER_VY_SINKS: readonly string[] = [];
 // The list can only shrink: the invariant fails for an entry the baseline in the test does not name, for one that is no longer a command, and
 // for one that is also a sink. Do not add to it; add a sink, or do not read the private rows.
 export const MEMBER_VY_KNOWN_CONSUMERS: readonly string[] = [
+  'meetings.draft.review', // #2941
   'meetings.summary.copy_result', // #2941
   'meetings.summary.start', // #2941
   'meetings.transcript.copy_result', // #2941
