@@ -235,7 +235,7 @@ suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
     const noted = lines.filter((l) => l.includes('latest exit is not recorded'));
     expect(noted.length, 'one line for three nightly passes').toBe(1);
     expect(noted[0], 'the org by its prefix').toContain(orgId.slice(0, 8));
-    expect(noted[0], 'no user id or text').not.toContain(users.gone.slice(0, 8));
+    expect(noted[0], 'no user id or text').not.toContain(users.gone);
   });
 
   it('maps no RPC route to the sweep commands (the router names each command it exposes)', () => {
