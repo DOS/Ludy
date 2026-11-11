@@ -280,6 +280,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
       'mcp_grant_check(uuid, uuid, uuid)',
       'mcp_grant_for_oauth(text)',
       'mcp_call_audit(uuid, uuid, text, text, text)',
+      'mcp_rows_charge(uuid, uuid, integer, integer)',
       'mcp_grant_list()',
       'mcp_grant_revoke(uuid)',
       'mcp_grant_standing(uuid, uuid, uuid)',

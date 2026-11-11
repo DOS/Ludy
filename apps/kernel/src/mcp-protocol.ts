@@ -44,6 +44,8 @@ export interface ToolDescriptor {
   argsSchema: z.ZodType<Record<string, unknown>>;
   // The kernel query it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
   read: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  // How many rows of business data an answer carries, charged against the grant's daily row budget. Zero for a tool that reads none.
+  rows: (value: Record<string, unknown>) => number;
 }
 
 export interface McpHeaders {
@@ -68,7 +70,7 @@ function metaOf(params: Record<string, unknown> | undefined): Record<string, unk
 export function toolList(tools: readonly ToolDescriptor[]): Array<Record<string, unknown>> {
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : 1))
-    .map(({ read: _read, argsSchema: _argsSchema, ...descriptor }) => descriptor);
+    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, ...descriptor }) => descriptor);
 }
 
 // What a tool answers: structured content and a short text form of it, for clients that read only text.

@@ -14,6 +14,7 @@ const tool: ToolDescriptor = {
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   argsSchema: z.strictObject({}),
   read: async () => ({ ok: true }),
+  rows: () => 0,
 };
 const input = (over: Partial<HandleInput>): HandleInput => ({
   body: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
@@ -113,6 +114,7 @@ describe('the OAUTH_SERVER settings', () => {
       name: 'ludy_list',
       argsSchema: z.strictObject({ kind: z.enum(['a', 'b']).optional(), limit: z.number().int().min(1).max(50).default(25) }),
       read: async (args) => ({ args }),
+      rows: () => 0,
     };
     const call = (args: unknown) => handleMcp(input({ tools: [listing], body: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_list', arguments: args } }, callTool: (t, a) => t.read(a) }));
     expect(json(await call({})).body.result.structuredContent).toEqual({ args: { limit: 25 } });
