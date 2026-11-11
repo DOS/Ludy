@@ -208,12 +208,12 @@ export const vi = {
     reportsTo: 'Báo cáo cho',
     waitingFor: 'Đang chờ',
     nodes: [
-      { id: 'tuan', kind: 'person', name: 'Anh Tuấn', role: 'Giám đốc', initials: 'AT', chip: null, budget: null },
-      { id: 'lan', kind: 'person', name: 'Chị Lan', role: 'Kế toán trưởng', initials: 'L', chip: { tone: 'ok', label: 'Đã duyệt HĐ 1284' }, budget: null },
-      { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 bài chờ duyệt' }, budget: null },
-      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Báo cáo cho Chị Lan', initials: '', chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
-      { id: 'tasks', kind: 'tasks', name: 'Công việc', role: '3 việc đang mở, 1 do agent nhận', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
+      { id: 'tuan', kind: 'person', name: 'Anh Tuấn', role: 'Giám đốc', initials: 'AT', avatar: '/avatars/tuan.webp', chip: null, budget: null },
+      { id: 'lan', kind: 'person', name: 'Chị Lan', role: 'Kế toán trưởng', initials: 'L', avatar: '/avatars/lan.webp', chip: { tone: 'ok', label: 'Đã duyệt HĐ 1284' }, budget: null },
+      { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', avatar: '/avatars/minh.webp', chip: { tone: 'warn', label: '1 bài chờ duyệt' }, budget: null },
+      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Báo cáo cho Chị Lan', initials: '', avatar: null, chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
+      { id: 'tasks', kind: 'tasks', name: 'Công việc', role: '3 việc đang mở, 1 do agent nhận', initials: '', avatar: null, chip: null, budget: null },
+      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Báo cáo cho Anh Minh', initials: '', avatar: null, chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {

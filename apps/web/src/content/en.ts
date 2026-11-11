@@ -208,12 +208,12 @@ export const en: Dictionary = {
     reportsTo: 'Reports to',
     waitingFor: 'Waiting',
     nodes: [
-      { id: 'tuan', kind: 'person', name: 'Tuan', role: 'Director', initials: 'T', chip: null, budget: null },
-      { id: 'lan', kind: 'person', name: 'Lan', role: 'Chief accountant', initials: 'L', chip: { tone: 'ok', label: 'Approved inv. 1284' }, budget: null },
-      { id: 'minh', kind: 'person', name: 'Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
-      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Lan', initials: '', chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
-      { id: 'tasks', kind: 'tasks', name: 'Tasks', role: '3 open, 1 taken by an agent', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Reports to Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
+      { id: 'tuan', kind: 'person', name: 'Tuan', role: 'Director', initials: 'T', avatar: '/avatars/tuan.webp', chip: null, budget: null },
+      { id: 'lan', kind: 'person', name: 'Lan', role: 'Chief accountant', initials: 'L', avatar: '/avatars/lan.webp', chip: { tone: 'ok', label: 'Approved inv. 1284' }, budget: null },
+      { id: 'minh', kind: 'person', name: 'Minh', role: 'Marketing', initials: 'M', avatar: '/avatars/minh.webp', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
+      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Lan', initials: '', avatar: null, chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
+      { id: 'tasks', kind: 'tasks', name: 'Tasks', role: '3 open, 1 taken by an agent', initials: '', avatar: null, chip: null, budget: null },
+      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Reports to Minh', initials: '', avatar: null, chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
