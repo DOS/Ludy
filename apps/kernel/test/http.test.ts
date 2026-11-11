@@ -158,6 +158,25 @@ describe('configuration guards', () => {
     expect(() => assertSplitRoles(loadConfig({ ...base, ...worker, PUBLIC_URL: 'http://127.0.0.1:8080' }), 'api')).not.toThrow();
   });
 
+  // #2162: the other logins the API must not hold on a public PUBLIC_URL: the postgres login, and a LISTEN connection on the worker's login.
+  it('refuses the api role on a public PUBLIC_URL when it holds the admin login, or a LISTEN url on the worker login, and only then', () => {
+    const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
+    const admin = { ADMIN_DATABASE_URL: 'postgres://postgres:admin-ref@db:5432/postgres' };
+    const listenWorker = { DATABASE_LISTEN_URL: 'postgres://crove_worker:listen-ref@db:5432/postgres' };
+    const listenApp = { DATABASE_LISTEN_URL: 'postgres://crove_app:listen-ref@db:5432/postgres' };
+    expect(() => assertSplitRoles(publicConfig(admin), 'api')).toThrow(/api role must not hold ADMIN_DATABASE_URL/);
+    expect(() => assertSplitRoles(publicConfig(listenWorker), 'api')).toThrow(/api role must not hold a DATABASE_LISTEN_URL on the worker login/);
+    // The message names the setting and never a value.
+    for (const extra of [admin, listenWorker]) expect(() => assertSplitRoles(publicConfig(extra), 'api')).not.toThrow(/-ref/);
+    // A LISTEN url on the app login is the API's own (the SSE stream), and an empty value (a compose `${VAR:-}`) is unset.
+    expect(() => assertSplitRoles(publicConfig(listenApp), 'api')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ ADMIN_DATABASE_URL: '', DATABASE_LISTEN_URL: '' }), 'api')).not.toThrow();
+    // Not for the worker, not for the all role with its opt-in, and not on a laptop.
+    expect(() => assertSplitRoles(publicConfig({ ...admin, ...listenWorker }), 'worker')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ ...admin, ...listenWorker, CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(loadConfig({ ...base, ...admin, ...listenWorker }), 'api')).not.toThrow();
+  });
+
   // #2119: how many extract jobs the worker runs at once, and how often an AI call is sent again.
   it('runs up to 4 extract jobs at once, never more than the sandbox has slots, and bounds the AI retries', () => {
     const sandbox = { EXTRACT_URL: 'http://crove-extract:8090' };
