@@ -22,6 +22,8 @@ To rotate the key: add the new key to the set (first), restart, and remove the o
 
 ## Connect an app
 
+Step by step for Claude and ChatGPT, with what is verified and what is not: [Connect Claude and ChatGPT](mcp-connect-claude-chatgpt.md).
+
 Give the app the address `PUBLIC_URL/mcp`. It discovers the rest (protected resource metadata, then the authorization server metadata), registers itself (dynamic client registration or a client ID metadata document), and sends you to `PUBLIC_URL/oauth/interaction/<id>`. Sign in as usual, choose the org (only orgs where you are owner or admin are offered), read the list, allow. The name an app shows is the one it gave itself; the page shows the address the browser returns to, which is the fact to check.
 
 ## What it can and cannot do
