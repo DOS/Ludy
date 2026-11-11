@@ -333,6 +333,8 @@ const schema = z.object({
   // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
   MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // Rows of business data one grant may read per UTC day (the sum of the rows its tool calls return). A call that starts under the budget may end over it by one answer.
+  MCP_GRANT_DAILY_ROWS: z.coerce.number().int().min(1).max(1_000_000).default(2000),
   // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
   OAUTH_REGISTER_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(10),
   OAUTH_REGISTER_GLOBAL_PER_MINUTE: z.coerce.number().int().min(1).max(100_000).default(120),
