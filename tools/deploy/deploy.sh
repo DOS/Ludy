@@ -384,10 +384,15 @@ EOF
 # line `pnpm pilot:check` reads). Read each time, so taking the file out of COMPOSE_FILE is all it takes to go back to one
 # container (#2133).
 pilot_layout() {
-  # The last assignment wins, as in a dotenv file: `export` and spaces around `=` are allowed, a trailing ` # comment` is not
-  # part of the value, and a commented-out line is not an assignment.
+  env_compose_file_lists compose.pilot.yml
+}
+
+# Whether the env file's COMPOSE_FILE names a compose file (the name is matched literally). The last assignment wins, as in a dotenv
+# file: `export` and spaces around `=` are allowed, a trailing ` # comment` is not part of the value, and a commented-out line is not
+# an assignment. The one reading of that line, for the pilot layout and for the WAL overlay (#2162).
+env_compose_file_lists() {
   sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?COMPOSE_FILE[[:space:]]*=[[:space:]]*//p' "$ENV_FILE" \
-    | tail -n 1 | sed -E 's/[[:space:]]+#.*$//' | grep -q 'compose\.pilot\.yml'
+    | tail -n 1 | sed -E 's/[[:space:]]+#.*$//' | grep -q -F -- "$1"
 }
 
 # In the pilot layout, the same image pins for `api` and `worker`, so a plain `docker compose` in the stack directory
@@ -396,6 +401,15 @@ pilot_layout() {
 pilot_pins() {
   pilot_layout || return 0
   printf "  api: { image: '%s', build: !reset null }\n  worker: { image: '%s', build: !reset null }\n" "$1" "$1"
+}
+
+# Whether the host's compose.pilot.yml is, byte for byte, the copy of a release staged on this host (an earlier deploy put it there).
+host_pilot_file_is_a_release_copy() {
+  local f
+  for f in "$DEPLOY_DIR"/releases/*/compose.pilot.yml; do
+    if [ -f "$f" ] && cmp -s "$f" "$DEPLOY_DIR/compose.pilot.yml"; then return 0; fi
+  done
+  return 1
 }
 
 # Makes a release directory the active files and exports its images.
@@ -420,6 +434,11 @@ activate() {
   # The pilot file ships with the release. A release staged before that (a rollback to it) keeps the host's copy.
   if pilot_layout; then
     if [ -f "$rel/compose.pilot.yml" ]; then
+      # The release's copy replaces the host's. Say so when the host's matches no release this host staged, that is when it was edited by hand
+      # (#2162); the line names the file, never its content. The host's copy of an earlier release, or of one a failed deploy left, is no edit.
+      if [ -f "$DEPLOY_DIR/compose.pilot.yml" ] && ! host_pilot_file_is_a_release_copy; then
+        log "replacing $DEPLOY_DIR/compose.pilot.yml with the copy of release $1: the host's copy matches no staged release, so it was edited by hand and that edit is lost (keep host settings in compose.host.yml)"
+      fi
       cp -f "$rel/compose.pilot.yml" "$DEPLOY_DIR/compose.pilot.yml.tmp"
     elif [ ! -f "$DEPLOY_DIR/compose.pilot.yml" ]; then
       die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists compose.pilot.yml but release $1 does not carry it and $DEPLOY_DIR has none (docs/runbooks/deploy.md, \"The pilot layout\")"
@@ -622,7 +641,7 @@ preflight() {
   [ -f "$ENV_FILE" ] || die "$EXIT_USAGE" "env file $ENV_FILE not found (copy .env.example there and change every secret)"
   # The WAL archiving overlay (#2120) stays the host's own file: without it the deploy would recreate `db` on the plain PostgreSQL image,
   # while the volume still tells PostgreSQL to push every WAL segment with a command that image does not have.
-  if sed -n 's/^COMPOSE_FILE=//p' "$ENV_FILE" | tail -n 1 | grep -q 'compose\.wal\.yml' && [ ! -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+  if env_compose_file_lists compose.wal.yml && [ ! -f "$DEPLOY_DIR/compose.wal.yml" ]; then
     die "$EXIT_USAGE" "COMPOSE_FILE in $ENV_FILE lists compose.wal.yml but $DEPLOY_DIR/compose.wal.yml does not exist: copy tools/backup/compose.wal.yml there (docs/runbooks/backup-and-restore.md, \"Point in time recovery\")"
   fi
   command -v docker >/dev/null || die "$EXIT_USAGE" 'docker is not installed'
