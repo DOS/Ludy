@@ -8,11 +8,12 @@
 //   off their own.
 // The audit row of one MCP call or refusal is not a command: the endpoint writes it through crove_kernel.mcp_call_audit (the API login has no
 // system context), as the system, naming the grant, the client and the tool, so it never reads as the person's own click.
-// - kernel.mcp.about: the one read of this step, `ludy_about`: the org's name, the grant and its scope. It holds no business data.
+// - kernel.mcp.about: `ludy_about`: the org's name, the grant and its scope. It holds no business data.
+// - kernel.mcp.parties: `ludy_parties_list` (slice 1b), the party register as the contacts screen shows it to an owner or admin; its comment is its privacy review.
 // No command declares `mcp`: an MCP grant reaches no write (a test pins it).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
+import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 
@@ -146,5 +147,97 @@ export const mcpAbout = defineQuery({
   },
 });
 
+export const MCP_LIST_DEFAULT = 25;
+export const MCP_LIST_MAX = 50;
+const zMcpLimit = z.number().int().min(1).max(MCP_LIST_MAX).default(MCP_LIST_DEFAULT).describe(`How many rows to return, newest first (1 to ${MCP_LIST_MAX}, default ${MCP_LIST_DEFAULT}).`);
+
+export const zMcpPartiesInput = z.strictObject({
+  kind: z.enum(['organization', 'person']).optional().describe('Only companies (organization) or only people (person). Leave out for both.'),
+  limit: zMcpLimit,
+});
+
+export interface McpPartyRow {
+  id: string;
+  kind: 'organization' | 'person';
+  name: string;
+  companyName: string | null;
+  createdOn: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  taxCode: string | null;
+  // Who put the row in: 'user' (staff typed it), 'external' (a visitor, a public form or an import), 'system'. A client treats an `external` value as less trusted.
+  sourceTrust: 'external' | 'user' | 'system';
+}
+export interface McpParties {
+  parties: McpPartyRow[];
+  total: number;
+  truncated: boolean;
+}
+
+// An optional text field as one plain line, or null when nothing is left of it.
+const optionalLine = (value: string | null, max: number): string | null => {
+  if (value === null) return null;
+  const line = plainLine(value, max);
+  return line === '' ? null : line;
+};
+
+// `ludy_parties_list`: the org's customers, suppliers and contacts (the party register), newest first, at most MCP_LIST_MAX.
+//
+// The projection is the privacy review of this tool, as the owner decided it (2026-11-11): an AI app the owner connected sees the customer data the consenting owner or
+// admin sees on the contacts screen, as the HubSpot and Twenty MCP servers show theirs. Returned: the name, whether it is a company or a person, for a person the
+// company they work at, the email, the phone, the address, the tax code (the contacts screen shows all four of every contact to an owner or an admin, a person's tax
+// code included), the day it was recorded, and `sourceTrust` (who put the row in: a value a visitor typed through a public form is `external`, so a client can trust
+// it less). Every text value is cut to one plain line (see plainLine). Never returned: the free-text search column, the duplicate and verification state, bank account
+// numbers, payroll or salary data, member-private notes or todos or member-Vy data; nothing from a query that is `sensitive`. Merged duplicates are not listed (the kept
+// party stands for them). There is no search and no cursor: a client sees the newest rows and `truncated` says there are more; a way to page is a later step.
+export const mcpParties = defineQuery({
+  name: 'kernel.mcp.parties',
+  input: zMcpPartiesInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpParties> => {
+    if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
+    const kind = input.kind ?? null;
+    const found = await sql<{
+      id: string;
+      kind: 'organization' | 'person';
+      name: string;
+      company_name: string | null;
+      created_on: string;
+      email: string | null;
+      phone: string | null;
+      address: string | null;
+      tax_code: string | null;
+      source_trust: 'external' | 'user' | 'system';
+    }>`
+      SELECT p.id, p.kind, p.name, c.name AS company_name, to_char(p.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS created_on,
+        p.email, p.phone, p.address, p.tax_code, p.source_trust
+      FROM crove_kernel.party p
+      LEFT JOIN crove_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id
+      LEFT JOIN crove_kernel.party c ON c.org_id = c0.org_id AND c.id = coalesce(c0.duplicate_of, c0.id)
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND (${kind}::text IS NULL OR p.kind = ${kind}::text)
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT ${input.limit}`.execute(ctx.trx);
+    const count = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM crove_kernel.party p
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND (${kind}::text IS NULL OR p.kind = ${kind}::text)`.execute(ctx.trx);
+    const total = count.rows[0]?.n ?? 0;
+    const parties = found.rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      name: plainLine(r.name, 300),
+      companyName: optionalLine(r.company_name, 300),
+      createdOn: r.created_on,
+      email: optionalLine(r.email, 254),
+      phone: optionalLine(r.phone, 40),
+      address: optionalLine(r.address, 500),
+      taxCode: optionalLine(r.tax_code, 30),
+      sourceTrust: r.source_trust,
+    }));
+    return { parties, total, truncated: total > parties.length };
+  },
+});
+
 export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke];
-export const mcpQueries = [mcpGrantList, mcpAbout];
+export const mcpQueries = [mcpGrantList, mcpAbout, mcpParties];

@@ -40,8 +40,10 @@ export interface ToolDescriptor {
   outputSchema: Record<string, unknown>;
   // The MCP annotations mirror the risk tier of the query behind the tool: every tool of this step reads only.
   annotations: { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false };
+  // What the tool accepts, checked here before anything runs: strict (an unknown key is refused), so a client cannot smuggle a field a query does not declare.
+  argsSchema: z.ZodType<Record<string, unknown>>;
   // The kernel query it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
-  read: () => Promise<Record<string, unknown>>;
+  read: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 export interface McpHeaders {
@@ -66,7 +68,7 @@ function metaOf(params: Record<string, unknown> | undefined): Record<string, unk
 export function toolList(tools: readonly ToolDescriptor[]): Array<Record<string, unknown>> {
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : 1))
-    .map(({ read: _read, ...descriptor }) => descriptor);
+    .map(({ read: _read, argsSchema: _argsSchema, ...descriptor }) => descriptor);
 }
 
 // What a tool answers: structured content and a short text form of it, for clients that read only text.
@@ -80,7 +82,7 @@ export interface HandleInput {
   tools: readonly ToolDescriptor[];
   serverVersion: string;
   // Runs one tool call after the endpoint's own checks; throws what the kernel throws.
-  callTool: (tool: ToolDescriptor) => Promise<Record<string, unknown>>;
+  callTool: (tool: ToolDescriptor, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // Describes an error thrown while running a tool as a JSON-RPC error body (never the thrown message of an unexpected error).
   describeError: (error: unknown) => { code: number; message: string };
 }
@@ -168,12 +170,18 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
       const name = typeof request.params?.name === 'string' ? request.params.name : null;
       const tool = input.tools.find((t) => t.name === name);
       if (!tool) return { kind: 'json', status: 200, body: rpcError(id, RPC_INVALID_PARAMS, 'Unknown tool') };
-      const args = request.params?.arguments;
-      if (args !== undefined && (args === null || typeof args !== 'object' || Array.isArray(args) || Object.keys(args as object).length > 0)) {
-        return { kind: 'json', status: 200, body: rpcError(id, RPC_INVALID_PARAMS, 'This tool takes no arguments') };
+      const raw = request.params?.arguments === undefined ? {} : request.params.arguments;
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return { kind: 'json', status: 200, body: rpcError(id, RPC_INVALID_PARAMS, 'Arguments must be an object') };
+      }
+      const parsed = tool.argsSchema.safeParse(raw);
+      if (!parsed.success) {
+        // The names of the fields that are wrong, never their values; a key the schema does not have is not named either (it is the client's text).
+        const fields = [...new Set(parsed.error.issues.flatMap((issue) => (issue.code === 'unrecognized_keys' ? ['(unknown field)'] : [issue.path.join('.') || '(arguments)'])))];
+        return { kind: 'json', status: 200, body: rpcError(id, RPC_INVALID_PARAMS, `Invalid arguments: ${fields.slice(0, 10).join(', ')}`) };
       }
       try {
-        return { kind: 'json', status: 200, body: rpcResult(id, toolResult(modern, await input.callTool(tool))) };
+        return { kind: 'json', status: 200, body: rpcResult(id, toolResult(modern, await input.callTool(tool, parsed.data))) };
       } catch (error) {
         const described = input.describeError(error);
         return { kind: 'json', status: 200, body: rpcError(id, described.code, described.message) };

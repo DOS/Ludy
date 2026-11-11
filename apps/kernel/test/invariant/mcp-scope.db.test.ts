@@ -31,7 +31,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', impo
 const suite = ADMIN ? describe : describe.skip;
 
 // Every query an MCP grant may run, with its scope. Adding one is a security change: read what it returns first, and keep member-private data out.
-const REACHABLE = ['kernel.mcp.about:ludy.read'];
+const REACHABLE = ['kernel.mcp.about:ludy.read', 'kernel.mcp.parties:ludy.read', 'finance.mcp.invoices:ludy.read'];
 
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
