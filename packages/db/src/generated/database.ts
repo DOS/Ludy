@@ -181,6 +181,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
@@ -2698,6 +2699,18 @@ export interface MeetingsAudioSegmentTable {
   segment_order: ColumnType<number, number, NotGranted>;
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting_link */
+export interface MeetingsMeetingLinkTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string | null, string | null, NotGranted>;
+  deal_id: ColumnType<string | null, string | null, NotGranted>;
+  calendar_event_id: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

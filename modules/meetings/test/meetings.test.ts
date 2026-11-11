@@ -91,6 +91,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.summary.copy_result',
       'meetings.draft.review',
       'meetings.summary.start',
+      'meetings.link.add',
+      'meetings.link.remove',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -115,6 +117,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.get',
       'meetings.action_item.source',
       'meetings.summary.status',
+      'meetings.link.list',
+      'meetings.link.by_target',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

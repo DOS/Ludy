@@ -447,3 +447,55 @@ export const zSummaryRef = z.strictObject({ meetingId: zId });
 export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolean(), reason: z.enum(['off', 'not_recorder']).nullable() });
 export const zSummarized = z.strictObject({ meetingId: zId, runId: zId, state: z.enum(SUMMARY_STATES), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() });
 export type Summarized = z.infer<typeof zSummarized>;
+
+// Links of a meeting (L1, #2587, ADR-0024): to a party, to at most one deal, and to the calendar event it came from. Set and removed by the meeting's
+// recorder; read only by the readers of the meeting.
+export const MEETING_LINK_KINDS = ['party', 'deal', 'calendar_event'] as const;
+export type MeetingLinkKind = (typeof MEETING_LINK_KINDS)[number];
+export const zMeetingLinkKind = z.enum(MEETING_LINK_KINDS);
+
+export const zMeetingLinkAdd = z.strictObject({
+  meetingId: zId,
+  kind: zMeetingLinkKind,
+  targetId: zId,
+});
+export type MeetingLinkAdd = z.infer<typeof zMeetingLinkAdd>;
+
+export const zMeetingLinkRemove = z.strictObject({
+  meetingId: zId,
+  linkId: zId,
+});
+export type MeetingLinkRemove = z.infer<typeof zMeetingLinkRemove>;
+
+export const zMeetingLink = z.strictObject({
+  id: zId,
+  meetingId: zId,
+  kind: zMeetingLinkKind,
+  targetId: zId,
+  createdBy: zId,
+  createdAt: z.string(),
+});
+export type MeetingLink = z.infer<typeof zMeetingLink>;
+
+export const zMeetingLinkRemoved = z.strictObject({ meetingId: zId, linkId: zId, removed: z.boolean() });
+export type MeetingLinkRemoved = z.infer<typeof zMeetingLinkRemoved>;
+
+// The meetings linked to one target, as the viewer may read them: a meeting the viewer does not read is not in the list at all (no row, no title).
+export const MEETING_LINK_PAGE = 50;
+export const zMeetingsOfTargetInput = z.strictObject({
+  kind: zMeetingLinkKind,
+  targetId: zId,
+  limit: z.number().int().min(1).max(MEETING_LINK_PAGE).optional(),
+});
+export type MeetingsOfTargetInput = z.infer<typeof zMeetingsOfTargetInput>;
+
+export const zMeetingOfTarget = z.strictObject({
+  linkId: zId,
+  meetingId: zId,
+  title: z.string(),
+  startedAt: z.string().nullable(),
+  status: zMeetingStatus,
+  visibility: zMeetingVisibility,
+  recorderUserId: zId,
+});
+export type MeetingOfTarget = z.infer<typeof zMeetingOfTarget>;
