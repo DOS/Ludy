@@ -63,6 +63,21 @@ function userOf(actor: CommandContext['actor'] | QueryContext['actor']): string 
   return actor.userId;
 }
 
+const MEDIA_EXTENSIONS: Record<string, string> = {
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'video/mp4': 'mp4',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/mpeg': 'mp3',
+};
+
+/** File extension for a sniffed container (detectMediaContainer), so the stored name matches the bytes (#2703). */
+export function mediaExtension(contentType: string, kind: 'audio' | 'video'): string {
+  return MEDIA_EXTENSIONS[contentType] ?? (kind === 'audio' ? 'bin' : 'mp4');
+}
+
 export function detectMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): string | null {
   if (bytes.length < 12) return null;
   // WebM / Matroska (EBML ID 0x1A45DFA3)
@@ -273,7 +288,7 @@ export const meetingMediaRecord = defineCommand({
     )`.execute(ctx.trx);
 
     const fileId = randomUUID();
-    const filename = `meeting-${input.meetingId}.${input.kind === 'audio' ? 'opus' : 'mp4'}`;
+    const filename = `meeting-${input.meetingId}.${mediaExtension(input.contentType, input.kind)}`;
     await ctx.trx
       .insertInto('crove_kernel.file')
       .values({
@@ -300,7 +315,7 @@ export const meetingMediaRecord = defineCommand({
           file_id: fileId,
           segment_order: 0,
           start_offset_seconds: 0,
-          length_seconds: input.lengthSeconds ?? 1800,
+          length_seconds: input.lengthSeconds,
         })
         .execute();
     } else {
@@ -314,7 +329,7 @@ export const meetingMediaRecord = defineCommand({
           id: randomUUID(),
           meeting_id: input.meetingId,
           file_id: fileId,
-          length_seconds: input.lengthSeconds ?? 1800,
+          length_seconds: input.lengthSeconds,
           video_retention_date: videoRetentionDate,
         })
         .execute();

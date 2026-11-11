@@ -16,6 +16,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { installJsonLogs } from '../src/log.ts';
 import { MEDIA_TICKET_KEY_LABEL, signMediaTicket, type MediaTicketPayload } from '../src/media-ticket.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
@@ -235,7 +236,7 @@ suite('meeting video tickets (#2703)', () => {
       commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries],
     });
-    deps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
+    deps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false, mediaMeasurer: fakeMediaMeasurer() };
     app = createHttpApp(deps);
 
     const created = await rpc('org/create', 'owner', { name: `Video Ticket Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);
@@ -262,7 +263,7 @@ suite('meeting video tickets (#2703)', () => {
     const ok = await issue('attendee', meetingId);
     expect(ok.res.status).toBe(200);
     expect(ok.res.headers.get('cache-control')).toBe('no-store');
-    expect(ok.body.ticket).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+    expect(ok.body.ticket).toMatch(/^v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
     // The bearer token lives 15 minutes, so the ten minute cap decides.
     expect(ok.body.expiresInSeconds).toBe(600);
     // A member who is not a reader, and a viewer, get nothing; a request with no token reaches no handler.
@@ -597,6 +598,92 @@ suite('meeting video tickets (#2703)', () => {
       const ok = await stream(meetingId, body.ticket!, { headers: { range: 'bytes=0-9' } }, fresh);
       expect(ok.status).toBe(206);
       await ok.arrayBuffer();
+    }
+  });
+
+  it('reserves a failure token before the checks, so parallel refusals cannot overshoot the budget, and gives it back to a request that is not refused (#2965)', async () => {
+    const meetingId = await videoMeeting(mp4(3000));
+    const { body } = await issue('attendee', meetingId);
+    const session = accounts.get('attendee')!.session;
+    revokedSessions.add(session);
+    try {
+      // A budget of 2 refusals: 8 requests at once with a ticket whose session is revoked. The token is taken before the database is asked, so
+      // only 2 are checked (and refused, and charged) and the other 6 are told to retry, where a peek-then-charge would have checked all 8.
+      const bounded = createHttpApp({ ...deps, videoTicketFailures: new RateLimiter({ perMinute: 2 }) });
+      const statuses = (await Promise.all(Array.from({ length: 8 }, () => stream(meetingId, body.ticket!, {}, bounded)))).map((r) => r.status).sort();
+      expect(statuses).toEqual([401, 401, 429, 429, 429, 429, 429, 429]);
+      expect((await stream(meetingId, body.ticket!, {}, bounded)).status).toBe(429);
+    } finally {
+      revokedSessions.delete(session);
+    }
+    // A request that is not refused gets its token back: on a budget of 2, many valid requests one after the other, and several at once, all pass.
+    const small = createHttpApp({ ...deps, videoTicketFailures: new RateLimiter({ perMinute: 2 }) });
+    const valid = await issue('recorder', meetingId, small);
+    for (let i = 0; i < 6; i += 1) {
+      const res = await stream(meetingId, valid.body.ticket!, { headers: { range: `bytes=${i}-${i + 3}` } }, small);
+      expect(res.status).toBe(206);
+      await res.arrayBuffer();
+    }
+    const results = await Promise.all([0, 1].map((i) => stream(meetingId, valid.body.ticket!, { headers: { range: `bytes=${i}-${i + 3}` } }, small)));
+    expect(results.map((r) => r.status)).toEqual([206, 206]);
+    for (const r of results) await r.arrayBuffer();
+    // And after all of them the budget still holds both tokens: two refusals are charged, the third is told to retry.
+    const bad = [await stream(meetingId, 'garbage', {}, small), await stream(meetingId, 'garbage', {}, small), await stream(meetingId, 'garbage', {}, small)];
+    expect(bad.map((r) => r.status)).toEqual([401, 401, 429]);
+  });
+
+  it('takes the global stream cap from MEETINGS_VIDEO_STREAMS_MAX: past it a stream of another member is told to retry, and a slot frees on cancel (#2965)', async () => {
+    const meetingId = await videoMeeting(mp4(5 * 1024 * 1024 + 123));
+    expect(deps.config.MEETINGS_VIDEO_STREAMS_MAX).toBe(64);
+    const config = { ...deps.config, MEETINGS_VIDEO_STREAMS_MAX: 1 };
+    // The limiter is the app's own (none is injected), so its size is the configured one.
+    const capped = createHttpApp({ ...deps, config });
+    const mine = await issue('recorder', meetingId, capped);
+    const theirs = await issue('attendee', meetingId, capped);
+    const first = await stream(meetingId, mine.body.ticket!, {}, capped);
+    expect(first.status).toBe(200);
+    const second = await stream(meetingId, theirs.body.ticket!, {}, capped);
+    expect(second.status).toBe(429);
+    expect(Number(second.headers.get('retry-after'))).toBeGreaterThan(0);
+    await first.body!.cancel();
+    await vi.waitFor(async () => {
+      const again = await stream(meetingId, theirs.body.ticket!, {}, capped);
+      expect(again.status).toBe(200);
+      await again.body!.cancel();
+    });
+  });
+
+  it('accepts the ticket on the stream path only: a trailing segment, a longer name, a prefix and a different case never serve it (#2965)', async () => {
+    const meetingId = await videoMeeting(mp4(3000));
+    const { body } = await issue('attendee', meetingId);
+    const ticket = body.ticket!;
+    const good = await app.request(`/api/meetings/${meetingId}/video/stream?ticket=${ticket}`, { headers: { range: 'bytes=0-9' } });
+    expect(good.status).toBe(206);
+    await good.arrayBuffer();
+    const others = [
+      `/api/meetings/${meetingId}/video/stream/?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/stream/extra?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/stream/..%2Fvideo?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/streams?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/streamx?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/Stream?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/audio/stream?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/stream?ticket=${ticket}`,
+      `/api/meetings/${meetingId}/video/ticket?ticket=${ticket}`,
+      `/api/meetings/video/stream?ticket=${ticket}`,
+      `/api/x/meetings/${meetingId}/video/stream?ticket=${ticket}`,
+    ];
+    for (const path of others) {
+      for (const method of ['GET', 'HEAD']) {
+        const res = await app.request(path, { method, headers: { range: 'bytes=0-9' } });
+        // Without a bearer token they reach the bearer check (or nothing at all): never the video.
+        expect([401, 404, 405], `${method} ${path}`).toContain(res.status);
+        expect(res.headers.get('content-range'), `${method} ${path}`).toBeNull();
+        // Refused by the bearer check (or no route), not by the ticket handler: the ticket route must never have run for these paths.
+        if (method === 'GET') expect(await res.text(), `GET ${path}`).not.toContain('VIDEO_TICKET_INVALID');
+        else await res.arrayBuffer();
+      }
     }
   });
 

@@ -500,6 +500,15 @@ const schema = z.object({
   // crove-extract, the parsing sandbox (plan §7.6, External-tenant gate T12), e.g. http://crove-extract:8090.
   // Required for the worker role: the worker never parses PDF, XML or MIME itself. The API role does not use it.
   EXTRACT_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // crove-media, the media sandbox (Meetings M3, #2985), e.g. http://crove-media:8095. The API measures the length of every meeting
+  // recording in it at upload and the worker re-measures an old one before it is transcribed. Unset: meeting uploads are refused
+  // (MEDIA_PROBE_UNAVAILABLE), because a recording whose length cannot be known would bypass the AI meter.
+  MEDIA_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // The most bytes crove-media accepts for one recording (its own MEDIA_MAX_INPUT_BYTES, which compose gives both with one value; #2989): a meeting upload over it is
+  // refused (413 FILE_TOO_LARGE) before it is read, and a staged grant is clamped to it, instead of after a full upload. Unset: the plan's limits only (300 MB audio, 2 GB video).
+  MEDIA_MAX_INPUT_BYTES: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1024).max(2 * 1024 * 1024 * 1024).optional()),
+  // How long one call to crove-media may take, in ms: its own MEDIA_TIMEOUT_MS (default 300000) plus a margin. Unset: 315000. Raise both for a 2 GB video.
+  MEDIA_CALL_TIMEOUT_MS: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1000).max(2_000_000).optional()),
   // Extract jobs the worker runs at once (#2119), each one reading a file and, for a PDF or a photo, calling the AI. Unset:
   // 4, or the sandbox's slots when it has fewer. EXTRACT_CONCURRENCY is the sandbox's own setting of that name (its
   // parser slots, 1 to 8, the sandbox's own default being 1); give the worker the same value, since it cannot ask: docker
@@ -519,6 +528,9 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
+  // so size it from the members who may watch together and the process's memory (a window is 4 MiB); a request over the limit is told to retry (429).
+  MEETINGS_VIDEO_STREAMS_MAX: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(4096).default(64)),
   // https by default: the audio and the key travel to it. Plain http is accepted for localhost and 127.0.0.1, and for any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1
   // (a speech-to-text container on the compose network is http://<service>:<port>); the check is in loadConfig below (#2863).
   TRANSCRIBE_BASE_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),

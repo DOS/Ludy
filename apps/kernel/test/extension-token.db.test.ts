@@ -18,6 +18,7 @@ import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -186,6 +187,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       aiEnabled: false,
       // A budget the test can spend: the default is a person's few sign-ins a minute.
       extensionTokenLimit: new RateLimiter({ perMinute: 40 }),
+      mediaMeasurer: fakeMediaMeasurer(),
     });
     const created = await rpc('org/create', await asBrowser('owner', null), { name: `Extension Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() });
     expect(created.status).toBe(200);

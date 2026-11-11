@@ -12,6 +12,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import {
   BlobNotFoundError,
+  DomainError,
   Runtime,
   encryptBlobBuffer,
   sha256Hex,
@@ -21,6 +22,8 @@ import {
 } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps } from '../src/meetings-transcribe.ts';
+import { mediaMeasurerFor, type MediaMeasurer } from '../src/meetings-measure.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -73,7 +76,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
       return new Response(JSON.stringify({ text: 'xin chao', segments: [{ start: 0, end: 5, text: `xin chào ${providerCalls}` }, { start: 5, end: 9, text: 'tạm biệt' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch,
   };
-  const deps = (): MeetingsTranscribeDeps => ({ runtime: worker, store, broker, provider, price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0.5' } });
+  const deps = (measurer: MediaMeasurer = fakeMediaMeasurer(600)): MeetingsTranscribeDeps => ({ runtime: worker, store, broker, measurer, provider, price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0.5' } });
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -119,8 +122,8 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
   const start = (who: string, meetingId: string) => app.execute<{ runId: string }>('meetings.transcript.start', { meetingId }, { actor: asUser(who), orgId });
   const agentOf = async (who: string) => (await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND member_user_id = $2 AND kind = 'member_vy'`, [orgId, users[who]]))).rows[0]?.id as string;
   const status = (who: string, meetingId: string) => app.query<{ enabled: boolean; state: string; runId: string | null; errorCode: string | null }>('meetings.transcript.status', { meetingId }, { actor: asUser(who), orgId });
-  async function runJob(who: string, meetingId: string, runId: string) {
-    return runMeetingsTranscribe(deps(), { orgId, meetingId, runId, agentId: await agentOf(who) });
+  async function runJob(who: string, meetingId: string, runId: string, measurer?: MediaMeasurer) {
+    return runMeetingsTranscribe(deps(measurer), { orgId, meetingId, runId, agentId: await agentOf(who) });
   }
   const refuses = async (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
 
@@ -209,6 +212,44 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     // No other member reads the draft.
     const seenByOther = await app.query<{ segments: unknown[] }>('meetings.transcript.get', { meetingId }, { actor: asUser('other'), orgId }).then((r) => r.segments.length, () => 0);
     expect(seenByOther).toBe(0);
+  });
+
+  it('charges the length crove-media measures in the audio, not the length the row stores (#2985)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    // A row written before uploads were measured: it says 5 seconds for audio that really is 600 (what the fake sandbox measures).
+    await admin((c) => c.query(`UPDATE crove_meetings.audio_segment SET length_seconds = 5 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    const { runId } = await start('recorder', meetingId);
+    const heard: number[] = [];
+    const measuring: MediaMeasurer = { ...fakeMediaMeasurer(600), measureBytes: async () => (heard.push(600), 600) };
+    expect(await runJob('recorder', meetingId, runId, measuring)).toBe('succeeded');
+    expect(heard).toHaveLength(2);
+    const recorderAgent = await agentOf('recorder');
+    const usage = await admin((c) => c.query<{ amount: string }>(`SELECT amount::text FROM crove_kernel.org_usage WHERE org_id = $1 AND feature = 'meetings.transcribe' AND agent_id = $2 AND created_at > now() - interval '1 minute'`, [orgId, recorderAgent]));
+    expect(usage.rows.map((r) => r.amount).sort().slice(-2)).toEqual(['5.000000', '5.000000']);
+  });
+
+  it('fails the run before any call or charge when the sandbox is down or refuses the audio (#2985)', async () => {
+    const callsBefore = providerCalls;
+    for (const [measurer, code] of [
+      [mediaMeasurerFor(undefined), 'TRANSCRIBE_UNAVAILABLE'],
+      [{ ...fakeMediaMeasurer(), measureBytes: async () => Promise.reject(new DomainError('MEDIA_PROBE_FAILED', 422, 'x')) }, 'TRANSCRIBE_FAILED'],
+      [{ ...fakeMediaMeasurer(), measureBytes: async () => Promise.reject(new DomainError('MEDIA_TOO_LONG', 413, 'x')) }, 'TRANSCRIPT_TOO_LONG'],
+    ] as Array<[MediaMeasurer, string]>) {
+      const meetingId = await seedMeeting('recorder');
+      const { runId } = await start('recorder', meetingId);
+      expect(await runJob('recorder', meetingId, runId, measurer)).toBe('failed');
+      expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: code });
+    }
+    expect(providerCalls).toBe(callsBefore);
+  });
+
+  it('refuses a chunk whose measured length is over the limit, before it is sent (#2985)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const callsBefore = providerCalls;
+    expect(await runJob('recorder', meetingId, runId, fakeMediaMeasurer(90 * 60 + 1))).toBe('failed');
+    expect(await status('recorder', meetingId)).toMatchObject({ errorCode: 'TRANSCRIPT_TOO_LONG' });
+    expect(providerCalls).toBe(callsBefore);
   });
 
   it('refuses a run for the wrong meeting, and copy of another meeting\'s result', async () => {
@@ -307,6 +348,32 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
     const run = await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
     expect(run.rows[0]).toEqual({ status: 'cancelled', error: 'MEETING_REMOVED' });
+    // The run the deletion stopped has an audit row of its own, by the system, with ids and no text (#2863, item 5).
+    const audit = await admin((c) =>
+      c.query<{ actor_type: string; command: string; outcome: string; target_type: string; target_id: string; detail: Record<string, unknown> }>(
+        `SELECT actor_type, command, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`,
+        [orgId, runId],
+      ),
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]).toMatchObject({ actor_type: 'system', outcome: 'ok', target_type: 'kernel.ai_run', target_id: runId });
+    expect(audit.rows[0]?.detail).toMatchObject({ runId, meetingId, feature: 'meetings.transcribe', reason: 'MEETING_REMOVED' });
+  });
+
+  it('deleting a meeting with no live run writes no cancellation audit row (#2863)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail ->> 'meetingId' = $2`, [orgId, meetingId]));
+    expect(audit.rows[0]?.n).toBe('0');
+  });
+
+  it('a run that already finished is not cancelled again and writes no audit row (#2863)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
+    expect(audit.rows[0]?.n).toBe('0');
   });
 
   it('a recorder demoted to viewer mid-run stops the run before the next chunk', async () => {
@@ -338,6 +405,9 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+    // In a user context the audit stamp names the member who deleted it (#2863).
+    const named = await admin((c) => c.query<{ actor_type: string; actor_id: string | null }>(`SELECT actor_type, actor_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
+    expect(named.rows).toEqual([{ actor_type: 'user', actor_id: users.recorder }]);
   });
 
   it('the text purge of the retention job (system context) mid-run stops the run and leaves no result row', async () => {

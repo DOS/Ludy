@@ -44,6 +44,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
         "  crove: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
         "  api: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
         "  worker: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
+        "  crove-media: { image: 'registry.example/ludy-media@sha256:bb', build: !reset null }",
         '',
       ].join('\n'));
     writeFileSync(join(dir, '.env'), '');
@@ -83,11 +84,39 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const worker = services['worker'];
     expect(api?.environment).not.toHaveProperty('WORKER_DATABASE_URL');
     expect(api?.environment).not.toHaveProperty('EXTRACT_URL');
-    expect(Object.keys(api?.networks ?? {})).toEqual(['default']);
+    // The API reaches crove-media (and not crove-extract): it measures the length of a meeting recording at upload (#2985).
+    expect(Object.keys(api?.networks ?? {}).sort()).toEqual(['default', 'media']);
+    expect(api?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
     expect(api?.environment?.['DATABASE_URL']).toContain('crove_app');
     expect(worker?.environment?.['WORKER_DATABASE_URL']).toContain('crove_worker');
     expect(worker?.environment?.['EXTRACT_URL']).toBe('http://crove-extract:8090');
-    expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract']);
+    expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract', 'media']);
+    expect(worker?.environment?.['MEDIA_URL']).toBe('http://crove-media:8095');
+    // crove-media runs in both layouts (the release publishes and pins its image, #2988): no profile keeps it out, and the pin wins over its build.
+    const pinned = config(['docker-compose.yml', 'compose.pilot.yml', 'docker-compose.override.yml'])['crove-media'] as (Service & { image?: string; build?: unknown }) | undefined;
+    expect(pinned?.image).toBe('registry.example/ludy-media@sha256:bb');
+    expect(pinned?.build).toBeUndefined();
+    expect(config(['docker-compose.yml'])['crove-media']?.profiles).toBeUndefined();
+    expect(services['crove-media']?.profiles).toBeUndefined();
+    // Where a recording sits decrypted while it is measured is a tmpfs, not a volume, so a killed container leaves nothing on the host (#2989).
+    const media = config(['docker-compose.yml', 'compose.pilot.yml'])['crove-media'] as (Service & { tmpfs?: string[]; volumes?: unknown[]; mem_limit?: unknown }) | undefined;
+    expect(media?.tmpfs?.some((t) => t.startsWith('/data/scratch'))).toBe(true);
+    expect(media?.volumes ?? []).toEqual([]);
+    // The pilot host has 8 GB: the sandbox is held to about 1 GB of video, with the scratch, the memory and the cap together, and the API refuses by the same cap (#2989).
+    const pilot = config(['docker-compose.yml', 'compose.pilot.yml']);
+    const pilotMedia = pilot['crove-media'] as (Service & { tmpfs?: string[]; mem_limit?: unknown; memswap_limit?: unknown }) | undefined;
+    expect(pilotMedia?.tmpfs).toEqual(['/tmp:size=64m,noexec,nosuid', '/data/scratch:size=1g,mode=0700,uid=1000,gid=1000,noexec,nosuid']);
+    expect(String(pilotMedia?.mem_limit)).toBe('1610612736');
+    expect(String(pilotMedia?.memswap_limit)).toBe('1610612736');
+    expect(pilotMedia?.environment?.['MEDIA_MAX_INPUT_BYTES']).toBe('1000000000');
+    expect(pilot['api']?.environment?.['MEDIA_MAX_INPUT_BYTES']).toBe('1000000000');
+    // The cap fits inside the scratch (1 GiB = 1073741824), and the memory limit holds the scratch and a decode.
+    expect(Number(pilotMedia?.environment?.['MEDIA_MAX_INPUT_BYTES'])).toBeLessThan(1024 ** 3);
+    // The default stack keeps the full 2 GB: 2304m of scratch, 4g of memory.
+    const full = config(['docker-compose.yml'])['crove-media'] as (Service & { tmpfs?: string[]; mem_limit?: unknown }) | undefined;
+    expect(full?.tmpfs?.[1]).toBe('/data/scratch:size=2304m,mode=0700,uid=1000,gid=1000,noexec,nosuid');
+    expect(String(full?.mem_limit)).toBe('4294967296');
+    expect(full?.environment?.['MEDIA_MAX_INPUT_BYTES']).toBe('2147483648');
     // Only the API opens a port.
     expect(api?.ports).toHaveLength(1);
     expect(worker?.ports).toBeUndefined();

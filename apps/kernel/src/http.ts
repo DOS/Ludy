@@ -124,7 +124,8 @@ import {
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
-import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
+import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
+import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
@@ -215,6 +216,8 @@ export interface HttpDeps {
   runtime: Runtime;
   store: BlobStore;
   broker?: CredentialBroker;
+  // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
+  mediaMeasurer?: MediaMeasurer;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -290,7 +293,7 @@ export interface HttpDeps {
   mediaStallMs?: number;
   // Refused meeting video tickets per client address (#2703). Default: STREAM_REDEEM_FAILURES_PER_MINUTE.
   videoTicketFailures?: RateLimiter;
-  // Meeting video responses being read at once, per user (#2703). Default: VIDEO_STREAMS_PER_USER each.
+  // Meeting video responses being read at once, per user (#2703). Default: VIDEO_STREAMS_PER_USER each, MEETINGS_VIDEO_STREAMS_MAX in all.
   videoStreams?: ConcurrencyLimiter;
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
@@ -1452,7 +1455,7 @@ export function createHttpApp(deps: HttpDeps) {
   // refusal; each one counts against a per-client budget. GET and HEAD only. The ticket is read from the query and goes to
   // no log (the access line names the route pattern); no CORS headers (a media element makes a no-cors request).
   const videoTicketFailures = deps.videoTicketFailures ?? new RateLimiter({ perMinute: STREAM_REDEEM_FAILURES_PER_MINUTE });
-  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: 64, perKey: VIDEO_STREAMS_PER_USER });
+  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: config.MEETINGS_VIDEO_STREAMS_MAX, perKey: VIDEO_STREAMS_PER_USER });
   const videoTicketKey = (keyId: string): Buffer | null => {
     try {
       const broker = deps.broker ?? createCredentialBroker(config);
@@ -1472,15 +1475,28 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/meetings/:id/video/stream', async (c) => {
     for (const [name, value] of Object.entries(VIDEO_TICKET_RESPONSE_HEADERS)) c.header(name, value);
     const client = clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS));
-    const budget = videoTicketFailures.peek(client);
+    // A refusal costs the client one token of the failure budget, and its check awaits the database. So the token is reserved here, before
+    // anything is awaited, and given back when the request is not refused: parallel requests cannot all pass a peek before the first
+    // refusal is charged (#2965), and a valid request costs nothing in the end.
+    const budget = videoTicketFailures.take(client);
     if (!budget.allowed) {
       c.header('retry-after', String(budget.retryAfterSeconds));
       return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: budget.retryAfterSeconds }, 429);
     }
+    const outcome = { refused: false };
+    try {
+      return await streamByTicket(c, outcome);
+    } finally {
+      if (!outcome.refused) videoTicketFailures.refund(client);
+    }
+  });
+
+  // The checks of a ticket request and, once they pass, the answer. A refusal marks the outcome, so its reserved token stays spent.
+  async function streamByTicket(c: Context, outcome: { refused: boolean }): Promise<Response> {
     // The same answer for every refusal, and a failure against the client's budget.
     const refused = () => {
       warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-      videoTicketFailures.take(client);
+      outcome.refused = true;
       return c.json({ code: 'VIDEO_TICKET_INVALID' }, 401);
     };
     const ticket = c.req.query('ticket');
@@ -1490,7 +1506,7 @@ export function createHttpApp(deps: HttpDeps) {
     if (!key) return refused();
     const payload = verifyMediaTicket(ticket, key, Math.floor(Date.now() / 1000));
     key.fill(0);
-    const meetingId = c.req.param('id');
+    const meetingId = c.req.param('id') ?? '';
     if (!payload || payload.purpose !== MEDIA_TICKET_PURPOSE || payload.meetingId !== meetingId.toLowerCase()) return refused();
     // The request limit of the user the ticket proves, as the bearer routes have.
     const decision = limiter?.take(payload.userId);
@@ -1530,7 +1546,7 @@ export function createHttpApp(deps: HttpDeps) {
       onFinished: release,
       fail,
     });
-  });
+  }
 
   // The Ludy extension trades the one-time code the signed-in member approved in the app for its token (issue #2582,
   // ADR-0047 point 10). Public by necessity: the extension holds no session, and the credential is the code, 256 random
@@ -1934,7 +1950,10 @@ export function createHttpApp(deps: HttpDeps) {
         actor: actorOf(user),
         orgId,
       });
-      const form = await direct.presignUpload(grant.stagingKey, grant.maxBytes);
+      // A meeting's media grant is no larger than crove-media takes (#2989): a recording over it is refused here, before the browser sends it to the bucket.
+      const purpose = uploadPurpose(input?.purpose);
+      const grantBytes = purpose === 'meeting_audio' || purpose === 'meeting_video' ? Math.min(grant.maxBytes, meetingMediaCap(purpose === 'meeting_video' ? 'video' : 'audio')) : grant.maxBytes;
+      const form = await direct.presignUpload(grant.stagingKey, grantBytes);
       c.header('cache-control', 'private, no-store');
       return c.json({ uploadId: grant.uploadId, url: form.url, fields: form.fields, expiresAt: form.expiresAt.toISOString(), maxBytes: form.maxBytes });
     } catch (error) {
@@ -2060,6 +2079,9 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
+  const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
+  // The most bytes one meeting recording may have: the plan's limit, or the lower cap of this deployment's crove-media (#2989).
+  const meetingMediaCap = (kind: 'audio' | 'video') => Math.min(kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
   const playbackAudited = new Map<string, number>();
   // What the two playback routes share (the bearer route and the ticket route, #2703): the range handling, the audit window,
@@ -2403,7 +2425,7 @@ export function createHttpApp(deps: HttpDeps) {
       const hint = c.req.query('kind');
       if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
       const videoSize = !json && meeting.keepVideo && hint !== 'audio';
-      const cap = json ? META_BODY_MAX_BYTES : (videoSize ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES) + 1024 * 1024;
+      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize ? 'video' : 'audio') + 1024 * 1024;
       // The raw body of the file (#2780) is sealed as it streams, so its size is declared up front: a body without a
       // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
       // count it, which is what streaming is for). Browsers send the length of a File they upload.
@@ -2454,9 +2476,10 @@ export function createHttpApp(deps: HttpDeps) {
       let releaseJsonVideo: (() => void) | null = null;
 
       try {
+        // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
+        if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
-        let lengthSeconds: number | undefined;
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
@@ -2508,11 +2531,11 @@ export function createHttpApp(deps: HttpDeps) {
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
             if (!releaseJsonVideo) throw busy(c);
           }
+          // The client's lengthSeconds is a hint at most and never stored: the sandbox measures the length (#2985).
           if (body.lengthSeconds !== undefined) {
             if (typeof body.lengthSeconds !== 'number' || !Number.isInteger(body.lengthSeconds) || body.lengthSeconds <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = body.lengthSeconds;
           }
 
           await verifyRecorderAndKind(kind);
@@ -2534,7 +2557,7 @@ export function createHttpApp(deps: HttpDeps) {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
             throw error;
           };
-          const cap = Math.min(claim.maxBytes, kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES);
+          const cap = Math.min(claim.maxBytes, meetingMediaCap(kind));
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
             const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
@@ -2561,9 +2584,9 @@ export function createHttpApp(deps: HttpDeps) {
           if (!fileVal || !(fileVal instanceof Blob)) {
             throw new DomainError('NO_FILE', 400, 'Tệp tải lên không hợp lệ');
           }
-          const maxBytes = kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
+          const maxBytes = meetingMediaCap(kind);
           if (fileVal.size > maxBytes) {
-            throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${kind === 'video' ? '2 GB' : '300 MB'})`);
+            throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${sizeText(maxBytes)})`);
           }
           const lengthVal = formData.get('lengthSeconds');
           if (typeof lengthVal === 'string' && lengthVal.trim().length > 0) {
@@ -2571,7 +2594,6 @@ export function createHttpApp(deps: HttpDeps) {
             if (!Number.isInteger(parsedLen) || parsedLen <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = parsedLen;
           }
           prepareKeys(kind);
           // The form was parsed whole by the body reader (use the raw body below for a large file); the sealing still streams.
@@ -2590,7 +2612,6 @@ export function createHttpApp(deps: HttpDeps) {
             if (lengthVal.trim() === '' || !Number.isInteger(parsedLen) || parsedLen <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = parsedLen;
           }
           const rawBody = c.req.raw.body;
           if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
@@ -2615,11 +2636,24 @@ export function createHttpApp(deps: HttpDeps) {
           kind,
           dataKey,
           binding,
-          maxBytes: kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES,
+          maxBytes: meetingMediaCap(kind),
           store,
           orgId,
         });
         const { key: storageKey, generation, sha256, contentType: sniffedContentType } = sealed;
+
+        // The sandbox measures the sealed media (read back and decrypted a window at a time, never held whole or written out). It
+        // refuses a file it cannot read, one that is too long, or when it is down; the sealed bytes then have no row, so drop them.
+        let measuredSeconds: number;
+        try {
+          measuredSeconds = await mediaMeasurer.measure(
+            kind,
+            decryptedWindows(store, { storageKey, generation, sizeBytes: sealed.size }, dataKey, binding),
+          );
+        } catch (error) {
+          if (sealed.created) await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
+          throw error;
+        }
 
         let result: { fileId: string };
         try {
@@ -2635,7 +2669,7 @@ export function createHttpApp(deps: HttpDeps) {
               sizeBytes: sealed.size,
               sha256,
               contentType: sniffedContentType,
-              lengthSeconds: lengthSeconds ?? 1800,
+              lengthSeconds: measuredSeconds,
             },
             { actor: actorOf(user), orgId },
           );

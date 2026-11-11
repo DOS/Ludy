@@ -10,6 +10,7 @@ import { kernelCommands, kernelQueries } from '@crove/kernel';
 import {
   BlobNotFoundError,
   BlobTooLargeError,
+  DomainError,
   Runtime,
   sha256Hex,
   type BlobStore,
@@ -23,6 +24,8 @@ import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
+import { mediaMeasurerFor } from '../src/meetings-measure.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -241,6 +244,7 @@ suite('meetings module database integration tests (#2576)', () => {
       authenticate: createAuthenticator(config, db),
       pool,
       aiEnabled: false,
+      mediaMeasurer: fakeMediaMeasurer(),
     };
     app = createHttpApp(deps);
 
@@ -843,6 +847,106 @@ suite('meetings module database integration tests (#2576)', () => {
     const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
     expect(play.status).toBe(200);
     expect(Buffer.from(await play.arrayBuffer()).equals(audio)).toBe(true);
+  });
+
+  it('13. the length is what crove-media measures, never what the client says (#2985)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Measured length', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('measure-me-'.repeat(200))]);
+    const seen: Buffer[] = [];
+    const measuring = createHttpApp({
+      ...deps,
+      mediaMeasurer: {
+        configured: true,
+        measure: async (_kind, source) => {
+          for await (const piece of source) seen.push(Buffer.from(piece));
+          return 1800;
+        },
+        measureBytes: async () => 1800,
+      },
+    });
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('lengthSeconds', '60');
+    form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
+    const up = await measuring.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    expect(up.status).toBe(200);
+    // The sandbox was sent the plaintext, whole and in order, read back from the sealed blob.
+    expect(Buffer.concat(seen).equals(audio)).toBe(true);
+    const rows = await admin(async (c) => (await c.query<{ length_seconds: number }>('SELECT length_seconds FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows);
+    expect(rows.map((r) => r.length_seconds)).toEqual([1800]);
+  });
+
+  it('14. without the sandbox, or with a file it refuses, nothing is stored (#2985)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'No sandbox', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const audio = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('hostile-'.repeat(100))]);
+    const send = async (target: ReturnType<typeof createHttpApp>) => {
+      const form = new FormData();
+      form.append('kind', 'audio');
+      form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
+      return target.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    };
+    const objectsBefore = store.storage.size;
+    const files = async () => admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.file WHERE org_id = $1 AND source = 'meeting_audio'", [orgId])).rows[0]!.n));
+    const filesBefore = await files();
+
+    // MEDIA_URL unset: refused before a byte is stored.
+    const unset = await send(createHttpApp({ ...deps, mediaMeasurer: mediaMeasurerFor(undefined) }));
+    expect(unset.status).toBe(503);
+    expect(((await unset.json()) as { code?: string }).code).toBe('MEDIA_PROBE_UNAVAILABLE');
+
+    // A file the sandbox cannot read: refused, and the sealed blob it was about to measure is deleted again.
+    const hostile = await send(
+      createHttpApp({
+        ...deps,
+        mediaMeasurer: {
+          configured: true,
+          measure: async (_kind, source) => {
+            for await (const piece of source) void piece;
+            throw new DomainError('MEDIA_PROBE_FAILED', 422, 'The recording could not be read');
+          },
+          measureBytes: async () => 0,
+        },
+      }),
+    );
+    expect(hostile.status).toBe(422);
+    expect(((await hostile.json()) as { code?: string }).code).toBe('MEDIA_PROBE_FAILED');
+
+    expect(store.storage.size).toBe(objectsBefore);
+    expect(await files()).toBe(filesBefore);
+    const segments = await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows[0]!.n));
+    expect(segments).toBe(0);
+  });
+
+  it('15. a deployment cap on crove-media is the cap of the upload: refused before it is read, with the cap in the message (#2989)', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', { title: 'Deployment cap', visibility: 'attendees', consentMethod: 'told_at_start' });
+    const meetingId = String(createRes.body.meetingId);
+    const cap = 2 * 1024 * 1024;
+    const capped = createHttpApp({ ...deps, config: { ...deps.config, MEDIA_MAX_INPUT_BYTES: cap }, mediaMeasurer: fakeMediaMeasurer() });
+    const big = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(cap, 0x61)]);
+    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, ...extra });
+    const objectsBefore = store.storage.size;
+    // Multipart: refused by size, naming the cap in force, not the plan's 300 MB.
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('file', new Blob([big], { type: 'audio/ogg' }), 'big.ogg');
+    const multipart = await capped.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: await headers(), body: form });
+    expect(multipart.status).toBe(413);
+    const multipartBody = (await multipart.json()) as { code?: string; message?: string; error?: string };
+    expect(multipartBody.code).toBe('FILE_TOO_LARGE');
+    expect(JSON.stringify(multipartBody)).toContain('2 MB');
+    expect(JSON.stringify(multipartBody)).not.toContain('300 MB');
+    // The raw body: its Content-Length is over the cap, so it is refused before one byte is sealed.
+    const raw = await capped.request(`/api/meetings/${meetingId}/media?kind=audio`, { method: 'POST', headers: await headers({ 'content-type': 'audio/ogg', 'content-length': String(big.length) }), body: big });
+    expect(raw.status).toBe(413);
+    expect(((await raw.json()) as { code?: string }).code).toBe('FILE_TOO_LARGE');
+    expect(store.storage.size).toBe(objectsBefore);
+    // The same file is within the default cap (300 MB audio): it stores.
+    const accepted = new FormData();
+    accepted.append('kind', 'audio');
+    accepted.append('file', new Blob([big], { type: 'audio/ogg' }), 'big.ogg');
+    expect((await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: await headers(), body: accepted })).status).toBe(200);
   });
 
   it('12. a long playback stops when the meeting is deleted after its first window', async () => {
