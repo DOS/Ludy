@@ -9,7 +9,7 @@
 --   - deal_id has no foreign key: a module names only its own schema and the kernel's (plan 5.4, ADR-0031), so the deal is checked through the CRM module's
 --     query when a link is added, and a deployment without the CRM module cannot link a deal. party_id and calendar_event_id are the kernel's and have keys.
 --   - Deleting the meeting, the party or the calendar event deletes its links; the org purge removes them with the meetings.
--- crove_kernel.meeting_link_export_rows() is what the org export carries of links: those of the meetings shared with the whole org.
+-- What the org export carries of links is in 20261222000100_crove_kernel_meeting_link_export.sql (a kernel file, as meeting_export_rows is).
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_meetings.meeting_link (
@@ -55,23 +55,3 @@ CREATE POLICY meeting_link_insert ON crove_meetings.meeting_link AS RESTRICTIVE 
 DROP POLICY IF EXISTS meeting_link_delete ON crove_meetings.meeting_link;
 CREATE POLICY meeting_link_delete ON crove_meetings.meeting_link AS RESTRICTIVE FOR DELETE TO crove_tenant
   USING (crove_meetings.is_meeting_recorder(org_id, meeting_id));
-
--- ---------------------------------------------------------------------------
--- What the org export carries of links: those of the meetings shared with the whole org (as meeting_export_rows). System context of the worker only.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION crove_kernel.meeting_link_export_rows()
-RETURNS SETOF crove_meetings.meeting_link LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  v_org uuid := crove_kernel.ctx_org_id();
-BEGIN
-  IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'system' OR NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
-    RAISE EXCEPTION 'MEETINGS_WORKER_ONLY' USING ERRCODE = '42501';
-  END IF;
-  RETURN QUERY
-    SELECT l.* FROM crove_meetings.meeting_link l
-    JOIN crove_meetings.meeting m ON m.org_id = l.org_id AND m.id = l.meeting_id
-    WHERE l.org_id = v_org AND m.visibility = 'org'
-    ORDER BY l.created_at, l.id;
-END $$;
-REVOKE ALL ON FUNCTION crove_kernel.meeting_link_export_rows() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_kernel.meeting_link_export_rows() TO crove_tenant;

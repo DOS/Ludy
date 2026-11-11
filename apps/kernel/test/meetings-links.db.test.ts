@@ -147,6 +147,26 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     expect(await linkCount(m)).toBe(3);
   });
 
+  it('refuses a non-manual calendar block as the meeting\'s event, and replaces the link to a deleted deal', async () => {
+    const m = await meeting('recorder', 'Họp lịch đồng bộ');
+    // Only an event the recorder made (manual or a booking's) can be the meeting's: a time-off block, like a synced busy block (kinds the calendar rewrites), cannot.
+    const timeOff = await admin((c) =>
+      c.query<{ id: string }>(
+        "INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, now(), now() + interval '1 hour', 'Asia/Ho_Chi_Minh', NULL, 'time_off', $2) RETURNING id",
+        [orgId, users.recorder],
+      ).then((r) => r.rows[0]!.id),
+    );
+    expect(await refuses(exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'calendar_event', targetId: timeOff }))).toBe('LINK_TARGET_NOT_FOUND');
+    // A deal that is deleted leaves its link: a new deal replaces it instead of being refused.
+    const p = await party('Công ty có cơ hội bị xóa');
+    const d1 = await deal('recorder', p);
+    await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d1 });
+    await exec('recorder', 'crm.deal.delete', { dealId: d1 });
+    const d2 = await deal('recorder', p);
+    expect((await exec<MeetingLink>('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d2 })).targetId).toBe(d2);
+    expect((await query<MeetingLink[]>('recorder', 'meetings.link.list', { meetingId: m })).filter((l) => l.kind === 'deal').map((l) => l.targetId)).toEqual([d2]);
+  });
+
   it('cannot link a deal in a deployment without the CRM module', async () => {
     const m = await meeting('recorder', 'Họp không CRM');
     expect(await refuses(exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: randomUUID() }, rtNoCrm))).toBe('DEAL_LINK_UNAVAILABLE');
@@ -190,21 +210,26 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     const d = await deal('recorder', p);
     const secret = await meeting('recorder', SECRET_TITLE, 'attendees');
     const shared = await meeting('recorder', 'Họp chung', 'org');
+    // Both meetings are linked to the party and the deal.
     for (const m of [secret, shared]) {
-      await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d }).catch(async () => undefined);
+      await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d });
+      await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: p });
     }
-    // One deal per meeting: both are linked to it; the party too.
-    for (const m of [secret, shared]) await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: p });
     const seen = async (who: string) => (await query<MeetingOfTarget[]>(who, 'meetings.link.by_target', { kind: 'party', targetId: p })).map((r) => r.title).sort();
     // The recorder reads both. A member who is not a reader reads the shared one only, the owner too (an owner has no extra right to an attendees-only meeting).
     expect(await seen('recorder')).toEqual(['Họp chung', SECRET_TITLE].sort());
     expect(await seen('other')).toEqual(['Họp chung']);
     expect(await seen('owner')).toEqual(['Họp chung']);
-    const dealPage = async (who: string) => query<MeetingOfTarget[]>(who, 'meetings.link.by_target', { kind: 'deal', targetId: d });
+    const dealPage = async (who: string) => (await query<MeetingOfTarget[]>(who, 'meetings.link.by_target', { kind: 'deal', targetId: d })).map((r) => r.title).sort();
+    // The deal page, which is the acceptance criterion: its readers see their meetings, and nobody else sees a row or a title of the others.
+    expect(await dealPage('recorder')).toEqual(['Họp chung', SECRET_TITLE].sort());
+    expect(await dealPage('other')).toEqual(['Họp chung']);
+    expect(await dealPage('owner')).toEqual(['Họp chung']);
     expect(JSON.stringify(await dealPage('other'))).not.toContain('lương');
     // A reader added by the recorder sees it; one removed no longer does.
     await exec('recorder', 'meetings.reader.add', { meetingId: secret, userId: users.attendee });
     expect(await seen('attendee')).toEqual(['Họp chung', SECRET_TITLE].sort());
+    expect(await dealPage('attendee')).toEqual(['Họp chung', SECRET_TITLE].sort());
     await exec('recorder', 'meetings.reader.remove', { meetingId: secret, userId: users.attendee });
     expect(await seen('attendee')).toEqual(['Họp chung']);
     // The links of a meeting are its readers' alone as well.

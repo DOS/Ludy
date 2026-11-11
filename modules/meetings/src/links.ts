@@ -73,8 +73,8 @@ async function recordedMeeting(ctx: CommandContext, meetingId: string, userId: s
 
 const targetMissing = () => new DomainError('LINK_TARGET_NOT_FOUND', 404, 'The party, deal or calendar event to link was not found');
 
-// The target exists and the caller may read it: a party by the caller's own read (its policy decides), a calendar event only the caller's own (the event the
-// meeting came from is the recorder's), a deal by the CRM module's query.
+// The target exists and the caller may read it: a party by the caller's own read (its policy decides), a calendar event only the caller's own and of kind manual or
+// booking (a synced busy block is deleted and rewritten by every calendar sync, and would take the link with it), a deal by the CRM module's query.
 async function checkTarget(ctx: CommandContext, kind: MeetingLinkKind, targetId: string, userId: string): Promise<void> {
   if (kind === 'party') {
     const found = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).executeTakeFirst();
@@ -82,7 +82,7 @@ async function checkTarget(ctx: CommandContext, kind: MeetingLinkKind, targetId:
     return;
   }
   if (kind === 'calendar_event') {
-    const found = await ctx.trx.selectFrom('crove_kernel.calendar_event').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).where('status', '=', 'active').where('user_id', '=', userId).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('crove_kernel.calendar_event').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).where('status', '=', 'active').where('user_id', '=', userId).where('kind', 'in', ['manual', 'booking']).executeTakeFirst();
     if (!found) throw targetMissing();
     return;
   }
@@ -90,11 +90,21 @@ async function checkTarget(ctx: CommandContext, kind: MeetingLinkKind, targetId:
   try {
     answer = await ctx.query<{ id: string }>('crm.deal.get', { dealId: targetId });
   } catch (error) {
-    if (error instanceof DomainError && (error.status === 404 || error.code === 'DEAL_NOT_FOUND' || error.code === 'NOT_FOUND')) throw targetMissing();
+    if (error instanceof DomainError && error.code === 'DEAL_NOT_FOUND') throw targetMissing();
     throw error;
   }
   if (answer.status === 'not_installed') {
     throw new DomainError('DEAL_LINK_UNAVAILABLE', 400, 'This deployment has no CRM module, so a meeting cannot be linked to a deal');
+  }
+}
+
+// Whether a deal is gone: the CRM module answers that it does not have it. Any other answer (found, no CRM, another error) is not "gone".
+async function dealIsGone(ctx: CommandContext, dealId: string): Promise<boolean> {
+  try {
+    await ctx.query('crm.deal.get', { dealId });
+    return false;
+  } catch (error) {
+    return error instanceof DomainError && error.code === 'DEAL_NOT_FOUND';
   }
 }
 
@@ -115,8 +125,16 @@ export const meetingLinkAdd = defineCommand({
     // The same link again is the same link: nothing is written or audited twice.
     if (same) return toLink(same as unknown as LinkRow);
     if (input.kind === 'deal') {
-      const other = await ctx.trx.selectFrom('crove_meetings.meeting_link').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('deal_id', 'is not', null).executeTakeFirst();
-      if (other) throw new DomainError('MEETING_HAS_DEAL', 409, 'This meeting is already linked to a deal; remove that link first');
+      const other = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('deal_id', 'is not', null).executeTakeFirst();
+      if (other) {
+        // A deal that was deleted left its link behind (a deal has no foreign key): such a link is dropped, not a reason to refuse the new one.
+        if (await dealIsGone(ctx, other.deal_id as string)) {
+          await ctx.trx.deleteFrom('crove_meetings.meeting_link').where('org_id', '=', ctx.orgId).where('id', '=', other.id).execute();
+          ctx.audit({ meetingId: input.meetingId, linkId: other.id, kind: 'deal', targetId: other.deal_id, removed: true, reason: 'DEAL_DELETED' });
+        } else {
+          throw new DomainError('MEETING_HAS_DEAL', 409, 'This meeting is already linked to a deal; remove that link first');
+        }
+      }
     }
 
     const row = await ctx.trx
