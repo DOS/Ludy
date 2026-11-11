@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { versionOfTag } from '../extension-version.mjs';
 
-const workflow = readFileSync(new URL('../../.github/workflows/extension-release.yml', import.meta.url), 'utf8');
+const workflow = readFileSync(new URL('../../.github/workflows/extension-package.yml', import.meta.url), 'utf8');
 const jobs = (): Record<string, string> => {
   const body = workflow.slice(workflow.indexOf('\njobs:\n'));
   const parts = body.split(/\n  (?=[a-z][a-z-]*:\n)/).slice(1);

@@ -26,9 +26,6 @@ export const ALLOWED = [
   // Points the `release` branch (Vercel's Production Branch) at a release tag once the backend runs it (#2261); it is part of
   // the pilot pipeline, so it stays with deploy.yml until the owner decides (#1204, #1234).
   { path: '.github/workflows/release-branch.yml', reason: 'moves the web app release branch with the pilot deploy (#2261), pending the owner decision listed in #1234 and #1204' },
-  // Builds the public extension package from a tag and attaches the zip to a GitHub release (#3009). It deploys nothing and uses no secret or store credential (tools/test/extension-release.test.ts
-  // asserts it); `release` in its name is the package's, not a deploy's.
-  { path: '.github/workflows/extension-release.yml', reason: 'builds and zips the public browser extension from an ext-v* tag for a GitHub release (#3009); no deploy, no secret' },
 ];
 
 const allowed = (path) => ALLOWED.some((a) => (a.path.endsWith('/') ? path.startsWith(a.path) : path === a.path));

@@ -1,4 +1,4 @@
-name: extension-release
+name: extension-package
 
 # The Ludy browser extension's release package (#3009; docs/runbooks/extension-store.md, plan docs/plan/meetings.md section 5.7): a tag `ext-vX.Y.Z` on a commit of
 # main builds the package exactly as the `extension` job of ci.yml does (no bundler, no runtime dependency), checks the built manifest against the fixed permission
@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: extension-release-${{ github.ref }}
+  group: extension-package-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
