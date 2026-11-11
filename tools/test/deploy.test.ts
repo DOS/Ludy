@@ -156,6 +156,44 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(readFileSync(`${dir}/compose.pilot.yml`, 'utf8')).toContain('# release c');
   });
 
+  // #2162: the host's compose.pilot.yml is replaced by each release's copy; an edit made by hand is said out loud, a previous release's copy is not.
+  it('says so when it replaces a hand-edited host compose.pilot.yml, and not when the host copy is a staged release\'s', () => {
+    writeFileSync(`${dir}/.env`, PILOT_ENV);
+    writeFileSync(`${root}/compose.pilot.yml`, '# release a\nservices: {}\n');
+    const first = deploy('v1.0.0', 'a', { STUB_SERVICES: SPLIT });
+    expect(first.status, first.out).toBe(0);
+    expect(first.out).not.toContain('replacing');
+    // The next release brings another copy over the unedited one: no word.
+    writeFileSync(`${root}/compose.pilot.yml`, '# release b\nservices: {}\n');
+    const second = deploy('v1.1.0', 'b', { STUB_SERVICES: SPLIT });
+    expect(second.status, second.out).toBe(0);
+    expect(second.out).not.toContain('replacing');
+    // An operator edits the host copy; the next release replaces it and says so, naming the file and not its content.
+    writeFileSync(`${dir}/compose.pilot.yml`, '# edited by hand SECRET-MARKER\nservices: {}\n');
+    writeFileSync(`${root}/compose.pilot.yml`, '# release c\nservices: {}\n');
+    const third = deploy('v1.2.0', 'c', { STUB_SERVICES: SPLIT });
+    expect(third.status, third.out).toBe(0);
+    expect(third.out).toContain(`replacing ${dir}/compose.pilot.yml with the copy of release`);
+    expect(third.out).not.toContain('SECRET-MARKER');
+    expect(readFileSync(`${dir}/compose.pilot.yml`, 'utf8')).toContain('# release c');
+  });
+
+  // #2162: `export COMPOSE_FILE=` and spaces around `=` are read like the pilot layout's own line, so the WAL overlay stop is not skipped.
+  it('refuses a missing compose.wal.yml however the COMPOSE_FILE line is written, and ignores a commented-out one', () => {
+    for (const line of ['export COMPOSE_FILE=docker-compose.yml:compose.wal.yml', 'COMPOSE_FILE = docker-compose.yml:compose.wal.yml', '  export  COMPOSE_FILE =docker-compose.yml:compose.wal.yml\r']) {
+      writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\n${line}\n`);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, `${line}: ${res.out}`).toBe(2);
+      expect(res.out).toContain('lists compose.wal.yml but');
+    }
+    // A comment, or a trailing comment, is not a listing.
+    for (const line of ['# COMPOSE_FILE=docker-compose.yml:compose.wal.yml', 'COMPOSE_FILE=docker-compose.yml # compose.wal.yml']) {
+      writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\n${line}\n`);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.out, line).not.toContain('lists compose.wal.yml but');
+    }
+  });
+
   it('rolls back to a release staged before crove-media was published: no media image to pull, none pinned (#2988)', () => {
     expect(deploy('v1.0.0', 'a').status).toBe(0);
     expect(deploy('v1.1.0', 'b').status).toBe(0);
