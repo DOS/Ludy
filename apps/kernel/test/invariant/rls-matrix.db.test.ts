@@ -80,6 +80,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -149,6 +150,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.meeting', () => 'false'], // As above.
+  ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
@@ -220,6 +222,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_link', 'false'],
   ['crove_meetings.meeting_reader', 'false'],
   // Meeting results (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_result', 'false'],
@@ -2226,6 +2229,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
       row: meetingsMeetingRow(o, 'attendees'),
     }),
+  },
+  // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
+  'crove_meetings.meeting_link': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          deal_id: randomUUID(),
+          created_by: o.owner,
+        },
+      };
+    },
   },
   // #2575: member attendee reader of a meeting (ADR-0047 point 1, 2).
   'crove_meetings.meeting_reader': {
