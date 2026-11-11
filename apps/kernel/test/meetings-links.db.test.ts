@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Deal, MeetingLink, MeetingOfTarget } from '@crove/kernel-contract';
+import type { Deal, MeetingLink, MeetingLinkSuggested, MeetingOfTarget } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { crmCommands, crmQueries } from '@crove/mod-crm';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
@@ -131,6 +131,37 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     expect((await exec<MeetingLink>('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: p })).id).toBe(linkParty.id);
     expect(await linkCount(m)).toBe(3);
     expect((await audits('meetings.link.add', m)).length).toBe(3);
+  });
+
+  it("Vy's suggestion names the contacts and deals the transcript says, for the recorder only, and links nothing", async () => {
+    const m = await meeting('recorder', 'Họp với khách');
+    const acme = await party('Công ty Á Châu');
+    const quiet = await party('Công ty Không Nhắc');
+    await party('AB');
+    const d = await deal('recorder', acme);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: m,
+      segments: [
+        { startSeconds: 0, endSeconds: 5, speakerLabel: 'A', text: 'Chào anh, bên công ty á châu muốn xem gói kế toán năm.' },
+        { startSeconds: 5, endSeconds: 9, speakerLabel: 'B', text: 'Công ty Á Châu, đúng rồi. AB thì không liên quan.' },
+      ],
+    });
+    const before = await linkCount(m);
+    const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
+    expect(got.tainted).toBe(true);
+    expect(got.parties).toEqual([{ partyId: acme, name: 'Công ty Á Châu', mentions: 2 }]);
+    expect(got.parties.map((p) => p.partyId)).not.toContain(quiet);
+    expect(got.deals).toEqual([expect.objectContaining({ dealId: d, partyId: acme })]);
+    // It reads: no link was written.
+    expect(await linkCount(m)).toBe(before);
+    // Linked items are left out, and a meeting with a deal is offered no deal.
+    await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: acme });
+    await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d });
+    expect(await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).toEqual({ tainted: true, parties: [], deals: [] });
+    // Nobody but the recorder gets a suggestion (or learns the meeting exists).
+    expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
+    expect(await refuses(query('other', 'meetings.link.suggest', { meetingId: m }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
+    expect(await refuses(query('viewer', 'meetings.link.suggest', { meetingId: m }))).not.toBeNull();
   });
 
   it('allows one deal per meeting and refuses a target that is not there', async () => {

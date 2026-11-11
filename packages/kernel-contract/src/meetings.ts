@@ -501,3 +501,14 @@ export const zMeetingOfTarget = z.strictObject({
   recorderUserId: zId,
 });
 export type MeetingOfTarget = z.infer<typeof zMeetingOfTarget>;
+
+// Vy's suggestion of what a meeting may be linked to (L1, #2587): read only, for the recorder. A suggestion is TAINTED (computed from the transcript text, which can
+// say anything): it names a contact whose name the transcript says, and a deal whose title it says, and links nothing. The recorder links with a click on links.add,
+// which checks the target again. The core works with AI off: today the suggestion is deterministic and calls no model.
+export const MEETING_LINK_SUGGEST_MAX = 5;
+export const zMeetingLinkSuggested = z.strictObject({
+  tainted: z.literal(true),
+  parties: z.array(z.strictObject({ partyId: zId, name: z.string(), mentions: z.number().int() })).max(MEETING_LINK_SUGGEST_MAX),
+  deals: z.array(z.strictObject({ dealId: zId, title: z.string(), partyId: zId, partyName: z.string() })).max(MEETING_LINK_SUGGEST_MAX),
+});
+export type MeetingLinkSuggested = z.infer<typeof zMeetingLinkSuggested>;

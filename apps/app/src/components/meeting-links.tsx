@@ -98,6 +98,52 @@ function AddDeal({ meetingId, partyIds, onError }: { meetingId: string; partyIds
   );
 }
 
+// Vy's suggestion for the recorder (tainted, from the transcript): the contacts and deals it names. Nothing is linked until the recorder clicks, and the server checks
+// the target again on that click.
+function Suggested({ meetingId, onError }: { meetingId: string; onError: (message: string | null) => void }) {
+  const t = useTranslations('meetings');
+  const suggested = useQuery({ ...orpc.meetings.links.suggest.queryOptions({ input: { meetingId } }), enabled: crmInstalled(), retry: false });
+  const add = useMutation({
+    mutationFn: (target: { kind: 'party' | 'deal'; targetId: string }) => orpc.meetings.links.add.call({ meetingId, ...target }),
+    onSuccess: () => {
+      onError(null);
+      void refresh();
+    },
+    onError: (e) => onError(errorMessage(e)),
+  });
+  const parties = suggested.data?.parties ?? [];
+  const deals = suggested.data?.deals ?? [];
+  if (parties.length + deals.length === 0) return null;
+  return (
+    <div className="space-y-2 rounded border border-dashed border-border p-3" data-testid="suggested-links">
+      <p className="text-xs font-medium">{t('links.suggestTitle')}</p>
+      <p className="text-xs text-muted-foreground">{t('links.suggestNote')}</p>
+      <ul className="divide-y text-xs">
+        {parties.map((p) => (
+          <li key={p.partyId} className="flex items-center justify-between gap-2 py-1" data-testid="suggested-party">
+            <span>
+              {p.name} <span className="text-muted-foreground">({t('links.suggestMentions', { count: String(p.mentions) })})</span>
+            </span>
+            <Button size="sm" variant="outline" disabled={add.isPending} onClick={() => add.mutate({ kind: 'party', targetId: p.partyId })}>
+              {t('links.addParty')}
+            </Button>
+          </li>
+        ))}
+        {deals.map((d) => (
+          <li key={d.dealId} className="flex items-center justify-between gap-2 py-1" data-testid="suggested-deal">
+            <span>
+              {d.title} <span className="text-muted-foreground">({d.partyName})</span>
+            </span>
+            <Button size="sm" variant="outline" disabled={add.isPending} onClick={() => add.mutate({ kind: 'deal', targetId: d.dealId })}>
+              {t('links.addDeal')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function MeetingLinks({ meetingId, isRecorder }: { meetingId: string; isRecorder: boolean }) {
   const t = useTranslations('meetings');
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +192,7 @@ export function MeetingLinks({ meetingId, isRecorder }: { meetingId: string; isR
         </ul>
         {isRecorder && (
           <>
+            <Suggested meetingId={meetingId} onError={setError} />
             <AddParty meetingId={meetingId} onError={setError} />
             {!data.some((l) => l.kind === 'deal') && <AddDeal meetingId={meetingId} partyIds={partyIds} onError={setError} />}
           </>

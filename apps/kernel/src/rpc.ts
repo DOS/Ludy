@@ -890,6 +890,7 @@ export function createRpcHandler(
         remove: os.meetings.links.remove.handler(meetingsCommand('meetings.link.remove')),
         list: os.meetings.links.list.handler(meetingsQuery('meetings.link.list')),
         byTarget: os.meetings.links.byTarget.handler(meetingsQuery('meetings.link.by_target')),
+        suggest: os.meetings.links.suggest.handler(meetingsQuery('meetings.link.suggest')),
       },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),

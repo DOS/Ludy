@@ -12,6 +12,8 @@ import {
   zMeetingRef,
   zMeetingsOfTargetInput,
   MEETING_LINK_PAGE,
+  MEETING_LINK_SUGGEST_MAX,
+  type MeetingLinkSuggested,
   type MeetingLink,
   type MeetingLinkKind,
   type MeetingLinkRemoved,
@@ -220,5 +222,68 @@ export const meetingsOfTarget = defineQuery({
   },
 });
 
+// The text of a name or a transcript as the search folds it (no marks, lower case, single spaces), so "Công ty Á Châu" is found in "công ty a chau,".
+export function fold(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+const mentionsOf = (body: string, name: string): number => (name.length < 3 ? 0 : body.split(` ${name} `).length - 1);
+
+// Vy's suggestion (L1, #2587), for the recorder only: the contacts whose name the transcript says and the deals (of those contacts and of the linked ones) whose title it
+// says, each with how often. It is TAINTED (the transcript is what people said, and the matching is a plain reading of it) and it reads only: nothing is linked
+// here, and a contact or deal already linked is left out. The recorder links with a click on meetings.link.add, which checks the target again. It calls no model, so the
+// AI budget meter has nothing to meter and the core works with AI off. The transcript is read under the recorder's own policies and audited like its own read.
+export const meetingLinkSuggest = defineQuery({
+  name: 'meetings.link.suggest',
+  input: zMeetingRef,
+  access: READERS,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx: QueryContext, input): Promise<MeetingLinkSuggested> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('recorder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
+    if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder gets suggestions');
+    const none: MeetingLinkSuggested = { tainted: true, parties: [], deals: [] };
+    const segments = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('start_seconds').orderBy('id').execute();
+    const body = ` ${fold(segments.map((r) => r.text).join(' '))} `;
+    if (body.trim() === '') return none;
+    const linked = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    const linkedParties = new Set(linked.flatMap((l) => (l.party_id ? [l.party_id] : [])));
+    const hasDeal = linked.some((l) => l.deal_id !== null);
+
+    // Contacts: the folded name, as a whole phrase, of at least three characters. The kernel party table is read under the recorder's own policies.
+    const { rows } = await sql<{ id: string; name: string; folded: string }>`
+      SELECT p.id, p.name, crove_kernel.search_fold(p.name) AS folded FROM crove_kernel.party p
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND pg_catalog.length(crove_kernel.search_fold(p.name)) >= 3
+        AND pg_catalog.strpos(${body}, ' ' || crove_kernel.search_fold(p.name) || ' ') > 0
+      ORDER BY p.name, p.id LIMIT 50`.execute(ctx.trx);
+    const found = rows.map((r) => ({ partyId: r.id, name: r.name, mentions: mentionsOf(body, r.folded) })).filter((p) => p.mentions > 0);
+    found.sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name));
+    const parties = found.filter((p) => !linkedParties.has(p.partyId)).slice(0, MEETING_LINK_SUGGEST_MAX);
+
+    // Deals: of the suggested and the linked contacts, by title; a meeting holds one deal, so none is suggested once it has one.
+    const deals: MeetingLinkSuggested['deals'] = [];
+    if (!hasDeal) {
+      for (const partyId of [...new Set([...linkedParties, ...parties.map((p) => p.partyId)])].slice(0, 10)) {
+        let answer;
+        try {
+          answer = await ctx.query<Array<{ id: string; title: string; partyId: string; partyName: string; stageKind: string }>>('crm.party.deals', { partyId });
+        } catch {
+          continue;
+        }
+        if (answer.status !== 'ok') break;
+        for (const d of answer.value) if (d.stageKind === 'open' && mentionsOf(body, fold(d.title)) > 0) deals.push({ dealId: d.id, title: d.title, partyId: d.partyId, partyName: d.partyName });
+      }
+    }
+    return { tainted: true, parties, deals: deals.slice(0, MEETING_LINK_SUGGEST_MAX) };
+  },
+});
+
 export const linkCommands = [meetingLinkAdd, meetingLinkRemove];
-export const linkQueries = [meetingLinkList, meetingsOfTarget];
+export const linkQueries = [meetingLinkList, meetingsOfTarget, meetingLinkSuggest];
