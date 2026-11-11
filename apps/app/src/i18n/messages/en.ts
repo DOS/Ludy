@@ -5586,9 +5586,9 @@ export const en = {
     allow: 'Allow “{client}” to read the data of {org}',
     approve: 'Allow',
     deny: 'Do not allow',
-    scope: { read: 'Read only: at this step the app has nothing that writes, edits, sends a message or spends money. It sees the organization name and this connection; other data opens only when Ludy adds a matching read tool.' },
+    scope: { read: 'Read only: the app cannot write, edit, send a message or spend money. But it sees the details of your customers and suppliers, including their names, emails, phone numbers, addresses and tax codes, and the details of your invoices (who it is with, the amounts, each line’s description, why one was voided). That information leaves Ludy and is kept and processed by that AI app’s provider under its own terms: allow only an app you trust.' },
     limits: 'The app works with your rights in this organization and only reads. An owner or admin can cut it off at once in Settings.',
-    actsAs: 'What is private to one person (personal notes, private results) is not part of this permission.',
+    actsAs: 'Not part of this permission: salaries, bank account numbers, and what is private to one person (personal notes, private results).',
     revokeHint: 'The permission lasts {days, number} days at most. You can disconnect it any time in Settings, under connected AI apps; the organization’s Stop AI switch cuts it at once too.',
   },
   orgMcpGrants: {

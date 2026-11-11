@@ -1,5 +1,5 @@
 import { mcpFinanceQueries } from './mcp.ts';
-export { zMcpInvoicesInput } from './mcp.ts';
+export { MCP_LINES_PER_INVOICE, zMcpInvoicesInput } from './mcp.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
 import { categorizationCommands, categorizationQueries } from './categorization.ts';

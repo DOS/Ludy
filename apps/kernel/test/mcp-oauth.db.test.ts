@@ -426,15 +426,18 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   });
 
   // Slice 1b: the data tools over the real endpoint, with arguments. The reads themselves, their projections and what they never return are pinned in mcp-data.db.test.ts.
-  it('serves the data tools with checked arguments, hands an AI app no contact detail, and audits each call by tool', async () => {
+  it('serves the data tools with checked arguments, hands an AI app the contact details an owner sees but nothing beyond them, and audits each call by tool', async () => {
     const c = await connect();
-    await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name, email, phone, tax_code, address) VALUES ($1, 'organization', 'Khach Hang E2E', 'e2e-secret@customer.test', 'phone-e2e-secret', '0300000999', 'e2e secret address')`, [orgId]));
+    await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name, email, phone, tax_code, address, source_trust) VALUES ($1, 'organization', 'Khach Hang E2E', 'e2e@customer.test', '0988 e2e phone', '0300000999', '1 Duong E2E', 'external')`, [orgId]));
     const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list');
     expect(called.status).toBe(200);
     const result = called.body?.result;
     expect(result?.isError).toBe(false);
     expect(result?.structuredContent.parties.map((p: any) => p.name)).toContain('Khach Hang E2E');
-    for (const secret of ['e2e-secret@customer.test', 'phone-e2e-secret', '0300000999', 'e2e secret address']) expect(JSON.stringify(result), secret).not.toContain(secret);
+    // The owner's contacts screen shows these four, so the app gets them (owner decision 2026-11-11), with who put the row in; no other column comes with them.
+    const row = result?.structuredContent.parties.find((p: any) => p.name === 'Khach Hang E2E');
+    expect(row).toMatchObject({ email: 'e2e@customer.test', phone: '0988 e2e phone', address: '1 Duong E2E', taxCode: '0300000999', sourceTrust: 'external' });
+    expect(Object.keys(row).sort()).toEqual(['address', 'companyName', 'createdOn', 'email', 'id', 'kind', 'name', 'phone', 'sourceTrust', 'taxCode']);
     const invoices = await mcpModern(c.access, 'tools/call', { name: 'ludy_invoices_list', arguments: {} }, 'ludy_invoices_list');
     expect(invoices.body?.result?.structuredContent).toMatchObject({ invoices: [], total: 0, truncated: false });
     // Arguments outside the schema are refused with the field's name, never its value, and before any query runs (no audit row for a call that did not run).
