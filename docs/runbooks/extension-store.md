@@ -17,14 +17,14 @@ This is a production-adjacent step with an account and a listing, so no team lea
 | 4 | A public privacy policy page on an `https` address | owner, lawyer | The store requires a link. The drafts in [docs/legal](../legal/README.md) are not reviewed by a lawyer (#328): do not point the listing at an unreviewed draft. The page must say what the extension does (the section "Privacy practices" below is its source) |
 | 5 | The release to publish, built as in "Pre-submission checklist" | agent builds, owner uploads | The owner uploads the zip; nobody else needs the account |
 
-## Known gaps to close before the first submission
+## Known gaps before the first submission (status)
 
 Each is a code or content item, not a credential, and has its own issue (P2, milestone M3, line `meetings`, each linked to #2584).
 
-1. **No icons in the package** (#3007). `apps/extension/manifest.json` has no `icons` key and the package has no image files, so the toolbar and the extensions page show the browser's default icon, and the store asks for a 128 by 128 pixel icon. Add 16, 32, 48 and 128 pixel PNGs of the Ludy mark to `apps/extension` (the build copies a fixed list of files: `STATIC` in `scripts/build.mjs`), reference them from the manifest (`icons` and `action.default_icon`), and keep `check:manifest` green (it checks permissions and forbidden keys, not icons).
+1. **Icons** (#3007, done): the package holds 16, 32, 48 and 128 pixel PNGs of the Ludy mark (`apps/extension/icons`, named by the manifest's `icons` and `action.default_icon`, copied by `scripts/build.mjs`, checked by `test/icons.test.ts`). The 128 pixel one keeps a transparent margin around the mark, as the store's icon guidance asks; upload that file as the listing's store icon too (take it from the built package, `dist/icons/icon-128.png`).
 2. **The store's extension id is not wired** (#3010, blocked on the first upload: the owner brings the id). A Ludy server signs in only the extension ids it lists; the default list (`DEFAULT_EXTENSION_IDS`) is empty until the listing exists, which refuses every extension that is not named in `EXTENSION_IDS` (`apps/extension/README.md`, `apps/kernel/src/config.ts`, #2740). After the first upload the dashboard shows the item's id: a PR adds it to the default list, and Ludy Cloud and every self-hosted server that updates then accepts the store build with no setting. Until then, and for a private test, a server lists the id in `EXTENSION_IDS`. Note: an item keeps its id for life; the id of a draft is already the final one.
 3. **Release workflow** (#3009, done): a tag `ext-vX.Y.Z` on a commit of main runs `.github/workflows/extension-package.yml`, which builds the package as the CI job `extension` does, checks the built manifest against the fixed permission list, zips it with `manifest.json` at the root and attaches the zip and its SHA-256 to a GitHub release. It uploads nothing to the store and uses no secret; uploading stays the owner's step. A run by hand (`workflow_dispatch`, the version as input) is a dry run that keeps the zip as a workflow artifact for 7 days and creates no release.
-4. **The extension speaks Vietnamese only** (#3008). `apps/extension/src/strings.ts` holds one language. The store listing can carry an English text (below), but a member who installs from an English listing sees Vietnamese in the popup. Either say so in the English description (the draft does) or add English strings first.
+4. **Languages** (#3008, done): the popup, the consent step, the microphone page and the toolbar title are English for an English browser (`en`, `en-US`, `en-GB`...) and Vietnamese for every other language, from one set of strings (`apps/extension/src/strings.ts`). The English consent wording is the app recorder's; the Vietnamese method labels are the extension's own short forms. The device name shown in Ludy under connected devices ("Tiện ích Ludy, Chrome trên Windows") and the manifest `description` stay Vietnamese.
 5. **The privacy policy page** (item 4 above) and its lawyer review (#328; the lawyer's review of the store answers is #2585). The lawyer reviews the privacy answers below **before** the owner submits.
 
 ## Pre-submission checklist
@@ -122,7 +122,7 @@ Productivity (Năng suất). Language of the listing: Vietnamese as the default,
 ### Short description
 
 - vi (about 100 characters): `Ghi âm tab họp và micro, tải lên Ludy khi dừng. Chỉ ghi sau khi bạn xác nhận đã thông báo cho mọi người.`
-- en (about 120 characters): `Record the audio of a browser meeting and your microphone, and upload it to your Ludy workspace once you stop. The popup is in Vietnamese.`
+- en (about 120 characters): `Record the audio of a browser meeting and your microphone, and upload it to your Ludy workspace once you stop.`
 
 ### Long description
 
@@ -167,7 +167,7 @@ Privacy
 - You can revoke the extension at any time in Ludy under Settings, connected devices.
 - Open source under the AGPL-3.0 licence.
 
-Needs a Ludy account and a workspace with the meetings feature turned on. The extension's popup is currently in Vietnamese only.
+Needs a Ludy account and a workspace with the meetings feature turned on. The extension's popup is in English or Vietnamese, following your browser's language.
 ```
 
 ### Screenshots to capture
@@ -182,7 +182,7 @@ The store takes up to five. Use a clean test workspace with no customer data and
 | 4 | Upload done | "Đã tải lên", and the meeting in Ludy with its audio player (a second window or a composite) | the meeting page of the app |
 | 5 | Settings, connected devices in Ludy | The extension listed and the revoke button, to show the member stays in control | Ludy Settings |
 
-Also needed by the dashboard (check): a **128 by 128 icon** (gap 1 above), a **small promotional tile of 440 by 280** pixels, and optionally a marquee of 1400 by 560. Edge has its own sizes if the extension is ever listed there (plan section 11 lists the Edge Add-ons store as a possible later step).
+Also needed by the dashboard (check): a **128 by 128 icon** (gap 1 above: `dist/icons/icon-128.png`), a **small promotional tile of 440 by 280** pixels, and optionally a marquee of 1400 by 560. Edge has its own sizes if the extension is ever listed there (plan section 11 lists the Edge Add-ons store as a possible later step).
 
 ### Data-use disclosures
 

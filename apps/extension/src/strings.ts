@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The extension's words, Vietnamese like the app. The consent text is the app recorder's.
-export const T = {
+// The extension's words in Vietnamese (the default and the fallback) and English, chosen once from the browser's interface language (#3008). The English consent text is the app
+// recorder's (apps/app/src/i18n/messages, meetings.form); the Vietnamese method labels are the extension's own short forms. No dependency and no remote file: both sets ship in the package.
+const VI = {
   title: 'Ludy',
   setupTitle: 'Kết nối với Ludy',
   cloud: 'Ludy Cloud (app.ludy.vn)',
@@ -45,6 +46,12 @@ export const T = {
   pending: 'Bản ghi còn trên máy này',
   retry: 'Tải lên lại',
   discard: 'Xóa khỏi máy',
+  recordingTitle: 'Ludy đang ghi',
+  micTitle: 'Cho phép micro cho Ludy',
+  micHeading: 'Cho phép micro cho tiện ích Ludy',
+  micPrompt: 'Trình duyệt sẽ hỏi quyền dùng micro. Chọn "Cho phép" để Ludy ghi cả giọng của bạn.',
+  micDone: 'Xong. Bạn có thể đóng tab này.',
+  micDenied: 'Micro chưa được cho phép. Ludy vẫn ghi âm thanh của tab họp, nhưng không có giọng của bạn. Bạn có thể cho phép micro trong cài đặt trình duyệt.',
   blockers: {
     invalid: 'Yêu cầu không hợp lệ.',
     title: 'Vui lòng nhập tên cuộc họp.',
@@ -58,3 +65,90 @@ export const T = {
     setup: 'Không bắt đầu được. Hãy thử lại.',
   },
 } as const;
+
+// The same keys with any text: English may not repeat Vietnamese's literals, but must have every key (a missing one fails the type check and strings.test.ts).
+type Widen<V> = { readonly [K in keyof V]: V[K] extends string ? string : Widen<V[K]> };
+export type Strings = Widen<typeof VI>;
+
+export const VIETNAMESE: Strings = VI;
+
+export const ENGLISH: Strings = {
+  title: 'Ludy',
+  setupTitle: 'Connect to Ludy',
+  cloud: 'Ludy Cloud (app.ludy.vn)',
+  selfHosted: 'Own server',
+  addressPlaceholder: 'ludy.yourcompany.com',
+  save: 'Save address',
+  addressInvalid: 'The address is not valid.',
+  addressInsecure: 'Only https addresses (or localhost) are accepted.',
+  addressDenied: 'The extension has not been allowed to talk to this address.',
+  signIn: 'Sign in to Ludy',
+  signingIn: 'Opening the sign-in page...',
+  signInFailed: 'Sign-in did not work. Please try again.',
+  signInDenied: 'You did not allow the extension.',
+  org: 'Organization',
+  addOrg: 'Connect another organization',
+  signOut: 'Sign out of the extension',
+  signOutNote: 'To revoke it for good, go to Settings, connected devices, in Ludy.',
+  changeAddress: 'Change address',
+  noFeatures: 'This organization has not turned on any feature that works with the extension.',
+  loadFailed: 'Could not get the information from Ludy. Please sign in again.',
+  meetings: 'Record meetings',
+  meetingsOn: 'Turn on meeting recording',
+  meetingsOff: 'Turn off and give the permission back',
+  meetingsNote: 'Records the audio of the meeting tab (Google Meet, Teams, Zoom in the browser) together with your microphone. The extension records only the tab you have open when you click Start.',
+  permissionDenied: 'Tab recording is not allowed yet. Click again and choose "Allow".',
+  consentTitle: 'Recording consent confirmation (Mandatory)',
+  consentNotice: 'Before starting, the organizer must notify all participants that the meeting is recorded and processed according to privacy policy.',
+  consentSpoken: 'Sample notice: "This meeting is being recorded for record keeping and summary. Please let us know if you have any questions before proceeding."',
+  meetingTitle: 'Meeting title',
+  consentMethod: 'How the participants were told',
+  consentMethods: { told_at_start: 'Announced verbally at the start of the meeting', in_invite: 'Stated in the meeting invitation', in_writing: 'Notified in writing prior to the meeting' },
+  consentChoose: 'Choose...',
+  consentConfirm: 'I confirm that all participants have been notified and gave consent according to regulations.',
+  withVideo: 'Record video too',
+  start: 'Start recording',
+  stop: 'Stop and upload',
+  recording: 'Recording',
+  uploading: 'Uploading...',
+  uploaded: 'Uploaded. Ludy is processing the meeting.',
+  uploadFailed: 'Could not upload yet. The recording is still on this device, and you can retry below.',
+  micMissing: 'The microphone is not allowed: the recording has the tab audio only, not your voice.',
+  pending: 'Recordings still on this device',
+  retry: 'Upload again',
+  discard: 'Remove from this device',
+  recordingTitle: 'Ludy is recording',
+  micTitle: 'Allow the microphone for Ludy',
+  micHeading: 'Allow the microphone for the Ludy extension',
+  micPrompt: 'The browser will ask for permission to use the microphone. Choose "Allow" so Ludy records your voice too.',
+  micDone: 'Done. You can close this tab.',
+  micDenied: 'The microphone is not allowed. Ludy still records the audio of the meeting tab, but not your voice. You can allow the microphone in the browser settings.',
+  blockers: {
+    invalid: 'The request is not valid.',
+    title: 'Enter the meeting title.',
+    consentMethod: 'Choose how the participants were told.',
+    consentAgreed: 'You must confirm the participants consented.',
+    permission: 'Tab recording is not allowed yet. Turn the feature off and on again.',
+    busy: 'Another recording is in progress.',
+    signedOut: 'Sign in and turn on meeting recording first.',
+    device: 'Could not open the tab audio. Open the meeting tab, click the Ludy icon on that tab and try again.',
+    store: 'Could not save the recording on this device.',
+    setup: 'Could not start. Please try again.',
+  },
+};
+
+// English for an English browser (en, en-US, en-GB...); Vietnamese for anything else, including no language at all.
+export function chooseStrings(language: string | undefined | null): Strings {
+  return typeof language === 'string' && /^en(-|_|$)/i.test(language.trim()) ? ENGLISH : VIETNAMESE;
+}
+
+// The browser's own language (the language of its interface), or the page's when there is no extension API (a unit test under Node).
+function browserLanguage(): string | undefined {
+  try {
+    return chrome.i18n.getUILanguage();
+  } catch {
+    return typeof navigator === 'undefined' ? undefined : navigator.language;
+  }
+}
+
+export const T: Strings = chooseStrings(browserLanguage());

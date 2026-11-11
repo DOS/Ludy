@@ -25,7 +25,10 @@ test.beforeAll(async () => {
     // The new headless mode loads extensions; CHROMIUM_PATH points at a browser installed elsewhere (a sandbox).
     channel: 'chromium',
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
-    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
+    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--lang=vi'],
+    // The browser's language drives the popup's language (#3008): Vietnamese here, so the texts below hold. Under Playwright it is the context's `locale` that a page's
+    // chrome.i18n.getUILanguage answers (the flag alone does not change it), so the locale decides what the tests see; a real browser's interface language is not tested here.
+    locale: 'vi-VN',
   });
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   extensionId = new URL(worker.url()).host;
@@ -59,6 +62,41 @@ test('the installed manifest asks for nothing beyond the list', async () => {
   expect([...(manifest.permissions ?? [])].sort()).toEqual(['identity', 'storage']);
   expect(manifest.host_permissions).toEqual(['https://app.ludy.vn/*']);
   expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['offscreen', 'tabCapture']);
+});
+
+test('the installed manifest names its icons, and the package holds them', async () => {
+  const manifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
+  expect(Object.keys(manifest.icons ?? {}).sort()).toEqual(['128', '16', '32', '48']);
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/popup.html`);
+  for (const path of Object.values(manifest.icons ?? {})) {
+    expect(await page.evaluate(async (file) => (await fetch(chrome.runtime.getURL(file))).ok, path), path).toBe(true);
+  }
+  await page.close();
+});
+
+test('the popup is Vietnamese in a Vietnamese browser and English in an English one (#3008)', async () => {
+  const englishProfile = mkdtempSync(`${tmpdir()}/ludy-ext-en-`);
+  const english = await chromium.launchPersistentContext(englishProfile, {
+    channel: 'chromium',
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--lang=en-US'],
+    locale: 'en-US',
+  });
+  try {
+    const worker = english.serviceWorkers()[0] ?? (await english.waitForEvent('serviceworker'));
+    const page = await english.newPage();
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    await expect(page.getByText('Connect to Ludy')).toBeVisible();
+    await expect(page.getByText('Kết nối với Ludy')).toHaveCount(0);
+  } finally {
+    await english.close();
+    rmSync(englishProfile, { recursive: true, force: true });
+  }
+  const vietnamese = await context.newPage();
+  await vietnamese.goto(`chrome-extension://${extensionId}/popup.html`);
+  await expect(vietnamese.getByText('Kết nối với Ludy')).toBeVisible();
+  await vietnamese.close();
 });
 
 test('with meetings off in the org the feature does not show, with it on it does', async () => {
