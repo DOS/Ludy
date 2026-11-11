@@ -4,7 +4,7 @@
 // exists. The recording is written to this device as it goes (IndexedDB), so a reload or a closed tab loses at most the
 // last few seconds, and it is uploaded when stopped through the same media route as a file upload. Vy has no part on this
 // screen: the recorder, the timer and the upload work with AI off.
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { ConsentMethod, MeetingLanguage, MeetingVisibility } from '@crove/kernel-contract';
@@ -62,7 +62,9 @@ export function MeetingRecordPage() {
   const scope = userId ? `${slug}:${userId}` : null;
 
   const [phase, setPhase] = useState<Phase>('setup');
-  const [title, setTitle] = useState('');
+  // A booking opens this screen with its title, contact and calendar event (L1, #2587); the meeting is linked to them once it is created.
+  const prefill = useSearch({ strict: false }) as { title?: string; partyId?: string; calendarEventId?: string };
+  const [title, setTitle] = useState(prefill.title ?? '');
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
   const [withVideo, setWithVideo] = useState(false);
@@ -86,6 +88,8 @@ export function MeetingRecordPage() {
   const unmounted = useRef(false);
   // The meeting created for this screen, reused if a later local step fails, so a retry makes no second meeting.
   const createdMeetingId = useRef<string | null>(null);
+  // The links of a booking are set once per created meeting; a failed link never blocks the recording (the recorder can link on the meeting page).
+  const linkedMeetingId = useRef<string | null>(null);
   // Recordings this tab wrote: shown in the recovery list at once; another tab's only once its heartbeat is stale.
   const ownIds = useRef(new Set<string>());
 
@@ -190,7 +194,16 @@ export function MeetingRecordPage() {
       createMeeting: async () => {
         // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
         createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod })).meetingId;
-        return createdMeetingId.current;
+        const meetingId = createdMeetingId.current;
+        if (linkedMeetingId.current !== meetingId) {
+          linkedMeetingId.current = meetingId;
+          const targets = [
+            ...(prefill.partyId ? [{ kind: 'party' as const, targetId: prefill.partyId }] : []),
+            ...(prefill.calendarEventId ? [{ kind: 'calendar_event' as const, targetId: prefill.calendarEventId }] : []),
+          ];
+          for (const target of targets) await orpc.meetings.links.add.call({ meetingId, ...target }).catch(() => toast(t('links.prefillFailed'), 'error'));
+        }
+        return meetingId;
       },
       makeRecorder: (stream) => {
         const mimeType = pickRecorderMime((type) => MediaRecorder.isTypeSupported(type), kind);

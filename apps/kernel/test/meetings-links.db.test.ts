@@ -119,6 +119,10 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     expect(linkDeal).toMatchObject({ kind: 'deal', targetId: d });
     expect(linkEvent).toMatchObject({ kind: 'calendar_event', targetId: e });
     expect((await query<MeetingLink[]>('recorder', 'meetings.link.list', { meetingId: m })).map((l) => l.kind).sort()).toEqual(['calendar_event', 'deal', 'party']);
+    // The list names a party and an event for display; a deal is named by the CRM module.
+    const listed = await query<MeetingLink[]>('recorder', 'meetings.link.list', { meetingId: m });
+    expect(listed.find((l) => l.kind === 'party')?.label).toBe('Công ty ABC');
+    expect(listed.find((l) => l.kind === 'deal')?.label).toBeNull();
     for (const [kind, targetId] of [['party', p], ['deal', d], ['calendar_event', e]] as const) {
       const page = await query<MeetingOfTarget[]>('recorder', 'meetings.link.by_target', { kind, targetId });
       expect(page, kind).toEqual([expect.objectContaining({ meetingId: m, title: 'Họp báo giá', recorderUserId: users.recorder })]);

@@ -47,13 +47,14 @@ function kindOf(row: LinkRow): MeetingLinkKind {
   return 'calendar_event';
 }
 
-function toLink(row: LinkRow): MeetingLink {
+function toLink(row: LinkRow, label: string | null = null): MeetingLink {
   const kind = kindOf(row);
   return {
     id: row.id,
     meetingId: row.meeting_id,
     kind,
     targetId: (row[COLUMN[kind]] as string),
+    label,
     createdBy: row.created_by,
     createdAt: new Date(row.created_at).toISOString(),
   };
@@ -175,7 +176,14 @@ export const meetingLinkList = defineQuery({
   access: READERS,
   handler: async (ctx: QueryContext, input): Promise<MeetingLink[]> => {
     const rows = await ctx.trx.selectFrom('crove_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('created_at').orderBy('id').execute();
-    return rows.map((r) => toLink(r as unknown as LinkRow));
+    const links = rows as unknown as LinkRow[];
+    // Names for display, read under the caller's own policies: a party the caller may not read has no name here.
+    const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
+    const eventIds = links.flatMap((l) => (l.calendar_event_id ? [l.calendar_event_id] : []));
+    const parties = partyIds.length ? await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute() : [];
+    const events = eventIds.length ? await ctx.trx.selectFrom('crove_kernel.calendar_event').select(['id', 'title']).where('org_id', '=', ctx.orgId).where('id', 'in', eventIds).execute() : [];
+    const names = new Map<string, string | null>([...parties.map((p) => [p.id, p.name] as const), ...events.map((e) => [e.id, e.title] as const)]);
+    return links.map((l) => toLink(l, names.get((l.party_id ?? l.calendar_event_id) ?? '') ?? null));
   },
 });
 

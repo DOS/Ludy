@@ -561,7 +561,15 @@ const myWorkRoute = createRoute({ getParentRoute: () => orgRoute, path: 'my-work
 // AI Meeting Notes (#2576), with the meetings module.
 const meetingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings', component: MeetingsPage });
 // Record a meeting in the app (#2581).
-const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/record', component: MeetingRecordPage });
+const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/record',
+  component: MeetingRecordPage,
+  // A booking opens this screen prefilled and linked (L1, #2587): its title, its contact and its calendar event. All optional; the ids are checked by the server on save.
+  validateSearch: (search: Record<string, unknown>): { title?: string; partyId?: string; calendarEventId?: string } => ({
+    ...(typeof search.title === 'string' ? { title: search.title.slice(0, 200) } : {}),
+    ...(typeof search.partyId === 'string' ? { partyId: search.partyId } : {}),
+    ...(typeof search.calendarEventId === 'string' ? { calendarEventId: search.calendarEventId } : {}),
+  }),
+});
 const meetingDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/$id', component: MeetingDetailPage });
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
