@@ -5581,9 +5581,9 @@ export const vi = {
     allow: 'Cho phép “{client}” đọc dữ liệu của tổ chức {org}',
     approve: 'Cho phép',
     deny: 'Không cho phép',
-    scope: { read: 'Chỉ đọc: ứng dụng không ghi, sửa, gửi tin hay chi tiền được. Nhưng nó xem được chi tiết khách hàng và nhà cung cấp, gồm tên, email, số điện thoại, địa chỉ và mã số thuế, cùng chi tiết hóa đơn (bên mua hoặc bán, số tiền, mô tả từng dòng, lý do hủy). Những thông tin này rời khỏi Ludy và do nhà cung cấp ứng dụng AI đó lưu giữ, xử lý theo điều khoản của họ: chỉ cho phép ứng dụng bạn tin cậy.' },
+    scope: { read: 'Chỉ đọc: ứng dụng không ghi, sửa, gửi tin hay chi tiền được. Nhưng nó xem được chi tiết khách hàng, nhà cung cấp và các liên hệ khác (kể cả người đã điền biểu mẫu đặt lịch công khai), gồm tên, email, số điện thoại, địa chỉ và mã số thuế, cùng chi tiết hóa đơn (bên mua hoặc bán, số tiền, mô tả từng dòng, lý do hủy). Những thông tin này rời khỏi Ludy và do nhà cung cấp ứng dụng AI đó lưu giữ, xử lý theo điều khoản của họ: chỉ cho phép ứng dụng bạn tin cậy.' },
     limits: 'Ứng dụng làm việc với quyền của bạn trong tổ chức này và chỉ đọc. Chủ sở hữu hay quản trị viên có thể ngắt ngay ở Cài đặt.',
-    actsAs: 'Không nằm trong quyền này: lương, số tài khoản ngân hàng và dữ liệu riêng của từng người (ghi chú cá nhân, kết quả riêng).',
+    actsAs: 'Không nằm trong quyền này: lương, dữ liệu tài khoản ngân hàng ghi riêng và dữ liệu riêng của từng người (ghi chú cá nhân, kết quả riêng). Lưu ý: nếu ai đó gõ số tài khoản vào mô tả dòng hoặc lý do hủy của một hóa đơn thì ứng dụng vẫn đọc được số đó, vì đó là văn bản tự do.',
     revokeHint: 'Quyền có hiệu lực tối đa {days, number} ngày. Bạn ngắt bất cứ lúc nào ở Cài đặt, mục ứng dụng AI đã kết nối; nút Dừng AI của tổ chức cũng cắt quyền ngay.',
   },
   orgMcpGrants: {
@@ -10467,7 +10467,7 @@ export const vi = {
           list: 'Xem các ứng dụng AI đã kết nối',
           revoke: 'Ngắt kết nối một ứng dụng AI',
         },
-        parties: 'Cho ứng dụng AI xem danh sách khách hàng và nhà cung cấp',
+        parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
       },
       session: {
         revoke: 'Đăng xuất phiên đăng nhập',
