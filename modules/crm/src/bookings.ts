@@ -747,6 +747,7 @@ async function loadBookings(
       'b.phone',
       'b.note',
       'b.party_id',
+      'b.calendar_event_id',
       'b.meeting_state',
       'b.meeting_url',
       'e.id as type_id',
@@ -787,6 +788,7 @@ async function loadBookings(
     timeZone: r.time_zone,
     visitor: { name: r.visitor_name, email: r.email, phone: r.phone, note: r.note },
     partyId: r.party_id,
+    calendarEventId: r.calendar_event_id as string,
     meeting: { state: r.meeting_state, url: r.meeting_url },
   }));
 }

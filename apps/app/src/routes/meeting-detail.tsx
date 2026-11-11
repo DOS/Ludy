@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
@@ -348,6 +349,8 @@ export function MeetingDetailPage() {
             </div>
           </CardContent>
         </Card>
+
+        <MeetingLinks meetingId={meeting.id} isRecorder={meeting.isRecorder} />
 
         {/* Readers List Card */}
         {meeting.visibility === 'attendees' && (

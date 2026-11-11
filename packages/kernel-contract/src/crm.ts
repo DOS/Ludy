@@ -151,6 +151,8 @@ export const zBookingItem = z.strictObject({
   // Null once a personal-data erasure cleared them.
   visitor: z.strictObject({ name: z.string().nullable(), email: z.string().nullable(), phone: z.string().nullable(), note: z.string().nullable() }),
   partyId: z.string().nullable(),
+  // The calendar event that holds the booking on the host's calendar (the meetings module links a recorded meeting to it, L1 #2587).
+  calendarEventId: z.string(),
   // The Google Meet of the booking (C7, #1375): its state, and the join link once it is ready.
   meeting: z.strictObject({ state: z.enum(BOOKING_MEETING_STATES), url: z.string().nullable() }),
 });

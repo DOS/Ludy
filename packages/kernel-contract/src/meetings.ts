@@ -472,6 +472,8 @@ export const zMeetingLink = z.strictObject({
   meetingId: zId,
   kind: zMeetingLinkKind,
   targetId: zId,
+  // The name to show: a party's name or the calendar event's title; null for a deal (the CRM module names it) and from add.
+  label: z.string().nullable(),
   createdBy: zId,
   createdAt: z.string(),
 });
