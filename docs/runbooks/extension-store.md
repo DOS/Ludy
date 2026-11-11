@@ -21,10 +21,10 @@ This is a production-adjacent step with an account and a listing, so no team lea
 
 Each is a code or content item, not a credential, and has its own issue (P2, milestone M3, line `meetings`, each linked to #2584).
 
-1. **No icons in the package** (#3007). `apps/extension/manifest.json` has no `icons` key and the package has no image files, so the toolbar and the extensions page show the browser's default icon, and the store asks for a 128 by 128 pixel icon. Add 16, 32, 48 and 128 pixel PNGs of the Ludy mark to `apps/extension` (the build copies a fixed list of files: `STATIC` in `scripts/build.mjs`), reference them from the manifest (`icons` and `action.default_icon`), and keep `check:manifest` green (it checks permissions and forbidden keys, not icons).
+1. **Icons** (#3007, done): the package holds 16, 32, 48 and 128 pixel PNGs of the Ludy mark (`apps/extension/icons`, named by the manifest's `icons` and `action.default_icon`, copied by `scripts/build.mjs`, checked by `test/icons.test.ts`). The 128 pixel one keeps a transparent margin around the mark, as the store's icon guidance asks; upload that file as the listing's store icon too (take it from the built package, `dist/icons/icon-128.png`).
 2. **The store's extension id is not wired** (#3010, blocked on the first upload: the owner brings the id). A Ludy server signs in only the extension ids it lists; the default list (`DEFAULT_EXTENSION_IDS`) is empty until the listing exists, which refuses every extension that is not named in `EXTENSION_IDS` (`apps/extension/README.md`, `apps/kernel/src/config.ts`, #2740). After the first upload the dashboard shows the item's id: a PR adds it to the default list, and Ludy Cloud and every self-hosted server that updates then accepts the store build with no setting. Until then, and for a private test, a server lists the id in `EXTENSION_IDS`. Note: an item keeps its id for life; the id of a draft is already the final one.
 3. **No tag workflow** (#3009). The CI job `extension` builds and checks the package on every pull request, but nothing builds on a tag or makes the zip ("nothing is published from here", `.github/workflows/ci.yml`). The checklist below runs the same commands by hand from the tag. #3009 adds a workflow that builds and zips the extension from an `ext-v*` tag and attaches it to a GitHub release (no store upload: that stays a person's step); until it lands, run the steps by hand.
-4. **The extension speaks Vietnamese only** (#3008). `apps/extension/src/strings.ts` holds one language. The store listing can carry an English text (below), but a member who installs from an English listing sees Vietnamese in the popup. Either say so in the English description (the draft does) or add English strings first.
+4. **Languages** (#3008, done): the popup is English for an English browser (`en`, `en-US`, `en-GB`...) and Vietnamese for every other language, from one set of strings (`apps/extension/src/strings.ts`). The consent text is the app recorder's, in both languages.
 5. **The privacy policy page** (item 4 above) and its lawyer review (#328; the lawyer's review of the store answers is #2585). The lawyer reviews the privacy answers below **before** the owner submits.
 
 ## Pre-submission checklist
@@ -122,7 +122,7 @@ Productivity (Năng suất). Language of the listing: Vietnamese as the default,
 ### Short description
 
 - vi (about 100 characters): `Ghi âm tab họp và micro, tải lên Ludy khi dừng. Chỉ ghi sau khi bạn xác nhận đã thông báo cho mọi người.`
-- en (about 120 characters): `Record the audio of a browser meeting and your microphone, and upload it to your Ludy workspace once you stop. The popup is in Vietnamese.`
+- en (about 120 characters): `Record the audio of a browser meeting and your microphone, and upload it to your Ludy workspace once you stop.`
 
 ### Long description
 
@@ -167,7 +167,7 @@ Privacy
 - You can revoke the extension at any time in Ludy under Settings, connected devices.
 - Open source under the AGPL-3.0 licence.
 
-Needs a Ludy account and a workspace with the meetings feature turned on. The extension's popup is currently in Vietnamese only.
+Needs a Ludy account and a workspace with the meetings feature turned on. The extension's popup is in English or Vietnamese, following your browser's language.
 ```
 
 ### Screenshots to capture

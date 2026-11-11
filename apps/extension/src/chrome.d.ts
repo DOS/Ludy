@@ -6,12 +6,15 @@ declare namespace chrome {
     const id: string | undefined;
     const lastError: { message?: string } | undefined;
     function getURL(path: string): string;
-    function getManifest(): { version: string; permissions?: string[]; optional_permissions?: string[]; host_permissions?: string[] };
+    function getManifest(): { version: string; permissions?: string[]; optional_permissions?: string[]; host_permissions?: string[]; icons?: Record<string, string> };
     function sendMessage(message: unknown): Promise<unknown>;
     const onMessage: {
       addListener(listener: (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => boolean | void): void;
     };
     function getContexts(filter: { contextTypes: string[] }): Promise<unknown[]>;
+  }
+  namespace i18n {
+    function getUILanguage(): string;
   }
   namespace storage {
     interface Area {
