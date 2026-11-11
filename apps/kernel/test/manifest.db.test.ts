@@ -26,7 +26,7 @@ const CONTROL_PLANE: ModuleManifest = {
   tables: {
     crove_kernel: {
       // The MCP endpoint's grants (#2975): a client's name and host as it declared them, never a secret.
-      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by']),
+      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'rows_day', 'rows_used']),
       auth_email_send: columns(['id', 'client_hash', 'target_hash', 'reserved_at']),
       auth_session: columns(['user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason', 'evidence_at']),
       // The keys of the blobs of deleted images (#2357), emptied by the worker once each object is gone: no tenant column, no personal data.

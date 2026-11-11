@@ -591,6 +591,28 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(limited).toBeGreaterThan(0);
   });
 
+  it('stops a grant that has read its day\'s rows: the call that crosses the line is answered, the next is refused before any query runs and audited as rate limited, and a new day starts at zero', async () => {
+    const c = await connect();
+    const grantId = (await admin((client) => client.query(`SELECT id FROM crove_kernel.agent_grant WHERE client_id = $1 AND revoked_at IS NULL`, [c.clientId]))).rows[0].id as string;
+    await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name, source_trust) VALUES ($1, 'organization', 'Budget Kh 1', 'external'), ($1, 'organization', 'Budget Kh 2', 'external')`, [orgId]));
+    const limit = 2000;
+    await admin((client) => client.query(`UPDATE crove_kernel.agent_grant SET rows_day = (now() AT TIME ZONE 'UTC')::date, rows_used = $2 WHERE id = $1`, [grantId, limit - 1]));
+    const crossing = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list');
+    expect(crossing.body?.result?.isError).toBe(false);
+    const used = await admin((client) => client.query(`SELECT rows_used FROM crove_kernel.agent_grant WHERE id = $1`, [grantId]));
+    expect(used.rows[0].rows_used).toBeGreaterThan(limit);
+    const refused = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list');
+    expect(refused.body?.error?.message).toContain('daily limit');
+    expect(JSON.stringify(refused.body)).not.toContain('Budget Kh');
+    // Every tool is refused once the day's rows are spent (the check runs before the query), and the refusal is in the audit as rate limited.
+    expect((await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about')).body?.error?.message).toContain('daily limit');
+    const audit = await admin((client) => client.query(`SELECT detail ->> 'result' AS result FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' = $1 AND detail ->> 'tool' = 'ludy_parties_list' ORDER BY id DESC LIMIT 1`, [grantId]));
+    expect(audit.rows[0].result).toBe('rate_limited');
+    // Yesterday's counter does not count today.
+    await admin((client) => client.query(`UPDATE crove_kernel.agent_grant SET rows_day = (now() AT TIME ZONE 'UTC')::date - 1 WHERE id = $1`, [grantId]));
+    expect((await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list')).body?.result?.isError).toBe(false);
+  });
+
   // A second server over the same database, with other limits, for the tests that need a budget they can spend.
   async function secondServer(env: Record<string, string>) {
     const port = await freePort();
