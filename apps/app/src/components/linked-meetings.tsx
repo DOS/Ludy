@@ -17,7 +17,11 @@ export function LinkedMeetings({ kind, targetId }: { kind: Exclude<MeetingLinkKi
   const t = useTranslations('meetings');
   const f = useFormat();
   const { slug } = useParams({ strict: false }) as { slug: string };
-  const meetings = useQuery(orpc.meetings.links.byTarget.queryOptions({ input: { kind, targetId } }));
+  // The server answers owners, admins and members only: a viewer gets no list (and no refusal shown on every panel).
+  const org = useQuery(orpc.org.get.queryOptions());
+  const allowed = org.data !== undefined && org.data.role !== 'viewer';
+  const meetings = useQuery({ ...orpc.meetings.links.byTarget.queryOptions({ input: { kind, targetId } }), enabled: allowed });
+  if (!allowed) return null;
   return (
     <div data-testid="linked-meetings">
       <p className="mb-2 text-sm font-medium text-muted-foreground">{t('links.forTarget')}</p>

@@ -177,7 +177,8 @@ export const meetingLinkList = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<MeetingLink[]> => {
     const rows = await ctx.trx.selectFrom('crove_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('created_at').orderBy('id').execute();
     const links = rows as unknown as LinkRow[];
-    // Names for display, read under the caller's own policies: a party the caller may not read has no name here.
+    // Names for display. A party is read under the caller's own policies. A calendar event title is shared on purpose with every reader of this meeting: the recorder
+    // linked their own event (link.add takes no other), and the meeting's readers are the people the recorder chose.
     const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
     const eventIds = links.flatMap((l) => (l.calendar_event_id ? [l.calendar_event_id] : []));
     const parties = partyIds.length ? await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute() : [];

@@ -201,7 +201,8 @@ export function MeetingRecordPage() {
             ...(prefill.partyId ? [{ kind: 'party' as const, targetId: prefill.partyId }] : []),
             ...(prefill.calendarEventId ? [{ kind: 'calendar_event' as const, targetId: prefill.calendarEventId }] : []),
           ];
-          for (const target of targets) await orpc.meetings.links.add.call({ meetingId, ...target }).catch(() => toast(t('links.prefillFailed'), 'error'));
+          const results = await Promise.allSettled(targets.map((target) => orpc.meetings.links.add.call({ meetingId, ...target })));
+          if (results.some((r) => r.status === 'rejected')) toast(t('links.prefillFailed'), 'error');
         }
         return meetingId;
       },

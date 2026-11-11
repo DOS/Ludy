@@ -79,9 +79,11 @@ describe('MeetingLinks', () => {
 });
 
 describe('LinkedMeetings', () => {
+  const asRole = (role: string) => client.current.setQueryData(['org', 'get'], { role, members: [] });
   const row = (over: Partial<MeetingOfTarget>): MeetingOfTarget => ({ linkId: 'k1', meetingId: 'm1', title: 'Họp báo giá', startedAt: '2026-11-10T03:00:00.000Z', status: 'ready', visibility: 'org', recorderUserId: 'u1', ...over }) as MeetingOfTarget;
 
   it('lists the meetings the server returned, each as a link to the meeting', () => {
+    asRole('member');
     client.current.setQueryData(['meetings', 'links', 'byTarget'], [row({}), row({ linkId: 'k2', meetingId: 'm2', title: 'Họp kỹ thuật', visibility: 'attendees' })]);
     const html = renderToStaticMarkup(wrap(<LinkedMeetings kind="deal" targetId="d1" />));
     expect(html).toContain('Họp báo giá');
@@ -91,10 +93,17 @@ describe('LinkedMeetings', () => {
   });
 
   it('draws nothing but the empty line when the server returned no row (a meeting the viewer may not read is no row, and its title is nowhere)', () => {
+    asRole('member');
     client.current.setQueryData(['meetings', 'links', 'byTarget'], []);
     const html = renderToStaticMarkup(wrap(<LinkedMeetings kind="party" targetId="p1" />));
     expect(html).toContain(en.meetings.links.forTargetEmpty);
     expect(html).not.toContain('Họp báo giá');
     expect(html).not.toContain('data-testid="linked-meeting"');
+  });
+
+  it('draws nothing for a viewer: the server answers members and above, so no refusal is shown on a contact or deal panel', () => {
+    asRole('viewer');
+    client.current.setQueryData(['meetings', 'links', 'byTarget'], [row({})]);
+    expect(renderToStaticMarkup(wrap(<LinkedMeetings kind="party" targetId="p1" />))).toBe('');
   });
 });
