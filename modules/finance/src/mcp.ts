@@ -5,8 +5,8 @@
 // or admin sees on the documents screen. Per invoice: its number (series and number), its date, the direction (a sale to a customer or a purchase from a supplier), the
 // three amounts and the currency, the party's name and tax code, the description of each line (at most MCP_LINES_PER_INVOICE lines, each one plain line of at most 200
 // characters, with the line count so a client sees when lines were left out), whether it was voided and the reason it was. Never returned: the party's address, email
-// or phone, the lines' amounts, quantities and accounts, the file the invoice came from, the journal entry and the exchange-rate details; bank account numbers, payroll
-// or salary data, member-private data; nothing from a query that is `sensitive`. Every text value is one plain line (see plainLine): a party's name, a line's
+// or phone, the lines' amounts, quantities and accounts, the file the invoice came from, the journal entry and the exchange-rate details; bank account records, payroll
+// or salary data, member-private data (a number someone typed into a line description or a void reason is free text and is returned as such); nothing from a query that is `sensitive`. Every text value is one plain line (see plainLine): a party's name, a line's
 // description and a void reason are text a person, a supplier's XML or an import wrote, and they reach the client as data, never as an instruction. The legal entity is
 // not chosen here: the row policy of the caller's scope decides which entities' invoices are visible, as it does on the documents screen. Money stays a decimal string.
 import { z } from 'zod';

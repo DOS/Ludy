@@ -189,7 +189,7 @@ const optionalLine = (value: string | null, max: number): string | null => {
 // company they work at, the email, the phone, the address, the tax code (the contacts screen shows all four of every contact to an owner or an admin, a person's tax
 // code included), the day it was recorded, and `sourceTrust` (who put the row in: a value a visitor typed through a public form is `external`, so a client can trust
 // it less). Every text value is cut to one plain line (see plainLine). Never returned: the free-text search column, the duplicate and verification state, bank account
-// numbers, payroll or salary data, member-private notes or todos or member-Vy data; nothing from a query that is `sensitive`. Merged duplicates are not listed (the kept
+// records, payroll or salary data, member-private notes or todos or member-Vy data; nothing from a query that is `sensitive`. Merged duplicates are not listed (the kept
 // party stands for them). There is no search and no cursor: a client sees the newest rows and `truncated` says there are more; a way to page is a later step.
 export const mcpParties = defineQuery({
   name: 'kernel.mcp.parties',
