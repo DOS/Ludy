@@ -17,14 +17,14 @@ This is a production-adjacent step with an account and a listing, so no team lea
 | 4 | A public privacy policy page on an `https` address | owner, lawyer | The store requires a link. The drafts in [docs/legal](../legal/README.md) are not reviewed by a lawyer (#328): do not point the listing at an unreviewed draft. The page must say what the extension does (the section "Privacy practices" below is its source) |
 | 5 | The release to publish, built as in "Pre-submission checklist" | agent builds, owner uploads | The owner uploads the zip; nobody else needs the account |
 
-## Known gaps to close before the first submission
+## Known gaps before the first submission (status)
 
 Each is a code or content item, not a credential, and has its own issue (P2, milestone M3, line `meetings`, each linked to #2584).
 
 1. **Icons** (#3007, done): the package holds 16, 32, 48 and 128 pixel PNGs of the Ludy mark (`apps/extension/icons`, named by the manifest's `icons` and `action.default_icon`, copied by `scripts/build.mjs`, checked by `test/icons.test.ts`). The 128 pixel one keeps a transparent margin around the mark, as the store's icon guidance asks; upload that file as the listing's store icon too (take it from the built package, `dist/icons/icon-128.png`).
 2. **The store's extension id is not wired** (#3010, blocked on the first upload: the owner brings the id). A Ludy server signs in only the extension ids it lists; the default list (`DEFAULT_EXTENSION_IDS`) is empty until the listing exists, which refuses every extension that is not named in `EXTENSION_IDS` (`apps/extension/README.md`, `apps/kernel/src/config.ts`, #2740). After the first upload the dashboard shows the item's id: a PR adds it to the default list, and Ludy Cloud and every self-hosted server that updates then accepts the store build with no setting. Until then, and for a private test, a server lists the id in `EXTENSION_IDS`. Note: an item keeps its id for life; the id of a draft is already the final one.
 3. **No tag workflow** (#3009). The CI job `extension` builds and checks the package on every pull request, but nothing builds on a tag or makes the zip ("nothing is published from here", `.github/workflows/ci.yml`). The checklist below runs the same commands by hand from the tag. #3009 adds a workflow that builds and zips the extension from an `ext-v*` tag and attaches it to a GitHub release (no store upload: that stays a person's step); until it lands, run the steps by hand.
-4. **Languages** (#3008, done): the popup is English for an English browser (`en`, `en-US`, `en-GB`...) and Vietnamese for every other language, from one set of strings (`apps/extension/src/strings.ts`). The consent text is the app recorder's, in both languages.
+4. **Languages** (#3008, done): the popup, the consent step, the microphone page and the toolbar title are English for an English browser (`en`, `en-US`, `en-GB`...) and Vietnamese for every other language, from one set of strings (`apps/extension/src/strings.ts`). The English consent wording is the app recorder's; the Vietnamese method labels are the extension's own short forms. The device name shown in Ludy under connected devices ("Tiện ích Ludy, Chrome trên Windows") and the manifest `description` stay Vietnamese.
 5. **The privacy policy page** (item 4 above) and its lawyer review (#328; the lawyer's review of the store answers is #2585). The lawyer reviews the privacy answers below **before** the owner submits.
 
 ## Pre-submission checklist
@@ -182,7 +182,7 @@ The store takes up to five. Use a clean test workspace with no customer data and
 | 4 | Upload done | "Đã tải lên", and the meeting in Ludy with its audio player (a second window or a composite) | the meeting page of the app |
 | 5 | Settings, connected devices in Ludy | The extension listed and the revoke button, to show the member stays in control | Ludy Settings |
 
-Also needed by the dashboard (check): a **128 by 128 icon** (gap 1 above), a **small promotional tile of 440 by 280** pixels, and optionally a marquee of 1400 by 560. Edge has its own sizes if the extension is ever listed there (plan section 11 lists the Edge Add-ons store as a possible later step).
+Also needed by the dashboard (check): a **128 by 128 icon** (gap 1 above: `dist/icons/icon-128.png`), a **small promotional tile of 440 by 280** pixels, and optionally a marquee of 1400 by 560. Edge has its own sizes if the extension is ever listed there (plan section 11 lists the Edge Add-ons store as a possible later step).
 
 ### Data-use disclosures
 

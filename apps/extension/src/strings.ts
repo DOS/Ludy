@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The extension's words in Vietnamese (the default and the fallback) and English, chosen once from the browser's interface language (#3008). The consent text is the app
-// recorder's, in both languages (apps/app/src/i18n/messages). No dependency and no remote file: both sets ship in the package.
+// The extension's words in Vietnamese (the default and the fallback) and English, chosen once from the browser's interface language (#3008). The English consent text is the app
+// recorder's (apps/app/src/i18n/messages, meetings.form); the Vietnamese method labels are the extension's own short forms. No dependency and no remote file: both sets ship in the package.
 const VI = {
   title: 'Ludy',
   setupTitle: 'Kết nối với Ludy',
@@ -46,6 +46,12 @@ const VI = {
   pending: 'Bản ghi còn trên máy này',
   retry: 'Tải lên lại',
   discard: 'Xóa khỏi máy',
+  recordingTitle: 'Ludy đang ghi',
+  micTitle: 'Cho phép micro cho Ludy',
+  micHeading: 'Cho phép micro cho tiện ích Ludy',
+  micPrompt: 'Trình duyệt sẽ hỏi quyền dùng micro. Chọn "Cho phép" để Ludy ghi cả giọng của bạn.',
+  micDone: 'Xong. Bạn có thể đóng tab này.',
+  micDenied: 'Micro chưa được cho phép. Ludy vẫn ghi âm thanh của tab họp, nhưng không có giọng của bạn. Bạn có thể cho phép micro trong cài đặt trình duyệt.',
   blockers: {
     invalid: 'Yêu cầu không hợp lệ.',
     title: 'Vui lòng nhập tên cuộc họp.',
@@ -111,6 +117,12 @@ export const ENGLISH: Strings = {
   pending: 'Recordings still on this device',
   retry: 'Upload again',
   discard: 'Delete from this device',
+  recordingTitle: 'Ludy is recording',
+  micTitle: 'Allow the microphone for Ludy',
+  micHeading: 'Allow the microphone for the Ludy extension',
+  micPrompt: 'The browser will ask for permission to use the microphone. Choose "Allow" so Ludy records your voice too.',
+  micDone: 'Done. You can close this tab.',
+  micDenied: 'The microphone is not allowed. Ludy still records the audio of the meeting tab, but not your voice. You can allow the microphone in the browser settings.',
   blockers: {
     invalid: 'The request is not valid.',
     title: 'Enter the meeting title.',
@@ -130,7 +142,7 @@ export function chooseStrings(language: string | undefined | null): Strings {
   return typeof language === 'string' && /^en(-|_|$)/i.test(language.trim()) ? ENGLISH : VIETNAMESE;
 }
 
-// The browser's own language (the language of its interface, which `--lang` sets in a test), or the page's when there is no extension API (a unit test under Node).
+// The browser's own language (the language of its interface), or the page's when there is no extension API (a unit test under Node).
 function browserLanguage(): string | undefined {
   try {
     return chrome.i18n.getUILanguage();

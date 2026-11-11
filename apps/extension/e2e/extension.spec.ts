@@ -26,8 +26,8 @@ test.beforeAll(async () => {
     channel: 'chromium',
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
     args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--lang=vi'],
-    // The browser's language drives the popup's language (#3008): Vietnamese here, so the texts below hold. Playwright's own locale is what the pages see (an extension page's
-    // chrome.i18n.getUILanguage included, once a page is open), so it is set with the flag.
+    // The browser's language drives the popup's language (#3008): Vietnamese here, so the texts below hold. Under Playwright it is the context's `locale` that a page's
+    // chrome.i18n.getUILanguage answers (the flag alone does not change it), so the locale decides what the tests see; a real browser's interface language is not tested here.
     locale: 'vi-VN',
   });
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
@@ -76,7 +76,8 @@ test('the installed manifest names its icons, and the package holds them', async
 });
 
 test('the popup is Vietnamese in a Vietnamese browser and English in an English one (#3008)', async () => {
-  const english = await chromium.launchPersistentContext(mkdtempSync(`${tmpdir()}/ludy-ext-en-`), {
+  const englishProfile = mkdtempSync(`${tmpdir()}/ludy-ext-en-`);
+  const english = await chromium.launchPersistentContext(englishProfile, {
     channel: 'chromium',
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
     args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--lang=en-US'],
@@ -90,6 +91,7 @@ test('the popup is Vietnamese in a Vietnamese browser and English in an English 
     await expect(page.getByText('Kết nối với Ludy')).toHaveCount(0);
   } finally {
     await english.close();
+    rmSync(englishProfile, { recursive: true, force: true });
   }
   const vietnamese = await context.newPage();
   await vietnamese.goto(`chrome-extension://${extensionId}/popup.html`);
