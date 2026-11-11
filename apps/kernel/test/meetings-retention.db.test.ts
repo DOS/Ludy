@@ -829,6 +829,10 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const docId = randomUUID();
     await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'contract.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [purgeOrgId, docId, 'c'.repeat(64), `org/${purgeOrgId}/${'c'.repeat(64)}`, userIds.get('purgeOwner')]);
 
+    // Links (L1, #2587): one on the shared meeting and one on the attendees-only one (a deal each, which has no foreign key).
+    const sharedLink = randomUUID();
+    await rows('INSERT INTO crove_meetings.meeting_link (org_id, id, meeting_id, deal_id, created_by) VALUES ($1, $2, $3, $4, $5), ($1, $6, $7, $4, $5)', [purgeOrgId, sharedLink, shared, randomUUID(), userIds.get('purgeOwner'), randomUUID(), hidden]);
+
     // The export: the shared meeting, a count for the attendees-only one, no file row of any recording.
     const exported = async (table: string) => {
       const lines: string[] = [];
@@ -841,6 +845,8 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(exportedMeetings.map((m) => m.id)).toEqual([shared]);
     expect(await exported('meetings.private_count')).toEqual([expect.objectContaining({ org_id: purgeOrgId, meetings: 1 })]);
     expect(JSON.stringify(await exported('meetings.meeting'))).not.toContain('Attendees only');
+    // The export carries the links of the shared meeting only, never one of an attendees-only meeting.
+    expect((await exported('meetings.link')).map((l) => l.id)).toEqual([sharedLink]);
     const exportedFiles = await exported('kernel.file');
     expect(exportedFiles.filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
     // The filter is on the source alone: the ordinary document is the one file row exported.
@@ -869,7 +875,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       }
     });
     await expect(purgeOrg(worker, 30, { ref: purgeOrgId, reason: 'test' })).resolves.toMatchObject({ kind: 'purged', orgId: purgeOrgId });
-    for (const t of ['meeting', 'meeting_reader', 'audio_segment', 'meeting_video', 'media_key']) {
+    for (const t of ['meeting', 'meeting_reader', 'meeting_link', 'audio_segment', 'meeting_video', 'media_key']) {
       expect(await count(`SELECT 1 FROM crove_meetings.${t} WHERE org_id = $1`, [purgeOrgId]), t).toBe(0);
     }
     expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId])).toBe(0);

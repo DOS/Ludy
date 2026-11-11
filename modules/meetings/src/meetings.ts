@@ -9,6 +9,7 @@ import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts
 import { resultCommands, resultQueries } from './results.ts';
 import { summaryCommands } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
+import { linkCommands, linkQueries } from './links.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -959,6 +960,7 @@ export const meetingsCommands = [
   ...resultCommands,
   ...summaryCommands,
   ...summaryRunCommands,
+  ...linkCommands,
 ];
 
 export const meetingsQueries = [
@@ -974,4 +976,5 @@ export const meetingsQueries = [
   ...transcribeRunQueries,
   ...resultQueries,
   ...summaryRunQueries,
+  ...linkQueries,
 ];

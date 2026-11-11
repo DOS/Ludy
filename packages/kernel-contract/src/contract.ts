@@ -312,7 +312,13 @@ import {
   zMeetingCreated,
   zMeetingDeleted,
   zMeetingOwnerList,
+  zMeetingLink,
+  zMeetingLinkAdd,
+  zMeetingLinkRemove,
+  zMeetingLinkRemoved,
+  zMeetingOfTarget,
   zMeetingOwnerListInput,
+  zMeetingsOfTargetInput,
   zMeetingDetail,
   zMeetingListInput,
   zMeetingReaderAdd,
@@ -822,6 +828,13 @@ export const contract = {
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
     ownerList: oc.input(zMeetingOwnerListInput).output(zMeetingOwnerList),
+    // Links to parties, a deal and the calendar event (L1, #2587): the recorder sets and removes them; a page reads only the meetings its viewer reads.
+    links: {
+      add: oc.input(zMeetingLinkAdd).output(zMeetingLink),
+      remove: oc.input(zMeetingLinkRemove).output(zMeetingLinkRemoved),
+      list: oc.input(zMeetingRef).output(z.array(zMeetingLink)),
+      byTarget: oc.input(zMeetingsOfTargetInput).output(z.array(zMeetingOfTarget)),
+    },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
