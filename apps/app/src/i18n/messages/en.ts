@@ -1866,7 +1866,7 @@ export const en = {
       forTargetEmpty: 'No meetings recorded for this yet.',
       suggestTitle: 'Vy suggests links',
       suggestNote: 'Vy read the transcript and suggests these; they may be wrong. A meeting is linked only when you click.',
-      suggestMentions: 'mentioned {count} times',
+      suggestMentions: 'mentioned: {count}',
       prefillFailed: 'A link to the booking could not be saved. Link it on the meeting page.',
     },
   },

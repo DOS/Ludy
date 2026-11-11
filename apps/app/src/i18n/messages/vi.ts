@@ -1864,7 +1864,7 @@ export const vi = {
       forTargetEmpty: 'Chưa có cuộc họp nào được ghi lại cho mục này.',
       suggestTitle: 'Vy gợi ý liên kết',
       suggestNote: 'Vy đọc bản ghi lời và gợi ý, có thể chưa đúng. Chỉ khi bạn bấm thì cuộc họp mới được liên kết.',
-      suggestMentions: 'nhắc {count} lần',
+      suggestMentions: 'được nhắc: {count}',
       prefillFailed: 'Không lưu được liên kết với lịch hẹn. Hãy liên kết trên trang cuộc họp.',
     },
   },

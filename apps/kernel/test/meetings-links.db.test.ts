@@ -189,6 +189,28 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toBe('FORBIDDEN');
   });
 
+  it("Vy's suggestion counts a repeated name, finds a capital Đ, offers no deal that is not open and nothing once the text period has ended", async () => {
+    const m = await meeting('recorder', 'Họp lặp tên');
+    const dong = await party('ĐÔNG PHƯƠNG');
+    const d = await deal('recorder', dong);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: m,
+      segments: [{ startSeconds: 0, endSeconds: 4, speakerLabel: 'A', text: 'Đông Phương, đông phương, ĐÔNG PHƯƠNG đông phương. Gói kế toán năm.' }],
+    });
+    const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
+    expect(got.parties).toEqual([{ partyId: dong, name: 'ĐÔNG PHƯƠNG', mentions: 4 }]);
+    expect(got.deals.map((x) => x.dealId)).toEqual([d]);
+    // A deal that is lost is not offered.
+    await exec('recorder', 'crm.deal.move', { dealId: d, version: 1, stageId: (await exec<Array<{ id: string; kind: string }>>('recorder', 'crm.pipeline.setup', {})).find((x) => x.kind === 'lost')?.id });
+    expect((await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).deals).toEqual([]);
+    // The sensitive read is audited like the transcript's own.
+    const read = await admin((c) => c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.link.suggest' AND detail ->> 'read' = 'sensitive'", [orgId]));
+    expect(read.rowCount).toBeGreaterThan(0);
+    // Past its text day the transcript is gone from the meeting: nothing is derived from it.
+    await admin((c) => c.query('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, m]));
+    expect(await refuses(query('recorder', 'meetings.link.suggest', { meetingId: m }))).toBe('MEETING_NOT_FOUND');
+  });
+
   it('allows one deal per meeting and refuses a target that is not there', async () => {
     const m = await meeting('recorder', 'Họp hai cơ hội');
     const p = await party('Công ty XYZ');
