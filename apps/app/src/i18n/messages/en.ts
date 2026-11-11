@@ -8889,6 +8889,10 @@ export const en = {
       NOTE_LINK_NOT_FOUND: 'This link was not found.',
       NOTE_LINK_TARGET_NOT_FOUND: 'The record to link was not found.',
       MEETING_NOT_FOUND: 'Meeting not found.',
+      MEETING_HAS_DEAL: 'This meeting is already linked to a deal. Remove that link first.',
+      LINK_NOT_FOUND: 'Link not found.',
+      LINK_TARGET_NOT_FOUND: 'The contact, deal or calendar event to link was not found.',
+      DEAL_LINK_UNAVAILABLE: 'This deployment has no deals module, so a deal cannot be linked.',
       TRANSCRIPT_SEGMENT_NOT_FOUND: 'Transcript segment not found.',
       TRANSCRIBE_OFF: 'Transcription is not turned on on this system.',
       TRANSCRIBE_NO_BROKER: 'Transcription needs the system credential key to be set. Ask the person who runs this system.',
@@ -10578,6 +10582,12 @@ export const en = {
         copy_result: 'Copy the summary Vy finished for a meeting into the draft',
         start: 'Ask Vy to summarize a meeting',
         status: 'See whether Vy can summarize a meeting',
+      },
+      link: {
+        add: 'Link a meeting to a contact, deal or calendar event',
+        by_target: 'See the meetings linked to a contact or deal',
+        list: 'See the links of a meeting',
+        remove: 'Remove a link of a meeting',
       },
       reader: {
         add: 'Add meeting reader',

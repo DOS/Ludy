@@ -161,9 +161,9 @@ export const meetingLinkRemove = defineCommand({
     const row = await ctx.trx.selectFrom('crove_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('id', '=', input.linkId).executeTakeFirst();
     if (!row) throw new DomainError('LINK_NOT_FOUND', 404, 'Link not found');
     await ctx.trx.deleteFrom('crove_meetings.meeting_link').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('id', '=', input.linkId).execute();
-    const kind = kindOf(row as unknown as LinkRow);
-    // Removing a link is audited (L1): who, which meeting, which target.
-    ctx.audit({ meetingId: input.meetingId, linkId: input.linkId, kind, targetId: (row as unknown as LinkRow)[COLUMN[kind]], removed: true });
+    const removed = toLink(row as unknown as LinkRow);
+    // Removing a link is audited (L1): who, which meeting, which target (ids only).
+    ctx.audit({ meetingId: input.meetingId, linkId: input.linkId, kind: removed.kind, targetId: removed.targetId, removed: true });
     return { meetingId: input.meetingId, linkId: input.linkId, removed: true };
   },
 });

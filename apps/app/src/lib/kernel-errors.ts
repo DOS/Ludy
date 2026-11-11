@@ -284,6 +284,11 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_TARGET_NOT_FOUND',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
+  // Links of a meeting (L1, #2587).
+  'MEETING_HAS_DEAL',
+  'LINK_NOT_FOUND',
+  'LINK_TARGET_NOT_FOUND',
+  'DEAL_LINK_UNAVAILABLE',
   'TRANSCRIPT_SEGMENT_NOT_FOUND',
   // Transcription as the recorder's own Vy (#2578, M4b).
   'TRANSCRIBE_OFF',

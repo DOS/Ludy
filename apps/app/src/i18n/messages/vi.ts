@@ -8886,6 +8886,10 @@ export const vi = {
       NOTE_LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
       NOTE_LINK_TARGET_NOT_FOUND: 'Không tìm thấy bản ghi để gắn ghi chú',
       MEETING_NOT_FOUND: 'Không tìm thấy cuộc họp này',
+      MEETING_HAS_DEAL: 'Cuộc họp này đã liên kết với một cơ hội. Hãy gỡ liên kết đó trước.',
+      LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
+      LINK_TARGET_NOT_FOUND: 'Không tìm thấy liên hệ, cơ hội hoặc lịch hẹn cần liên kết',
+      DEAL_LINK_UNAVAILABLE: 'Hệ thống này chưa có phần quản lý cơ hội nên chưa liên kết được',
       TRANSCRIPT_SEGMENT_NOT_FOUND: 'Không tìm thấy đoạn bản ghi này',
       TRANSCRIBE_OFF: 'Hệ thống này chưa bật tính năng ghi lời.',
       TRANSCRIBE_NO_BROKER: 'Tính năng ghi lời cần khóa mã hóa thông tin kết nối của hệ thống. Hãy báo người quản trị hệ thống.',
@@ -10575,6 +10579,12 @@ export const vi = {
         copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
         start: 'Nhờ Vy tóm tắt một cuộc họp',
         status: 'Xem Vy có tóm tắt được cuộc họp không',
+      },
+      link: {
+        add: 'Liên kết cuộc họp với liên hệ, cơ hội hoặc lịch hẹn',
+        by_target: 'Xem các cuộc họp liên kết với một liên hệ hoặc cơ hội',
+        list: 'Xem các liên kết của cuộc họp',
+        remove: 'Gỡ liên kết của cuộc họp',
       },
       reader: {
         add: 'Thêm người đọc cuộc họp',
