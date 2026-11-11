@@ -1862,6 +1862,9 @@ export const vi = {
       addDeal: 'Liên kết cơ hội',
       forTarget: 'Cuộc họp',
       forTargetEmpty: 'Chưa có cuộc họp nào được ghi lại cho mục này.',
+      suggestTitle: 'Vy gợi ý liên kết',
+      suggestNote: 'Vy đọc bản ghi lời và gợi ý, có thể chưa đúng. Chỉ khi bạn bấm thì cuộc họp mới được liên kết.',
+      suggestMentions: 'được nhắc: {count}',
       prefillFailed: 'Không lưu được liên kết với lịch hẹn. Hãy liên kết trên trang cuộc họp.',
     },
   },
@@ -10606,6 +10609,7 @@ export const vi = {
         by_target: 'Xem các cuộc họp liên kết với một liên hệ hoặc cơ hội',
         list: 'Xem các liên kết của cuộc họp',
         remove: 'Gỡ liên kết của cuộc họp',
+        suggest: 'Vy gợi ý liên hệ và cơ hội từ bản ghi lời',
       },
       reader: {
         add: 'Thêm người đọc cuộc họp',

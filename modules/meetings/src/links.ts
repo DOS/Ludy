@@ -12,6 +12,8 @@ import {
   zMeetingRef,
   zMeetingsOfTargetInput,
   MEETING_LINK_PAGE,
+  MEETING_LINK_SUGGEST_MAX,
+  type MeetingLinkSuggested,
   type MeetingLink,
   type MeetingLinkKind,
   type MeetingLinkRemoved,
@@ -21,6 +23,7 @@ import {
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { vnDay } from './retention.ts';
+import { openMeeting } from './transcript.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -220,5 +223,80 @@ export const meetingsOfTarget = defineQuery({
   },
 });
 
+// How many times a folded name stands in a folded body (both wrapped in single spaces), as a whole phrase. A repeat right after a mention counts: the space that ends one
+// mention may start the next.
+function mentionsOf(body: string, name: string): number {
+  if (name.length < 3) return 0;
+  const needle = ` ${name} `;
+  let count = 0;
+  for (let at = body.indexOf(needle); at >= 0; at = body.indexOf(needle, at + needle.length - 1)) count += 1;
+  return count;
+}
+const TRANSCRIPT_SCAN_MAX = 400_000;
+const PARTY_SCAN_MAX = 500;
+
+// Vy's suggestion (L1, #2587), for the recorder only: the contacts whose name the transcript says and the deals (of those contacts and of the linked ones) whose title it
+// says, each with how often. It is TAINTED (the transcript is what people said, and the matching is a plain reading of it) and it reads only: nothing is linked
+// here, and a contact or deal already linked is left out. The recorder links with a click on meetings.link.add, which checks the target again. It calls no model, so the
+// AI budget meter has nothing to meter and the core works with AI off. The transcript is read under the recorder's own policies and audited like its own read.
+export const meetingLinkSuggest = defineQuery({
+  name: 'meetings.link.suggest',
+  input: zMeetingRef,
+  access: READERS,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx: QueryContext, input): Promise<MeetingLinkSuggested> => {
+    const userId = userOf(ctx.actor);
+    // The text-retention gate, as for every other read of a meeting's text: past its day the transcript is gone from the meeting, so nothing is derived from it.
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder gets suggestions');
+    const none: MeetingLinkSuggested = { tainted: true, ai: 'off', parties: [], deals: [] };
+    const segments = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('start_seconds').orderBy('id').execute();
+    const raw = segments.map((r) => r.text).join(' ').slice(0, TRANSCRIPT_SCAN_MAX);
+    if (raw.trim() === '') return none;
+    // One fold for the transcript and the names alike (the search's own, in SQL), so a name and the text are always read the same way.
+    const folded = await sql<{ body: string }>`SELECT crove_kernel.search_fold(${raw}) AS body`.execute(ctx.trx);
+    const body = ` ${folded.rows[0]?.body ?? ''} `;
+    if (body.trim() === '') return none;
+    const linked = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    const linkedParties = linked.flatMap((l) => (l.party_id ? [l.party_id] : []));
+    const hasDeal = linked.some((l) => l.deal_id !== null);
+
+    // Contacts: the folded name, as a whole phrase, of at least three characters, not yet linked. The kernel party table is read under the recorder's own policies.
+    const { rows } = await sql<{ id: string; name: string; folded: string }>`
+      SELECT p.id, p.name, f.folded FROM crove_kernel.party p
+      CROSS JOIN LATERAL (SELECT crove_kernel.search_fold(p.name) AS folded) f
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.id <> ALL(${linkedParties}::uuid[])
+        AND pg_catalog.length(f.folded) >= 3 AND pg_catalog.strpos(${body}, ' ' || f.folded || ' ') > 0
+      ORDER BY p.id LIMIT ${PARTY_SCAN_MAX}`.execute(ctx.trx);
+    const parties = rows
+      .map((r) => ({ partyId: r.id, name: r.name, mentions: mentionsOf(body, r.folded) }))
+      .filter((p) => p.mentions > 0)
+      .sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name))
+      .slice(0, MEETING_LINK_SUGGEST_MAX);
+
+    // Deals: of the suggested and the linked contacts, by title; a meeting holds one deal, so none is suggested once it has one. The CRM module answers as the caller.
+    type DealView = { id: string; title: string; partyId: string; partyName: string; stageKind: string };
+    const open: DealView[] = [];
+    if (!hasDeal) {
+      for (const partyId of [...new Set([...linkedParties, ...parties.map((p) => p.partyId)])].slice(0, 10)) {
+        const answer = await ctx.query<DealView[]>('crm.party.deals', { partyId });
+        if (answer.status !== 'ok') break;
+        open.push(...answer.value.filter((d) => d.stageKind === 'open'));
+      }
+    }
+    const deals: MeetingLinkSuggested['deals'] = [];
+    if (open.length > 0) {
+      const titles = await sql<{ i: string; folded: string }>`
+        SELECT t.i::text AS i, crove_kernel.search_fold(t.title) AS folded FROM unnest(${open.map((d) => d.title)}::text[]) WITH ORDINALITY AS t(title, i)`.execute(ctx.trx);
+      for (const row of titles.rows) {
+        const d = open[Number(row.i) - 1];
+        if (d && mentionsOf(body, row.folded) > 0) deals.push({ dealId: d.id, title: d.title, partyId: d.partyId, partyName: d.partyName });
+      }
+    }
+    return { tainted: true, ai: 'off', parties, deals: deals.slice(0, MEETING_LINK_SUGGEST_MAX) };
+  },
+});
+
 export const linkCommands = [meetingLinkAdd, meetingLinkRemove];
-export const linkQueries = [meetingLinkList, meetingsOfTarget];
+export const linkQueries = [meetingLinkList, meetingsOfTarget, meetingLinkSuggest];

@@ -319,6 +319,7 @@ import {
   zMeetingOfTarget,
   zMeetingOwnerListInput,
   zMeetingsOfTargetInput,
+  zMeetingLinkSuggested,
   zMeetingDetail,
   zMeetingListInput,
   zMeetingReaderAdd,
@@ -834,6 +835,8 @@ export const contract = {
       remove: oc.input(zMeetingLinkRemove).output(zMeetingLinkRemoved),
       list: oc.input(zMeetingRef).output(z.array(zMeetingLink)),
       byTarget: oc.input(zMeetingsOfTargetInput).output(z.array(zMeetingOfTarget)),
+      // Vy's tainted suggestion for the recorder (L1, #2587): contacts and deals the transcript names. Nothing is linked by it.
+      suggest: oc.input(zMeetingRef).output(zMeetingLinkSuggested),
     },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {

@@ -119,6 +119,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.summary.status',
       'meetings.link.list',
       'meetings.link.by_target',
+      'meetings.link.suggest',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Deal, MeetingLink, MeetingOfTarget } from '@crove/kernel-contract';
+import type { Deal, MeetingLink, MeetingLinkSuggested, MeetingOfTarget } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { crmCommands, crmQueries } from '@crove/mod-crm';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
@@ -131,6 +131,84 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     expect((await exec<MeetingLink>('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: p })).id).toBe(linkParty.id);
     expect(await linkCount(m)).toBe(3);
     expect((await audits('meetings.link.add', m)).length).toBe(3);
+  });
+
+  it("Vy's suggestion names the contacts and deals the transcript says, for the recorder only, and links nothing", async () => {
+    const m = await meeting('recorder', 'Họp với khách');
+    const acme = await party('Công ty Á Châu');
+    const quiet = await party('Công ty Không Nhắc');
+    await party('AB');
+    const d = await deal('recorder', acme);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: m,
+      segments: [
+        { startSeconds: 0, endSeconds: 5, speakerLabel: 'A', text: 'Chào anh, bên công ty á châu muốn xem gói kế toán năm.' },
+        { startSeconds: 5, endSeconds: 9, speakerLabel: 'B', text: 'Công ty Á Châu, đúng rồi. AB thì không liên quan.' },
+      ],
+    });
+    const before = await linkCount(m);
+    const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
+    expect(got.tainted).toBe(true);
+    expect(got.ai).toBe('off');
+    expect(got.parties).toEqual([{ partyId: acme, name: 'Công ty Á Châu', mentions: 2 }]);
+    expect(got.parties.map((p) => p.partyId)).not.toContain(quiet);
+    expect(got.deals).toEqual([expect.objectContaining({ dealId: d, partyId: acme })]);
+    // It reads: no link was written.
+    expect(await linkCount(m)).toBe(before);
+    // Linked items are left out, and a meeting with a deal is offered no deal.
+    await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: acme });
+    await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d });
+    expect(await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).toEqual({ tainted: true, ai: 'off', parties: [], deals: [] });
+    // Nobody but the recorder gets a suggestion (or learns the meeting exists).
+    expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
+    expect(await refuses(query('other', 'meetings.link.suggest', { meetingId: m }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
+    expect(await refuses(query('viewer', 'meetings.link.suggest', { meetingId: m }))).not.toBeNull();
+  });
+
+  it("Vy's suggestion offers no contact or deal the recorder cannot read, and no transcript but the recorder's own", async () => {
+    const m = await meeting('recorder', 'Họp có khách ẩn');
+    const visible = await party('Công ty Nhìn Thấy');
+    const hidden = await party('Công ty Bị Ẩn');
+    const hiddenDeal = await deal('recorder', hidden);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: m,
+      segments: [{ startSeconds: 0, endSeconds: 4, speakerLabel: 'A', text: 'Công ty Nhìn Thấy và Công ty Bị Ẩn đều có mặt, nói về gói kế toán năm.' }],
+    });
+    // A restrictive policy on party stands in for the legal-entity policy to come (#1538): the recorder's own reads do not see this row.
+    await admin((c) => c.query(`CREATE POLICY test_hide_party_suggest ON crove_kernel.party AS RESTRICTIVE FOR SELECT TO crove_tenant USING (id <> '${hidden}'::uuid)`));
+    try {
+      const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
+      expect(got.parties.map((p) => p.partyId)).toEqual([visible]);
+      expect(JSON.stringify(got)).not.toContain('Bị Ẩn');
+      expect(got.deals.map((d) => d.dealId)).not.toContain(hiddenDeal);
+    } finally {
+      await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_party_suggest ON crove_kernel.party'));
+    }
+    // The transcript is the recorder's: a reader who may read the meeting still gets no suggestion from it.
+    await admin((c) => c.query("INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)", [orgId, m, users.attendee]));
+    expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toBe('FORBIDDEN');
+  });
+
+  it("Vy's suggestion counts a repeated name, finds a capital Đ, offers no deal that is not open and nothing once the text period has ended", async () => {
+    const m = await meeting('recorder', 'Họp lặp tên');
+    const dong = await party('ĐÔNG PHƯƠNG');
+    const d = await deal('recorder', dong);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: m,
+      segments: [{ startSeconds: 0, endSeconds: 4, speakerLabel: 'A', text: 'Đông Phương, đông phương, ĐÔNG PHƯƠNG đông phương. Gói kế toán năm.' }],
+    });
+    const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
+    expect(got.parties).toEqual([{ partyId: dong, name: 'ĐÔNG PHƯƠNG', mentions: 4 }]);
+    expect(got.deals.map((x) => x.dealId)).toEqual([d]);
+    // A deal that is lost is not offered.
+    await exec('recorder', 'crm.deal.move', { dealId: d, version: 1, stageId: (await exec<Array<{ id: string; kind: string }>>('recorder', 'crm.pipeline.setup', {})).find((x) => x.kind === 'lost')?.id });
+    expect((await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).deals).toEqual([]);
+    // The sensitive read is audited like the transcript's own.
+    const read = await admin((c) => c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.link.suggest' AND detail ->> 'read' = 'sensitive'", [orgId]));
+    expect(read.rowCount).toBeGreaterThan(0);
+    // Past its text day the transcript is gone from the meeting: nothing is derived from it.
+    await admin((c) => c.query('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, m]));
+    expect(await refuses(query('recorder', 'meetings.link.suggest', { meetingId: m }))).toBe('MEETING_NOT_FOUND');
   });
 
   it('allows one deal per meeting and refuses a target that is not there', async () => {

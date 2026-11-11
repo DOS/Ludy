@@ -60,6 +60,20 @@ describe('MeetingLinks', () => {
     expect(html).toContain(en.meetings.links.searchLabel);
   });
 
+  it("shows the recorder Vy's suggestion as a suggestion to click (never linked by itself), and a reader none", () => {
+    client.current.setQueryData(['meetings', 'links', 'list'], []);
+    client.current.setQueryData(['meetings', 'links', 'suggest'], { tainted: true, ai: 'off', parties: [{ partyId: 'p9', name: 'Công ty Á Châu', mentions: 2 }], deals: [{ dealId: 'd9', title: 'Gói kế toán', partyId: 'p9', partyName: 'Công ty Á Châu' }] });
+    const html = renderToStaticMarkup(wrap(<MeetingLinks meetingId="m1" isRecorder />));
+    expect(html).toContain(en.meetings.links.suggestTitle);
+    expect(html).toContain(en.meetings.links.suggestNote);
+    expect(html.match(/data-testid="suggested-party"/g)).toHaveLength(1);
+    expect(html.match(/data-testid="suggested-deal"/g)).toHaveLength(1);
+    // Suggestions are not links: the linked list stays empty until a click.
+    expect(html).not.toContain('data-testid="meeting-link"');
+    expect(html).toContain(en.meetings.links.none);
+    expect(renderToStaticMarkup(wrap(<MeetingLinks meetingId="m1" isRecorder={false} />))).not.toContain('suggested-links');
+  });
+
   it('shows a reader the links with no remove button and no add controls', () => {
     client.current.setQueryData(['meetings', 'links', 'list'], [link({})]);
     const html = renderToStaticMarkup(wrap(<MeetingLinks meetingId="m1" isRecorder={false} />));

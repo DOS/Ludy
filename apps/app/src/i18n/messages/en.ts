@@ -1864,6 +1864,9 @@ export const en = {
       addDeal: 'Link deal',
       forTarget: 'Meetings',
       forTargetEmpty: 'No meetings recorded for this yet.',
+      suggestTitle: 'Vy suggests links',
+      suggestNote: 'Vy read the transcript and suggests these; they may be wrong. A meeting is linked only when you click.',
+      suggestMentions: 'mentioned: {count}',
       prefillFailed: 'A link to the booking could not be saved. Link it on the meeting page.',
     },
   },
@@ -10609,6 +10612,7 @@ export const en = {
         by_target: 'See the meetings linked to a contact or deal',
         list: 'See the links of a meeting',
         remove: 'Remove a link of a meeting',
+        suggest: 'Vy suggests contacts and deals from the transcript',
       },
       reader: {
         add: 'Add meeting reader',
