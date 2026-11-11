@@ -149,6 +149,7 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     const before = await linkCount(m);
     const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
     expect(got.tainted).toBe(true);
+    expect(got.ai).toBe('off');
     expect(got.parties).toEqual([{ partyId: acme, name: 'Công ty Á Châu', mentions: 2 }]);
     expect(got.parties.map((p) => p.partyId)).not.toContain(quiet);
     expect(got.deals).toEqual([expect.objectContaining({ dealId: d, partyId: acme })]);
@@ -157,11 +158,35 @@ suite('meeting links on PostgreSQL (#2587)', () => {
     // Linked items are left out, and a meeting with a deal is offered no deal.
     await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: acme });
     await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'deal', targetId: d });
-    expect(await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).toEqual({ tainted: true, parties: [], deals: [] });
+    expect(await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m })).toEqual({ tainted: true, ai: 'off', parties: [], deals: [] });
     // Nobody but the recorder gets a suggestion (or learns the meeting exists).
     expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
     expect(await refuses(query('other', 'meetings.link.suggest', { meetingId: m }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
     expect(await refuses(query('viewer', 'meetings.link.suggest', { meetingId: m }))).not.toBeNull();
+  });
+
+  it("Vy's suggestion offers no contact or deal the recorder cannot read, and no transcript but the recorder's own", async () => {
+    const m = await meeting('recorder', 'Họp có khách ẩn');
+    const visible = await party('Công ty Nhìn Thấy');
+    const hidden = await party('Công ty Bị Ẩn');
+    const hiddenDeal = await deal('recorder', hidden);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId: m,
+      segments: [{ startSeconds: 0, endSeconds: 4, speakerLabel: 'A', text: 'Công ty Nhìn Thấy và Công ty Bị Ẩn đều có mặt, nói về gói kế toán năm.' }],
+    });
+    // A restrictive policy on party stands in for the legal-entity policy to come (#1538): the recorder's own reads do not see this row.
+    await admin((c) => c.query(`CREATE POLICY test_hide_party_suggest ON crove_kernel.party AS RESTRICTIVE FOR SELECT TO crove_tenant USING (id <> '${hidden}'::uuid)`));
+    try {
+      const got = await query<MeetingLinkSuggested>('recorder', 'meetings.link.suggest', { meetingId: m });
+      expect(got.parties.map((p) => p.partyId)).toEqual([visible]);
+      expect(JSON.stringify(got)).not.toContain('Bị Ẩn');
+      expect(got.deals.map((d) => d.dealId)).not.toContain(hiddenDeal);
+    } finally {
+      await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_party_suggest ON crove_kernel.party'));
+    }
+    // The transcript is the recorder's: a reader who may read the meeting still gets no suggestion from it.
+    await admin((c) => c.query("INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)", [orgId, m, users.attendee]));
+    expect(await refuses(query('attendee', 'meetings.link.suggest', { meetingId: m }))).toBe('FORBIDDEN');
   });
 
   it('allows one deal per meeting and refuses a target that is not there', async () => {

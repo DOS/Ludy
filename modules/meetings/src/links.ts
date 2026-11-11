@@ -249,7 +249,7 @@ export const meetingLinkSuggest = defineQuery({
     const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('recorder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
     if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder gets suggestions');
-    const none: MeetingLinkSuggested = { tainted: true, parties: [], deals: [] };
+    const none: MeetingLinkSuggested = { tainted: true, ai: 'off', parties: [], deals: [] };
     const segments = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('start_seconds').orderBy('id').execute();
     const body = ` ${fold(segments.map((r) => r.text).join(' '))} `;
     if (body.trim() === '') return none;
@@ -281,7 +281,7 @@ export const meetingLinkSuggest = defineQuery({
         for (const d of answer.value) if (d.stageKind === 'open' && mentionsOf(body, fold(d.title)) > 0) deals.push({ dealId: d.id, title: d.title, partyId: d.partyId, partyName: d.partyName });
       }
     }
-    return { tainted: true, parties, deals: deals.slice(0, MEETING_LINK_SUGGEST_MAX) };
+    return { tainted: true, ai: 'off', parties, deals: deals.slice(0, MEETING_LINK_SUGGEST_MAX) };
   },
 });
 

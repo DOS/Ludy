@@ -62,7 +62,7 @@ describe('MeetingLinks', () => {
 
   it("shows the recorder Vy's suggestion as a suggestion to click (never linked by itself), and a reader none", () => {
     client.current.setQueryData(['meetings', 'links', 'list'], []);
-    client.current.setQueryData(['meetings', 'links', 'suggest'], { tainted: true, parties: [{ partyId: 'p9', name: 'Công ty Á Châu', mentions: 2 }], deals: [{ dealId: 'd9', title: 'Gói kế toán', partyId: 'p9', partyName: 'Công ty Á Châu' }] });
+    client.current.setQueryData(['meetings', 'links', 'suggest'], { tainted: true, ai: 'off', parties: [{ partyId: 'p9', name: 'Công ty Á Châu', mentions: 2 }], deals: [{ dealId: 'd9', title: 'Gói kế toán', partyId: 'p9', partyName: 'Công ty Á Châu' }] });
     const html = renderToStaticMarkup(wrap(<MeetingLinks meetingId="m1" isRecorder />));
     expect(html).toContain(en.meetings.links.suggestTitle);
     expect(html).toContain(en.meetings.links.suggestNote);
