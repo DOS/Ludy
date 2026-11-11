@@ -116,7 +116,7 @@ export const ENGLISH: Strings = {
   micMissing: 'The microphone is not allowed: the recording has the tab audio only, not your voice.',
   pending: 'Recordings still on this device',
   retry: 'Upload again',
-  discard: 'Delete from this device',
+  discard: 'Remove from this device',
   recordingTitle: 'Ludy is recording',
   micTitle: 'Allow the microphone for Ludy',
   micHeading: 'Allow the microphone for the Ludy extension',
