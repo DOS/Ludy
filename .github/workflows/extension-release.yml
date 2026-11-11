@@ -58,6 +58,12 @@ jobs:
           else
             [ "$REF_TYPE" = tag ] || { echo "::error::a release is built from a tag"; exit 1; }
             version="$(node tools/extension-version.mjs "$REF_NAME")"
+            # The tag and the package agree (runbook C1: the version is bumped in apps/extension/package.json first).
+            package_version="$(node -p 'JSON.parse(require("node:fs").readFileSync("apps/extension/package.json", "utf8")).version')"
+            if [ "$package_version" != "$version" ]; then
+              echo "::error::$REF_NAME says $version but apps/extension/package.json says $package_version"
+              exit 1
+            fi
             # The release is built from code of main only: the tagged commit is one.
             git fetch --no-tags origin main
             if ! git merge-base --is-ancestor "$SHA" origin/main; then
@@ -68,21 +74,21 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "### Extension $version ($SHA)" >> "$GITHUB_STEP_SUMMARY"
 
-      # A release must have passed CI: the extension job of ci.yml succeeded on this commit. Waits up to 20 minutes for a run that is still going, as after a tag right
+      # A release must have passed CI: the required check of ci.yml (typecheck and unit tests included; it passes only when the `extension` job did too) succeeded on this commit. Waits up to 20 minutes for a run that is still going, as after a tag right
       # after a merge. (A dry run does not wait.)
-      - name: The extension CI job is green on this commit
+      - name: The required CI check is green on this commit
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          JOB: Browser extension (build, manifest permissions, Chromium)
+          JOB: Lint, typecheck, test
         run: |
           set -euo pipefail
           deadline=$((SECONDS + 1200))
           while :; do
             row="$(gh api "repos/$REPO/commits/$SHA/check-runs?filter=latest&per_page=100" --paginate \
-              --jq ".check_runs[] | select(.name == \"$JOB\") | [.status, (.conclusion // \"\")] | @tsv" | head -n 1)"
+              --jq ".check_runs[] | select(.name == \"$JOB\") | [.status, (.conclusion // \"\")] | @tsv" | head -n 1)" || row="api error"
             case "$row" in
               "completed"$'\t'"success") echo "$JOB: success"; exit 0 ;;
               "completed"*) echo "::error::$JOB did not succeed on $SHA: $row"; exit 1 ;;

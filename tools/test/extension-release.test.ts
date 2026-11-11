@@ -42,7 +42,7 @@ describe('the extension release workflow', () => {
     const on = workflow.slice(workflow.indexOf('\non:\n'), workflow.indexOf('\npermissions:\n'));
     expect(on).toContain("tags: ['ext-v*']");
     expect(on).toContain('workflow_dispatch:');
-    expect(on).not.toMatch(/pull_request|branches:|schedule:|workflow_run/);
+    expect(on).not.toMatch(/pull_request|branches:|schedule:|workflow_run|workflow_call|repository_dispatch|issue_comment|release:/);
   });
 
   it('uses no secret and no store: nothing is uploaded to the Chrome Web Store from CI', () => {
@@ -55,9 +55,12 @@ describe('the extension release workflow', () => {
     const all = jobs();
     expect(Object.keys(all).sort()).toEqual(['build', 'release']);
     expect(workflow.slice(0, workflow.indexOf('\njobs:\n'))).toMatch(/\npermissions:\n  contents: read\n/);
-    expect(all.build).not.toContain('contents: write');
-    expect(all.release).toContain('contents: write');
-    expect(all.release).not.toMatch(/actions\/checkout|pnpm|npm |setup-node|node tools|apps\/extension/);
+    // The permissions are exact: the build job reads, the release job writes contents and reads actions, nothing else (no id-token, packages or pull-requests).
+    expect(all.build).toMatch(/\n    permissions:\n      contents: read\n      checks: read\n/);
+    expect(all.release).toMatch(/\n    permissions:\n      contents: write\n      actions: read\n/);
+    // Only a push of a tag publishes: a dispatch from any ref, a tag included, never reaches the write token.
+    expect(all.release).toContain("if: github.event_name == 'push' && github.ref_type == 'tag'");
+    expect(all.release).not.toMatch(/actions\/checkout|actions\/download-artifact|uses: \.|docker:|pnpm|npm |setup-node|node |git |gh repo|curl|wget|bash |sh -c|apps\/extension/);
     expect(all.release).toContain('--verify-tag');
     expect(all.release).toContain('--latest=false');
     expect(all.release).toContain('sha256sum --check');
@@ -78,10 +81,16 @@ describe('the extension release workflow', () => {
     expect(build.indexOf('zip -X')).toBeGreaterThan(build.indexOf('check:manifest'));
     expect(build).toContain('tools/extension-version.mjs');
     expect(build).toContain('git merge-base --is-ancestor');
+    // The tag and the package agree, and the CI gate is the required aggregate check.
+    expect(build).toContain('apps/extension/package.json');
+    expect(build).toContain('JOB: Lint, typecheck, test');
   });
 
   it('keeps the input and the tag out of the shell text: they reach the script through the environment', () => {
-    const runs = [...workflow.matchAll(/run: \|?\n?([\s\S]*?)(?=\n      - |\n  [a-z]|$)/g)].map((m) => m[1] as string);
+    // No expression in any `run:` text, nor in a `shell:` or `working-directory:` line (they reach the shell as text); `env:` is where they belong.
+    const runs = [...workflow.matchAll(/run:[ \t]*\|?\n?([\s\S]*?)(?=\n      - |\n  [a-z]|$)/g)].map((m) => m[1] as string);
+    expect(runs.length).toBeGreaterThanOrEqual(9);
     for (const run of runs) expect(run, run.slice(0, 60)).not.toMatch(/\$\{\{/);
+    expect(workflow).not.toMatch(/(?:shell|working-directory):.*\$\{\{/);
   });
 });
