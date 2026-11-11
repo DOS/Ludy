@@ -1,0 +1,179 @@
+name: extension-release
+
+# The Ludy browser extension's release package (#3009; docs/runbooks/extension-store.md, plan docs/plan/meetings.md section 5.7): a tag `ext-vX.Y.Z` on a commit of
+# main builds the package exactly as the `extension` job of ci.yml does (no bundler, no runtime dependency), checks the built manifest against the fixed permission
+# list, zips it with manifest.json at the zip's root, and attaches the zip and its SHA-256 to a GitHub release.
+#
+# NOTHING is published to the Chrome Web Store from here, and no store credential or secret is used anywhere: uploading the zip is the owner's step, from the owner's
+# developer account. The write permission is held by the second job only, which checks out nothing and runs no repository code: it downloads what the first job built,
+# checks its hash and publishes it.
+#
+# A run by hand (`workflow_dispatch`) is a dry run on any ref: it builds, checks and zips, and keeps the zip as a workflow artifact for 7 days. It creates no release.
+
+on:
+  push:
+    tags: ['ext-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The manifest version the dry run stamps (for example 0.1.1); a tag push takes its version from the tag
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and zip the extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: The version, and that the tag is a commit of main
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            version="$(node tools/extension-version.mjs "ext-v$INPUT_VERSION")"
+          else
+            [ "$REF_TYPE" = tag ] || { echo "::error::a release is built from a tag"; exit 1; }
+            version="$(node tools/extension-version.mjs "$REF_NAME")"
+            # The release is built from code of main only: the tagged commit is one.
+            git fetch --no-tags origin main
+            if ! git merge-base --is-ancestor "$SHA" origin/main; then
+              echo "::error::$REF_NAME ($SHA) is not a commit of main"
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "### Extension $version ($SHA)" >> "$GITHUB_STEP_SUMMARY"
+
+      # A release must have passed CI: the extension job of ci.yml succeeded on this commit. Waits up to 20 minutes for a run that is still going, as after a tag right
+      # after a merge. (A dry run does not wait.)
+      - name: The extension CI job is green on this commit
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          JOB: Browser extension (build, manifest permissions, Chromium)
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 1200))
+          while :; do
+            row="$(gh api "repos/$REPO/commits/$SHA/check-runs?filter=latest&per_page=100" --paginate \
+              --jq ".check_runs[] | select(.name == \"$JOB\") | [.status, (.conclusion // \"\")] | @tsv" | head -n 1)"
+            case "$row" in
+              "completed"$'\t'"success") echo "$JOB: success"; exit 0 ;;
+              "completed"*) echo "::error::$JOB did not succeed on $SHA: $row"; exit 1 ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::$JOB has no finished run on $SHA after 20 minutes"; exit 1; fi
+            echo "waiting for $JOB on $SHA (${row:-no run yet})"
+            sleep 30
+          done
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@crove/extension..."
+
+      - name: Build the package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node apps/extension/scripts/build.mjs --version "$VERSION"
+
+      - name: Manifest permissions match the fixed list
+        run: pnpm --filter @crove/extension check:manifest
+
+      - name: Zip the package, manifest.json at the root, and hash it
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/package"
+          zip_file="$RUNNER_TEMP/package/ludy-extension-$VERSION.zip"
+          (cd apps/extension/dist && find . -type f | LC_ALL=C sort | zip -X -q "$zip_file" -@)
+          unzip -p "$zip_file" manifest.json | node -e 'const m = JSON.parse(require("node:fs").readFileSync(0, "utf8")); if (m.version !== process.argv[1]) { console.error("the zip manifest says " + m.version); process.exit(1); } console.log("manifest.json at the root of the zip, version " + m.version)' "$VERSION"
+          (cd "$RUNNER_TEMP/package" && sha256sum "ludy-extension-$VERSION.zip" | tee "ludy-extension-$VERSION.zip.sha256")
+          {
+            echo '```'
+            cat "$RUNNER_TEMP/package/ludy-extension-$VERSION.zip.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the zip for the next job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extension-package
+          path: ${{ runner.temp }}/package/
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Attach the zip to a GitHub release
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # No checkout and no repository code in this job: it holds the write permission, and only moves what the build job made.
+      - name: Download the package the build job made
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: gh run download "$RUN_ID" --repo "$REPO" --name extension-package --dir "$RUNNER_TEMP/package"
+
+      - name: Check the hash and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/package"
+          sha256sum --check "ludy-extension-$VERSION.zip.sha256"
+          {
+            echo "The Ludy browser extension $VERSION, built in CI from this tag (commit of main). Permissions checked against the fixed list of plan section 5.7."
+            echo
+            echo "This release is the package only. It is not on the Chrome Web Store: the owner uploads the zip from the developer account (docs/runbooks/extension-store.md)."
+            echo
+            echo '```'
+            cat "ludy-extension-$VERSION.zip.sha256"
+            echo '```'
+          } > notes.md
+          # Not the latest release: the app's own v* releases are.
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "::error::$TAG already has a release; a tag is released once"
+            exit 1
+          fi
+          gh release create "$TAG" --repo "$REPO" --verify-tag --latest=false --title "Extension $VERSION" --notes-file notes.md "ludy-extension-$VERSION.zip" "ludy-extension-$VERSION.zip.sha256"

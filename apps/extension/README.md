@@ -26,7 +26,7 @@ Never `<all_urls>`, `tabs`, `cookies`, `history`, `activeTab`, content scripts o
 pnpm --filter @crove/extension build                       # dist/, the unpacked package
 pnpm --filter @crove/extension check:manifest              # dist/manifest.json against the fixed list
 pnpm --filter @crove/extension test:e2e                    # unpacked in Chromium, fake server, fake media
-node apps/extension/scripts/build.mjs --version 1.2.3      # a release build from a tag, e.g. extension-v1.2.3
+node apps/extension/scripts/build.mjs --version 1.2.3      # a release build by hand; CI does it for a tag ext-v1.2.3 (.github/workflows/extension-release.yml)
 ```
 
 A Ludy server signs in only the extension ids it lists: the store's id by default (not set until the store listing exists, so until then an unpacked build always needs its own), or the ids in its `EXTENSION_IDS` setting (#2740). An unpacked build has its own id (shown at `chrome://extensions`), so list it in `EXTENSION_IDS` on the server it connects to, or the sign-in window says the request is not valid.
