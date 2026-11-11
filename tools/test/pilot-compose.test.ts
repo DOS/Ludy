@@ -3,10 +3,12 @@
 // pilot layout runs api and worker apart, drops the worker's database login from the API, and keeps the all-in-one
 // service behind a profile. docker-compose.yml alone must stay what `docker compose up` runs on a laptop.
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { assertSplitRoles, loadConfig } from '../../apps/kernel/src/config.ts';
 
 const repo = resolve(import.meta.dirname, '../..');
 // `!reset` and `!override` need compose v2.24; a runner without docker compose skips the file, as deploy.test.ts does.
@@ -21,6 +23,7 @@ interface Service {
   ports?: unknown[];
   networks?: Record<string, unknown>;
   environment?: Record<string, string | null>;
+  volumes?: Array<{ target?: string; read_only?: boolean }>;
   healthcheck?: { disable?: boolean };
 }
 
@@ -121,6 +124,68 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(api?.ports).toHaveLength(1);
     expect(worker?.ports).toBeUndefined();
     expect(worker?.healthcheck?.disable).toBe(true);
+  });
+
+  // #2130: what each role keeps of the release's `crove` service. The lists come from reading which role reads each variable
+  // (kernel.ts start(): the api branch builds the HTTP app, the worker branch runs startWorker); see the audit on the issue. A variable in
+  // neither list reaches both roles, which is the safe default for a new one.
+  const WORKER_ONLY = [
+    'ARCHIVE_STORE', 'ARCHIVE_S3_BUCKET', 'ARCHIVE_LOCK_MODE', 'ARCHIVE_RETENTION_DAYS', 'ARCHIVE_LAG_SECONDS', 'ARCHIVE_RESTORE_ALERT_DAYS',
+    'ORG_LIMIT_INBOUND_EMAILS_PER_DAY', 'ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY', 'ORG_LIMIT_ATTACHMENT_MB_PER_DAY', 'ORG_LIMIT_EXTRACTION_PAGES_PER_DAY',
+    'ORG_LIMIT_AI_COST_PER_DAY', 'ORG_PURGE_MIN_DAYS', 'REFUSAL_TALLY_RETENTION_DAYS', 'OUTBOX_LAG_PAUSE_SECONDS', 'WORKER_DATABASE_POOL_MAX',
+    'TRANSCRIBE_API_KEY', 'TRANSCRIBE_API_MODE', 'AI_PRICE_AUDIO_PER_MIN',
+    // Already taken away from the API by #2133 and #2118.
+    'WORKER_DATABASE_URL', 'EXTRACT_URL',
+  ];
+  const API_ONLY = ['OAUTH_SERVER', 'OAUTH_JWKS', 'OAUTH_COOKIE_KEYS', 'MCP_ALLOWED_ORIGINS'];
+  // What the API and the worker both read, and the issue guessed were worker-only: they must stay on the API.
+  const API_NEEDS = ['S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'STORAGE', 'CREDENTIAL_KEY', 'CHANNEL_META_APP_SECRET', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_THREADS_APP_SECRET', 'EXPORT_ENCRYPTION_KEY', 'EVIDENCE_LOCK_DAYS', 'EXPORT_RETENTION_DAYS'];
+
+  it('takes the worker-only settings and the archive volume away from the API, and the API-only ones from the worker, and nothing else', () => {
+    const all = config(['docker-compose.yml', 'compose.pilot.yml'], {}, ['all-in-one'])['crove'];
+    const pilot = config(['docker-compose.yml', 'compose.pilot.yml']);
+    const crove = Object.keys(all?.environment ?? {});
+    const apiKeys = Object.keys(pilot['api']?.environment ?? {}).sort();
+    const workerKeys = Object.keys(pilot['worker']?.environment ?? {}).sort();
+    // Exactly the lists are gone, and every other variable of crove reaches both roles, so a new variable stays on both until it is sorted here.
+    expect(apiKeys).toEqual(crove.filter((k) => !WORKER_ONLY.includes(k)).sort());
+    expect(workerKeys).toEqual(crove.filter((k) => !API_ONLY.includes(k)).sort());
+    // Every name in the lists exists in crove (a renamed variable would drop out of the list unnoticed).
+    for (const name of [...WORKER_ONLY, ...API_ONLY]) expect(crove, name).toContain(name);
+    for (const name of API_NEEDS) expect(apiKeys, name).toContain(name);
+    // Volumes: the API has no archive, keeps files, keys and the read-only status; the worker keeps the archive.
+    const targets = (name: string) => (pilot[name]?.volumes ?? []).map((v) => v.target).sort();
+    expect(targets('api')).toEqual(['/data/files', '/data/keys', '/data/status']);
+    expect(targets('worker')).toEqual(['/data/archive', '/data/files', '/data/keys', '/data/status']);
+    expect(pilot['api']?.volumes?.find((v) => v.target === '/data/status')?.read_only).toBe(true);
+  });
+
+  it('starts each role on exactly the environment it is left with: a public deployment loads its config and the api role passes its own check', () => {
+    const pilot = config(['docker-compose.yml', 'compose.pilot.yml'], {
+      PUBLIC_URL: 'https://books.example.com',
+      PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1',
+    });
+    const strings = (name: string): Record<string, string> =>
+      Object.fromEntries(Object.entries(pilot[name]?.environment ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string'));
+    // The deployment's own secrets, in place of the sample values compose falls back to (config refuses those on a public URL). Made here
+    // at random, so no literal in this file looks like a secret to the secret scan.
+    const random = () => randomBytes(32).toString('base64');
+    const secrets = {
+      AUTH_JWT_SECRET: random(),
+      AUTH_AUTOCONFIRM: 'false',
+      CROVE_CONTEXT_TOKEN_KEY: random(),
+      DATABASE_URL: `postgres://crove_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
+      EXPORT_ENCRYPTION_KEY: random(),
+    };
+    const workerSecret = { WORKER_DATABASE_URL: `postgres://crove_worker:${randomBytes(18).toString('hex')}@db:5432/postgres` };
+    // The API: loads, refuses nothing of its own, and has none of the worker's.
+    const api = loadConfig({ ...strings('api'), ...secrets });
+    expect(() => assertSplitRoles(api, 'api')).not.toThrow();
+    // The worker: loads without the API's OAuth settings, and turning the endpoint on in the API's environment does not leak to it.
+    const worker = loadConfig({ ...strings('worker'), ...secrets, ...workerSecret });
+    expect(() => assertSplitRoles(worker, 'worker')).not.toThrow();
+    expect(worker.OAUTH_SERVER).toBe('off');
+    expect(worker.OAUTH_JWKS).toBeUndefined();
   });
 
   it('runs the finance module by default for api, worker and prober, and follows CROVE_MODULES', () => {

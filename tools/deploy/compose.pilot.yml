@@ -32,6 +32,33 @@ services:
       WORKER_DATABASE_URL: !reset null
       EXTRACT_URL: !reset null
       MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-1000000000}
+      # What only the worker reads (#2130; the API's own list is in tools/test/pilot-compose.test.ts, which also fails when a new variable of
+      # `crove` is not sorted into one list). The WORM archive is one group: config refuses ARCHIVE_STORE=s3 without its bucket, so none of it
+      # is left behind. The S3 credentials, the channel app secrets and the credential key stay: the API uses them (uploads, webhook
+      # signatures, the connect flows, the channel broker).
+      ARCHIVE_STORE: !reset null
+      ARCHIVE_S3_BUCKET: !reset null
+      ARCHIVE_LOCK_MODE: !reset null
+      ARCHIVE_RETENTION_DAYS: !reset null
+      ARCHIVE_LAG_SECONDS: !reset null
+      ARCHIVE_RESTORE_ALERT_DAYS: !reset null
+      ORG_LIMIT_INBOUND_EMAILS_PER_DAY: !reset null
+      ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY: !reset null
+      ORG_LIMIT_ATTACHMENT_MB_PER_DAY: !reset null
+      ORG_LIMIT_EXTRACTION_PAGES_PER_DAY: !reset null
+      ORG_LIMIT_AI_COST_PER_DAY: !reset null
+      ORG_PURGE_MIN_DAYS: !reset null
+      REFUSAL_TALLY_RETENTION_DAYS: !reset null
+      OUTBOX_LAG_PAUSE_SECONDS: !reset null
+      WORKER_DATABASE_POOL_MAX: !reset null
+      TRANSCRIBE_API_KEY: !reset null
+      TRANSCRIBE_API_MODE: !reset null
+      AI_PRICE_AUDIO_PER_MIN: !reset null
+    # No `archive` volume: the API never reads the archive (the year-archive route reads the STORAGE store).
+    volumes: !override
+      - files:/data/files
+      - keys:/data/keys
+      - status:/data/status:ro
     networks: !override
       - default
       - media
@@ -47,6 +74,12 @@ services:
       disable: true
     environment:
       CROVE_MODULES: ${CROVE_MODULES:-finance}
+      # What only the API reads (#2130): the MCP endpoint's authorization server, with its signing key and cookie secrets. One group, because
+      # OAUTH_SERVER=on makes config demand the other two.
+      OAUTH_SERVER: !reset null
+      OAUTH_JWKS: !reset null
+      OAUTH_COOKIE_KEYS: !reset null
+      MCP_ALLOWED_ORIGINS: !reset null
     ports: !reset []
 
   # The pilot host has 8 GB for PostgreSQL, Supabase Auth, the kernel and the sandboxes, so the media sandbox is held to a smaller recording than the
