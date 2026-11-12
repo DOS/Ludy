@@ -49,7 +49,8 @@ export function renderFollowupMail(raw: unknown, context: { replyTo: string | nu
   const mail = zFollowupMail.parse(raw);
   const t = LABELS[mail.lang];
   const brand = context.brand ?? 'Ludy';
-  const { facts } = mail;
+  // The facts are the recorder's published text: cleaned here as the items are (no bidi or zero-width characters), then escaped.
+  const facts = { summary: followupClean(mail.facts.summary, false), decisions: mail.facts.decisions.map((d) => followupClean(d, true)).filter((d) => d !== ''), items: mail.facts.items };
   const items = facts.items.map((i) => itemLine(i, mail.lang));
   const text = [
     mail.greeting,

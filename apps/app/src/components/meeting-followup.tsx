@@ -30,7 +30,7 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   );
 }
 
-export function FollowupForm({ draft, onSent }: { draft: FollowupDraft; onSent: (queued: number) => void }) {
+export function FollowupForm({ draft, onSent, onReload }: { draft: FollowupDraft; onSent: (queued: number) => void; onReload?: () => void }) {
   const t = useTranslations('meetings.followup');
   const [subject, setSubject] = useState(draft.words.subject);
   const [greeting, setGreeting] = useState(draft.words.greeting);
@@ -56,7 +56,8 @@ export function FollowupForm({ draft, onSent }: { draft: FollowupDraft; onSent: 
     mutationFn: () => orpc.meetings.followup.wording.call({ meetingId: draft.meetingId, ...(hint.trim() ? { hint: hint.trim() } : {}) }),
     onSuccess: (answer: FollowupWording) => {
       if (!answer.words) return;
-      setBefore({ lead, closing });
+      // The words before Vy's first text: Undo goes back to these, never to an earlier Vy text that would lose its review tick.
+      setBefore((b) => b ?? { lead, closing });
       setLead(answer.words.lead);
       setClosing(answer.words.closing);
       // Vy's words are the model's until the recorder says they read them.
@@ -122,13 +123,16 @@ export function FollowupForm({ draft, onSent }: { draft: FollowupDraft; onSent: 
   const picked = [...chosen];
   const outsiders = picked.filter((a) => !suggested.has(a));
   const repeats = draft.recipients.filter((r) => r.alreadySent && chosen.has(r.email));
+  const sendCode = (send.error as { code?: string } | null)?.code;
+  // The tick also shows when the server says an address (one the recorder added) already got the mail.
+  const askRepeat = repeats.length > 0 || sendCode === 'ALREADY_SENT';
   const blocked =
     picked.length === 0 ||
     picked.length > FOLLOWUP_RECIPIENTS_MAX ||
     draft.sendsLeft === 0 ||
     (fromVy && !reviewed) ||
     outsiders.some((a) => !confirmed.has(a)) ||
-    (repeats.length > 0 && !confirmRepeat) ||
+    (askRepeat && !confirmRepeat && repeats.length > 0) ||
     subject.trim() === '' ||
     lead.trim() === '' ||
     closing.trim() === '' ||
@@ -253,10 +257,10 @@ export function FollowupForm({ draft, onSent }: { draft: FollowupDraft; onSent: 
           </Button>
         </div>
         {extraError && <ErrorText>{t('addressInvalid')}</ErrorText>}
-        {repeats.length > 0 && (
+        {askRepeat && (
           <label className="flex items-center gap-2 text-xs" data-testid="followup-repeat">
             <Checkbox checked={confirmRepeat} onCheckedChange={(on) => { setConfirmRepeat(on === true); touch(); }} />
-            {t('confirmRepeat', { count: String(repeats.length) })}
+            {t('confirmRepeat', { count: String(Math.max(repeats.length, 1)) })}
           </label>
         )}
       </section>
@@ -264,6 +268,11 @@ export function FollowupForm({ draft, onSent }: { draft: FollowupDraft; onSent: 
       <div className="space-y-2 border-t pt-3">
         <p className="text-xs text-muted-foreground">{draft.sendsLeft === 0 ? t('limitReached') : t('sendsLeft', { count: String(draft.sendsLeft) })}</p>
         {send.error && <ErrorText>{errorMessage(send.error)}</ErrorText>}
+        {sendCode === 'STALE_FOLLOWUP' && onReload && (
+          <Button variant="outline" size="sm" onClick={onReload} data-testid="followup-reload">
+            {t('reload')}
+          </Button>
+        )}
         <Button loading={send.isPending} disabled={blocked || wording.isPending} onClick={() => send.mutate()} data-testid="followup-send">
           {t('send', { count: String(picked.length) })}
         </Button>
@@ -302,5 +311,5 @@ function FollowupBody({ meetingId, onSent }: { meetingId: string; onSent: (queue
   const draft = useQuery({ ...orpc.meetings.followup.draft.queryOptions({ input: { meetingId } }), ...FRESH });
   if (draft.isPending) return null;
   if (draft.error) return <ErrorText>{errorMessage(draft.error)}</ErrorText>;
-  return <FollowupForm draft={draft.data} onSent={onSent} />;
+  return <FollowupForm key={draft.data.factsKey} draft={draft.data} onSent={onSent} onReload={() => void draft.refetch()} />;
 }

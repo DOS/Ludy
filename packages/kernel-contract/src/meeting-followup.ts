@@ -50,7 +50,7 @@ const VI_NUMBER_BEFORE_UNIT = new RegExp(
 const VI_MAGNITUDE = /(?<![\p{L}])(?:trăm|nghìn|ngàn|triệu|tỷ|tỉ)(?![\p{L}])/iu;
 const CURRENCY_SIGN = /[$€£¥₫₩₹]/u;
 // Anything that reads as an address: a dot between letters, an obfuscated dot or at sign, a scheme, "www", "@".
-const ADDRESS = /\p{L}\.\p{L}|\p{L}\s*\[\.\]\s*\p{L}|\p{L}\s*\(dot\)\s*\p{L}|\p{L}\s+dot\s+\p{L}|\(at\)|@|:\/\/|(?<![\p{L}])www(?![\p{L}])/iu;
+const ADDRESS = /\p{L}\p{M}*[.。．｡]\p{L}|\p{L}\s*[[(]\s*(?:\.|dot)\s*[\])]\s*\p{L}|\p{L}\s+dot\s+\p{L}|[[(]\s*at\s*[\])]|@|:\/\/|(?<![\p{L}])www(?![\p{L}])/iu;
 
 const lengthOf = (text: string): number => Array.from(text).length;
 

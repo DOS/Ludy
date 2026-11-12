@@ -1789,6 +1789,7 @@ export const vi = {
       sendsLeft: 'Còn {count} lần gửi cho cuộc họp này trong 24 giờ.',
       limitReached: 'Cuộc họp này đã gửi đủ số lần trong 24 giờ. Hãy thử lại sau.',
       send: 'Gửi cho {count} người',
+      reload: 'Mở lại bản nháp mới',
       queued: 'Đã xếp hàng gửi {count} thư.',
     },
     results: {

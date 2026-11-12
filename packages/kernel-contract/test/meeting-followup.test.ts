@@ -39,7 +39,7 @@ describe('followupWordsProblem', () => {
     expect(problem('x'.repeat(601))).toBe('TOO_LONG');
     expect(followupWordsProblem('x'.repeat(FOLLOWUP_CLOSING_MAX + 1), FOLLOWUP_CLOSING_MAX)).toBe('TOO_LONG');
     for (const text of ['pay 5', '1.000.000 đồng', '$10', '₫ nhiều', 'twenty days', 'one million', 'hai mươi ngày', 'ba trăm', 'năm triệu', 'ten']) expect(problem(text), text).toBe('FIGURES');
-    for (const text of ['https://a.test', 'a@b.test', 'evil.club', 'mail (at) host', 'host (dot) com', 'www tại đây', 'x[.]y']) expect(problem(text), text).toBe('LINK');
+    for (const text of ['https://a.test', 'a@b.test', 'evil.club', 'mail (at) host', 'host (dot) com', 'www tại đây', 'x[.]y', 'an [at] ludy [dot] vn', 'a。com', 'ludy｡vn']) expect(problem(text), text).toBe('LINK');
   });
 });
 

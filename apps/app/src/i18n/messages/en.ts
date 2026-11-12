@@ -1791,6 +1791,7 @@ export const en = {
       sendsLeft: '{count} sends left for this meeting in 24 hours.',
       limitReached: 'This meeting has used all its sends in 24 hours. Try again later.',
       send: 'Send to {count}',
+      reload: 'Reload the latest draft',
       queued: '{count} emails queued to send.',
     },
     results: {
