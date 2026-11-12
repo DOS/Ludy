@@ -131,7 +131,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   }
 
   // The whole consent: authorize, the page's details call, the approve call, the resumed authorization, the code.
-  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve') {
+  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member') {
     const reg = await register();
     expect(reg.status, JSON.stringify(reg.body)).toBe(201);
     const clientId = String(reg.body.client_id);
@@ -141,7 +141,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const uid = new URL(started.location, base).pathname.split('/').pop() as string;
     const headers = { ...(await asBrowser(owner, null)), cookie: started.cookie };
     const detailsResponse = await fetch(`${base}/oauth/interaction/${uid}/details`, { headers });
-    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf } : { decision }) });
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}) } : { decision }) });
     const answer = (await approved.json()) as { redirectTo?: string; message?: string; code?: string };
     return { clientId, verifier, redirect: reg.redirect, uid, started, details: { status: detailsResponse.status, body: (await detailsResponse.json()) as Record<string, unknown> }, consentStatus: approved.status, redirectTo: answer.redirectTo ?? '', cookie: started.cookie + '; ' + cookiesOf(approved) };
   }
@@ -353,6 +353,41 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     await admin((client) => client.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = (SELECT id FROM crove_kernel.user_account WHERE email = $2)`, [orgId, email]));
     expect(await aboutStatus(c.access)).toBe(401);
     expect((await refreshWith(c.clientId, c.refresh)).status).toBe(400);
+  });
+
+  it('lets a member connect their own AI app once the org allows it: refused while the switch is off, a token that reads only what a member reads, and the very next call refused when the owner turns the switch off', async () => {
+    const member = 'member-own-app';
+    await jwt(member);
+    const email = accounts.get(member)?.email;
+    const invited = await rpc('org/invite', await asBrowser('owner'), { email, role: 'member' });
+    expect(invited.status).toBe(200);
+    expect((await rpc('invites/accept', await asBrowser(member, null), { token: String(invited.body.acceptPath).split('#')[1] })).status).toBe(200);
+    const setSwitch = (on: boolean) => admin((client) => client.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgId, on]));
+    await setSwitch(false);
+    // The consent page lists the orgs where the user may connect: none for a member while the org has not allowed it.
+    const before = await consent(member, orgId, 'approve', 'member');
+    expect(before.details.body).toMatchObject({ orgs: [] });
+    expect(before.consentStatus).toBe(403);
+    // A member asking for a company grant is refused whatever the switch says.
+    expect((await consent(member, orgId, 'approve', 'company')).consentStatus).toBe(403);
+    await setSwitch(true);
+    try {
+      const c = await consent(member, orgId, 'approve', 'member');
+      expect(c.details.body).toMatchObject({ orgs: [expect.objectContaining({ orgId, memberGrants: true })] });
+      expect(c.consentStatus).toBe(200);
+      const t = await tokens(c, (await codeOf(c)).code);
+      expect(t.status).toBe(200);
+      const access = String(t.body.access_token);
+      expect(await aboutStatus(access)).toBe(200);
+      // A member's grant reaches no owner or admin tool: the contacts tool answers an error, not data.
+      const parties = await mcpModern(access, 'tools/call', { name: 'ludy_parties_list', arguments: {} }, 'ludy_parties_list');
+      expect(parties.body?.error).toMatchObject({ message: 'Not allowed for this connection' });
+      expect(parties.body?.result).toBeUndefined();
+      await setSwitch(false);
+      expect(await aboutStatus(access)).toBe(401);
+    } finally {
+      await setSwitch(false);
+    }
   });
 
   it('refuses a consent by a member who is not an owner or admin, and a consent for an org the user is not in', async () => {

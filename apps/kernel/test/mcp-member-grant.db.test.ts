@@ -141,6 +141,25 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     await refusal(about(users.viewerA, viewer));
   });
 
+  it('ends every grant of an owner or admin who is demoted, a member grant of theirs too, and none of them comes back when the role does (stricter on purpose)', async () => {
+    await setSwitch(users.ownerA, true);
+    const demoted = users.capA;
+    const company = (await consent(demoted, 'company')).grantId;
+    const mine = (await consent(demoted, 'member')).grantId;
+    expect(await about(demoted, company)).toMatchObject({ orgName: 'Org A' });
+    expect(await about(demoted, mine)).toMatchObject({ orgName: 'Org A' });
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
+    // The trigger that guards the grants ends them all (and destroys their tokens) with the admin role they were made under: a demotion is a change of
+    // standing the person did not choose, so nothing they connected under the old role keeps reading. They connect again as the member they now are.
+    for (const id of [company, mine]) expect((await refusal(about(demoted, id))).status).toBe(401);
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
+    for (const id of [company, mine]) expect((await refusal(about(demoted, id))).status).toBe(401);
+    const fresh = (await consent(demoted, 'member')).grantId;
+    expect(await about(demoted, fresh)).toMatchObject({ orgName: 'Org A' });
+    // Leave the user clean for the cap test, which counts a user's live member grants.
+    await runtime.execute('kernel.mcp.grant.revoke', { grantId: fresh }, { actor: user(demoted), orgId: orgA });
+  });
+
   it('allows five live member grants per user and refuses the sixth, and a new consent for the same client replaces the old one', async () => {
     const ids: string[] = [];
     for (let i = 0; i < 5; i += 1) ids.push((await consent(users.capA, 'member', ['ludy.read'], `cap-${i}`)).grantId);
