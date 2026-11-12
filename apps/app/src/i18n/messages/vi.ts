@@ -8708,6 +8708,8 @@ export const vi = {
       EXTENSION_TOKEN_INVALID: 'Mã của tiện ích không còn hiệu lực, hãy đăng nhập lại tiện ích',
       EXTENSION_TOKEN_NOT_FOUND: 'Không tìm thấy thiết bị này, hoặc đã được ngắt kết nối',
       MCP_GRANT_NOT_FOUND: 'Không tìm thấy quyền kết nối này, hoặc đã được thu hồi',
+      MCP_WAKE_GRANT_NOT_FOUND: 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực',
+      MCP_WAKE_NOT_FOUND: 'Quyền kết nối này chưa có địa chỉ nhận',
       EXTENSION_TOO_MANY: 'Bạn đã mở quá nhiều lượt kết nối tiện ích chưa hoàn tất, hãy thử lại sau ít phút',
       FORBIDDEN: 'Không có quyền thực hiện',
       NOT_FOUND: 'Không tìm thấy',
@@ -10557,6 +10559,12 @@ export const vi = {
           revoke: 'Ngắt kết nối một ứng dụng AI',
         },
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
+        wake: {
+          clear: 'Gỡ địa chỉ nhận báo thức của một ứng dụng AI',
+          get: 'Xem địa chỉ nhận báo thức của các ứng dụng AI',
+          rotate_secret: 'Đổi khóa bí mật báo thức của một ứng dụng AI',
+          set: 'Cài địa chỉ nhận và lịch báo thức của một ứng dụng AI',
+        },
       },
       session: {
         revoke: 'Đăng xuất phiên đăng nhập',
