@@ -174,7 +174,7 @@ suite("member-scoped agent actor in the runtime", () => {
         [orgId, agentId, user],
       );
       await c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.summary', 'running', true, now(), now() + interval '30 minutes')`,
         [orgId, runId, agentId],
       );
       await c.query("COMMIT");
