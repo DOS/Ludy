@@ -2,6 +2,7 @@
 -- ADR-0051 decision 2, slice 3b-2 (#2975): the edge learns a grant's kind. mcp_grant_verify now also answers `kind` ('company' or 'member'), so
 -- the actor the endpoint builds names the context the runtime enters (a member-bound grant enters crove_kernel.enter_mcp_member_context). Nothing
 -- else changes: same arguments, same standing check, same refusals (no row), same grants (the API login only).
+-- crove:contract adr=0051
 DROP FUNCTION IF EXISTS crove_kernel.mcp_grant_verify(uuid, text);
 CREATE FUNCTION crove_kernel.mcp_grant_verify(p_grant_id uuid, p_client_id text)
 RETURNS TABLE (grant_id uuid, org_id uuid, user_id uuid, scopes text[], client_name text, client_host text, expires_at timestamptz, kind text)
