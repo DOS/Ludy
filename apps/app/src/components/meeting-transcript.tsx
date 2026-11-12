@@ -108,6 +108,8 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
       return t('vy.codes.TRANSCRIBE_NO_BROKER');
     case 'TRANSCRIBE_RUNNING':
       return t('vy.codes.TRANSCRIBE_RUNNING');
+    case 'TRANSCRIBE_OTHER_RUNNING':
+      return t('vy.codes.TRANSCRIBE_OTHER_RUNNING');
     case 'MEETING_NO_AUDIO':
       return t('vy.codes.MEETING_NO_AUDIO');
     case 'TRANSCRIPT_EMPTY':
