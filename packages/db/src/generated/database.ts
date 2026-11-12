@@ -1712,6 +1712,7 @@ export interface KernelAiRunTable {
   finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   error: string | null;
   private_read: Generated<boolean>;
+  feature: string | null;
 }
 
 /** crove_kernel.approval_preset */

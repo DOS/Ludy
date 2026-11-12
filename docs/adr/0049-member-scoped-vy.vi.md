@@ -58,6 +58,16 @@ Kế hoạch cuộc họp (#2554) và kế hoạch dự án (#2556, bước P7) 
 
 JOY chỉ cần quyết nếu muốn đổi thứ mà ADR để mặc định: trần chi phí mặc định cho từng người, quyền "mở khóa khẩn cấp" cho chủ tổ chức, hoặc cho phép Vy ghi thẳng vào bảng của cuộc họp thay vì bấm một lần.
 
+## Điều chỉnh ngày 2026-11-12 (#3029): mỗi người một lượt chạy đang sống cho mỗi tính năng
+
+**JOY quyết ngày 2026-11-12**, trong cuộc trao đổi với PO của dòng Cuộc họp: câu hỏi là "allow Vy to transcribe a meeting in parallel with the member's other Vy work?" (cho phép Vy ghi lời một cuộc họp song song với việc khác của Vy cho cùng người đó?), và JOY trả lời "1" (đồng ý).
+
+- **Vấn đề trước đây:** mỗi người chỉ có một lượt chạy đang sống. Người ghi cuộc họp mà dùng Vy cho việc khác trong lúc đang ghi lời (có thể tới 4 giờ) thì lượt ghi lời bị hủy, cuộc họp mất bản ghi lời.
+- **Từ nay:** mỗi người có **một lượt chạy đang sống cho mỗi tính năng**. Bắt đầu một lượt mới chỉ thay thế lượt đang chạy **cùng tính năng** của chính người đó; lượt của tính năng khác không bị đụng tới. Mọi điểm khác của ADR giữ nguyên: tác tử trong sơ đồ tổ chức vẫn một lượt mỗi tác tử; ngân sách và công tắc dừng vẫn tính và dừng mọi lượt; giới hạn thời gian (30 phút cho ghi chú, tối đa 4 giờ cho cuộc họp) tính riêng từng lượt; gỡ người khỏi tổ chức, thu quyền `vy.use` hay bật công tắc dừng vẫn kết thúc mọi lượt đang sống của người đó, dù là tính năng nào.
+- **Cơ sở dữ liệu giữ quy tắc này:** lượt chạy có thêm cột tính năng; hai chỉ mục duy nhất một phần thay chỉ mục cũ (một cho tác tử sơ đồ tổ chức, một cho từng cặp người và tính năng); lượt của Vy riêng từng người bắt buộc có tính năng và không đổi được, kết quả phải cùng tính năng với lượt của nó. Hai lần bắt đầu cùng tính năng cùng lúc thì một lần được, lần kia nhận mã `VY_RUN_BUSY` (thử lại sau), không bao giờ có hai lượt cùng chạy.
+- **Không đặt trần số lượt chạy riêng cho từng người:** mỗi tính năng tối đa một lượt, nên số lượt đang sống của một người bị chặn bởi số tính năng Vy riêng từng người đã khai báo (hiện là bốn).
+- **Trong phần Cuộc họp:** bắt đầu ghi lời một cuộc họp bị từ chối (`TRANSCRIBE_OTHER_RUNNING`) khi người ghi đang có một cuộc họp **khác** được ghi lời, để bản ghi lời không bao giờ mất vì lần ghi thứ hai. Tóm tắt không còn thay thế gì; nó chỉ phải đợi bản ghi lời của chính cuộc họp đó xong. Giới hạn còn lại: nếu việc ghi lời bị lạc (máy chủ ngừng giữa chừng), người ghi không bắt đầu được cuộc họp khác cho đến khi lượt đó hết hạn (tối đa 4 giờ) và chưa có lệnh để tự hủy; việc này nằm trong #3033.
+
 ## Việc tiếp theo sau khi được chấp nhận
 
 N8-1 (kiểm thử bất biến, PR bảo vệ) rồi N8-2 (cơ chế phía máy chủ, PR bảo vệ, rồi PR dọn) rồi N8-3 (tính năng trên màn hình ghi chú). Chi tiết trong bảng N8 của [notes.md](../plan/notes.md).
