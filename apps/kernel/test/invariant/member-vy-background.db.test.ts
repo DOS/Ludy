@@ -384,6 +384,18 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     await root.end();
   });
 
+  // The context of a member-bound MCP grant (ADR-0051, design note on #2975 slice 3) adds one writer of the sealed context and one reader of the sealed member, each its own kind: they
+  // are accepted here once they exist, and only these two names (`enter_mcp_member_context`, `ctx_mcp_member_id`); a third writer or reader still fails the exact sets below.
+  const mcpMemberObjects = async () => {
+    const found = await admin((c) =>
+      c.query<{ entry: boolean; helper: boolean }>(
+        `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper`,
+      ),
+    );
+    const row = found.rows[0];
+    return { entry: row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : [], helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [] };
+  };
+
   // ---- Unconditional: nothing here needs a stage B object ----------------------------------------------------------------
 
   // The presence pin (#2822): what member Vy rests on is there, so none of the cases below can pass by finding nothing to check. These cases once skipped when an
@@ -404,7 +416,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       rows.map((r) => r.n).sort(),
       "functions that call ctx_write",
-    ).toEqual([...CTX_WRITERS, MEMBER_ENTRY].sort());
+    ).toEqual([...CTX_WRITERS, MEMBER_ENTRY, ...(await mcpMemberObjects()).entry].sort());
   });
 
   it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {
@@ -488,7 +500,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     expect(
       found.sealReaders,
       "functions that read the sealed member directly",
-    ).toEqual(["crove_kernel.ctx_acting_user_id()"]);
+    ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper]);
     expect(
       found.policies.map((p) => [p.t, p.n, p.cmd, p.perm]),
       "policies that read the helper: (table, policy, command, permissive)",
