@@ -205,15 +205,18 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [other]).then((r) => r.rows[0].n))).toBe(0);
   });
 
-  it('answers 503 without a credential key, and refuses a viewer every procedure', async () => {
+  it('answers 503 without a credential key, and refuses a viewer every procedure but the read of their own', async () => {
     const token = await tokenFor(owner);
     const noKey = await rpc('mcp/wake/set', token, { grantId, url: 'https://hooks.example.com/x' }, { app: 'noKey' });
     expect(noKey.status).toBe(503);
     const noKeyRotate = await rpc('mcp/wake/rotateSecret', token, { grantId }, { app: 'noKey' });
     expect(noKeyRotate.status).toBe(503);
     const viewerToken = await tokenFor(viewer);
+    // A viewer reads their own wake-ups (member-bound grants, ADR-0051 slice 3c): none here, and never the owner's company grant's.
+    const viewerGet = await rpc('mcp/wake/get', viewerToken, {});
+    expect(viewerGet.status).toBe(200);
+    expect(viewerGet.body).toEqual([]);
     for (const [path, input] of [
-      ['mcp/wake/get', {}],
       ['mcp/wake/set', { grantId, url: 'https://hooks.example.com/x' }],
       ['mcp/wake/rotateSecret', { grantId }],
       ['mcp/wake/clear', { grantId }],
