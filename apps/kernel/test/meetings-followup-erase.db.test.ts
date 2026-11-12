@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { FollowupDraft } from '@crove/kernel-contract';
+import type { FollowupDraft, PersonalDataErasure } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -44,27 +44,28 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
 
   // A meeting with a shared summary, and one follow-up mail sent for it.
-  async function seedSent(): Promise<string> {
+  async function seedSent(opts: { recorder?: string; summary?: string; subject?: string } = {}): Promise<string> {
+    const recorder = opts.recorder ?? 'recorder';
     const meetingId = randomUUID();
     await sqlAdmin(
       `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
-      [orgId, meetingId, users.recorder],
+      [orgId, meetingId, users[recorder]],
     );
     await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
-    await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Chốt báo giá tuần này.', decisions: ['Giữ giá cũ'] });
-    await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
-    const draft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId });
+    await exec(recorder, 'meetings.summary.save', { meetingId, summary: opts.summary ?? 'Chốt báo giá tuần này.', decisions: ['Giữ giá cũ'] });
+    await exec(recorder, 'meetings.result.publish', { meetingId, confirmed: true });
+    const draft = await query<FollowupDraft>(recorder, 'meetings.followup.draft', { meetingId });
     await exec(
-      'recorder',
+      recorder,
       'meetings.followup.send',
-      { meetingId, factsKey: draft.factsKey, subject: 'Tóm tắt', greeting: 'Xin chào,', lead: 'Cảm ơn mọi người.', closing: 'Cảm ơn.', recipients: ['attendee@erase.test'], confirmedOutsiders: [], confirmRepeat: false, fromVy: false, reviewed: false },
+      { meetingId, factsKey: draft.factsKey, subject: opts.subject ?? 'Tóm tắt', greeting: 'Xin chào,', lead: 'Cảm ơn mọi người.', closing: 'Cảm ơn.', recipients: ['attendee@erase.test'], confirmedOutsiders: [], confirmRepeat: false, fromVy: false, reviewed: false },
       randomUUID(),
     );
     return meetingId;
   }
   const mail = (meetingId: string) =>
-    sqlAdmin<{ payload: unknown; status: string; to_address: string | null }>("SELECT payload, status, to_address FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]).then((r) => r.rows);
+    sqlAdmin<{ payload: unknown; status: string; to_address: string | null; subject: string | null }>("SELECT payload, status, to_address, subject FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, meetingId]).then((r) => r.rows);
   const audit = (command: string, meetingId: string) =>
     sqlAdmin<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND target_id = $3', [orgId, command, meetingId]).then((r) => r.rows);
 
@@ -168,5 +169,55 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     await exec('recorder', 'meetings.meeting.delete', { meetingId: m });
     const kept = await sqlAdmin<{ payload: unknown }>('SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, other]);
     expect(kept.rows[0]?.payload).toEqual({ keep: true });
+  });
+
+  // The erasure of a mention (#3020, ADR-0047 point 7): kernel.personal_data.erase redacts the meeting's rows, and the copy in its follow-up mails goes with them.
+  describe('kernel.personal_data.erase', () => {
+    const MENTION = 'khach.hang@erase.test';
+    const asMfa = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
+    const erase = (value = MENTION) => runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
+    const lastAudit = () =>
+      sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1", [orgId]).then((r) => r.rows[0]?.detail);
+
+    it('drops the payload and the subject of the follow-up mails of a meeting whose rows it changed, and only those', async () => {
+      // The owner records these meetings, so the erasure may redact them at once.
+      const touched = await seedSent({ recorder: 'owner', summary: `Gửi báo giá cho ${MENTION} trước thứ sáu.`, subject: "Tóm tắt họp với anh Khách" });
+      const untouched = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
+      const other = (await sqlAdmin<{ id: string }>(
+        "INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('b', 64), 's', '{\"keep\":true}', '<erase-other@y.test>', 'queued') RETURNING id",
+        [orgId, touched],
+      )).rows[0]!.id;
+      const before = (await mail(touched))[0];
+      expect(before?.payload).not.toBeNull();
+      expect(before?.subject).not.toBeNull();
+
+      const result = await erase();
+      expect(result.erased.find((e) => e.column === 'crove_meetings.meeting_result.summary')?.rows).toBe(1);
+
+      const after = await mail(touched);
+      expect(after).toHaveLength(1);
+      // The row, its status and its recipient stay; the two copies of the text are gone.
+      expect(after[0]).toMatchObject({ payload: null, subject: null, status: 'queued', to_address: 'attendee@erase.test' });
+      const left = await mail(untouched);
+      expect(left[0]?.payload).not.toBeNull();
+      expect(left[0]?.subject).toBe('Tóm tắt');
+      expect((await sqlAdmin<{ payload: unknown }>('SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, other])).rows[0]?.payload).toEqual({ keep: true });
+      // The audit row holds a count, never the text.
+      const detail = await lastAudit();
+      expect(detail).toMatchObject({ follow_up_mails: 1 });
+      expect(JSON.stringify(detail)).not.toContain('báo giá');
+      expect(JSON.stringify(detail)).not.toContain(MENTION);
+    });
+
+    it('drops nothing when the erasure changed no row of the meeting', async () => {
+      // A meeting the owner cannot read (another recorder's, the owner is no reader): the mention stays there, counted, and so does the mail.
+      const hidden = await seedSent({ recorder: 'recorder', summary: `Nhắc ${MENTION} ký hợp đồng.`, subject: 'Tóm tắt' });
+      const result = await erase();
+      expect(result.erased.find((e) => e.column === 'crove_meetings.meeting_result.summary')).toBeUndefined();
+      const kept = (await mail(hidden))[0];
+      expect(kept?.payload).not.toBeNull();
+      expect(kept?.subject).toBe('Tóm tắt');
+      expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
+    });
   });
 });
