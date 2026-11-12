@@ -383,7 +383,7 @@ describe('what a wake-up body may carry (#3024)', () => {
     expect(codeOf(DELIVERY)).not.toMatch(/\bcreated_at\s*:/);
   });
 
-  it('has user-only commands for the wake-up setup that the agent actor cannot run (each checks the actor is a user and not an MCP grant, and none is open to a member), and system-only commands for its delivery', () => {
+  it('has user-only commands for the wake-up setup that the agent actor cannot run (each checks the actor is a user and not an MCP grant, and a member reaches only what the database lets them), and system-only commands for its delivery', () => {
     for (const c of kernelCommands.filter((x) => x.name.startsWith('kernel.mcp.wake.'))) {
       // The system's own steps (enqueue, record, the sync of seen signals) are the system actor's alone, which the runtime enforces and the handler says again; no user, agent
       // or MCP grant runs one. Every other command is for an owner or an admin.
@@ -394,7 +394,9 @@ describe('what a wake-up body may carry (#3024)', () => {
       }
       const access = c.access as readonly string[];
       if (access.length > 0) {
-        expect(access.every((r) => r === 'owner' || r === 'admin'), `${c.name} access`).toBe(true);
+        // A role list of the org's roles: owner and admin, and, once a member may set a wake-up for their own member-bound grant (ADR-0051, slice 3, step 3c), member and viewer
+        // too, where the database decides which grants are theirs (the invariants of mcp-wake-member.db.test.ts hold the rest).
+        expect(access.every((r) => r === 'owner' || r === 'admin' || r === 'member' || r === 'viewer'), `${c.name} access`).toBe(true);
         expect(String(c.handler), `${c.name} refuses a non-user actor`).toMatch(/actor\.type\s*!==\s*['"]user['"]/);
         expect(String(c.handler), `${c.name} refuses an MCP grant`).toMatch(/actor\.mcp/);
         expect(['R2', 'R3', 'R4'], `${c.name} risk`).toContain(c.risk);

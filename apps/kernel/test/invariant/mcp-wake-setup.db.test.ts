@@ -202,7 +202,6 @@ suite('the wake-up setup of an MCP grant (#3024)', () => {
     // Refused: a member, an agent, the MCP grant itself, and the owner of another org (one answer for a grant that is not theirs).
     for (const [name, call] of [
       ['a member sets', () => set(browser(users.memberA), orgA, grant, made.credential)],
-      ['a member reads', () => runtime.query('kernel.mcp.wake.get', {}, { actor: browser(users.memberA), orgId: orgA })],
       ['a member clears', () => runtime.execute('kernel.mcp.wake.clear', { grantId: grant }, { actor: browser(users.memberA), orgId: orgA })],
       ['the MCP grant sets', () => set(mcp(users.ownerA, grant), orgA, grant, made.credential)],
       ['an agent sets', () => set({ type: 'agent', agentId: randomUUID(), runId: randomUUID() } as never, orgA, grant, made.credential)],
@@ -210,7 +209,18 @@ suite('the wake-up setup of an MCP grant (#3024)', () => {
     ] as const) {
       const error = await refusal(call());
       expect(error.status, name).toBeGreaterThanOrEqual(401);
-      expect(error.status, name).toBeLessThanOrEqual(403);
+      expect(error.status, name).toBeLessThanOrEqual(404);
+    }
+    // A member's read is a refusal, or (once a member may have a wake-up of their own member-bound grant) nothing: never a view of the owner's.
+    const memberRead = await runtime.query<unknown[]>('kernel.mcp.wake.get', {}, { actor: browser(users.memberA), orgId: orgA }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    if ('error' in memberRead) {
+      expect((memberRead.error as DomainError).status).toBeGreaterThanOrEqual(401);
+      expect((memberRead.error as DomainError).status).toBeLessThanOrEqual(404);
+    } else {
+      expect(memberRead.value).toEqual([]);
     }
     const other = await refusal(set(browser(users.ownerB), orgB, grant, made.credential));
     expect(other.code).toBe('MCP_WAKE_GRANT_NOT_FOUND');
