@@ -11,9 +11,10 @@
 //   - What a body may carry: ids, an event type, dates, a day count and decimal-string amounts, by a pinned list of keys and a pinned shape for every
 //     value, so no name, note, message or bank text can ride in a field whatever it is called.
 //   - What the grant's wake-up table may hold: secrets only sealed, in the two named columns; the table under row-level security.
-// A case whose feature does not exist yet passes by finding nothing; once any source or migration names the feature, the agreed files and shapes are
-// required (the tripwire at the start of "the files"). Part of the invariant suite; it imports package code under test, never helpers from outside
-// test/invariant/. Keep this directory self-contained.
+// A case whose feature does not exist yet passes by finding nothing. Once any source or migration names the delivery (its signature header, its queue or its
+// table), the agreed files and shapes are required (the tripwire at the start of "the files"); the setup table and its commands are held to their own cases
+// as soon as they exist. Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/. Keep this directory
+// self-contained.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -153,7 +154,9 @@ const codeOf = (path: string) =>
     .join('\n');
 
 // The wake-up feature exists once any source or migration names one of its marks.
-const MARKS = ['Ludy-Signature', 'kernel-mcp-wake', 'agent_grant_wake', 'agent_wake_delivery'];
+// Two levels: the setup (the grant's wake-up table and its commands) is held to the table and command cases by what it is; the delivery (a signature, the queue,
+// the delivery table) additionally needs its two files and its queue. So the setup can land before the delivery, and the delivery cannot land half-built.
+const MARKS = ['Ludy-Signature', 'kernel-mcp-wake', 'agent_wake_delivery'];
 const featureFiles = [...new Set([...MARKS.flatMap((m) => naming(SOURCES, m)), ...MARKS.flatMap((m) => naming(MIGRATIONS, m))])].sort();
 const wakeQueues = Object.entries(QUEUES).filter(([, name]) => /mcp-wake/.test(name));
 
