@@ -329,9 +329,34 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect((await mail(hidden))[0]?.subject).toBe(`Gửi ${value}`);
         expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('cannot read') });
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
-        // The recorder's own delete is what drops it.
+        // The recorder's own delete takes its text copy at once (the subject is not part of that), and erasing the same value again then drops what is left of the subject: the mail
+        // can no longer render, so no pending send is lost, and the meeting being gone does not leave the value in the subject for 13 months.
         await exec('recorder', 'meetings.meeting.delete', { meetingId: hidden });
-        expect((await mail(hidden))[0]).toMatchObject({ payload: null });
+        expect((await mail(hidden))[0]).toMatchObject({ payload: null, subject: `Gửi ${value}` });
+        const again = await erase(value);
+        expect((await mail(hidden))[0]).toMatchObject({ payload: null, subject: null });
+        expect(again.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toBeUndefined();
+        expect(await lastAudit()).toMatchObject({ follow_up_mails: 1 });
+      });
+
+      it('drops the subject of a mail whose payload is already gone, and a payload when the subject is empty', async () => {
+        const value = 'cu.va.moi@erase.test';
+        const purged = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
+        await setSubject(purged, `Gửi ${value}`);
+        await sqlAdmin("UPDATE crove_kernel.mail_message SET payload = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, purged]);
+        const noSubject = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
+        await sqlAdmin('UPDATE crove_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2', [orgId, noSubject, 'Đã sửa.']);
+        await admin(async (c) => {
+          await c.query('BEGIN');
+          await c.query('SET LOCAL session_replication_role = replica');
+          await c.query("UPDATE crove_kernel.mail_message SET subject = NULL WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, noSubject]);
+          await c.query('COMMIT');
+        });
+        expect((await mail(noSubject))[0]).toMatchObject({ subject: null });
+        expect((await mail(noSubject))[0]?.payload).not.toBeNull();
+        await erase(value);
+        expect((await mail(purged))[0]).toMatchObject({ payload: null, subject: null });
+        expect((await mail(noSubject))[0]).toMatchObject({ payload: null, subject: null });
       });
 
       it('says that a mail already delivered cannot be recalled, and says it only when one was dropped', async () => {
@@ -339,12 +364,22 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         const sent = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(sent, `Gửi ${value}`);
         await deliver(sent);
+        const unsure = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
+        await setSubject(unsure, `Gửi ${value}`);
+        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, unsure]);
+        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'ambiguous' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, unsure]);
+        const failed = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
+        await setSubject(failed, `Gửi ${value}`);
+        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'sending' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, failed]);
+        await sqlAdmin("UPDATE crove_kernel.mail_message SET status = 'failed' WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, failed]);
         const queued = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
         await setSubject(queued, `Gửi ${LEFT}`);
         const out = await erase(value);
         expect((await mail(sent))[0]).toMatchObject({ payload: null, subject: null, status: 'sent' });
         const note = out.kept.find((k) => k.column === 'crove_kernel.mail_message.payload');
-        expect(note).toMatchObject({ rows: 1 });
+        // The sent one and the one whose outcome is unknown (ambiguous) count; the one that failed never reached a recipient.
+        expect(note).toMatchObject({ rows: 2 });
+        expect((await mail(failed))[0]).toMatchObject({ payload: null, subject: null, status: 'failed' });
         expect(note?.reason).toMatch(/cannot be recalled/);
         expect(note?.reason).toMatch(/mailboxes/);
         // A queued mail is dropped (and fails to render), with no such line.

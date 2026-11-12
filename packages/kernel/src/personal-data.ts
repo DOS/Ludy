@@ -579,12 +579,13 @@ export const personalDataFind = defineCommand({
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
-// The statuses of a mail that has left Crove (the mail table's own set): its copies in the recipients' mailboxes cannot be taken back.
-const DELIVERED_MAIL_STATUSES: readonly string[] = ['sent', 'delivered', 'bounced', 'complained'];
+// The statuses of a mail that has left Crove or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
+// delivered, bounced, complained). Its copies in the recipients' mailboxes cannot be taken back; a queued, failed or suppressed mail never reached one.
+const DELIVERED_MAIL_STATUSES: readonly string[] = ['sending', 'ambiguous', 'sent', 'delivered', 'bounced', 'complained'];
 export const FOLLOWUP_MAIL_HIDDEN_REASON =
-  'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read (or that no longer exists): the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. The recorder or an owner deletes the meeting (which drops its mails at once), or the copy expires 30 days after the mail\'s final status';
+  'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read: the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. When the recorder or an owner deletes the meeting its mails lose their text at once, and erasing the same value again then drops what is left of their subject; otherwise the text expires 30 days after the mail\'s final status and the subject after 13 months';
 export const FOLLOWUP_MAIL_DELIVERED_REASON =
-  'Follow-up mails of a meeting that were already delivered to their recipients cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
+  'Follow-up mails of a meeting that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
@@ -961,30 +962,31 @@ export const personalDataErase = defineCommand({
     // (the meeting then has no hit), or typed it only into the subject. The same matcher (text_mentions) reads the subject and the payload; the rows of the first pass are already dropped
     // in this transaction, so none is counted twice. Only mails of a meeting the owner reads (row security shows its row) are dropped, as the meeting rows follow the notice rule: a mail of a
     // meeting the owner cannot read, or of one that no longer exists, stays and is counted. A meeting's mails are dropped under the same try-lock as above (busy: the same retryable refusal).
-    const { rows: leftovers } = await sql<{ id: string; source_id: string; readable: boolean; delivered: boolean }>`
-      SELECT m.id, m.source_id,
+    const { rows: leftovers } = await sql<{ source_id: string; readable: boolean; text_kept: boolean }>`
+      SELECT m.source_id,
              EXISTS (SELECT 1 FROM crove_meetings.meeting g WHERE g.org_id = m.org_id AND g.id = m.source_id) AS readable,
-             m.status IN ('sent', 'delivered', 'bounced', 'complained') AS delivered
+             m.payload IS NOT NULL AS text_kept
         FROM crove_kernel.mail_message m
        WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
          AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})`.execute(ctx.trx);
-    const followupHidden = leftovers.filter((m) => !m.readable).length;
-    const leftoverMeetings = new Map<string, string[]>();
-    for (const m of leftovers) if (m.readable) leftoverMeetings.set(m.source_id, [...(leftoverMeetings.get(m.source_id) ?? []), m.id]);
-    for (const [meetingId, mailIds] of leftoverMeetings) {
+    // A mail whose payload is already gone (its meeting was deleted or its text purged) fails to render when it is still queued, so dropping what is left of its subject destroys no pending
+    // send: it is dropped whatever its meeting's readability. Every other mail of a meeting the owner cannot read, or that no longer exists, stays and is counted.
+    const followupHidden = leftovers.filter((m) => !m.readable && m.text_kept).length;
+    const leftoverMeetings = new Map<string, boolean>();
+    for (const m of leftovers) if (m.readable || !m.text_kept) leftoverMeetings.set(m.source_id, (leftoverMeetings.get(m.source_id) ?? false) || m.readable);
+    for (const [meetingId, readable] of leftoverMeetings) {
       const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${meetingId}`}, 0)) AS ok`.execute(ctx.trx);
       if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa cùng lúc; hãy thử lại sau ít phút');
-      const dropped = await ctx.trx
-        .updateTable('crove_kernel.mail_message')
-        .set({ payload: null, subject: null })
-        .where('org_id', '=', ctx.orgId)
-        .where('source', '=', FOLLOWUP_MAIL_SOURCE)
-        .where('id', 'in', mailIds)
-        .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
-        .returning('status')
-        .execute();
-      followupMails += dropped.length;
-      followupDelivered += dropped.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
+      // Selected again by the meeting once the lock is held, so a send that committed after the scan above is dropped too.
+      const dropped = await sql<{ status: string }>`
+        UPDATE crove_kernel.mail_message m SET payload = NULL, subject = NULL
+         WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND m.source_id = ${meetingId}::uuid
+           AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+           AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
+           AND (${readable} OR m.payload IS NULL)
+        RETURNING m.status`.execute(ctx.trx);
+      followupMails += dropped.rows.length;
+      followupDelivered += dropped.rows.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
     }
     // The retention dates of the meetings the owner reads (row security shows only those); the others are counted, their dates never shown.
     const readable = new Set(
