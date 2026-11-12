@@ -43,6 +43,8 @@ import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTransc
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
+import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, runWakeDelivery, type WakeJob } from './mcp-wake.ts';
+import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -1171,6 +1173,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (failure) throw failure;
   });
   await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEMBER_VY_SWEEP_EXPIRE_SECONDS });
+
+  // The wake-up webhook of an MCP grant (ADR-0051 decision 4, #3024): a sweep every minute stores and hands over what is due (mcp-wake-sweep.ts), and one job per delivery posts
+  // it to the receiver the org set (mcp-wake.ts). Without a credential key no secret can be opened, so neither runs and nothing is sent; the queue's retries are bounded.
+  const wakeBroker = deps.channels?.broker;
+  if (wakeBroker && wakeBroker.id !== 'none') {
+    await boss.work<WakeJob>(QUEUES.mcpWake, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+      if (!job) return;
+      await runWakeDelivery({ runtime: deps.runtime, broker: wakeBroker }, job.data, { retryCount: job.retryCount, retryLimit: WAKE_RETRY_LIMIT });
+    });
+    await boss.work(QUEUES.mcpWakeSweep, { batchSize: 1 }, async () => {
+      const done = await runWakeSweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        send: (job: WakeJob) =>
+          boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS }),
+      });
+      if (done.handedOver + done.expired + done.schedules + done.signals + done.failures > 0) {
+        console.log(`[mcp-wake-sweep] handed over ${done.handedOver}, expired ${done.expired}, schedules ${done.schedules}, signals ${done.signals}, failures ${done.failures}`);
+      }
+    });
+    await boss.schedule(QUEUES.mcpWakeSweep, MCP_WAKE_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MCP_WAKE_SWEEP_EXPIRE_SECONDS });
+  } else {
+    await dropCron(QUEUES.mcpWakeSweep);
+  }
 
   // Bank feeds (ADR-0039, #2044): a connection's sync, queued by the relay above and, once a day, for every active
   // bank feed connection of an active org. The adapters are the deployment's; with none on, the sweep queues nothing.
