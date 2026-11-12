@@ -7,10 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { DomainError, isPublicAddress, type CredentialBroker } from '@crove/kernel-runtime';
-import type { McpWakeCredential } from '@crove/kernel';
-
-// The binding of a wake-up secret: the grant it signs for, under a provider name of its own, so it opens for nothing else.
-export const WAKE_PROVIDER = 'mcp-wake';
+import { MCP_WAKE_PROVIDER, type McpWakeCredential } from '@crove/kernel';
 
 export interface MadeWakeSecret {
   // Shown once to the person who asked, never stored in the clear.
@@ -22,7 +19,7 @@ export interface MadeWakeSecret {
 export function makeWakeSecret(broker: CredentialBroker, orgId: string, grantId: string): MadeWakeSecret {
   if (broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
   const secret = `whsec_${randomBytes(32).toString('base64url')}`;
-  const sealed = broker.seal(secret, { orgId, provider: WAKE_PROVIDER, externalAccountId: grantId });
+  const sealed = broker.seal(secret, { orgId, provider: MCP_WAKE_PROVIDER, externalAccountId: grantId });
   return { secret, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64'), hint: `whk_${randomBytes(4).toString('hex')}` } };
 }
 

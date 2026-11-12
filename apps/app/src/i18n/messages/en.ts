@@ -10564,9 +10564,15 @@ export const en = {
         parties: 'Show an AI app the list of customers, suppliers and contacts',
         wake: {
           clear: 'Remove the wake-up receiver of an AI app',
+          delivery: 'Read a wake-up waiting to be sent',
+          enqueue: 'Queue a wake-up for an AI app',
           get: 'See the wake-up receivers of the AI apps',
+          queued: 'Note a wake-up was handed to the queue',
+          record: 'Record the result of sending a wake-up',
           rotate_secret: 'Rotate the wake-up secret of an AI app',
           set: 'Set the wake-up receiver and schedule of an AI app',
+          signals_check: 'Check which signals a wake-up already sent',
+          target: 'Read the wake-up receiver of a connection',
         },
       },
       session: {

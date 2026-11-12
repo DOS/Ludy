@@ -270,7 +270,7 @@ const KEY_RE = /^[a-z]+(_[a-z]+)*(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const TYPES = ['signal.fired', 'schedule.due', 'ping'];
 const SEVERITIES = ['info', 'warn', 'block'];
 const TOP_KEYS = ['id', 'type', 'created_at', 'org', 'grant', 'data'];
-const ITEM_KEYS = ['rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'due_on', 'days'];
+const ITEM_KEYS = ['rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'currency', 'due_on', 'days'];
 
 // A body is exactly the pinned keys, each value of its pinned shape: an id, a date, a number or one of a few fixed words. A name, a note or a message
 // fits none of these, so none can ride in any field, whatever it is called. Returns what is wrong, or [].
@@ -307,6 +307,8 @@ function bodyProblems(body: unknown): string[] {
       str('deal_id', UUID_RE);
       str('invoice_id', UUID_RE);
       str('amount', AMOUNT_RE);
+      str('currency', /^[A-Z]{3}$/);
+      if (item.currency !== undefined && item.amount === undefined) out.push(`item ${i}: a currency without an amount`);
       str('due_on', DATE_RE);
       if (item.days !== undefined && (typeof item.days !== 'number' || !Number.isInteger(item.days) || item.days < 0 || item.days > 3650)) out.push(`item ${i}: days is not a day count`);
     }
@@ -381,10 +383,16 @@ describe('what a wake-up body may carry (#3024)', () => {
     expect(codeOf(DELIVERY)).not.toMatch(/\bcreated_at\s*:/);
   });
 
-  it('has user-only commands for the wake-up setup that the agent actor cannot run: each checks the actor is a user and not an MCP grant, and none is open to a member', () => {
+  it('has user-only commands for the wake-up setup that the agent actor cannot run (each checks the actor is a user and not an MCP grant, and none is open to a member), and system-only commands for its delivery', () => {
     for (const c of kernelCommands.filter((x) => x.name.startsWith('kernel.mcp.wake.'))) {
+      // The system's own steps (enqueue, record, the sync of seen signals) are the system actor's alone, which the runtime enforces and the handler says again; no user, agent
+      // or MCP grant runs one. Every other command is for an owner or an admin.
+      if (c.access === 'system') {
+        expect(String(c.handler), `${c.name} refuses any actor but the system`).toMatch(/actor\.type\s*!==\s*['"]system['"]/);
+        expect((c as { mcp?: unknown }).mcp, c.name).toBeUndefined();
+        continue;
+      }
       const access = c.access as readonly string[];
-      // The system's own steps (enqueue, record) have no role at all; every other command is for an owner or an admin.
       if (access.length > 0) {
         expect(access.every((r) => r === 'owner' || r === 'admin'), `${c.name} access`).toBe(true);
         expect(String(c.handler), `${c.name} refuses a non-user actor`).toMatch(/actor\.type\s*!==\s*['"]user['"]/);
