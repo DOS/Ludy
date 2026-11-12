@@ -583,7 +583,7 @@ export const UNTOLD_MEETING_REASON =
 // delivered, bounced, complained). Its copies in the recipients' mailboxes cannot be taken back; a queued, failed or suppressed mail never reached one.
 const DELIVERED_MAIL_STATUSES: readonly string[] = ['sending', 'ambiguous', 'sent', 'delivered', 'bounced', 'complained'];
 export const FOLLOWUP_MAIL_HIDDEN_REASON =
-  'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read: the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. When the recorder or an owner deletes the meeting its mails lose their text at once, and erasing the same value again then drops what is left of their subject; otherwise the text expires 30 days after the mail\'s final status and the subject after 13 months';
+  'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read: the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. When the recorder or an owner deletes the meeting its mails lose their payload and subject at once; otherwise the payload expires 30 days after the mail\'s final status and the subject after 13 months';
 export const FOLLOWUP_MAIL_SHORT_NUMBER_REASON =
   'Follow-up mails whose text holds a number of fewer than 10 digits: such a number may as well be an amount, a date or a figure of the meeting, and dropping a mail cannot be undone, so the erasure leaves these mails as they are (their meeting rows are still redacted); check them and tell the person, or ask for a longer value';
 export const FOLLOWUP_MAIL_SKIPPED_REASON =

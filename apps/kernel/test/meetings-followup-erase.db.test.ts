@@ -410,7 +410,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       });
 
       // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to
-      // bite by one follow-up mail with a very large payload (tens of megabytes of text), which the matcher cannot read in time.
+      // bite by one follow-up mail with a very large payload (about 54 MB of text: the matcher needs over a second for it, against the 400 ms below).
       it('skips the by-text pass and says so when the scan hits the statement timeout, and still erases the rest', async () => {
         const value = 'cham.qua@erase.test';
         const small = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
@@ -422,18 +422,18 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
           await c.query('SET LOCAL session_replication_role = replica');
           await c.query(
             `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
-             VALUES ($1, 'transactional', 'meetings.followup', $2, 'x.y', 'lon@erase.test', repeat('e', 64), 'Thư lớn', jsonb_build_object('t', repeat('khong co gi o day ', 6000000)), '<' || gen_random_uuid()::text || '@erase.test>', 'queued')`,
+             VALUES ($1, 'transactional', 'meetings.followup', $2, 'x.y', 'lon@erase.test', repeat('e', 64), 'Thư lớn', jsonb_build_object('t', repeat('khong co gi o day ', 3000000)), '<' || gen_random_uuid()::text || '@erase.test>', 'queued')`,
             [orgId, big],
           );
           await c.query('COMMIT');
         });
-        const url = new URL(adminUrl);
-        url.username = 'crove_app';
-        url.password = 'test-app-pw';
-        const fast = createPool({ connectionString: url.toString(), max: 2, statementTimeoutMs: 400 });
-        pools.push(fast);
-        const quick = new Runtime(createDb(fast), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
         try {
+          const url = new URL(adminUrl);
+          url.username = 'crove_app';
+          url.password = 'test-app-pw';
+          const fast = createPool({ connectionString: url.toString(), max: 2, statementTimeoutMs: 400 });
+          pools.push(fast);
+          const quick = new Runtime(createDb(fast), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
           const out = await quick.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
           // The first pass (the meeting whose rows changed) was done; the by-text pass was skipped and said so; the leftover mail stays.
           expect((await mail(small))[0]).toMatchObject({ payload: null, subject: null });
