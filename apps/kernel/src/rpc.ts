@@ -5,7 +5,7 @@ import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOU
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -47,6 +47,7 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
@@ -347,6 +348,8 @@ export function createRpcHandler(
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
+  // The meetings coworker's wording of a follow-up email (L3, #2590): the same reader and model, a budget of its own. The model is told the language and the sender's name only.
+  const followupAi: FollowupAi = { reader: conversationReader?.followupWords ? { followupWords: conversationReader.followupWords.bind(conversationReader) } : null, budget: suggestionBudget() };
   // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
   // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
   const stockCoworker = stockAi(
@@ -885,6 +888,21 @@ export function createRpcHandler(
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
+      followup: {
+        draft: os.meetings.followup.draft.handler(meetingsQuery('meetings.followup.draft')),
+        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only, a published summary).
+        wording: os.meetings.followup.wording.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const draft = await runtime.query<FollowupDraft>('meetings.followup.draft', { meetingId: input.meetingId }, { actor, orgId });
+            return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
+          }),
+        ),
+        // A send runs once per idempotency key: a double click or a retry gets the first answer, never a second mail.
+        send: os.meetings.followup.send.handler(({ context, input }) => inMeetings(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
+        })),
+      },
       links: {
         add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),
         remove: os.meetings.links.remove.handler(meetingsCommand('meetings.link.remove')),

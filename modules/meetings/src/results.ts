@@ -82,7 +82,7 @@ const itemNotFound = () => new DomainError('ACTION_ITEM_NOT_FOUND', 404, 'Action
 type Trx = QueryContext['trx'];
 
 // The meeting, and that the caller is its recorder (404 when they cannot read it at all).
-async function recorderMeeting(ctx: CommandContext, meetingId: string, what: string) {
+export async function recorderMeeting(ctx: CommandContext, meetingId: string, what: string) {
   const userId = userOf(ctx.actor);
   const meeting = await openMeeting(ctx.trx, ctx.orgId, meetingId);
   if (meeting.recorder_user_id !== userId) throw recorderOnly(what);

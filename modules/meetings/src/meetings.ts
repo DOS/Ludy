@@ -10,6 +10,7 @@ import { resultCommands, resultQueries } from './results.ts';
 import { summaryCommands } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { followupCommands, followupQueries } from './followup.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -961,6 +962,7 @@ export const meetingsCommands = [
   ...summaryCommands,
   ...summaryRunCommands,
   ...linkCommands,
+  ...followupCommands,
 ];
 
 export const meetingsQueries = [
@@ -977,4 +979,5 @@ export const meetingsQueries = [
   ...resultQueries,
   ...summaryRunQueries,
   ...linkQueries,
+  ...followupQueries,
 ];
