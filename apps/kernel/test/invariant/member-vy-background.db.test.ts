@@ -35,6 +35,10 @@ import { Runtime } from "@crove/kernel-runtime";
 import { financeCommands, financeQueries } from "@crove/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
+import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+
+// The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
+let FEAT: AiRunFeature = { cols: "", vals: "" };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(
@@ -213,7 +217,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       userEnter(users[who]),
       (c) =>
         c.query(
-          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
           [orgId, runId, agentId],
         ),
       true,
@@ -260,6 +264,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    FEAT = await admin((c) => aiRunFeature(c));
     await setRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",

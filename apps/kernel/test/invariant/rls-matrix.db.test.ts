@@ -26,6 +26,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove
 import { Runtime } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { aiRunFeature } from './fixtures/ai-run-feature.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -369,6 +370,8 @@ const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit'
   values: { org_id: org, entry_id: entry, line_no: lineNo, account_code: side === 'debit' ? '6422' : '331', debit: side === 'debit' ? '100' : '0', credit: side === 'credit' ? '100' : '0' },
 });
 const vyAgentOf = new Map<string, { id: string } & Record<string, string>>();
+// Whether ai_run has the `feature` column (#3029): a member's Vy run seeded here then carries the feature its result names, as the result bind requires. Set once the migrations ran.
+let AI_RUN_FEATURE: Record<string, string> = {};
 const agentRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -2044,7 +2047,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           {
             table: 'crove_kernel.ai_run',
             unguarded: true,
-            values: { org_id: o.id, id: run, agent_id: agent.id, module: 'notes', status: 'succeeded', started_at: '2026-10-01T00:00:00Z', expires_at: '2026-10-01T00:15:00Z', finished_at: '2026-10-01T00:10:00Z' },
+            values: { org_id: o.id, id: run, agent_id: agent.id, module: 'notes', status: 'succeeded', started_at: '2026-10-01T00:00:00Z', expires_at: '2026-10-01T00:15:00Z', finished_at: '2026-10-01T00:10:00Z', ...AI_RUN_FEATURE },
           },
         ],
         row: {
@@ -2813,6 +2816,7 @@ async function prepare() {
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
     await admin.connect();
+    AI_RUN_FEATURE = (await aiRunFeature(admin)).cols ? { feature: 'notes.summary' } : {};
     const { rows } = await admin.query<Relation>(
       `SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) AS name, c.relkind::text AS kind, c.relrowsecurity AS rls,
               pg_catalog.pg_get_userbyid(c.relowner) AS owner,
@@ -3266,6 +3270,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           status: 'running',
           started_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+          ...AI_RUN_FEATURE,
         },
       },
     ]);
@@ -3303,6 +3308,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           status: 'running',
           started_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+          ...AI_RUN_FEATURE,
         },
       },
     ]);
