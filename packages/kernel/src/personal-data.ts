@@ -91,7 +91,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_kernel.mail_message.to_address': {
     kind: 'email',
     handling: 'erase',
-    reason: 'The recipient of a mail Crove sent; the keyed hash stays so a suppression still holds',
+    reason: 'The recipient of a mail Crove sent; the keyed hash stays so a suppression still holds. A mail already delivered cannot be recalled: the erasure drops the copy Crove holds (and, for a meeting follow-up mail, the copy of its text), not the copies in the recipients\' mailboxes',
   },
   'crove_kernel.mail_message.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash of the recipient (crove_kernel.mail_address_hash), not the address' },
   'crove_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
@@ -579,6 +579,12 @@ export const personalDataFind = defineCommand({
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
+// The statuses of a mail that has left Crove (the mail table's own set): its copies in the recipients' mailboxes cannot be taken back.
+const DELIVERED_MAIL_STATUSES: readonly string[] = ['sent', 'delivered', 'bounced', 'complained'];
+export const FOLLOWUP_MAIL_HIDDEN_REASON =
+  'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read (or that no longer exists): the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. The recorder or an owner deletes the meeting (which drops its mails at once), or the copy expires 30 days after the mail\'s final status';
+export const FOLLOWUP_MAIL_DELIVERED_REASON =
+  'Follow-up mails of a meeting that were already delivered to their recipients cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
@@ -934,6 +940,7 @@ export const personalDataErase = defineCommand({
     // meeting rows, while the meeting delete commands take this lock first and the row after: waiting for the lock here could deadlock with them, so it is only tried, and a busy meeting
     // answers the same retryable PERSONAL_DATA_BUSY as a deadlock in the scan (the whole erasure rolls back, nothing is half done). Only the count reaches the audit row.
     let followupMails = 0;
+    let followupDelivered = 0;
     for (const r of redaction ?? []) {
       if (Number(r.lines) + Number(r.results) + Number(r.items) + Number(r.titles) === 0) continue;
       const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${r.meeting_id}`}, 0)) AS ok`.execute(ctx.trx);
@@ -945,8 +952,39 @@ export const personalDataErase = defineCommand({
         .where('source', '=', FOLLOWUP_MAIL_SOURCE)
         .where('source_id', '=', r.meeting_id)
         .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
-        .executeTakeFirst();
-      followupMails += Number(dropped.numUpdatedRows);
+        .returning('status')
+        .execute();
+      followupMails += dropped.length;
+      followupDelivered += dropped.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
+    }
+    // The follow-up mails whose OWN text mentions the value (#3025), whether or not the meeting's rows changed: the recorder may have edited the value out of the summary after the send
+    // (the meeting then has no hit), or typed it only into the subject. The same matcher (text_mentions) reads the subject and the payload; the rows of the first pass are already dropped
+    // in this transaction, so none is counted twice. Only mails of a meeting the owner reads (row security shows its row) are dropped, as the meeting rows follow the notice rule: a mail of a
+    // meeting the owner cannot read, or of one that no longer exists, stays and is counted. A meeting's mails are dropped under the same try-lock as above (busy: the same retryable refusal).
+    const { rows: leftovers } = await sql<{ id: string; source_id: string; readable: boolean; delivered: boolean }>`
+      SELECT m.id, m.source_id,
+             EXISTS (SELECT 1 FROM crove_meetings.meeting g WHERE g.org_id = m.org_id AND g.id = m.source_id) AS readable,
+             m.status IN ('sent', 'delivered', 'bounced', 'complained') AS delivered
+        FROM crove_kernel.mail_message m
+       WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+         AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})`.execute(ctx.trx);
+    const followupHidden = leftovers.filter((m) => !m.readable).length;
+    const leftoverMeetings = new Map<string, string[]>();
+    for (const m of leftovers) if (m.readable) leftoverMeetings.set(m.source_id, [...(leftoverMeetings.get(m.source_id) ?? []), m.id]);
+    for (const [meetingId, mailIds] of leftoverMeetings) {
+      const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${meetingId}`}, 0)) AS ok`.execute(ctx.trx);
+      if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa cùng lúc; hãy thử lại sau ít phút');
+      const dropped = await ctx.trx
+        .updateTable('crove_kernel.mail_message')
+        .set({ payload: null, subject: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('source', '=', FOLLOWUP_MAIL_SOURCE)
+        .where('id', 'in', mailIds)
+        .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
+        .returning('status')
+        .execute();
+      followupMails += dropped.length;
+      followupDelivered += dropped.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
     }
     // The retention dates of the meetings the owner reads (row security shows only those); the others are counted, their dates never shown.
     const readable = new Set(
@@ -1019,6 +1057,9 @@ export const personalDataErase = defineCommand({
     // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
     if (redaction === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     else if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    // Follow-up mail copies (#3025): the ones of a meeting the owner cannot read stay, counted; and the copies that already reached their recipients cannot be taken back.
+    if (followupHidden > 0) kept.set('crove_meetings.followup_mail', { column: 'crove_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
+    if (followupDelivered > 0) kept.set('crove_kernel.mail_message.payload', { column: 'crove_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
     // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
     if (mediaOf.some((m) => m.audio)) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
     if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
