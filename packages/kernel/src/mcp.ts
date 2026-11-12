@@ -13,7 +13,7 @@
 // No command declares `mcp`: an MCP grant reaches no write (a test pins it).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
+import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
@@ -28,6 +28,8 @@ export const zMcpGrantApprove = z.strictObject({
   scopes: z.array(z.enum(MCP_SCOPE_IDS)).min(1).max(4),
   oauthGrantId: z.string().min(1).max(200),
   expiresInDays: z.number().int().min(1).max(89).default(89),
+  // A company grant (an owner or admin, for the company) or a member grant (a member, for themself, under their own rights).
+  kind: z.enum(['company', 'member']).default('company'),
 });
 
 // The errors the grant definers raise, as domain errors; anything else goes through the runtime's mapping.
@@ -38,6 +40,8 @@ function mcpError(error: unknown): never {
       throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp được quyền kết nối MCP');
     case 'MCP_INVALID':
       throw new DomainError('INVALID', 422, 'Yêu cầu cấp quyền kết nối MCP không hợp lệ');
+    case 'MCP_TOO_MANY':
+      throw new DomainError('MCP_GRANT_TOO_MANY', 409, 'Bạn đã có đủ 5 quyền kết nối MCP của riêng mình, hãy ngắt bớt một quyền rồi thử lại');
     default:
       throw error;
   }
@@ -52,7 +56,8 @@ export const mcpGrantApprove = defineCommand({
   input: zMcpGrantApprove,
   risk: 'R2',
   sideEffect: 'internal',
-  access: GRANTORS,
+  // Any member may reach the command: the definers decide who may make which kind (a company grant is an owner's or admin's; a member grant is any member's while the org allows it).
+  access: ALL,
   handler: async (ctx, input) => {
     requireUser(ctx);
     // A member who has a second factor approves a connection with a fresh one, as for the extension (ADR-0047 point 10): aal2 means "has one".
@@ -60,16 +65,21 @@ export const mcpGrantApprove = defineCommand({
     if (actor.type === 'user' && actor.aal === 'aal2' && !hasFreshMfa(actor)) {
       throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để cấp quyền kết nối MCP');
     }
-    const { rows } = await sql<{ id: string }>`
-      SELECT crove_kernel.mcp_grant_approve(
-        ${input.clientId}, ${input.clientName}, ${input.clientHost}, ${input.scopes}::text[], ${input.oauthGrantId},
-        pg_catalog.clock_timestamp() + (${input.expiresInDays} * interval '1 day')) AS id`
-      .execute(ctx.trx)
-      .catch(mcpError);
+    const expires = sql`pg_catalog.clock_timestamp() + (${input.expiresInDays} * interval '1 day')`;
+    const { rows } =
+      input.kind === 'member'
+        ? await sql<{ id: string }>`
+            SELECT crove_kernel.mcp_member_grant_approve(${input.clientId}, ${input.clientName}, ${input.clientHost}, ${input.scopes}::text[], ${input.oauthGrantId}, ${expires}) AS id`
+            .execute(ctx.trx)
+            .catch(mcpError)
+        : await sql<{ id: string }>`
+            SELECT crove_kernel.mcp_grant_approve(${input.clientId}, ${input.clientName}, ${input.clientHost}, ${input.scopes}::text[], ${input.oauthGrantId}, ${expires}) AS id`
+            .execute(ctx.trx)
+            .catch(mcpError);
     const grantId = rows[0]?.id;
     if (!grantId) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     // Ids, the client and the scopes: never a token, a code or the authorization grant's id.
-    ctx.audit({ grantId, clientId: input.clientId, clientName: input.clientName, clientHost: input.clientHost, scopes: [...input.scopes].sort() });
+    ctx.audit({ grantId, kind: input.kind, clientId: input.clientId, clientName: input.clientName, clientHost: input.clientHost, scopes: [...input.scopes].sort() });
     return { grantId };
   },
 });
@@ -93,7 +103,8 @@ export const mcpGrantRevoke = defineCommand({
 export const mcpGrantList = defineQuery({
   name: 'kernel.mcp.grant.list',
   input: z.strictObject({}),
-  access: GRANTORS,
+  // An owner or admin sees the org's grants; any other member only their own (the definer decides which).
+  access: ALL,
   handler: async (ctx): Promise<McpGrantView[]> => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được quyền kết nối MCP');
     const { rows } = await sql<{
@@ -137,7 +148,8 @@ export type McpAbout = z.infer<typeof zMcpAbout>;
 export const mcpAbout = defineQuery({
   name: 'kernel.mcp.about',
   input: z.strictObject({}),
-  access: GRANTORS,
+  // Every role: a member grant of a member or a viewer reaches this and nothing that is owner or admin only; what it returns holds no business data.
+  access: ALL,
   mcp: { scope: 'ludy.read' },
   handler: async (ctx): Promise<McpAbout> => {
     if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
@@ -240,5 +252,36 @@ export const mcpParties = defineQuery({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, ...mcpWakeCommands];
-export const mcpQueries = [mcpGrantList, mcpAbout, mcpParties, ...mcpWakeQueries];
+// The org's switch for member-bound grants: an owner turns it on or off. Off by default; turning it off ends every non-admin member grant at its next request (the standing
+// function reads the switch live), with no row touched. It changes who may let company data leave to a third-party AI app, so it is R2, user-only and audited.
+export const mcpMemberGrantsSet = defineCommand({
+  name: 'kernel.mcp.member_grants.set',
+  input: zMcpMemberGrantsSet,
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: ['owner'],
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const actor = ctx.actor;
+    if (actor.type === 'user' && actor.aal === 'aal2' && !hasFreshMfa(actor)) {
+      throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để đổi cài đặt này');
+    }
+    const { rows } = await sql<{ on: boolean }>`SELECT crove_kernel.mcp_member_grants_set(${input.enabled}) AS "on"`.execute(ctx.trx).catch(mcpError);
+    ctx.audit({ enabled: rows[0]?.on === true });
+    return { enabled: rows[0]?.on === true };
+  },
+});
+
+export const mcpMemberGrantsGet = defineQuery({
+  name: 'kernel.mcp.member_grants.get',
+  input: z.strictObject({}),
+  access: GRANTORS,
+  handler: async (ctx): Promise<z.infer<typeof zMcpMemberGrantsView>> => {
+    if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được cài đặt này');
+    const { rows } = await sql<{ on: boolean }>`SELECT crove_kernel.mcp_member_grants_get() AS "on"`.execute(ctx.trx).catch(mcpError);
+    return { enabled: rows[0]?.on === true };
+  },
+});
+
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, ...mcpWakeCommands];
+export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, ...mcpWakeQueries];

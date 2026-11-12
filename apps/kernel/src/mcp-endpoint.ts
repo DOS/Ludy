@@ -19,7 +19,6 @@ import { sql } from 'kysely';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS } from '@crove/kernel-contract';
 import { DomainError, toDomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { zMcpPartiesInput, myOrgs } from '@crove/kernel';
 import { zMcpInvoicesInput } from '@crove/mod-finance';
@@ -221,7 +220,9 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       const client = await oauth.provider.Client.find(clientId);
       if (!client) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy ứng dụng cần kết nối');
       const redirect = new URL(String(interaction.params.redirect_uri ?? ''));
-      const orgs = (await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId))).filter((o) => o.role === 'owner' || o.role === 'admin');
+      // An owner or admin of an org may consent for the company or for themself; a member or viewer only for themself and only where the org has turned member grants on.
+      const memberGrants = await memberGrantsByOrg(user);
+      const orgs = (await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId))).filter((o) => o.role === 'owner' || o.role === 'admin' || memberGrants.get(o.orgId) === true);
       return c.json({
         client: {
           // What the client declared about itself: shown as self-declared. The redirect host is the one fact the person can check.
@@ -233,7 +234,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         },
         scopes: [MCP_SCOPE],
         expiresInDays: 89,
-        orgs: orgs.map((o) => ({ orgId: o.orgId, slug: o.slug, name: o.name, role: o.role })),
+        orgs: orgs.map((o) => ({ orgId: o.orgId, slug: o.slug, name: o.name, role: o.role, memberGrants: memberGrants.get(o.orgId) === true })),
       });
     } catch (error) {
       return problem(c, error);
@@ -241,7 +242,13 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
   };
   app.get('/oauth/interaction/:uid/details', details);
 
-  const zConsent = z.strictObject({ decision: z.enum(['approve', 'deny']), orgId: z.uuid().optional() });
+  // Whether each org the user belongs to lets members connect their own AI app (the org's switch; a boolean per org of the user's own memberships).
+  async function memberGrantsByOrg(user: AuthUser): Promise<Map<string, boolean>> {
+    const rows = await runtime.forUser(actorOf(user), async (db) => (await sql<{ org_id: string; enabled: boolean }>`SELECT org_id, enabled FROM crove_kernel.mcp_member_grants_for_user(${user.userId}::uuid)`.execute(db)).rows);
+    return new Map(rows.map((r) => [r.org_id, r.enabled]));
+  }
+
+  const zConsent = z.strictObject({ decision: z.enum(['approve', 'deny']), orgId: z.uuid().optional(), kind: z.enum(['company', 'member']).default('company') });
   app.post('/oauth/interaction/:uid/consent', bodyLimit({ maxSize: MAX_CONSENT_BODY_BYTES }), async (c) => {
     noStore(c);
     try {
@@ -256,10 +263,15 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         return c.json({ redirectTo });
       }
       if (!parsed.data.orgId) throw new DomainError('INVALID', 422, 'Hãy chọn tổ chức');
-      // Only an owner or admin of the org may consent for it; the definer checks again, in the org's own transaction.
+      // A company grant is an owner's or admin's alone. A member grant is for the person themself: an owner or admin always, a member or viewer only while the org has turned
+      // member grants on. The definers check again, in the org's own transaction.
       const orgs = await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId));
       const org = orgs.find((o) => o.orgId === parsed.data.orgId);
-      if (!org || (org.role !== 'owner' && org.role !== 'admin')) throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấp được quyền kết nối');
+      const privileged = org !== undefined && (org.role === 'owner' || org.role === 'admin');
+      const memberGrants = await memberGrantsByOrg(user);
+      if (!org || (parsed.data.kind === 'company' && !privileged) || (parsed.data.kind === 'member' && !privileged && memberGrants.get(org.orgId) !== true)) {
+        throw new DomainError('FORBIDDEN', 403, 'Bạn không được cấp quyền kết nối này cho tổ chức, hãy hỏi chủ sở hữu');
+      }
       const clientId = String(interaction.params.client_id ?? '');
       const client = await oauth.provider.Client.find(clientId);
       if (!client) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy ứng dụng cần kết nối');
@@ -279,8 +291,10 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
             clientId,
             clientName: typeof client.clientName === 'string' && client.clientName.trim() !== '' ? client.clientName.trim().slice(0, 120) : clientId.slice(0, 120),
             clientHost: new URL(String(interaction.params.redirect_uri ?? '')).host,
-            scopes: [...MCP_SCOPE_IDS],
+            // The one scope a person can be asked for today; the private scope of a member grant ships dark (no query declares it, no screen offers it).
+            scopes: [MCP_SCOPE],
             oauthGrantId,
+            kind: parsed.data.kind,
           },
           { actor: actorOf(user), orgId: parsed.data.orgId },
         );

@@ -52,7 +52,7 @@ export interface ConsentDetails {
   client: { id: string; name: string; logoUri: string | null; redirectHost: string; selfDeclared: boolean };
   scopes: string[];
   expiresInDays: number;
-  orgs: Array<{ orgId: string; slug: string; name: string; role: string }>;
+  orgs: Array<{ orgId: string; slug: string; name: string; role: string; memberGrants: boolean }>;
 }
 
 // Where the browser may be sent after an answer: the server's resume address on this origin. Anything else is refused.

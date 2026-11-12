@@ -6,7 +6,9 @@ import { zId } from './schemas.ts';
 
 // The scopes an MCP grant may hold. @crove/kernel-runtime keeps the list the runtime enforces (MCP_SCOPES) and
 // crove_kernel.agent_grant's CHECK the same one; a test pins the two lists.
-export const MCP_SCOPE_IDS = ['ludy.read'] as const;
+// `ludy.member.read` is the private scope of a member grant (design note on #2975, slice 3): it ships dark. The database accepts it on a member grant, but the runtime's own
+// list (MCP_SCOPES) does not have it yet, so no query can declare it, and no screen asks for it; it joins that list with the first query that declares it (step 3d).
+export const MCP_SCOPE_IDS = ['ludy.read', 'ludy.member.read'] as const;
 export type McpScopeId = (typeof MCP_SCOPE_IDS)[number];
 export const zMcpScope = z.enum(MCP_SCOPE_IDS);
 
@@ -24,6 +26,10 @@ export const zMcpGrantView = z.strictObject({
   revokedAt: z.string().nullable(),
 });
 export type McpGrantView = z.infer<typeof zMcpGrantView>;
+
+// The org's switch for member-bound grants (owner only; off by default): while it is off no member or viewer can consent and every non-admin member grant ends at its next request.
+export const zMcpMemberGrantsSet = z.strictObject({ enabled: z.boolean() });
+export const zMcpMemberGrantsView = z.strictObject({ enabled: z.boolean() });
 
 export const zMcpGrantRevoke = z.strictObject({ grantId: zId });
 export const zMcpGrantRevoked = z.strictObject({ grantId: zId, revoked: z.literal(true) });
