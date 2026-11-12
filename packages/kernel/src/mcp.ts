@@ -121,6 +121,7 @@ export const mcpGrantList = defineQuery({
     }>`SELECT id, user_id, client_id, client_name, client_host, scopes, created_at, expires_at, last_used_at, revoked_at FROM crove_kernel.mcp_grant_list()`
       .execute(ctx.trx)
       .catch(mcpError);
+    const me = ctx.actor.userId;
     const kinds = new Map((await sql<{ id: string; kind: string }>`SELECT id, kind FROM crove_kernel.mcp_grant_kinds()`.execute(ctx.trx).catch(mcpError)).rows.map((k) => [k.id, k.kind === 'member' ? 'member' : 'company'] as const));
     return rows.map((r) => ({
       id: r.id,
@@ -134,7 +135,7 @@ export const mcpGrantList = defineQuery({
       lastUsedAt: r.last_used_at ? r.last_used_at.toISOString() : null,
       revokedAt: r.revoked_at ? r.revoked_at.toISOString() : null,
       kind: kinds.get(r.id) ?? 'company',
-      mine: r.user_id === ctx.actor.userId,
+      mine: r.user_id === me,
     }));
   },
 });
