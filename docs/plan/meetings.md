@@ -1,6 +1,6 @@
 # Ludy Meetings: AI meeting notes, plan
 
-> Plan for epic [#932](https://github.com/DOS/Ludy/issues/932), 2026-11-03. Owner direction the same day: "Okay đưa nó đi. Rồi tao bàn với nó. Nói nó là làm lean, core feature trước và AI first nhé" (go ahead; the owner discusses it first; lean, core features first, AI-first). Revised the same day after the owner's input on capture: "Tao thấy option extension là ổn nhất mà, không cần bot, không cần cài app mà ghi âm, record video đều được" (a browser extension is the best option: no bot, no app to install, and it records audio and video). **Approved by the owner on 2026-11-04 ("Đồng ý"): Q1 to Q6 as recommended, Q7 decided the same day (section 14).** Nothing here is built yet and no money is spent; the build issues are listed in section 15. Steps M4 (transcription) and M6 (summary, decisions, action items) depend on ADR-0049, the member-scoped Vy (PR [#2572](https://github.com/DOS/Ludy/pull/2572)), which still waits for the Platform PO's acceptance. The decision record is [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Accepted); a Vietnamese summary for the owner is [meetings.vi.md](meetings.vi.md). It replaces the scope paragraph of the kernel plan's §13 "Meeting Notes" once accepted. The legal points of section 7 are commentary until a lawyer (#62) confirms them.
+> Plan for epic [#932](https://github.com/DOS/Ludy/issues/932), 2026-11-03. Owner direction the same day: "Okay đưa nó đi. Rồi tao bàn với nó. Nói nó là làm lean, core feature trước và AI first nhé" (go ahead; the owner discusses it first; lean, core features first, AI-first). Revised the same day after the owner's input on capture: "Tao thấy option extension là ổn nhất mà, không cần bot, không cần cài app mà ghi âm, record video đều được" (a browser extension is the best option: no bot, no app to install, and it records audio and video). **Approved by the owner on 2026-11-04 ("Đồng ý"): Q1 to Q6 as recommended, Q7 decided the same day (section 14).** The build issues are listed in section 15; what is built and what still waits is in section 16 (status of 2026-11-12). Steps M4 (transcription) and M6 (summary, decisions, action items) depend on ADR-0049, the member-scoped Vy (PR [#2572](https://github.com/DOS/Ludy/pull/2572)), which still waits for the Platform PO's acceptance. The decision record is [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Accepted); a Vietnamese summary for the owner is [meetings.vi.md](meetings.vi.md). It replaces the scope paragraph of the kernel plan's §13 "Meeting Notes" once accepted. The legal points of section 7 are commentary until a lawyer (#62) confirms them.
 
 ## 1. The user and the weekly job
 
@@ -246,3 +246,26 @@ The recorder of a meeting with a shared summary clicks "Soạn thư cảm ơn". 
 - **The AI part:** Vy words the lead-in and the closing only, told none of the meeting's content (no summary, decision, action item, name or date). The call goes through the AI budget meter (`meetings.followup_words`, meetings module budget) and the kill switches; a stopped, spent, failed or refused call leaves the fixed words. Vy's text is tainted: the recorder ticks "Tôi đã đọc" before the send, and the server checks every text the same way whatever its origin (no figure, link or address, not empty, not too long). With AI off the fixed words are the draft and no model is called.
 - **A person sends:** the send is an R2 command from the recorder's click, once per idempotency key. The audit names counts and ids only, never an address or a word.
 - **Erasure (#3016):** the mail queue keeps a follow-up mail's merge data (the shared summary, decisions and action item owners) until 30 days after its final status. A meeting's own delete, the owner's compliance delete, the text retention purge and the archive replay of a shred each also set that payload to NULL (the mail table lets a payload only be dropped), in the same transaction; the mail row, its status and its counts stay, and a mail still queued (not yet taken by the worker) then fails to render rather than send the text of a meeting that is gone. The drop and a send of the same meeting share one lock, so a send running at the same moment either finishes first (its mails are dropped too) or finds the meeting gone. The audit row holds the count (`mailPayloads`). Not covered yet: the personal-data erasure of a mention (kernel.personal_data.erase) redacts the meeting's text rows but not this copy; that is a separate follow-up.
+
+## 16. Status (2026-11-12)
+
+The Meetings line paused here on 2026-11-12 (the owner is moving to a new machine). No sub-session is running and no Meetings PR is open.
+
+**Built and merged:** M1, M2, M3 (crove-media, with measured media length, tmpfs scratch and the pilot caps; its image is published and pinned by the release), M5, M6, M7, M8, M9 (the extension, with icons, English UI and the `ext-v*` packaging workflow `.github/workflows/extension-package.yml`), L1, L3 (#3015, follow-up email), L5, and the follow-ups #3016 (erasure of follow-up mail payloads) and #3017 (usage page labels). The transcription code of M4 is merged (Gemini through `TRANSCRIBE_API_MODE=chat_input_audio`, the WER/CER scorer of `docs/runbooks/meetings-transcribe-eval.md`); the issue stays open for its eval.
+
+**Deployed:** the pilot runs release v0.3.1 (2026-11-11), which holds the summary code but not crove-media, L1, L3 or the later fixes; they go out with the next release. Before the first release that includes crove-media, the GHCR package `<repo>-media` must be linked to the read-only deploy token (runbook `docs/runbooks/meetings-ai.md`, P3b).
+
+**Waiting on a person (nothing an agent can build):**
+
+| Item | Who | What |
+|---|---|---|
+| Summary switch-on (runbook `meetings-ai.md`, S1 to S4) | The owner, then the coordinator | Approve in the coordinator's chat; the coordinator runs the steps |
+| #2584 (M10), #3010 | The owner | Upload the extension package (artifact of the `extension-package` workflow) to the Chrome Web Store, following `docs/runbooks/extension-store.md`; give the store id, which an agent adds to `DEFAULT_EXTENSION_IDS` |
+| #3013 | The owner | A tag ruleset that protects `ext-v*` tags, if a public release page is wanted |
+| #2585 (M11), #2578 (M4) | The owner, a lawyer | Answers to section 7, the consented eval recordings, and a transcription provider key |
+| #328 | The owner, a lawyer | Review of the privacy notice the store listing links to |
+
+**Open for agents, not Meetings-owned:** #3020 (personal-data erasure of a mention also clears the follow-up mail copy; `packages/kernel`, the Platform PO). **Icebox:** L2 (#2589), L4 (#2592), #2863.
+
+**To resume:** a new Meetings PO session reads this section and the issues above, then picks the first item a person has unblocked.
+
