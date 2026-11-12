@@ -137,7 +137,13 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
         'crove_kernel.mcp_wake_signals_check(uuid, text[], text[])',
       ];
       const nobody = ['crove_kernel.mcp_wake_body_ok(jsonb, uuid, uuid, uuid, text)', 'crove_kernel.mcp_wake_system()'];
-      const grants: Array<[string, string[]]> = [...worker.map((f): [string, string[]] => [f, ['crove_worker']]), ...nobody.map((f): [string, string[]] => [f, []])];
+      // The test ping is asked for by a person through the API's login (step c2), never by the worker.
+      const app = ['crove_kernel.mcp_wake_test(uuid)'];
+      const grants: Array<[string, string[]]> = [
+        ...worker.map((f): [string, string[]] => [f, ['crove_worker']]),
+        ...app.map((f): [string, string[]] => [f, ['crove_app']]),
+        ...nobody.map((f): [string, string[]] => [f, []]),
+      ];
       for (const [fn, allowed] of grants) {
         for (const role of roles) {
           expect((await c.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, fn])).rows[0].ok, `${role} execute ${fn}`).toBe(allowed.includes(role));

@@ -29,6 +29,7 @@ export const KERNEL_ERROR_CODES = [
   'MCP_GRANT_NOT_FOUND',
   'MCP_WAKE_GRANT_NOT_FOUND',
   'MCP_WAKE_NOT_FOUND',
+  'MCP_WAKE_TOO_SOON',
   'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',

@@ -54,6 +54,7 @@ export function OrgMcpWake({ grantId, view }: { grantId: string; view: McpWakeVi
   };
   const save = useMutation(orpc.mcp.wake.set.mutationOptions({ onSuccess: got, onError: refresh }));
   const rotate = useMutation(orpc.mcp.wake.rotateSecret.mutationOptions({ onSuccess: got, onError: refresh }));
+  const test = useMutation(orpc.mcp.wake.test.mutationOptions({ onSuccess: refresh, onError: refresh }));
   const clear = useMutation(
     orpc.mcp.wake.clear.mutationOptions({
       onSuccess: () => {
@@ -78,7 +79,7 @@ export function OrgMcpWake({ grantId, view }: { grantId: string; view: McpWakeVi
       ...(schedule === 'off' || minute === null ? {} : { minute }),
       ...(schedule === 'weekly' ? { weekday } : {}),
     });
-  const error = save.error ?? rotate.error ?? clear.error;
+  const error = save.error ?? rotate.error ?? clear.error ?? test.error;
   return (
     <div className="mt-2 space-y-2 text-xs" data-testid="org-mcp-wake">
       <p className="flex flex-wrap items-center gap-2 text-subtle-foreground">
@@ -102,6 +103,7 @@ export function OrgMcpWake({ grantId, view }: { grantId: string; view: McpWakeVi
           </Button>
         </div>
       )}
+      {test.isSuccess && <p role="status" className="text-subtle-foreground">{t('testQueued')}</p>}
       {view?.previousUntil && <p className="text-subtle-foreground">{t('overlap', { at: f.dateTime(view.previousUntil) })}</p>}
       {open && (
         <form
@@ -159,6 +161,11 @@ export function OrgMcpWake({ grantId, view }: { grantId: string; view: McpWakeVi
             {view && (
               <Button size="sm" variant="outline" type="button" disabled={rotate.isPending} onClick={() => rotate.mutate({ grantId })}>
                 {t('rotate')}
+              </Button>
+            )}
+            {view && view.enabled && (
+              <Button size="sm" variant="outline" type="button" disabled={test.isPending} onClick={() => test.mutate({ grantId })}>
+                {t('test')}
               </Button>
             )}
             {view &&

@@ -40,6 +40,8 @@ function wakeError(error: unknown): never {
       throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới cài được địa chỉ nhận của quyền kết nối MCP');
     case 'MCP_WAKE_GRANT':
       throw new DomainError('MCP_WAKE_GRANT_NOT_FOUND', 404, 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực');
+    case 'MCP_WAKE_TOO_SOON':
+      throw new DomainError('MCP_WAKE_TOO_SOON', 429, 'Mỗi quyền kết nối chỉ gửi thử được một lần mỗi phút');
     case 'MCP_WAKE_INVALID':
       throw new DomainError('INVALID', 422, 'Địa chỉ nhận hoặc lịch gửi không hợp lệ');
     default:
@@ -110,6 +112,27 @@ export const mcpWakeClear = defineCommand({
     if (rows[0]?.cleared !== true) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
     ctx.audit({ grantId: input.grantId });
     return { grantId: input.grantId, cleared: true as const };
+  },
+});
+
+// "Send a test": stores a `ping` for the grant's receiver (the sweep hands it to the delivery queue within a minute). It carries no data, and the database allows one a
+// minute per grant. A user only, with a fresh second factor as for setting the receiver.
+export const mcpWakeTest = defineCommand({
+  name: 'kernel.mcp.wake.test',
+  input: zMcpWakeGrantRef,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: GRANTORS,
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gửi thử được tin nhắn đánh thức');
+    if (ctx.actor.aal === 'aal2' && !hasFreshMfa(ctx.actor)) {
+      throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để gửi thử');
+    }
+    const { rows } = await sql<{ id: string }>`SELECT crove_kernel.mcp_wake_test(${input.grantId}::uuid) AS id`.execute(ctx.trx).catch(wakeError);
+    const eventId = rows[0]?.id;
+    if (!eventId) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+    ctx.audit({ grantId: input.grantId, eventId });
+    return { grantId: input.grantId, eventId, queued: true as const };
   },
 });
 
@@ -301,5 +324,5 @@ export const mcpWakeTarget = defineQuery({
   },
 });
 
-export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck];
+export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck];
 export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget];
