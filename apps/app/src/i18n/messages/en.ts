@@ -1737,6 +1737,8 @@ export const en = {
         desc: 'Vy listens to the recording and writes it down for you only. It uses your AI budget, takes a few minutes, and nothing is shared until you decide.',
         start: 'Transcribe with Vy',
         restart: 'Transcribe again',
+        stop: 'Stop transcribing',
+        stopHint: 'Stop this run if it seems stuck. The recording is not affected, and you can transcribe again.',
         running: 'Vy is transcribing. You can leave this page; it keeps going.',
         ready: 'Vy has finished. Copy the text here to read and correct it.',
         copy: 'Copy into my draft',
@@ -1754,6 +1756,7 @@ export const en = {
           TRANSCRIPT_EMPTY: 'The recording holds no speech.',
           TRANSCRIPT_TOO_LONG: 'The meeting is too long to transcribe in one go.',
           RUN_ENDED: 'The run ended before it finished. Start it again.',
+          RUN_CANCELLED: 'This run was stopped. You can ask Vy to transcribe it again at any time.',
           default: 'Something went wrong while transcribing. Start it again.',
         },
       },
@@ -10500,6 +10503,7 @@ export const en = {
           open: "Let Vy read your own recording of a meeting to transcribe it (you started the run)",
         },
         run: {
+          cancel: 'Stop a run of Vy working for you',
           check: 'Check that a run of Vy working for you may go on',
           finish: 'Close a run of Vy working for you',
           latest: "See my Vy's latest run for this item",
@@ -10766,6 +10770,7 @@ export const en = {
       },
       search: 'Search the transcripts of meetings',
       transcript: {
+        cancel: 'Stop Vy transcribing your meeting',
         copy_result: 'Copy Vy\'s transcription into the draft transcript',
         correct: 'Correct a line of the draft transcript',
         draft_store: 'Store the draft transcript of a meeting',

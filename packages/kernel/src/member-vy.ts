@@ -160,6 +160,70 @@ export const memberVyRunStart = defineCommand({
   },
 });
 
+// The member ends their own running run (#3033): a lost job otherwise holds the member's slot for the feature until the run expires (up to 4 hours for a meeting) and the member
+// has no way to free it. Only a running run of the caller's own Vy: another member's run, a finished run and an unknown id all answer `cancelled: false` the same way, so the answer
+// tells nothing about a run that is not theirs. It does what the start's supersede and the result store already do in the member's own context (the run is cancelled with the fixed word
+// RUN_CANCELLED, its result row fails with the same word); a model call already in flight finishes but cannot store its text, since a store needs a live run.
+export const memberVyRunCancel = defineCommand({
+  name: 'kernel.member_vy.run.cancel',
+  input: z.object({ runId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBER_ROLES,
+  target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
+  handler: async (ctx, input): Promise<{ cancelled: boolean }> => {
+    const userId = requireUser(ctx);
+    const agent = await ctx.trx
+      .selectFrom('crove_kernel.agent')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('kind', '=', 'member_vy')
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
+    if (!agent) return { cancelled: false };
+    // The run row is locked first, the same order the result store and the worker's finish take (run, then result), so a store in progress is waited for. A background run's
+    // text is stored as `ready` in one transaction and the run is closed in another (the worker's run.finish): in the gap the run still reads `running`, and cancelling it then would
+    // leave a cancelled run beside a ready result, which the finish definer says never to record. So the result is read after the lock, in a statement of its own (READ COMMITTED
+    // sees what the store committed), and a result that is no longer running leaves the run to the worker's finish: `cancelled: false`.
+    const run = await ctx.trx
+      .selectFrom('crove_kernel.ai_run')
+      .select(['id', 'feature'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.runId)
+      .where('agent_id', '=', agent.id)
+      .where('status', '=', 'running')
+      .forUpdate()
+      .executeTakeFirst();
+    if (!run) return { cancelled: false };
+    const result = await ctx.trx
+      .selectFrom('crove_kernel.member_vy_result')
+      .select('status')
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', input.runId)
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
+    if (result && result.status !== 'running') return { cancelled: false };
+    await ctx.trx
+      .updateTable('crove_kernel.ai_run')
+      .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_CANCELLED' })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.runId)
+      .where('agent_id', '=', agent.id)
+      .where('status', '=', 'running')
+      .execute();
+    await ctx.trx
+      .updateTable('crove_kernel.member_vy_result')
+      .set({ status: 'failed', error_code: 'RUN_CANCELLED' })
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', input.runId)
+      .where('member_user_id', '=', userId)
+      .where('status', '=', 'running')
+      .execute();
+    ctx.audit({ run_id: input.runId, feature: run.feature });
+    return { cancelled: true };
+  },
+});
+
 const zOutcome = z.discriminatedUnion('status', [
   z.object({ status: z.literal('ready'), body: z.string().min(1).max(MAX_BODY), sourceRevision: z.number().int().min(0).max(2_000_000_000).optional() }),
   z.object({ status: z.literal('failed'), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/) }),
@@ -646,5 +710,5 @@ export const memberVyMemberDataPurge = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
+export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

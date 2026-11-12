@@ -1734,6 +1734,8 @@ export const vi = {
         title: 'Nhờ Vy ghi lời cuộc họp này',
         desc: 'Vy nghe bản ghi âm rồi chép thành chữ, chỉ mình bạn thấy. Việc này dùng ngân sách AI của bạn, mất vài phút, và chưa chia sẻ gì cho ai khi bạn chưa quyết định.',
         start: 'Nhờ Vy ghi lời',
+        stop: 'Dừng ghi lời',
+        stopHint: 'Dừng lượt này nếu nó treo quá lâu. Bản ghi âm không bị ảnh hưởng, và bạn có thể ghi lời lại.',
         restart: 'Ghi lời lại',
         running: 'Vy đang ghi lời. Bạn có thể rời trang, Vy vẫn làm tiếp.',
         ready: 'Vy đã xong. Hãy chép chữ về đây để đọc và sửa.',
@@ -1752,6 +1754,7 @@ export const vi = {
           TRANSCRIPT_EMPTY: 'Bản ghi âm không có tiếng nói.',
           TRANSCRIPT_TOO_LONG: 'Cuộc họp quá dài để ghi lời một lần.',
           RUN_ENDED: 'Lượt ghi lời đã dừng trước khi xong. Hãy nhờ Vy làm lại.',
+          RUN_CANCELLED: 'Lượt ghi lời này đã bị dừng. Bạn có thể nhờ Vy ghi lời lại bất cứ lúc nào.',
           default: 'Có lỗi khi ghi lời. Hãy nhờ Vy làm lại.',
         },
       },
@@ -10497,6 +10500,7 @@ export const vi = {
           open: 'Cho Vy đọc bản ghi âm cuộc họp của chính bạn để ghi lời (bạn đã bắt đầu lượt này)',
         },
         run: {
+          cancel: 'Dừng một lượt Vy đang làm việc cho bạn',
           check: 'Kiểm tra lượt Vy làm việc cho bạn có được tiếp tục không',
           finish: 'Đóng một lượt Vy làm việc cho bạn',
           latest: 'Xem lần chạy gần nhất của Vy của tôi cho mục này',
@@ -10763,6 +10767,7 @@ export const vi = {
       },
       search: 'Tìm trong bản ghi các cuộc họp',
       transcript: {
+        cancel: 'Dừng lượt Vy ghi lời cuộc họp của bạn',
         copy_result: 'Chép bản ghi lời của Vy vào bản nháp',
         correct: 'Sửa một dòng của bản ghi nháp',
         draft_store: 'Lưu bản ghi nháp của cuộc họp',
