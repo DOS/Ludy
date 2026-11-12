@@ -10762,6 +10762,7 @@ export const en = {
         add: 'Add meeting reader',
         remove: 'Remove meeting reader',
       },
+      search: 'Search the transcripts of meetings',
       transcript: {
         copy_result: 'Copy Vy\'s transcription into the draft transcript',
         correct: 'Correct a line of the draft transcript',

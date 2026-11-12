@@ -10759,6 +10759,7 @@ export const vi = {
         add: 'Thêm người đọc cuộc họp',
         remove: 'Xóa người đọc cuộc họp',
       },
+      search: 'Tìm trong bản ghi các cuộc họp',
       transcript: {
         copy_result: 'Chép bản ghi lời của Vy vào bản nháp',
         correct: 'Sửa một dòng của bản ghi nháp',
