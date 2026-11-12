@@ -317,6 +317,9 @@ export const TRANSCRIBE_STATES = ['none', 'running', 'ready', 'failed'] as const
 export type TranscribeState = (typeof TRANSCRIBE_STATES)[number];
 export const zTranscribeStart = z.strictObject({ meetingId: zId });
 export const zTranscribeStarted = z.strictObject({ meetingId: zId, runId: zId });
+// The recorder stops their own transcription run of a meeting (#3033): `cancelled` is false when there was nothing running to stop.
+export const zTranscribeCancel = z.strictObject({ meetingId: zId });
+export const zTranscribeCancelled = z.strictObject({ meetingId: zId, cancelled: z.boolean() });
 // What the recorder's screen shows: whether transcription is switched on in this deployment at all, the state of the latest run, and the fixed
 // code of a failed one (AI_OFF, AI_BUDGET_EXHAUSTED, TRANSCRIBE_FAILED, ...). Never text.
 export const zTranscribeStatus = z.strictObject({

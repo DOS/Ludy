@@ -123,6 +123,8 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
       return t('vy.codes.TRANSCRIPT_TOO_LONG');
     case 'RUN_ENDED':
       return t('vy.codes.RUN_ENDED');
+    case 'RUN_CANCELLED':
+      return t('vy.codes.RUN_CANCELLED');
     default:
       return null;
   }
@@ -145,6 +147,8 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
     void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
   };
   const start = useMutation({ mutationFn: () => orpc.meetings.transcript.start.call({ meetingId }), onSuccess: refresh });
+  // Stops the recorder's own run (#3033), so a lost job does not hold their slot until it expires.
+  const stop = useMutation({ mutationFn: () => orpc.meetings.transcript.cancel.call({ meetingId }), onSuccess: refresh });
   const copy = useMutation({
     mutationFn: (runId: string) => orpc.meetings.transcript.copyResult.call({ meetingId, runId }),
     onSuccess: refresh,
@@ -159,7 +163,15 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
         <CardDescription className="text-xs text-muted-foreground">{t('vy.desc')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {running && <p role="status">{t('vy.running')}</p>}
+        {running && (
+          <div className="space-y-2">
+            <p role="status">{t('vy.running')}</p>
+            <p className="text-xs text-muted-foreground">{t('vy.stopHint')}</p>
+            <Button size="sm" variant="outline" loading={stop.isPending} onClick={() => stop.mutate()}>
+              {t('vy.stop')}
+            </Button>
+          </div>
+        )}
         {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
         {data.state === 'ready' && data.runId && !copy.isSuccess && (
           <div className="space-y-2">
@@ -171,7 +183,7 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
           </div>
         )}
         {data.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${codeText(t, data.errorCode) ?? t('vy.codes.default')}`}</ErrorText>}
-        {(start.error || copy.error) && <ErrorText>{refusalText(t, start.error ?? copy.error)}</ErrorText>}
+        {(start.error || copy.error || stop.error) && <ErrorText>{refusalText(t, start.error ?? copy.error ?? stop.error)}</ErrorText>}
         {!running && (
           <Button size="sm" variant={data.state === 'none' ? 'default' : 'outline'} loading={start.isPending} onClick={() => start.mutate()}>
             {data.state === 'none' ? t('vy.start') : t('vy.restart')}

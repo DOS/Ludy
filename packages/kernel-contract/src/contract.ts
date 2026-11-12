@@ -339,6 +339,8 @@ import {
   zTranscriptDraftStore,
   zTranscriptDraftStored,
   zTranscribeRunRef,
+  zTranscribeCancel,
+  zTranscribeCancelled,
   zTranscribeStart,
   zTranscribeStarted,
   zTranscribeStatus,
@@ -876,6 +878,8 @@ export const contract = {
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
       // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
       start: oc.input(zTranscribeStart).output(zTranscribeStarted),
+      // The recorder stops their own run (#3033), so a lost job does not hold their slot until it expires.
+      cancel: oc.input(zTranscribeCancel).output(zTranscribeCancelled),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
     },

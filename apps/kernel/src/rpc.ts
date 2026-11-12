@@ -924,6 +924,7 @@ export function createRpcHandler(
         draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
         correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
         start: os.meetings.transcript.start.handler(meetingsCommand('meetings.transcript.start')),
+        cancel: os.meetings.transcript.cancel.handler(meetingsCommand('meetings.transcript.cancel')),
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
       },

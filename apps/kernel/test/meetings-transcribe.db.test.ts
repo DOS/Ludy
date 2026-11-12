@@ -464,4 +464,114 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
     expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
   });
+  // #3033: the recorder stops their own run, and two starts for two meetings no longer race.
+  const cancel = (who: string, meetingId: string) => app.execute<{ meetingId: string; cancelled: boolean }>('meetings.transcript.cancel', { meetingId }, { actor: asUser(who), orgId, idempotencyKey: randomUUID() });
+  const runRow = async (runId: string) => (await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]))).rows[0];
+  const resultOf = async (runId: string) => (await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]))).rows[0];
+  const clearRuns = () => admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running'`, [orgId]));
+
+  it('lets the recorder stop their own run, which frees them to start another meeting, and a late job of the stopped run stores nothing (#3033)', async () => {
+    await clearRuns();
+    const first = await seedMeeting('recorder');
+    const second = await seedMeeting('recorder');
+    const { runId } = await start('recorder', first);
+    expect(await refuses(start('recorder', second))).toBe('TRANSCRIBE_OTHER_RUNNING');
+    expect(await cancel('recorder', first)).toEqual({ meetingId: first, cancelled: true });
+    expect(await runRow(runId)).toEqual({ status: 'cancelled', error: 'RUN_CANCELLED' });
+    expect(await resultOf(runId)).toEqual({ status: 'failed', error_code: 'RUN_CANCELLED' });
+    expect(await status('recorder', first)).toMatchObject({ state: 'failed', errorCode: 'RUN_CANCELLED', runId });
+    // A job that was already on its way finds no live run: no provider call, and the result stays as the cancel left it.
+    const before = providerCalls;
+    expect(await runJob('recorder', first, runId)).toBe('failed');
+    expect(providerCalls).toBe(before);
+    expect(await resultOf(runId)).toEqual({ status: 'failed', error_code: 'RUN_CANCELLED' });
+    // The recorder is free: the other meeting starts, and the first meeting can start again too.
+    expect(await start('recorder', second)).toMatchObject({ runId: expect.any(String) });
+    await clearRuns();
+    expect(await start('recorder', first)).toMatchObject({ runId: expect.any(String) });
+    await clearRuns();
+  });
+
+  it('answers the same when there is nothing to stop: no run, a stopped run, a finished run (#3033)', async () => {
+    await clearRuns();
+    const idle = await seedMeeting('recorder');
+    expect(await cancel('recorder', idle)).toEqual({ meetingId: idle, cancelled: false });
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    expect(await cancel('recorder', meetingId)).toMatchObject({ cancelled: true });
+    expect(await cancel('recorder', meetingId)).toMatchObject({ cancelled: false });
+    // A finished run is not touched: its text stays ready.
+    const done = await seedMeeting('recorder');
+    const finished = await start('recorder', done);
+    expect(await runJob('recorder', done, finished.runId)).toBe('succeeded');
+    expect(await cancel('recorder', done)).toMatchObject({ cancelled: false });
+    expect(await resultOf(finished.runId)).toEqual({ status: 'ready', error_code: null });
+    expect((await runRow(finished.runId))?.status).toBe('succeeded');
+    expect((await runRow(runId))?.error).toBe('RUN_CANCELLED');
+  });
+
+  it('lets only the recorder stop it: another member, a viewer and another member\'s run id get nothing (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    // Another member of the org cannot read this attendees-only meeting: it is not found, as for a start.
+    expect(await refuses(cancel('other', meetingId))).toBe('MEETING_NOT_FOUND');
+    // The kernel command, asked directly for the recorder's run id, answers false for anyone else, and the run runs on.
+    expect(await app.execute('kernel.member_vy.run.cancel', { runId }, { actor: asUser('other'), orgId, idempotencyKey: randomUUID() })).toEqual({ cancelled: false });
+    expect(await app.execute('kernel.member_vy.run.cancel', { runId }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() })).toEqual({ cancelled: false });
+    expect(await runRow(runId)).toEqual({ status: 'running', error: null });
+    // A viewer reads and stops no transcription.
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]));
+    expect(await refuses(cancel('recorder', meetingId))).toBe('FORBIDDEN');
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]));
+    expect(await runRow(runId)).toEqual({ status: 'running', error: null });
+    await clearRuns();
+  });
+
+  it('stops a run whose time has passed but is still marked running, which the screen already shows as ended (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET expires_at = started_at + interval '1 millisecond' WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: 'RUN_ENDED' });
+    expect(await cancel('recorder', meetingId)).toMatchObject({ cancelled: true });
+    expect(await runRow(runId)).toEqual({ status: 'cancelled', error: 'RUN_CANCELLED' });
+    await clearRuns();
+  });
+
+  it('serializes two starts of one recorder: two meetings at once start one and refuse the other, and the first is never superseded (#3033)', async () => {
+    for (let round = 0; round < 6; round += 1) {
+      await clearRuns();
+      const first = await seedMeeting('recorder');
+      const second = await seedMeeting('recorder');
+      const results = await Promise.allSettled([start('recorder', first), start('recorder', second)]);
+      const ok = results.filter((r) => r.status === 'fulfilled');
+      const refused = results.filter((r) => r.status === 'rejected');
+      expect(ok, `round ${round}`).toHaveLength(1);
+      expect(refused, `round ${round}`).toHaveLength(1);
+      expect(((refused[0] as PromiseRejectedResult).reason as { code?: string }).code, `round ${round}`).toBe('TRANSCRIBE_OTHER_RUNNING');
+      const runId = ((ok[0] as PromiseFulfilledResult<{ runId: string }>).value).runId;
+      expect(await runRow(runId), `round ${round}`).toEqual({ status: 'running', error: null });
+      // No run of the recorder was superseded, and exactly one is running.
+      const rows = await admin((c) => c.query<{ n: string; superseded: string }>(`SELECT count(*) FILTER (WHERE status = 'running')::text AS n, count(*) FILTER (WHERE error = 'RUN_SUPERSEDED')::text AS superseded FROM crove_kernel.ai_run WHERE org_id = $1`, [orgId]));
+      expect(rows.rows[0], `round ${round}`).toEqual({ n: '1', superseded: '0' });
+    }
+    // One meeting started twice at once: the second is told it is already being transcribed.
+    await clearRuns();
+    const same = await seedMeeting('recorder');
+    const both = await Promise.allSettled([start('recorder', same), start('recorder', same)]);
+    expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect((((both.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason) as { code?: string }).code).toBe('TRANSCRIBE_RUNNING');
+    await clearRuns();
+  });
+
+  it('does not make two members wait for each other: starts of two recorders run side by side (#3033)', async () => {
+    await clearRuns();
+    const mine = await seedMeeting('recorder');
+    const theirs = await seedMeeting('other');
+    const results = await Promise.allSettled([start('recorder', mine), start('other', theirs)]);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    await clearRuns();
+  });
 });

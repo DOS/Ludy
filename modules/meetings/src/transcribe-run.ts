@@ -13,7 +13,8 @@
 // Transcription is off unless the deployment turns it on (MEETINGS_TRANSCRIBE, with a provider): the module works with it off, and `start` refuses
 // with TRANSCRIBE_OFF. A kill switch or a spent budget refuses with the kernel's AI_BUDGET_EXHAUSTED, as for every use of Vy. The audit rows and the
 // event carry ids and counts, never text.
-import { zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@crove/kernel-contract';
+import { sql } from 'kysely';
+import { zTranscribeCancel, zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
@@ -35,6 +36,13 @@ export function setTranscribeBroker(configured: boolean): void {
 
 export const TRANSCRIBE_FEATURE = 'meetings.transcribe';
 const FEATURE = TRANSCRIBE_FEATURE;
+
+// One start or cancel of a member's transcription at a time (#3033): a transaction-level advisory lock per (org, member). Without it two starts for two meetings (two tabs) both
+// pass the "another meeting is being transcribed" check before either commits, and the second supersedes the first run. With it the second waits for the first, then finds the
+// first run live and is refused. The lock is released at commit or rollback.
+async function lockTranscription(trx: QueryContext['trx'], orgId: string, userId: string): Promise<void> {
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.transcribe:${orgId}:${userId}`}, 0))`.execute(trx);
+}
 
 async function meetingHasAudio(trx: QueryContext['trx'], orgId: string, meetingId: string): Promise<boolean> {
   const row = await trx.selectFrom('crove_meetings.audio_segment').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).executeTakeFirst();
@@ -65,6 +73,7 @@ export const transcriptStart = defineCommand({
       await ctx.trx.selectFrom('crove_meetings.meeting').select('audio_retention_date').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow()
     ).audio_retention_date;
     if (String(audioDay) <= vnDay(ctx.now)) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
+    await lockTranscription(ctx.trx, ctx.orgId, userId);
     // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. Nor is a transcription of ANOTHER meeting of
     // the recorder that is still going (live and not expired) cut off by this one (#3029): the kernel's rule is that a start supersedes a run of the same feature, which is
     // meant for a crashed or abandoned run, so a transcript is never lost to a second recording. Other uses of Vy (a summary, a note) no longer touch it at all.
@@ -88,6 +97,28 @@ export const transcriptStart = defineCommand({
   },
 });
 
+export const transcriptCancel = defineCommand({
+  name: 'meetings.transcript.cancel',
+  input: zTranscribeCancel,
+  // Stopping the recorder's own run spends nothing and sends nothing: internal, and the recorder's own click (R1).
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can stop its transcription');
+    await lockTranscription(ctx.trx, ctx.orgId, userId);
+    // The recorder's own latest run for this meeting; the kernel command stops it only if it is still running, and answers the same for a run that is not (or no longer) theirs.
+    const latest = await ctx.query<{ runId: string } | null>('kernel.member_vy.run.latest', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
+    if (latest.status !== 'ok' || latest.value === null) return { meetingId: input.meetingId, cancelled: false };
+    const stopped = await ctx.run<{ cancelled: boolean }>('kernel.member_vy.run.cancel', { runId: latest.value.runId });
+    ctx.audit({ meetingId: input.meetingId, runId: latest.value.runId, cancelled: stopped.cancelled });
+    return { meetingId: input.meetingId, cancelled: stopped.cancelled };
+  },
+});
+
 export const transcriptStatus = defineQuery({
   name: 'meetings.transcript.status',
   input: zTranscribeRunRef,
@@ -108,5 +139,5 @@ export const transcriptStatus = defineQuery({
   },
 });
 
-export const transcribeRunCommands = [transcriptStart];
+export const transcribeRunCommands = [transcriptStart, transcriptCancel];
 export const transcribeRunQueries = [transcriptStatus];

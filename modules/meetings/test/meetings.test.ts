@@ -80,6 +80,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.transcript.draft_store',
       'meetings.transcript.correct',
       'meetings.transcript.start',
+      'meetings.transcript.cancel',
       'meetings.transcript.copy_result',
       'meetings.summary.save',
       'meetings.action_item.create',
