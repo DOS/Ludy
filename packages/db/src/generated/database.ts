@@ -89,6 +89,8 @@ export interface CroveHrSchema {
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_line': HrPayrollLineTable;
+  'crove_hr.payroll_run': HrPayrollRunTable;
 }
 
 export interface CroveKernelSchema {
@@ -1331,6 +1333,52 @@ export interface HrPayrollEmploymentTable {
   base_wage: ColumnType<string, string, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_hr.payroll_line */
+export interface HrPayrollLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  run_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  employment_id: string | null;
+  kind: ColumnType<string, string | undefined, NotGranted>;
+  status: Generated<string>;
+  inputs: ColumnType<unknown, string | undefined, string>;
+  gross: string | null;
+  employee_insurance: string | null;
+  employer_insurance: string | null;
+  union_fee: string | null;
+  taxable_income: string | null;
+  pit: string | null;
+  net: string | null;
+  employer_cost: string | null;
+  breakdown: ColumnType<unknown, string | null | undefined, string | null>;
+  checks: ColumnType<unknown, string | undefined, string>;
+  rules_used: ColumnType<unknown, string | undefined, string>;
+  refusal: string | null;
+  adjusts_run_id: ColumnType<string | null, string | null, NotGranted>;
+  note: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.payroll_run */
+export interface HrPayrollRunTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  working_days: string;
+  approved_by: string | null;
+  approved_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  approval: ColumnType<unknown, string | null | undefined, string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_kernel.activity */
