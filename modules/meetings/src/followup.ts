@@ -309,7 +309,7 @@ export const followupSend = defineCommand({
       else queued += 1;
     }
     // Counts and ids only: no address, no word of the mail.
-    ctx.audit({ meetingId: input.meetingId, batchId, recipients: addresses.length, outsiders: outsiders.length, repeated: repeats.size, queued, suppressed, fromVy: input.fromVy });
+    ctx.audit({ meetingId: input.meetingId, batchId, recipientCount: addresses.length, outsiders: outsiders.length, repeated: repeats.size, queued, suppressed, fromVy: input.fromVy });
     return { meetingId: input.meetingId, batchId, queued, suppressed };
   },
 });

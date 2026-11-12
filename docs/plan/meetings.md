@@ -231,8 +231,18 @@ Step ids M1 to M11 and L1 to L5 name the steps of this plan, not the milestones 
 | M11 (#2585) | owner-action: lawyer and eval recordings | The questions of section 7; 5 to 10 consented scripted meetings for the eval set | Answers recorded on the issue and section 7 updated; recordings stored outside the repo, scripts committed | none | M3, P2 | No |
 | L1 (#2587) | Links to parties, deals and calendar events | Link a meeting; a booking opens one | A deal shows its meetings to their readers only | `modules/meetings/**`, `modules/crm/**` | M3, P2 (opened by the owner on 2026-11-11) | Yes (migration) |
 | L2 (#2589) | Search across meetings | Folded search over readable transcripts | A member finds only meetings they read | `modules/meetings/**` | Icebox, P3 | Yes (migration) |
-| L3 (#2590) | Follow-up email draft | Vy drafts, a person sends (R2) through Email | Nothing is sent without a person | `modules/meetings/**`, `packages/agent/**` | Icebox, P3 | No |
+| L3 (#2590) | Follow-up email draft | Vy drafts, a person sends (R2) | Nothing is sent without a person | `modules/meetings/**`, `packages/agent/**` | M3, P2 | No |
 | L4 (#2592) | Meeting bot and live notes | A connector joins Meet, Zoom or Teams; consent inside the call; live notes in the extension | Needs the owner's OAuth apps or vendor agreements | `packages/channel/**`, `modules/meetings/**` | Icebox, P3 | Yes |
 | L5 (#2594) | Personal-data finder in transcripts | Match a person's values in transcript text; counts for meetings the owner cannot read | An erasure request reaches every meeting that names the person | `packages/kernel/src/personal-data.ts`, `modules/meetings/**` | GA gate, P2 | Yes |
 
 Each issue's acceptance says what Vy does on that screen, that the core works with AI off, and that a person approves every task.
+
+### Follow-up email (L3, #2590)
+
+The recorder of a meeting with a shared summary clicks "Soạn thư cảm ơn". The dialog is the meetings module's own (the Email module has no compose screen yet): it hands off to Email compose once that screen exists (docs/plan/email.md E4 and E7), and until then `meetings.followup.send` queues the mail through the kernel mail queue (`source = meetings.followup`, `source_id` the meeting).
+
+- **The draft** is read, never stored: a greeting, the lead-in, the shared summary with its decisions and action items (owner and due date), and a closing, in the meeting's language (vi or en). The facts are rebuilt from the **published** result at the send; a result unpublished or shared again after the draft was opened refuses the send (`STALE_FOLLOWUP`).
+- **Recipients** are the meeting's readers that are members and the contacts linked to it (L1), each with an email address, at most `FOLLOWUP_RECIPIENTS_MAX = 20`. The recorder edits the list. An address that is neither a reader nor a linked contact is flagged and sent only when the recorder ticks it, one address at a time (`confirmedOutsiders`, enforced on the server). A repeat send to an address that already got the mail needs a tick (`confirmRepeat`). A suppressed address is recorded as suppressed and never sent. At most `FOLLOWUP_SENDS_PER_MEETING_PER_DAY = 3` sends per meeting in 24 hours.
+- **The AI part:** Vy words the lead-in and the closing only, told none of the meeting's content (no summary, decision, action item, name or date). The call goes through the AI budget meter (`meetings.followup_words`, meetings module budget) and the kill switches; a stopped, spent, failed or refused call leaves the fixed words. Vy's text is tainted: the recorder ticks "Tôi đã đọc" before the send, and the server checks every text the same way whatever its origin (no figure, link or address, not empty, not too long). With AI off the fixed words are the draft and no model is called.
+- **A person sends:** the send is an R2 command from the recorder's click, once per idempotency key. The audit names counts and ids only, never an address or a word.
+

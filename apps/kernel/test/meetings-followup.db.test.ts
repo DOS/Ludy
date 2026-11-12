@@ -145,7 +145,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(rows[0]?.payload).toMatchObject({ lang: 'vi', batch: sent.batchId, facts: { summary: 'Chốt báo giá tuần này.' } });
     const audit = await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2", [orgId, m]);
     expect(audit.rows).toHaveLength(1);
-    expect(audit.rows[0]?.detail).toMatchObject({ meetingId: m, batchId: sent.batchId, recipients: 1, queued: 1, suppressed: 0 });
+    expect(audit.rows[0]?.detail).toMatchObject({ meetingId: m, batchId: sent.batchId, recipientCount: 1, queued: 1, suppressed: 0 });
     // No address and no word of the mail in the audit row.
     const text = JSON.stringify(audit.rows[0]?.detail);
     expect(text).not.toContain('followup.test');
@@ -182,7 +182,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(await mails(m)).toEqual([]);
     expect(await send(m, { recipients: ['attendee@followup.test', 'ngoai@ngoai.test'], confirmedOutsiders: ['Ngoai@ngoai.test'] })).toMatchObject({ queued: 2 });
     const audit = await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.followup.send' AND detail ->> 'meetingId' = $2", [orgId, m]);
-    expect(audit.rows[0]?.detail).toMatchObject({ recipients: 2, outsiders: 1 });
+    expect(audit.rows[0]?.detail).toMatchObject({ recipientCount: 2, outsiders: 1 });
   });
 
   it('records a suppressed address as suppressed and never queues it', async () => {
