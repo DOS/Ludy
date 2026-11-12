@@ -114,8 +114,10 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     await exec('recorder', 'meetings.meeting.delete', { meetingId: gone });
     const after = await mail(gone);
     expect(after).toHaveLength(1);
-    expect(after[0]).toMatchObject({ payload: null, status: 'queued' });
+    // The payload and the subject (which the recorder can type meeting content into) both go; the row and its status stay.
+    expect(after[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
     expect((await mail(kept))[0]?.payload).not.toBeNull();
+    expect((await mail(kept))[0]?.subject).toBe('Tóm tắt');
     const rows = await audit('meetings.meeting.delete', gone);
     expect(rows[0]?.detail).toMatchObject({ meetingId: gone, mailPayloads: 1 });
     expect(JSON.stringify(rows[0]?.detail)).not.toContain('báo giá');
@@ -125,7 +127,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     const gone = await seedSent();
     // An R3 command: the owner's second factor is fresh.
     await runtime.execute('meetings.meeting.owner_delete', { meetingId: gone }, { actor: { ...asUser('owner'), aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) }, orgId });
-    expect((await mail(gone))[0]).toMatchObject({ payload: null });
+    expect((await mail(gone))[0]).toMatchObject({ payload: null, subject: null });
     expect((await audit('meetings.meeting.owner_delete', gone))[0]?.detail).toMatchObject({ mailPayloads: 1 });
   });
 
@@ -137,7 +139,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     expect((await mail(early))[0]?.payload).not.toBeNull();
     await sqlAdmin('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, due]);
     expect(await worker.execute('meetings.retention.shred', { meetingId: due, kind: 'text' }, { actor: SYSTEM, orgId })).toMatchObject({ applied: true });
-    expect((await mail(due))[0]).toMatchObject({ payload: null });
+    expect((await mail(due))[0]).toMatchObject({ payload: null, subject: null });
     expect((await audit('meetings.retention.shred', due))[0]?.detail).toMatchObject({ applied: true, mailPayloads: 1 });
     expect((await mail(early))[0]?.payload).not.toBeNull();
   });
@@ -145,7 +147,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
   it('the archive replay of a shred drops it too', async () => {
     const gone = await seedSent();
     expect(await worker.execute('meetings.shred.replay', { meetingId: gone }, { actor: SYSTEM, orgId })).toMatchObject({ deleted: true });
-    expect((await mail(gone))[0]).toMatchObject({ payload: null });
+    expect((await mail(gone))[0]).toMatchObject({ payload: null, subject: null });
     // Again: nothing left, nothing changes.
     expect(await worker.execute('meetings.shred.replay', { meetingId: gone }, { actor: SYSTEM, orgId })).toMatchObject({ deleted: false });
   });
@@ -157,7 +159,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     const del = exec('recorder', 'meetings.meeting.delete', { meetingId: m }).then(() => 'deleted', (e: unknown) => (e as { code?: string }).code ?? 'ERR');
     await Promise.all([send, del]);
     // Whichever ran first, no mail of the meeting still holds the text.
-    expect((await mail(m)).filter((r) => r.payload !== null)).toEqual([]);
+    expect((await mail(m)).filter((r) => r.payload !== null || r.subject !== null)).toEqual([]);
   });
 
   it('leaves a mail of another source with the same id untouched', async () => {
@@ -321,7 +323,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect((await sqlAdmin<{ subject: string | null; payload: unknown }>('SELECT subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2', [orgId, foreign])).rows[0]).toEqual({ subject: `Gửi ${value}`, payload: { keep: true } });
       });
 
-      it('keeps the mail of a meeting the owner cannot read, and counts it with the reason', async () => {
+      it('keeps the mail of a meeting the owner cannot read, counts it with the reason, and a delete then clears payload and subject', async () => {
         const value = 'phong.kin@erase.test';
         const hidden = await seedSent({ recorder: 'recorder', summary: 'Chốt kế hoạch quý.' });
         await setSubject(hidden, `Gửi ${value}`);
@@ -329,13 +331,16 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect((await mail(hidden))[0]?.subject).toBe(`Gửi ${value}`);
         expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('cannot read') });
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
-        // The recorder's own delete takes its text copy at once (the subject is not part of that), and erasing the same value again then drops what is left of the subject: the mail
-        // can no longer render, so no pending send is lost, and the meeting being gone does not leave the value in the subject for 13 months.
+        // The recorder's own delete takes both copies of the text at once (payload and subject, #3063).
         await exec('recorder', 'meetings.meeting.delete', { meetingId: hidden });
-        expect((await mail(hidden))[0]).toMatchObject({ payload: null, subject: `Gửi ${value}` });
-        const again = await erase(value);
         expect((await mail(hidden))[0]).toMatchObject({ payload: null, subject: null });
+        const again = await erase(value);
         expect(again.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toBeUndefined();
+        expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
+        // A mail from before the delete paths cleared the subject (the subject left behind, payload gone) is still cleared by erasing the value again.
+        await setSubject(hidden, `Gửi ${value}`);
+        await erase(value);
+        expect((await mail(hidden))[0]).toMatchObject({ payload: null, subject: null });
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 1 });
       });
 
@@ -387,6 +392,65 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect((await mail(queued))[0]).toMatchObject({ payload: null, subject: null, status: 'queued' });
         expect(second.kept.find((k) => k.column === 'crove_kernel.mail_message.payload')).toBeUndefined();
         expect(JSON.stringify(await lastAudit())).not.toContain('cannot be recalled');
+      });
+
+      // #3063: a number of fewer than 10 digits may be a date or a figure; the mail pass leaves such mails and counts them.
+      it('leaves a mail alone for a number of fewer than 10 digits, counts it, and still drops one for a 10-digit number', async () => {
+        const dated = await seedSent({ recorder: 'owner', summary: 'Hẹn ngày 2026-11-12 hoặc 20261112 gửi báo giá 12345678 đồng.' });
+        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, dated]);
+        const short = await erase('20261112');
+        expect((await mail(dated))[0]?.payload).not.toBeNull();
+        expect(short.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 1, reason: expect.stringContaining('fewer than 10 digits') });
+        expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
+        const long = await seedSent({ recorder: 'owner', summary: 'Gọi 0912345678 sau 3 giờ.' });
+        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, long]);
+        const out = await erase('0912345678');
+        expect((await mail(long))[0]).toMatchObject({ payload: null, subject: null });
+        expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toBeUndefined();
+      });
+
+      // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to
+      // bite by one follow-up mail with a very large payload (tens of megabytes of text), which the matcher cannot read in time.
+      it('skips the by-text pass and says so when the scan hits the statement timeout, and still erases the rest', async () => {
+        const value = 'cham.qua@erase.test';
+        const small = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
+        const leftover = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản hai.` });
+        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, leftover]);
+        const big = randomUUID();
+        await admin(async (c) => {
+          await c.query('BEGIN');
+          await c.query('SET LOCAL session_replication_role = replica');
+          await c.query(
+            `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
+             VALUES ($1, 'transactional', 'meetings.followup', $2, 'x.y', 'lon@erase.test', repeat('e', 64), 'Thư lớn', jsonb_build_object('t', repeat('khong co gi o day ', 6000000)), '<' || gen_random_uuid()::text || '@erase.test>', 'queued')`,
+            [orgId, big],
+          );
+          await c.query('COMMIT');
+        });
+        const url = new URL(adminUrl);
+        url.username = 'crove_app';
+        url.password = 'test-app-pw';
+        const fast = createPool({ connectionString: url.toString(), max: 2, statementTimeoutMs: 400 });
+        pools.push(fast);
+        const quick = new Runtime(createDb(fast), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
+        try {
+          const out = await quick.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
+          // The first pass (the meeting whose rows changed) was done; the by-text pass was skipped and said so; the leftover mail stays.
+          expect((await mail(small))[0]).toMatchObject({ payload: null, subject: null });
+          expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toMatchObject({ rows: 0, reason: expect.stringContaining('too many to search in time') });
+          expect((await mail(leftover))[0]?.payload).not.toBeNull();
+          expect(await lastAudit()).toMatchObject({ follow_up_mails: 1 });
+        } finally {
+          await admin(async (c) => {
+            await c.query('BEGIN');
+            await c.query('SET LOCAL session_replication_role = replica');
+            await c.query('DELETE FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [orgId, big]);
+            await c.query('COMMIT');
+          });
+        }
+        // Asked again without the large mail, the leftover goes.
+        await erase(value);
+        expect((await mail(leftover))[0]).toMatchObject({ payload: null, subject: null });
       });
 
       it('finds the leftover when the same erasure is run again, and answers a retry while a send holds the lock', async () => {
