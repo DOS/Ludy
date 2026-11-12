@@ -329,6 +329,8 @@ import {
   zMeetingSettings,
   zMeetingExtensionStatus,
   zMeetingSettingsGet,
+  zMeetingSearchInput,
+  zMeetingSearchResult,
   zMeetingSettingsSet,
   zMeetingSummary,
   zTranscript,
@@ -865,6 +867,8 @@ export const contract = {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
     },
+    // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
+    search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),

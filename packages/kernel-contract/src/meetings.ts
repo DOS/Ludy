@@ -279,6 +279,38 @@ export const zTranscript = z.strictObject({
 });
 export type Transcript = z.infer<typeof zTranscript>;
 
+// Search across the transcript lines the caller reads (L2, #2589). A plain search, no model call. `q` is folded in SQL like the lines are (lower case, Vietnamese
+// marks and đ removed), every word a word prefix, all required. A page is `limit` hits from `offset`; at most MEETING_SEARCH_HITS_MAX hits can be paged, and `capped`
+// says that more matched than that.
+export const MEETING_SEARCH_QUERY_MAX = 200;
+export const MEETING_SEARCH_HITS_MAX = 200;
+export const MEETING_SEARCH_PAGE_MAX = 50;
+export const zMeetingSearchInput = z.strictObject({
+  q: z.string().trim().min(2).max(MEETING_SEARCH_QUERY_MAX),
+  limit: z.number().int().min(1).max(MEETING_SEARCH_PAGE_MAX).default(20),
+  offset: z.number().int().min(0).max(MEETING_SEARCH_HITS_MAX).default(0),
+});
+export type MeetingSearchInput = z.infer<typeof zMeetingSearchInput>;
+export const zMeetingSearchHit = z.strictObject({
+  meetingId: zId,
+  meetingTitle: z.string(),
+  // When the meeting was held (its start, else when it was created), an ISO 8601 instant.
+  heldAt: z.string(),
+  segmentId: zId,
+  startSeconds: z.number(),
+  speakerLabel: z.string(),
+  text: z.string(),
+  // The stage the caller sees: a draft line is the recorder's own.
+  stage: z.enum(TRANSCRIPT_STAGES),
+});
+export type MeetingSearchHit = z.infer<typeof zMeetingSearchHit>;
+export const zMeetingSearchResult = z.strictObject({
+  hits: z.array(zMeetingSearchHit),
+  hasMore: z.boolean(),
+  capped: z.boolean(),
+});
+export type MeetingSearchResult = z.infer<typeof zMeetingSearchResult>;
+
 // The recorder's transcription run (#2578, M4b, ADR-0049 decision 8). The recorder's own Vy transcribes in the background and writes only its own
 // result (member_vy_result); the recorder's own action then copies that result into the draft transcript.
 export const TRANSCRIBE_STATES = ['none', 'running', 'ready', 'failed'] as const;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
@@ -33,6 +33,8 @@ export function MeetingDetailPage() {
   const f = useFormat();
   const navigate = useNavigate();
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
+  // A search hit names the transcript line to open at (L2, #2589).
+  const { seg } = useSearch({ strict: false }) as { seg?: string };
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [newReaderUserId, setNewReaderUserId] = useState('');
@@ -317,7 +319,7 @@ export function MeetingDetailPage() {
       </div>
 
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
-      <MeetingTranscript meetingId={id} />
+      <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
       <MeetingResults meetingId={id} readers={meeting.readers} />
 
       <div className="grid gap-6 md:grid-cols-2">

@@ -22,6 +22,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { MeetingSearch } from '../components/meeting-search.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.ts';
@@ -251,6 +252,8 @@ export function MeetingsPage() {
         }
       />
       <NotesSubnav slug={slug} active="meetings" />
+
+      <MeetingSearch slug={slug} />
 
       <div className="flex items-center gap-4">
         <div className="w-full max-w-sm space-y-1">

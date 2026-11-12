@@ -918,6 +918,7 @@ export function createRpcHandler(
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
         draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),

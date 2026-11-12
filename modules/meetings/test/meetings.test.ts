@@ -114,6 +114,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.settings.get',
       'meetings.media.orphan_keys',
       'meetings.transcript.get',
+      'meetings.search',
       'meetings.transcript.status',
       'meetings.result.get',
       'meetings.action_item.source',

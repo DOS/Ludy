@@ -5,7 +5,7 @@
 // recorder's own click copies it here as the draft. Without AI (or with transcription off) there is no button and no
 // transcript, and the recording and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { TranscriptSegment } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -29,7 +29,7 @@ export function clock(seconds: number): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-function Line({ segment, editable }: { segment: TranscriptSegment; editable: boolean }) {
+function Line({ segment, editable, focused }: { segment: TranscriptSegment; editable: boolean; focused: boolean }) {
   const t = useTranslations('meetings.transcript');
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
@@ -47,9 +47,14 @@ function Line({ segment, editable }: { segment: TranscriptSegment; editable: boo
     },
   });
   const unchanged = text.trim() === segment.text && speaker.trim() === segment.speakerLabel;
+  // The line a search hit opened the page at: scrolled to the middle once and marked.
+  const ref = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView?.({ block: 'center' });
+  }, [focused]);
 
   return (
-    <li className="space-y-1 py-2 text-sm" data-testid="transcript-line">
+    <li ref={ref} className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'} data-testid="transcript-line" {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="font-mono">{clock(segment.startSeconds)}</span>
         {editing ? (
@@ -177,7 +182,7 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   );
 }
 
-export function MeetingTranscript({ meetingId }: { meetingId: string }) {
+export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: string; focusSegmentId?: string }) {
   const t = useTranslations('meetings.transcript');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   if (query.isPending) return null;
@@ -204,7 +209,7 @@ export function MeetingTranscript({ meetingId }: { meetingId: string }) {
       <CardContent>
         <ul className="divide-y">
           {transcript.segments.map((segment) => (
-            <Line key={segment.id} segment={segment} editable={transcript.isRecorder} />
+            <Line key={segment.id} segment={segment} editable={transcript.isRecorder} focused={segment.id === focusSegmentId} />
           ))}
         </ul>
       </CardContent>
