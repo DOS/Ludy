@@ -398,6 +398,9 @@ export const dealDelete = defineCommand({
     const userId = userOf(ctx.actor);
     const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forUpdate().executeTakeFirst();
     if (!deal) throw notFound();
+    // A quote is a document the customer may hold: a deal that has one is not deleted (the quote's foreign key says the same, this says it first).
+    const quote = await ctx.trx.selectFrom('crove_crm.quote').select('id').where('org_id', '=', ctx.orgId).where('deal_id', '=', input.dealId).limit(1).executeTakeFirst();
+    if (quote) throw new DomainError('DEAL_HAS_QUOTES', 409, 'Cơ hội này đã có báo giá nên không xóa được');
     // A member deletes the deals they created; owners and admins any.
     if (ctx.role === 'member' && deal.created_by !== userId) throw new DomainError('DEAL_DELETE_FORBIDDEN', 403, 'Bạn chỉ xóa được cơ hội do chính mình tạo');
     await ctx.trx.deleteFrom('crove_crm.deal').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).execute();

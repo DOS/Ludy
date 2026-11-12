@@ -36,6 +36,9 @@ export interface CroveCrmSchema {
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_crm.quote': CrmQuoteTable;
+  'crove_crm.quote_line': CrmQuoteLineTable;
+  'crove_crm.quote_setting': CrmQuoteSettingTable;
 }
 
 export interface CroveFinanceSchema {
@@ -607,6 +610,68 @@ export interface CrmPipelineStageTable {
   kind: string;
   position: number;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_crm.quote_line */
+export interface CrmQuoteLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  quote_id: ColumnType<string, string, NotGranted>;
+  line_no: number;
+  kind: Generated<string>;
+  description: Generated<string>;
+  unit: string | null;
+  quantity: Generated<string>;
+  unit_price: Generated<string>;
+  discount_percent: Generated<string>;
+  vat_rate: Generated<string>;
+  amount: Generated<string>;
+  vat_amount: Generated<string>;
+  stock_item_id: string | null;
+}
+
+/** crove_crm.quote_setting */
+export interface CrmQuoteSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  valid_days: Generated<number>;
+  default_vat: Generated<string>;
+  default_terms: Generated<string>;
+  set_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_crm.quote */
+export interface CrmQuoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  deal_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  number: ColumnType<string | null, string | null, NotGranted>;
+  revision: ColumnType<number, number | undefined, NotGranted>;
+  revision_of: ColumnType<string | null, string | null, NotGranted>;
+  status: ColumnType<string, string | undefined, NotGranted>;
+  valid_until: string;
+  buyer_name: ColumnType<string | null, string | null, NotGranted>;
+  buyer_tax_code: ColumnType<string | null, string | null, NotGranted>;
+  buyer_address: ColumnType<string | null, string | null, NotGranted>;
+  buyer_email: ColumnType<string | null, string | null, NotGranted>;
+  remarks: Generated<string>;
+  terms: Generated<string>;
+  subtotal: Generated<string>;
+  vat_amount: Generated<string>;
+  total: Generated<string>;
+  sent_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  sent_via: ColumnType<string | null, string | null, NotGranted>;
+  first_viewed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  decided_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  decline_reason: ColumnType<string | null, string | null, NotGranted>;
+  version: Generated<number>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 

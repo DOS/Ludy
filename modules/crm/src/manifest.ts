@@ -18,6 +18,10 @@ export const crmManifest = defineModule({
       import_batch: columns(['org_id', 'id', 'filename', 'status', 'on_duplicate', 'total_rows', 'new_rows', 'duplicate_rows', 'conflict_rows', 'invalid_rows', 'created_rows', 'updated_rows', 'new_companies', 'created_companies', 'linked_rows', 'created_by', 'created_at', 'decided_at']),
       import_row: columns(['org_id', 'id', 'batch_id', 'row_no', 'kind', 'outcome', 'reason', 'match_party_id', 'company_state', 'company_party_id'], { name: 'pii', company_name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact' }),
       pipeline_stage: columns(['org_id', 'id', 'name', 'kind', 'position', 'created_at', 'updated_at']),
+      // A quote of a deal (docs/plan/crm-quotes.md, #2693): the customer's snapshot, the remarks and the terms may name people; the money and the dates are internal.
+      quote: columns(['org_id', 'id', 'deal_id', 'party_id', 'number', 'revision', 'revision_of', 'status', 'valid_until', 'subtotal', 'vat_amount', 'total', 'sent_at', 'sent_via', 'first_viewed_at', 'decided_at', 'version', 'created_by', 'created_at', 'updated_by', 'updated_at'], { buyer_name: 'pii', buyer_tax_code: 'national_id_if_individual', buyer_address: 'contact', buyer_email: 'contact', remarks: 'pii', terms: 'pii', decline_reason: 'pii' }),
+      quote_line: columns(['org_id', 'id', 'quote_id', 'line_no', 'kind', 'unit', 'quantity', 'unit_price', 'discount_percent', 'vat_rate', 'amount', 'vat_amount', 'stock_item_id'], { description: 'pii' }),
+      quote_setting: columns(['org_id', 'id', 'valid_days', 'default_vat', 'default_terms', 'set_by', 'created_at', 'updated_at']),
     },
   },
   // It owns no permission: no command of the module declares one and no role grants one.
@@ -28,6 +32,7 @@ export const crmManifest = defineModule({
     { type: 'crm.booking', table: 'booking', legalEntityScoped: false, audit: 'command' },
     { type: 'crm.deal', table: 'deal', legalEntityScoped: false, audit: 'command' },
     { type: 'crm.import', table: 'import_batch', legalEntityScoped: false, audit: 'command' },
+    { type: 'crm.quote', table: 'quote', legalEntityScoped: false, audit: 'command' },
     { type: 'crm.stage', table: 'pipeline_stage', legalEntityScoped: false, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.

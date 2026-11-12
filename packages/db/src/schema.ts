@@ -784,6 +784,27 @@ export type CrmDealNextStepTable = Refine<
     closed_reason: (typeof DEAL_NEXT_STEP_CLOSE_REASONS)[number] | null;
   }
 >;
+// Quotes of a deal (docs/plan/crm-quotes.md, #2693): a quote is a draft until step Q2 sends it; a line is a priced item or a text row; a line's VAT rate and the
+// org's default VAT rate are written as an invoice writes them.
+export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
+export const QUOTE_SENT_VIA = ['link', 'email'] as const;
+export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
+export const QUOTE_VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
+export type CrmQuoteTable = Refine<
+  G.CrmQuoteTable,
+  {
+    status: Generated<(typeof QUOTE_STATUSES)[number]>;
+    sent_via: (typeof QUOTE_SENT_VIA)[number] | null;
+  }
+>;
+export type CrmQuoteLineTable = Refine<
+  G.CrmQuoteLineTable,
+  {
+    kind: Generated<(typeof QUOTE_LINE_KINDS)[number]>;
+    vat_rate: Generated<(typeof QUOTE_VAT_RATES)[number]>;
+  }
+>;
+export type CrmQuoteSettingTable = Refine<G.CrmQuoteSettingTable, { default_vat: Generated<(typeof QUOTE_VAT_RATES)[number]> }>;
 // Contact import staging (#2229): a batch is staged until it is committed, cancelled or expired; a row is classified as
 // new, a duplicate of a party or of an earlier row, a conflict between two parties, or invalid.
 export const IMPORT_BATCH_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
@@ -987,6 +1008,9 @@ type Refined = Tables<{
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
+  'crove_crm.quote': CrmQuoteTable;
+  'crove_crm.quote_line': CrmQuoteLineTable;
+  'crove_crm.quote_setting': CrmQuoteSettingTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
   'crove_notes.link': NotesLinkTable;

@@ -24,6 +24,7 @@ export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';
 export * from './crm-deals.ts';
+export * from './crm-quotes.ts';
 export * from './contact-company.ts';
 export * from './contact-import.ts';
 export * from './conversations.ts';

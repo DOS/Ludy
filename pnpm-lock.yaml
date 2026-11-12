@@ -672,6 +672,9 @@ importers:
       '@crove/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
+      '@crove/l10n-vn':
+        specifier: workspace:*
+        version: link:../../packages/l10n-vn
       kysely:
         specifier: 'catalog:'
         version: 0.29.6

@@ -819,6 +819,19 @@ export function createRpcHandler(
         move: os.crm.deals.move.handler(crmCommand('crm.deal.move')),
         delete: os.crm.deals.delete.handler(crmCommand('crm.deal.delete')),
       },
+      // Quotes of a deal (Q1 of docs/plan/crm-quotes.md, #2693): drafts only; sending and the freeze come with Q2.
+      quotes: {
+        list: os.crm.quotes.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.list', input, { actor, orgId }))),
+        get: os.crm.quotes.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote.get', input, { actor, orgId }))),
+        byDeal: os.crm.quotes.byDeal.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.quotes', input, { actor, orgId }))),
+        save: os.crm.quotes.save.handler(crmCommand('crm.quote.save')),
+        deleteDraft: os.crm.quotes.deleteDraft.handler(crmCommand('crm.quote.delete_draft')),
+        revise: os.crm.quotes.revise.handler(crmCommand('crm.quote.revise')),
+      },
+      quoteSetting: {
+        get: os.crm.quoteSetting.get.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.quote_setting.get', {}, { actor, orgId }))),
+        set: os.crm.quoteSetting.set.handler(crmCommand('crm.quote_setting.set')),
+      },
       // The stale-deal rule's next steps (#2381): read them, mark them done or snooze them; the rule itself runs in the worker.
       nextSteps: {
         list: os.crm.nextSteps.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.next_step.list', input, { actor, orgId }))),
