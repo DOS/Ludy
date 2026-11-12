@@ -81,6 +81,22 @@ turn on `sprint_review` with `line_scopes`.
   runs, metering and budgets), member-scoped Vy (ADR-0049, `vy.use`) and
   Vy's own cross-app work. A line's feature that uses Vy (for example
   the meeting summary, or Ly's invoice drafts) stays with that line.
+- Owner decisions 2026-11-10 on Vy's architecture and packaging (ADR-0051):
+  Vy's agent brain is a DOS Claw agent on work.dos.ai and Ludy is the gate
+  (MCP endpoint, deterministic signal rules, signed wake-up webhook); Ludy
+  Cloud includes one Vy by default, and the other AI coworkers are paid
+  per-org add-ons.
+- Owner decision 2026-11-11 (Platform PO chat, popup "Đồng ý"): an AI app
+  connected over MCP sees full customer and invoice data like a HubSpot or
+  Twenty MCP does (person names, email, phone, address, tax code, invoice
+  lines), within what the consenting owner or admin can see. Salaries,
+  separately stored bank account records and member-private notes stay out.
+  The consent screen says so.
+- Owner request 2026-11-12: the landing page `apps/web` below the hero is
+  visual and plain-language (no accounting jargon), and its numbers band and
+  the README's are counted from the repository by `tools/readme-assets.mjs`
+  (`--check` in CI keeps them true). Frontend owns the page; the Platform PO
+  built it while Frontend had no live PO session.
 - Line POs are peers (JOY, Platform PO chat, 2026-11-07: "Tại sao PO khác
   lại phải qua mày mà ko làm việc với tao trực tiếp. Mày chỉ ngang hàng thôi
   mà", then option 1 of the PO's recommendation: "Cách 1 mày đề xuất đi").
@@ -134,6 +150,23 @@ The DOS organization ids are the same in every DOS repository.
     tag of `main`. Pushing that tag is a Production step that JOY approves
     in the coordinator's chat (AGENTS.md, "Production, secret and
     credential steps").
+  - Who pushes the tag (learned 2026-11-11): a cloud session cannot. Its
+    git proxy allows writes only to its own branch and pull requests (the
+    GitHub API answers "Write access to this GitHub API path is not
+    permitted", and `git push` of a tag gets 403), and auto mode refuses a
+    Production deploy anyway. So JOY creates the release, or a local
+    session on JOY's machine does it with his approval: open
+    `https://github.com/DOS/Ludy/releases/new?tag=vX.Y.Z&target=main&title=vX.Y.Z`
+    and press Publish. Tag `main` itself: a coordinator that wants an older
+    commit pushes it to its own branch first and passes that branch as
+    `target`, since the form cannot find a commit by its short SHA.
+  - One-time step before the first deploy of a release that carries #2991
+    (every tag after `v0.3.1`): link the GHCR package `ghcr.io/dos/ludy-media`
+    to the repository (Package settings, "Manage Actions access", as
+    `-extract` is), so the read-only deploy token can pull it. Until then
+    that deploy fails at pull and changes nothing; rerun it after linking.
+  - Release history: `CHANGELOG.md` at the repository root, one section per
+    `v*` tag, written by the coordinator when the tag is cut.
 - test_environment: none yet (a beta instance from a `dev` branch is
   planned in plan §3.5).
 

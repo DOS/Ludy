@@ -47,6 +47,17 @@
 | Org-chart agents: positions, tasks with leases, delegation inside the subtree, escalation to the nearest human, agent proposals (#260); templates `finance.chief_accountant` (Ly), `crm.scheduler` (Dy), `social.content_manager` (Uy), all deterministic programs; "the general manager is not a template agent" | ADR-0029, `packages/kernel/src/agents.ts`, `coworkers.ts`; model runner [#259](https://github.com/DOS/Ludy/issues/259) and schedules [#261](https://github.com/DOS/Ludy/issues/261) open | company | C6 |
 | Projects (not built): Vy's late and stuck work ([#2596](https://github.com/DOS/Ludy/issues/2596)), weekly status ([#2597](https://github.com/DOS/Ludy/issues/2597)), tasks from a note ([#2598](https://github.com/DOS/Ludy/issues/2598)) | [projects.md](projects.md); the module is [#2591](https://github.com/DOS/Ludy/issues/2591) | | C3, C4, C5 |
 
+Status on 2026-11-12, on `main` and on the pilot from `v0.3.1` (it ships off, `OAUTH_SERVER=off`):
+
+| What | Where |
+|---|---|
+| Cross-app signal rules, the kernel half: V4 (a won deal with no sales invoice after 7 days) and V5 (an overdue receivable with an open deal; a supplier's bank account changed while a payment waits, never silent) | #2968, #2970; the six line reads (`finance.signals.*`, `crm.signals.*`) are the Accounting and Engage lines' work, tracked on [#2967](https://github.com/DOS/Ludy/issues/2967) and [#2969](https://github.com/DOS/Ludy/issues/2969); until they land the rules answer nothing |
+| The MCP endpoint of ADR-0051 decision 2: OAuth 2.1 (PKCE, dynamic registration, audience-bound ES256 tokens), the consent screen, `agent_grant` checked in every transaction, default-deny `mcp` on queries, no command reachable, audit "via <app> (MCP)" | #2976, #2977, #2978 |
+| Read tools `ludy_about`, `ludy_parties_list`, `ludy_invoices_list` (owner decision 2026-11-11 on the data they carry), a daily row budget per grant (2000 by default) | #2980, #2995, #2996 |
+| The connection guide for Claude and ChatGPT | [docs/runbooks/mcp-connect-claude-chatgpt.md](../runbooks/mcp-connect-claude-chatgpt.md) (#2997) |
+
+Next: `ludy_signals` once the line reads land; the member-bound grant (slice 3); the signed wake-up webhook (decision 4); the DOS side on [DOS/DOS.AI#7053](https://github.com/DOS/DOS.AI/issues/7053).
+
 What does not exist: any question-answering over the org's data, any retrieval index or embeddings, any cross-app rule that joins two apps' records, a general-manager position or template, and an inbound email module (finance's invoice mail route is the only inbound mail; [email.md](email.md) covers sending).
 
 ## 4. The scope gate
