@@ -40,5 +40,7 @@ describe('renderFollowupMail', () => {
   it('refuses merge data that is not what the template needs', () => {
     expect(() => renderFollowupMail({ ...MAIL, extra: 1 }, { replyTo: null })).toThrow();
     expect(() => renderFollowupMail({ ...MAIL, lang: 'fr' }, { replyTo: null })).toThrow();
+    // The payload of a meeting that was erased is gone: the queue hands the template `{}`, and the mail is not sent (TEMPLATE_DATA), never sent empty.
+    expect(() => renderFollowupMail({}, { replyTo: null })).toThrow();
   });
 });

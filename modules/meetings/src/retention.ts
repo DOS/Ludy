@@ -192,7 +192,7 @@ export const meetingShredReplay = defineCommand({
       SELECT crove_meetings.meeting_replay_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
     const deleted = rows[0]?.done === true;
     // The same for the follow-up mails' copy of the text (#3016).
-    const mailPayloads = deleted ? await dropFollowupPayloads(ctx, input.meetingId) : 0;
+    const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     ctx.audit({ meetingId: input.meetingId, replayed: true, deleted, mailPayloads });
     return { deleted };
   },

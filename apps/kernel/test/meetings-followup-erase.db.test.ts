@@ -149,7 +149,17 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     expect(await worker.execute('meetings.shred.replay', { meetingId: gone }, { actor: SYSTEM, orgId })).toMatchObject({ deleted: false });
   });
 
-  it('leaves a mail of another source with the same id untouched, and a payload can still only be dropped', async () => {
+  it('a send running at the same moment as a delete is not left with a mail that holds the text', async () => {
+    const m = await seedSent();
+    const draft = await query<FollowupDraft>('recorder', 'meetings.followup.draft', { meetingId: m });
+    const send = exec('recorder', 'meetings.followup.send', { meetingId: m, factsKey: draft.factsKey, subject: 'Tóm tắt', greeting: 'Xin chào,', lead: 'Cảm ơn mọi người.', closing: 'Cảm ơn.', recipients: ['attendee@erase.test'], confirmedOutsiders: [], confirmRepeat: true, fromVy: false, reviewed: false }, randomUUID()).then(() => 'sent', (e: unknown) => (e as { code?: string }).code ?? 'ERR');
+    const del = exec('recorder', 'meetings.meeting.delete', { meetingId: m }).then(() => 'deleted', (e: unknown) => (e as { code?: string }).code ?? 'ERR');
+    await Promise.all([send, del]);
+    // Whichever ran first, no mail of the meeting still holds the text.
+    expect((await mail(m)).filter((r) => r.payload !== null)).toEqual([]);
+  });
+
+  it('leaves a mail of another source with the same id untouched', async () => {
     const m = await seedSent();
     const other = (await sqlAdmin<{ id: string }>(
       "INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), 's', '{\"keep\":true}', '<x@y.test>', 'queued') RETURNING id",
