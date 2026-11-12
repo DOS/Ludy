@@ -162,16 +162,25 @@ export const mcpWakeGet = defineQuery({
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // The delivery's own steps (step b): commands of the system actor, run by the worker's sweep and delivery job in the org's system context. None is a
 // procedure of the contract, and no user, agent or MCP grant reaches any of them (access is empty and each handler says so). A command here changes
-// nothing a person sees: it stores a delivery, notes it was handed to the queue, records an attempt's outcome, remembers which signals were sent and
-// moves a due schedule on. The body of a delivery is built by the worker (apps/kernel/src/mcp-wake-body.ts, the only builder) and checked again by the
+// nothing a person sees: it stores a delivery (and, with it, the signals it carries or the schedule it moves on), notes it was handed to the queue, records an attempt's
+// outcome and looks at which signals were already sent. The body of a delivery is built by the worker (apps/kernel/src/mcp-wake-body.ts, the only builder) and checked again by the
 // database; the URL and the secret are never an input of any of them.
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 const zWakeEventId = z.uuid();
-export const zMcpWakeEnqueue = z.strictObject({ id: zWakeEventId, grantId: zMcpWakeGrantRef.shape.grantId, type: z.enum(['signal.fired', 'schedule.due', 'ping']), body: z.record(z.string(), z.unknown()) });
-export const zMcpWakeRecord = z.strictObject({ id: zWakeEventId, outcome: z.enum(['sent', 'retry', 'failed', 'dropped']), code: z.number().int().min(100).max(599).optional() });
+const zWakeKey = z.string().max(300);
+export const zMcpWakeEnqueue = z.strictObject({
+  id: zWakeEventId,
+  grantId: zMcpWakeGrantRef.shape.grantId,
+  type: z.enum(['signal.fired', 'schedule.due', 'ping']),
+  body: z.record(z.string(), z.unknown()),
+  // The signal keys this event carries: noted as seen in the same transaction that stores it.
+  keys: z.array(zWakeKey).max(20).optional(),
+});
+// 'expired': waited too long with no attempt made, so it fails without counting against the receiver.
+export const zMcpWakeRecord = z.strictObject({ id: zWakeEventId, outcome: z.enum(['sent', 'retry', 'failed', 'dropped', 'expired']), code: z.number().int().min(100).max(599).optional() });
 export const zMcpWakeTouch = z.strictObject({ id: zWakeEventId });
-export const zMcpWakeSignalsSync = z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, keys: z.array(z.string().max(300)).max(200) });
-export const zMcpWakeScheduleAdvance = zMcpWakeGrantRef;
+// `complete`: the short names of the rules that answered in full (the part of a key before the first colon); only their keys are forgotten.
+export const zMcpWakeSignalsCheck = z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, keys: z.array(zWakeKey).max(200), complete: z.array(z.string().max(60)).max(10) });
 
 function wakeSystemError(error: unknown): never {
   const message = (error as { message?: unknown; code?: unknown } | null)?.message;
@@ -191,7 +200,7 @@ export const mcpWakeEnqueue = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới xếp hàng một lần báo thức');
     const { rows } = await sql<{ stored: boolean }>`
-      SELECT crove_kernel.mcp_wake_enqueue(${input.id}::uuid, ${input.grantId}::uuid, ${input.type}, ${JSON.stringify(input.body)}::jsonb) AS stored`
+      SELECT crove_kernel.mcp_wake_enqueue(${input.id}::uuid, ${input.grantId}::uuid, ${input.type}, ${JSON.stringify(input.body)}::jsonb, ${input.keys ?? null}::text[]) AS stored`
       .execute(ctx.trx)
       .catch(wakeSystemError);
     const stored = rows[0]?.stored === true;
@@ -233,29 +242,19 @@ export const mcpWakeRecord = defineCommand({
   },
 });
 
-export const mcpWakeSignalsSync = defineCommand({
-  name: 'kernel.mcp.wake.signals_sync',
-  input: zMcpWakeSignalsSync,
+export const mcpWakeSignalsCheck = defineCommand({
+  name: 'kernel.mcp.wake.signals_check',
+  input: zMcpWakeSignalsCheck,
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   handler: async (ctx, input) => {
-    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đồng bộ các tín hiệu đã gửi');
-    const { rows } = await sql<{ fresh: string[] }>`SELECT crove_kernel.mcp_wake_signals_sync(${input.grantId}::uuid, ${input.keys}::text[]) AS fresh`.execute(ctx.trx).catch(wakeSystemError);
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới kiểm tra các tín hiệu đã gửi báo thức');
+    const { rows } = await sql<{ fresh: string[] }>`
+      SELECT crove_kernel.mcp_wake_signals_check(${input.grantId}::uuid, ${input.keys}::text[], ${input.complete}::text[]) AS fresh`
+      .execute(ctx.trx)
+      .catch(wakeSystemError);
     return { fresh: rows[0]?.fresh ?? [] };
-  },
-});
-
-export const mcpWakeScheduleAdvance = defineCommand({
-  name: 'kernel.mcp.wake.schedule_advance',
-  input: zMcpWakeScheduleAdvance,
-  risk: 'R1',
-  sideEffect: 'internal',
-  access: 'system',
-  handler: async (ctx, input) => {
-    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới chuyển lịch báo thức sang lần kế');
-    const { rows } = await sql<{ day: string | null }>`SELECT crove_kernel.mcp_wake_schedule_advance(${input.grantId}::uuid) AS day`.execute(ctx.trx).catch(wakeSystemError);
-    return { day: rows[0]?.day ?? null };
   },
 });
 
@@ -302,5 +301,5 @@ export const mcpWakeTarget = defineQuery({
   },
 });
 
-export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsSync, mcpWakeScheduleAdvance];
+export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck];
 export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget];

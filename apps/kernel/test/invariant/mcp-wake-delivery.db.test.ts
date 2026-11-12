@@ -131,14 +131,14 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
         'crove_kernel.mcp_wake_due(integer)',
         'crove_kernel.mcp_wake_open(integer)',
         'crove_kernel.mcp_wake_delivery_get(uuid, uuid)',
-        'crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb)',
+        'crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[])',
         'crove_kernel.mcp_wake_touch(uuid)',
         'crove_kernel.mcp_wake_record(uuid, text, integer)',
-        'crove_kernel.mcp_wake_signals_sync(uuid, text[])',
-        'crove_kernel.mcp_wake_schedule_advance(uuid)',
+        'crove_kernel.mcp_wake_signals_check(uuid, text[], text[])',
       ];
       const nobody = ['crove_kernel.mcp_wake_body_ok(jsonb, uuid, uuid, uuid, text)', 'crove_kernel.mcp_wake_system()'];
-      for (const [fn, allowed] of [...worker.map((f) => [f, ['crove_worker']] as const), ...nobody.map((f) => [f, [] as string[]] as const)]) {
+      const grants: Array<[string, string[]]> = [...worker.map((f): [string, string[]] => [f, ['crove_worker']]), ...nobody.map((f): [string, string[]] => [f, []])];
+      for (const [fn, allowed] of grants) {
         for (const role of roles) {
           expect((await c.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, fn])).rows[0].ok, `${role} execute ${fn}`).toBe(allowed.includes(role));
         }
@@ -157,7 +157,7 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       await expect(asApp.query(`SELECT * FROM crove_kernel.agent_wake_delivery`)).rejects.toThrow(/permission denied/);
       await expect(asWorker.query(`SELECT * FROM crove_kernel.agent_wake_delivery`)).rejects.toThrow(/permission denied/);
       const due = await asWorker.query(`SELECT * FROM crove_kernel.mcp_wake_due(10)`);
-      expect(due.fields.map((f) => f.name)).toEqual(['org_id', 'grant_id', 'user_id', 'schedule_due', 'signals_due']);
+      expect(due.fields.map((f) => f.name)).toEqual(['org_id', 'grant_id', 'user_id', 'schedule_due', 'due_day', 'signals_due']);
       const open = await asWorker.query(`SELECT * FROM crove_kernel.mcp_wake_open(10)`);
       expect(open.fields.map((f) => f.name)).toEqual(['org_id', 'id', 'kind']);
       // A write outside a system context in an org is refused whoever calls: the worker without a context has none.
@@ -180,6 +180,9 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       ['the body the builder makes', good, true],
       ['a schedule', { ...head, type: 'schedule.due', data: { date: '2026-11-12' } }, true],
       ['a ping', { ...head, type: 'ping', data: {} }, true],
+      ['an amount with its currency', { ...good, data: { items: [{ ...itemOk, currency: 'USD' }] } }, true],
+      ['a currency without an amount', { ...good, data: { items: [{ rule: itemOk.rule, key: itemOk.key, severity: 'warn', currency: 'USD' }] } }, false],
+      ['a currency that is text', { ...good, data: { items: [{ ...itemOk, currency: 'dong' }] } }, false],
       ['a name beside the ids', { ...good, data: { items: [{ ...itemOk, party_name: 'Công ty TNHH Nguyễn Văn A' }] } }, false],
       ['a note at the top', { ...good, note: 'gọi lại khách' }, false],
       ['text in the rule', { ...good, data: { items: [{ ...itemOk, rule: 'Hợp đồng chưa có hóa đơn' }] } }, false],
@@ -222,8 +225,7 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       ['kernel.mcp.wake.enqueue', { id, grantId: grant, type: 'ping', body }],
       ['kernel.mcp.wake.queued', { id }],
       ['kernel.mcp.wake.record', { id, outcome: 'sent' }],
-      ['kernel.mcp.wake.signals_sync', { grantId: grant, keys: [] }],
-      ['kernel.mcp.wake.schedule_advance', { grantId: grant }],
+      ['kernel.mcp.wake.signals_check', { grantId: grant, keys: [], complete: [] }],
     ];
     const reads: Array<[string, unknown]> = [['kernel.mcp.wake.delivery', { id }], ['kernel.mcp.wake.target', { grantId: grant }]];
     const actors: Array<[string, UserActor]> = [

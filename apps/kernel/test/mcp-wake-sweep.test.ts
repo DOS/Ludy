@@ -12,9 +12,12 @@ const base = { kind: 'flag', app: 'crm', href: '/deals' } as const;
 describe('a Home item as a wake-up item', () => {
   it('maps the three rules to their key, entity id, severity, amount, Vietnam due day and day count', () => {
     const won: TodayItem = { ...base, id: `signal:won-deal-no-invoice:${ID}`, title: { key: 'signals.wonDealNoInvoice', params: { days: 7 } }, amount: '12500000', dueAt: '2026-11-19T00:00:00+07:00', severity: 'warn' };
-    expect(wakeItemOf(DEAL_WITHOUT_INVOICE_READ, won)).toEqual({ rule: DEAL_WITHOUT_INVOICE_READ, key: `deal_without_invoice:${ID}`, severity: 'warn', deal_id: ID, amount: '12500000', due_on: '2026-11-19', days: 7 });
+    expect(wakeItemOf(DEAL_WITHOUT_INVOICE_READ, won)).toEqual({ rule: DEAL_WITHOUT_INVOICE_READ, key: `deal_without_invoice:${ID}`, severity: 'warn', deal_id: ID, amount: '12500000', currency: 'VND', due_on: '2026-11-19', days: 7 });
     const receivable: TodayItem = { ...base, id: `signal:overdue-receivable-open-deal:${ID}`, title: { key: 'x', params: { days: 31 } }, amount: '4000000.50' };
-    expect(wakeItemOf(RECEIVABLE_WITH_OPEN_DEAL_READ, receivable)).toEqual({ rule: RECEIVABLE_WITH_OPEN_DEAL_READ, key: `receivable_with_open_deal:${ID}`, severity: 'warn', party_id: ID, amount: '4000000.50', days: 31 });
+    expect(wakeItemOf(RECEIVABLE_WITH_OPEN_DEAL_READ, receivable)).toEqual({ rule: RECEIVABLE_WITH_OPEN_DEAL_READ, key: `receivable_with_open_deal:${ID}`, severity: 'warn', party_id: ID, amount: '4000000.50', currency: 'VND', days: 31 });
+    // A currency other than VND is kept, so a receiver never reads a dollar amount as dong.
+    const usd: TodayItem = { ...base, id: `signal:won-deal-no-invoice:${ID}`, title: { key: 'x' }, amount: '1200', currency: 'USD' };
+    expect(wakeItemOf(DEAL_WITHOUT_INVOICE_READ, usd)).toMatchObject({ amount: '1200', currency: 'USD' });
     const bank: TodayItem = { kind: 'flag', app: 'finance', href: '/inbox', id: `signal:supplier-bank-changed:${ID}`, title: { key: 'x', params: { days: 2, count: 3 } }, severity: 'block' };
     expect(wakeItemOf(SUPPLIER_BANK_CHANGED_READ, bank)).toEqual({ rule: SUPPLIER_BANK_CHANGED_READ, key: `supplier_bank_changed:${ID}`, severity: 'block', party_id: ID, days: 2 });
   });

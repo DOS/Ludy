@@ -60,15 +60,15 @@ export async function runWakeDelivery(deps: WakeDeps, job: WakeJob, attempt: { r
     await deps.runtime.execute('kernel.mcp.wake.record', { id: job.id, outcome: 'dropped' }, ctx);
     return 'dropped';
   }
-  const binding = { orgId: job.orgId, provider: MCP_WAKE_PROVIDER, externalAccountId: delivery.grantId };
-  const open = (sealed: { keyId: string; envelope: string }) => deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, binding);
-  const secrets = [open(target.sealed), ...(target.previous ? [open(target.previous)] : [])];
-  // The body is checked once more as it is sent: what the receiver gets is what the builder accepts.
-  const { body: stored } = delivery;
-  const text = wakeBody(stored);
-  const timestamp = String(Math.floor((deps.now ? deps.now() : Date.now()) / 1000));
   let status: number | null = null;
   try {
+    const binding = { orgId: job.orgId, provider: MCP_WAKE_PROVIDER, externalAccountId: delivery.grantId };
+    const open = (sealed: { keyId: string; envelope: string }) => deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, binding);
+    const secrets = [open(target.sealed), ...(target.previous ? [open(target.previous)] : [])];
+    // The body is checked once more as it is sent: what the receiver gets is what the builder accepts.
+    const { body: stored } = delivery;
+    const text = wakeBody(stored);
+    const timestamp = String(Math.floor((deps.now ? deps.now() : Date.now()) / 1000));
     const send = egressFetch({ timeoutMs: ATTEMPT_MS, maxBytes: MAX_ANSWER, overLimit: 'truncate', httpsOnly: true, userAgent: 'Ludy-Webhook/1', ...deps.egress });
     const answer = await send(target.url, {
       method: 'POST',
@@ -82,7 +82,8 @@ export async function runWakeDelivery(deps: WakeDeps, job: WakeJob, attempt: { r
     });
     status = answer.status;
   } catch (error) {
-    // A name the guard refuses, one that does not resolve, a timeout, a dropped connection: a failed attempt.
+    // A key that no longer opens, a stored body that no longer fits, a name the guard refuses, one that does not resolve, a timeout, a dropped connection: a failed attempt, recorded
+    // like any other, so the delivery counts it, is never handed over again for want of an attempt, and an owner sees the wake-up failing.
     console.warn(`[mcp-wake] ${job.id.slice(0, 8)} not delivered`, codeOf(error));
   }
   if (status !== null && status >= 200 && status < 300) {

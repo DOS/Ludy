@@ -6,8 +6,8 @@
 --   too (mcp_wake_body_ok: the keys, the shape of every value, and the ids equal to the row's), so no name, note or message can be stored in one whatever wrote the row.
 -- - agent_wake_signal_seen: the keys of the signals already sent for a grant, so a signal fires when its key first appears and again only after it went away.
 -- - Both are definer-only like agent_grant_wake. The delivery worker lists work through mcp_wake_due and mcp_wake_open, loads a delivery with mcp_wake_delivery_get and the
---   receiver with mcp_wake_target (20261223000000); every change goes through a system command that calls mcp_wake_enqueue, mcp_wake_touch, mcp_wake_record, mcp_wake_signals_sync
---   or mcp_wake_schedule_advance, which refuse any context but the system's, in an org.
+--   receiver with mcp_wake_target (20261223000000); every change goes through a system command that calls mcp_wake_enqueue, mcp_wake_touch, mcp_wake_record
+--   or mcp_wake_signals_check, which refuse any context but the system's, in an org.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.agent_grant_wake ADD COLUMN IF NOT EXISTS signals_checked_at timestamptz;
@@ -65,7 +65,7 @@ BEGIN
         RETURN false;
       END IF;
       FOR k IN SELECT pg_catalog.jsonb_object_keys(v_item) LOOP
-        IF k NOT IN ('rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'due_on', 'days') THEN
+        IF k NOT IN ('rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'currency', 'due_on', 'days') THEN
           RETURN false;
         END IF;
       END LOOP;
@@ -82,6 +82,10 @@ BEGIN
         END IF;
       END LOOP;
       IF v_item ? 'amount' AND (pg_catalog.jsonb_typeof(v_item -> 'amount') <> 'string' OR (v_item ->> 'amount') !~ '^-?(0|[1-9][0-9]{0,17})(\.[0-9]{1,4})?$') THEN
+        RETURN false;
+      END IF;
+      -- A currency names the unit of an amount and has no meaning without one.
+      IF v_item ? 'currency' AND (NOT (v_item ? 'amount') OR pg_catalog.jsonb_typeof(v_item -> 'currency') <> 'string' OR (v_item ->> 'currency') !~ '^[A-Z]{3}$') THEN
         RETURN false;
       END IF;
       IF v_item ? 'due_on' AND (pg_catalog.jsonb_typeof(v_item -> 'due_on') <> 'string' OR (v_item ->> 'due_on') !~ '^\d{4}-\d{2}-\d{2}$') THEN
@@ -153,11 +157,14 @@ SELECT crove_kernel.agent_write_guard_install('crove_kernel.agent_wake_signal_se
 -- ---------------------------------------------------------------------------
 -- The wake-ups to look at now: enabled, the grant in good standing, and a schedule that is due or signals not checked for five minutes.
 CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_due(p_limit integer)
-RETURNS TABLE (org_id uuid, grant_id uuid, user_id uuid, schedule_due boolean, signals_due boolean)
+RETURNS TABLE (org_id uuid, grant_id uuid, user_id uuid, schedule_due boolean, due_day text, signals_due boolean)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   SELECT w.org_id, w.grant_id, g.user_id,
-         (w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp()),
-         (w.signals_checked_at IS NULL OR w.signals_checked_at <= pg_catalog.clock_timestamp() - interval '5 minutes')
+         (w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp()) AS schedule_due,
+         -- The Vietnam calendar day a due schedule fell due, which is what its event says.
+         CASE WHEN w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp()
+              THEN pg_catalog.to_char(w.next_due_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') END AS due_day,
+         (w.signals_checked_at IS NULL OR w.signals_checked_at <= pg_catalog.clock_timestamp() - interval '5 minutes') AS signals_due
   FROM crove_kernel.agent_grant_wake w
   JOIN crove_kernel.agent_grant g ON g.org_id = w.org_id AND g.id = w.grant_id
   WHERE w.enabled
@@ -165,7 +172,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
       (w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp())
       OR w.signals_checked_at IS NULL OR w.signals_checked_at <= pg_catalog.clock_timestamp() - interval '5 minutes')
     AND crove_kernel.mcp_grant_standing(g.id, g.org_id, g.user_id)
-  ORDER BY w.org_id, w.grant_id
+  -- A due schedule goes first, so signal checks never hold it back.
+  ORDER BY (w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp()) DESC, w.org_id, w.grant_id
   LIMIT GREATEST(1, LEAST(p_limit, 500))
 $$;
 
@@ -207,14 +215,17 @@ BEGIN
   RETURN v_org;
 END $$;
 
--- Stores a delivery for a grant whose wake-up is enabled and in good standing: false when the id is already stored (a replay). Raises MCP_WAKE_GRANT (22023) when the
--- grant cannot be woken now, and the body's CHECK (23514) for a body that does not fit.
-CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_enqueue(p_id uuid, p_grant_id uuid, p_type text, p_body jsonb)
+-- Stores a delivery for a grant whose wake-up is enabled and in good standing, in one transaction with what makes it fire only once: a signal event notes its item keys as
+-- seen, and a schedule event moves the schedule to its next time (counted from now, so a gap sends once and not once per missed day). A schedule event stores nothing, and answers
+-- false, when the schedule is no longer due (another pass took it); any event answers false when its id is already stored (a replay). Raises MCP_WAKE_GRANT (22023) when
+-- the grant cannot be woken now, and the body's CHECK (23514) for a body that does not fit.
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_enqueue(p_id uuid, p_grant_id uuid, p_type text, p_body jsonb, p_keys text[])
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
   v_org uuid := crove_kernel.mcp_wake_system();
   v_user uuid;
+  v_row crove_kernel.agent_grant_wake%ROWTYPE;
   v_count integer;
 BEGIN
   SELECT g.user_id INTO v_user
@@ -223,10 +234,33 @@ BEGIN
   IF NOT FOUND OR NOT crove_kernel.mcp_grant_standing(p_grant_id, v_org, v_user) THEN
     RAISE EXCEPTION 'MCP_WAKE_GRANT' USING ERRCODE = '22023';
   END IF;
+  IF p_keys IS NOT NULL AND (p_type <> 'signal.fired' OR pg_catalog.cardinality(p_keys) > 20) THEN
+    RAISE EXCEPTION 'MCP_WAKE_INVALID' USING ERRCODE = '22023';
+  END IF;
+  IF p_type = 'schedule.due' THEN
+    SELECT w.* INTO v_row FROM crove_kernel.agent_grant_wake w
+    WHERE w.org_id = v_org AND w.grant_id = p_grant_id AND w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp()
+    FOR UPDATE;
+    IF NOT FOUND THEN
+      RETURN false;
+    END IF;
+  END IF;
   INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES (v_org, p_id, p_grant_id, p_type, p_body)
   ON CONFLICT (org_id, id) DO NOTHING;
   GET DIAGNOSTICS v_count = ROW_COUNT;
-  RETURN v_count = 1;
+  IF v_count = 0 THEN
+    RETURN false;
+  END IF;
+  IF p_type = 'schedule.due' THEN
+    UPDATE crove_kernel.agent_grant_wake w SET
+      next_due_at = crove_kernel.mcp_wake_next_due(v_row.schedule, v_row.schedule_minute, v_row.schedule_weekday, pg_catalog.clock_timestamp()),
+      updated_at = pg_catalog.clock_timestamp()
+    WHERE w.org_id = v_org AND w.grant_id = p_grant_id;
+  ELSIF p_keys IS NOT NULL THEN
+    INSERT INTO crove_kernel.agent_wake_signal_seen (org_id, grant_id, key) SELECT v_org, p_grant_id, k FROM pg_catalog.unnest(p_keys) AS k
+    ON CONFLICT (org_id, grant_id, key) DO NOTHING;
+  END IF;
+  RETURN true;
 END $$;
 
 -- Notes that a queued delivery was handed to the queue now.
@@ -243,7 +277,8 @@ BEGIN
 END $$;
 
 -- The outcome of one attempt. 'sent': delivered. 'retry': the attempt failed and the queue tries again. 'failed': the last attempt failed. 'dropped': the grant can no longer be
--- woken, so nothing is sent. A failure counts on the wake-up; after seven days of failing the wake-up is paused with the reason. A delivery already settled is left as it is (false).
+-- woken, so nothing is sent. 'expired': the delivery waited too long with no attempt made (the worker was down), so it is failed without counting against the receiver. A failed
+-- attempt counts on the wake-up; after seven days of failing the wake-up is paused with the reason. A delivery already settled is left as it is (false).
 CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_record(p_id uuid, p_outcome text, p_code integer)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
@@ -251,12 +286,12 @@ DECLARE
   v_org uuid := crove_kernel.mcp_wake_system();
   v_grant uuid;
 BEGIN
-  IF p_outcome IS NULL OR p_outcome NOT IN ('sent', 'retry', 'failed', 'dropped') OR (p_code IS NOT NULL AND p_code NOT BETWEEN 100 AND 599) THEN
+  IF p_outcome IS NULL OR p_outcome NOT IN ('sent', 'retry', 'failed', 'dropped', 'expired') OR (p_code IS NOT NULL AND p_code NOT BETWEEN 100 AND 599) THEN
     RAISE EXCEPTION 'MCP_WAKE_INVALID' USING ERRCODE = '22023';
   END IF;
   UPDATE crove_kernel.agent_wake_delivery d SET
-    status = CASE p_outcome WHEN 'sent' THEN 'sent' WHEN 'failed' THEN 'failed' WHEN 'dropped' THEN 'dropped' ELSE d.status END,
-    attempts = d.attempts + CASE WHEN p_outcome = 'dropped' THEN 0 ELSE 1 END,
+    status = CASE p_outcome WHEN 'sent' THEN 'sent' WHEN 'failed' THEN 'failed' WHEN 'expired' THEN 'failed' WHEN 'dropped' THEN 'dropped' ELSE d.status END,
+    attempts = d.attempts + CASE WHEN p_outcome IN ('dropped', 'expired') THEN 0 ELSE 1 END,
     last_code = p_code,
     sent_at = CASE WHEN p_outcome = 'sent' THEN pg_catalog.clock_timestamp() ELSE d.sent_at END
   WHERE d.org_id = v_org AND d.id = p_id AND d.status = 'queued'
@@ -282,53 +317,31 @@ BEGIN
   RETURN true;
 END $$;
 
--- The signal keys a grant's wake-up has seen: stores the keys not seen before and returns them, forgets the keys that are gone (so one that comes back fires again) and notes
--- that the signals were checked now.
-CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_signals_sync(p_grant_id uuid, p_keys text[])
+-- Looks at a grant's signals: returns the keys not seen before (they are noted as seen by the event that carries them, mcp_wake_enqueue, so a failure between the two
+-- fires them again and never loses them), forgets the keys that are gone, and notes that the signals were checked now. A key is forgotten only when its rule answered in
+-- full (p_complete names those rules by the short name in the key): a rule that failed, or answered in part, leaves its keys as they are, so they do not fire again
+-- when the rule is back. A key that went away and comes back fires again.
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_signals_check(p_grant_id uuid, p_keys text[], p_complete text[])
 RETURNS text[] LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
   v_org uuid := crove_kernel.mcp_wake_system();
   v_new text[];
 BEGIN
-  IF p_keys IS NULL OR pg_catalog.cardinality(p_keys) > 200 THEN
+  IF p_keys IS NULL OR p_complete IS NULL OR pg_catalog.cardinality(p_keys) > 200 OR pg_catalog.cardinality(p_complete) > 10 THEN
     RAISE EXCEPTION 'MCP_WAKE_INVALID' USING ERRCODE = '22023';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM crove_kernel.agent_grant_wake w WHERE w.org_id = v_org AND w.grant_id = p_grant_id) THEN
     RAISE EXCEPTION 'MCP_WAKE_GRANT' USING ERRCODE = '22023';
   END IF;
-  DELETE FROM crove_kernel.agent_wake_signal_seen s WHERE s.org_id = v_org AND s.grant_id = p_grant_id AND NOT (s.key = ANY (p_keys));
+  DELETE FROM crove_kernel.agent_wake_signal_seen s
+  WHERE s.org_id = v_org AND s.grant_id = p_grant_id AND NOT (s.key = ANY (p_keys)) AND pg_catalog.split_part(s.key, ':', 1) = ANY (p_complete);
   UPDATE crove_kernel.agent_wake_signal_seen s SET last_seen_at = pg_catalog.clock_timestamp() WHERE s.org_id = v_org AND s.grant_id = p_grant_id AND s.key = ANY (p_keys);
-  WITH ins AS (
-    INSERT INTO crove_kernel.agent_wake_signal_seen (org_id, grant_id, key)
-    SELECT v_org, p_grant_id, k FROM pg_catalog.unnest(p_keys) AS k
-    ON CONFLICT (org_id, grant_id, key) DO NOTHING
-    RETURNING key)
-  SELECT pg_catalog.array_agg(ins.key ORDER BY ins.key) INTO v_new FROM ins;
+  SELECT COALESCE(pg_catalog.array_agg(k ORDER BY k), ARRAY[]::text[]) INTO v_new
+  FROM pg_catalog.unnest(p_keys) AS k
+  WHERE NOT EXISTS (SELECT 1 FROM crove_kernel.agent_wake_signal_seen s WHERE s.org_id = v_org AND s.grant_id = p_grant_id AND s.key = k);
   UPDATE crove_kernel.agent_grant_wake w SET signals_checked_at = pg_catalog.clock_timestamp() WHERE w.org_id = v_org AND w.grant_id = p_grant_id;
-  RETURN COALESCE(v_new, ARRAY[]::text[]);
-END $$;
-
--- A schedule that is due moves to its next time (counted from now, so a gap sends once and not once per missed day) and returns the Vietnam calendar day it was due, or
--- null when it is not due.
-CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_schedule_advance(p_grant_id uuid)
-RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-#variable_conflict use_column
-DECLARE
-  v_org uuid := crove_kernel.mcp_wake_system();
-  v_row crove_kernel.agent_grant_wake%ROWTYPE;
-BEGIN
-  SELECT w.* INTO v_row FROM crove_kernel.agent_grant_wake w
-  WHERE w.org_id = v_org AND w.grant_id = p_grant_id AND w.enabled AND w.schedule <> 'off' AND w.next_due_at IS NOT NULL AND w.next_due_at <= pg_catalog.clock_timestamp()
-  FOR UPDATE;
-  IF NOT FOUND THEN
-    RETURN NULL;
-  END IF;
-  UPDATE crove_kernel.agent_grant_wake w SET
-    next_due_at = crove_kernel.mcp_wake_next_due(v_row.schedule, v_row.schedule_minute, v_row.schedule_weekday, pg_catalog.clock_timestamp()),
-    updated_at = pg_catalog.clock_timestamp()
-  WHERE w.org_id = v_org AND w.grant_id = p_grant_id;
-  RETURN pg_catalog.to_char(v_row.next_due_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD');
+  RETURN v_new;
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -340,11 +353,10 @@ REVOKE ALL ON FUNCTION
   crove_kernel.mcp_wake_open(integer),
   crove_kernel.mcp_wake_delivery_get(uuid, uuid),
   crove_kernel.mcp_wake_system(),
-  crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb),
+  crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[]),
   crove_kernel.mcp_wake_touch(uuid),
   crove_kernel.mcp_wake_record(uuid, text, integer),
-  crove_kernel.mcp_wake_signals_sync(uuid, text[]),
-  crove_kernel.mcp_wake_schedule_advance(uuid)
+  crove_kernel.mcp_wake_signals_check(uuid, text[], text[])
 FROM PUBLIC;
 DO $$
 DECLARE
@@ -353,8 +365,8 @@ BEGIN
   FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\_%' AND rolname <> current_user LOOP
     EXECUTE pg_catalog.format(
       'REVOKE ALL ON FUNCTION crove_kernel.mcp_wake_body_ok(jsonb, uuid, uuid, uuid, text), crove_kernel.mcp_wake_due(integer), crove_kernel.mcp_wake_open(integer), '
-      'crove_kernel.mcp_wake_delivery_get(uuid, uuid), crove_kernel.mcp_wake_system(), crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb), crove_kernel.mcp_wake_touch(uuid), '
-      'crove_kernel.mcp_wake_record(uuid, text, integer), crove_kernel.mcp_wake_signals_sync(uuid, text[]), crove_kernel.mcp_wake_schedule_advance(uuid) FROM %I',
+      'crove_kernel.mcp_wake_delivery_get(uuid, uuid), crove_kernel.mcp_wake_system(), crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[]), crove_kernel.mcp_wake_touch(uuid), '
+      'crove_kernel.mcp_wake_record(uuid, text, integer), crove_kernel.mcp_wake_signals_check(uuid, text[], text[]) FROM %I',
       r.rolname);
   END LOOP;
 END $$;
@@ -362,11 +374,10 @@ GRANT EXECUTE ON FUNCTION
   crove_kernel.mcp_wake_due(integer),
   crove_kernel.mcp_wake_open(integer),
   crove_kernel.mcp_wake_delivery_get(uuid, uuid),
-  crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb),
+  crove_kernel.mcp_wake_enqueue(uuid, uuid, text, jsonb, text[]),
   crove_kernel.mcp_wake_touch(uuid),
   crove_kernel.mcp_wake_record(uuid, text, integer),
-  crove_kernel.mcp_wake_signals_sync(uuid, text[]),
-  crove_kernel.mcp_wake_schedule_advance(uuid)
+  crove_kernel.mcp_wake_signals_check(uuid, text[], text[])
 TO crove_worker;
 
 -- ---------------------------------------------------------------------------

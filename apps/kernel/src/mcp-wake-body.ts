@@ -20,7 +20,7 @@ const zAmount = z.string().regex(/^-?(0|[1-9]\d{0,17})(\.\d{1,4})?$/);
 // A rule's short name and the ids it is about: lower-case words, then one to three ids.
 const zKey = z.string().regex(/^[a-z]+(_[a-z]+)*(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}){1,3}$/);
 
-const zItem = z.strictObject({
+const zItemBase = z.strictObject({
   rule: z.enum(WAKE_RULES),
   key: zKey,
   severity: z.enum(['info', 'warn', 'block']),
@@ -28,9 +28,12 @@ const zItem = z.strictObject({
   deal_id: zId.optional(),
   invoice_id: zId.optional(),
   amount: zAmount.optional(),
+  // The unit of the amount (ISO 4217), present only with one; Home leaves VND out, so a missing currency in a Home item is VND and is sent as such.
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
   due_on: zDate.optional(),
   days: z.number().int().min(0).max(3650).optional(),
 });
+const zItem = zItemBase.refine((item) => item.currency === undefined || item.amount !== undefined, { message: 'a currency needs an amount' });
 
 const head = { id: zId, created_at: zInstant, org: zId, grant: zId };
 const zEvent = z.discriminatedUnion('type', [

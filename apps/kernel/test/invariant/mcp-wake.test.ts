@@ -270,7 +270,7 @@ const KEY_RE = /^[a-z]+(_[a-z]+)*(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const TYPES = ['signal.fired', 'schedule.due', 'ping'];
 const SEVERITIES = ['info', 'warn', 'block'];
 const TOP_KEYS = ['id', 'type', 'created_at', 'org', 'grant', 'data'];
-const ITEM_KEYS = ['rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'due_on', 'days'];
+const ITEM_KEYS = ['rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'currency', 'due_on', 'days'];
 
 // A body is exactly the pinned keys, each value of its pinned shape: an id, a date, a number or one of a few fixed words. A name, a note or a message
 // fits none of these, so none can ride in any field, whatever it is called. Returns what is wrong, or [].
@@ -307,6 +307,8 @@ function bodyProblems(body: unknown): string[] {
       str('deal_id', UUID_RE);
       str('invoice_id', UUID_RE);
       str('amount', AMOUNT_RE);
+      str('currency', /^[A-Z]{3}$/);
+      if (item.currency !== undefined && item.amount === undefined) out.push(`item ${i}: a currency without an amount`);
       str('due_on', DATE_RE);
       if (item.days !== undefined && (typeof item.days !== 'number' || !Number.isInteger(item.days) || item.days < 0 || item.days > 3650)) out.push(`item ${i}: days is not a day count`);
     }

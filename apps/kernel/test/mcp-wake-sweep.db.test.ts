@@ -89,9 +89,9 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     return { rule: DEAL_WITHOUT_INVOICE_READ, key: `deal_without_invoice:${id}`, severity: 'warn', deal_id: id, days: 7 };
   };
   // A sweep with the signals the test says are there now, and every hand-over collected.
-  const sweeper = (signals: () => WakeItem[], sent: Array<{ orgId: string; id: string }>, now?: () => Date) => {
-    const evaluate: SignalEvaluator = async () => signals();
-    return () => runWakeSweep({ runtime: worker, workerDb, send: async (job) => void sent.push(job), evaluate, ...(now ? { now } : {}) });
+  const sweeper = (signals: () => WakeItem[], sent: Array<{ orgId: string; id: string }>, options: { complete?: () => string[]; runtime?: Runtime } = {}) => {
+    const evaluate: SignalEvaluator = async () => ({ items: signals(), complete: options.complete ? options.complete() : ['deal_without_invoice'] });
+    return () => runWakeSweep({ runtime: options.runtime ?? worker, workerDb, send: async (job) => void sent.push(job), evaluate });
   };
   const stampPast = (grantId: string, column: string, interval: string) => admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET ${column} = now() - interval '${interval}' WHERE grant_id = $1`, [grantId]));
 
@@ -211,7 +211,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const { grantId } = await wakeUp();
     const sent: Array<{ orgId: string; id: string }> = [];
     // The hand-over failed: the delivery is stored and the queue was not given it.
-    const lost = await runWakeSweep({ runtime: worker, workerDb, send: async () => Promise.reject(new Error('queue down')), evaluate: async () => [item(7)] });
+    const lost = await runWakeSweep({ runtime: worker, workerDb, send: async () => Promise.reject(new Error('queue down')), evaluate: async () => ({ items: [item(7)], complete: ['deal_without_invoice'] }) });
     expect(lost).toMatchObject({ signals: 1 });
     const [stored] = await deliveries(grantId);
     expect(stored?.status).toBe('queued');
@@ -226,7 +226,8 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     await admin((c) => c.query(`UPDATE crove_kernel.agent_wake_delivery SET created_at = now() - interval '9 hours' WHERE id = $1`, [stored?.id]));
     expect((await sweep()).expired).toBe(1);
     expect((await deliveries(grantId))[0]).toMatchObject({ status: 'failed' });
-    expect((await wakeRow(grantId)).consecutive_failures).toBe(1);
+    // Expiry is the worker's absence, not the receiver's fault: nothing counts against the wake-up.
+    expect(await wakeRow(grantId)).toMatchObject({ consecutive_failures: 0, failing_since: null, enabled: true });
   });
 
   it('delivers through the job against the real tables: posts the stored event signed with the grant\'s secret, records it, and leaves no secret or signature in any table', async () => {
@@ -334,6 +335,80 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(await wakeRow(grantId)).toMatchObject({ enabled: true, paused_reason: null, consecutive_failures: 0, failing_since: null });
   });
 
+  it('does not forget a signal when its rule did not answer in full, so it does not fire again when the rule is back', async () => {
+    const { grantId } = await wakeUp();
+    const sent: Array<{ orgId: string; id: string }> = [];
+    let present = [item(31), item(32)];
+    let complete = ['deal_without_invoice'];
+    const sweep = sweeper(() => present, sent, { complete: () => complete });
+    await sweep();
+    expect(await deliveries(grantId)).toHaveLength(1);
+    // The rule fails once: no items, and it is not in `complete`. Its keys stay seen.
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    present = [];
+    complete = [];
+    await sweep();
+    // It answers again with the same two: nothing new fires.
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    present = [item(31), item(32)];
+    complete = ['deal_without_invoice'];
+    await sweep();
+    expect(await deliveries(grantId)).toHaveLength(1);
+    // Answering in full with one gone forgets it, and it fires again when it returns.
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    present = [item(31)];
+    await sweep();
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    present = [item(31), item(32)];
+    await sweep();
+    expect(await deliveries(grantId)).toHaveLength(2);
+  });
+
+  it('loses nothing when storing an event fails: the signal fires on the next look, and the schedule is still due', async () => {
+    const { grantId } = await wakeUp({ schedule: 'daily', minute: 480 });
+    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET next_due_at = now() - interval '1 hour' WHERE grant_id = $1`, [grantId]));
+    const sent: Array<{ orgId: string; id: string }> = [];
+    let broken = true;
+    const flaky = {
+      execute: (name: string, input: unknown, ctx: unknown) => (broken && name === 'kernel.mcp.wake.enqueue' ? Promise.reject(new Error('database hiccup')) : (worker.execute as (...a: unknown[]) => Promise<unknown>)(name, input, ctx)),
+      query: (...a: unknown[]) => (worker.query as (...b: unknown[]) => Promise<unknown>)(...a),
+    } as unknown as Runtime;
+    const sweep = sweeper(() => [item(41)], sent, { runtime: flaky });
+    const first = await sweep();
+    expect(first.failures).toBe(1);
+    expect(await deliveries(grantId)).toEqual([]);
+    expect((await wakeRow(grantId)).next_due_at.getTime()).toBeLessThan(Date.now());
+    broken = false;
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    const second = await sweep();
+    expect(second).toMatchObject({ failures: 0, schedules: 1, signals: 1 });
+    const rows = await deliveries(grantId);
+    expect(rows.map((r) => r.type).sort()).toEqual(['schedule.due', 'signal.fired']);
+    expect((await wakeRow(grantId)).next_due_at.getTime()).toBeGreaterThan(Date.now());
+    // A second pass finds neither due again.
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    expect(await sweep()).toMatchObject({ schedules: 0, signals: 0 });
+  });
+
+  it('makes no call and writes no refusal against the owner when no rule declares `mcp` (the real evaluator)', async () => {
+    const { grantId } = await wakeUp();
+    const before = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number));
+    const queried: string[] = [];
+    const spy = {
+      execute: (...a: unknown[]) => (worker.execute as (...b: unknown[]) => Promise<unknown>)(...a),
+      query: (name: string, ...rest: unknown[]) => {
+        queried.push(name);
+        return (worker.query as (...b: unknown[]) => Promise<unknown>)(name, ...rest);
+      },
+    } as unknown as Runtime;
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    const done = await runWakeSweep({ runtime: spy, workerDb, send: async () => undefined });
+    expect(done.failures).toBe(0);
+    expect(queried.filter((q) => q.startsWith('kernel.signals.'))).toEqual([]);
+    expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number))).toBe(before);
+    expect((await wakeRow(grantId)).signals_checked_at).not.toBeNull();
+  });
+
   it('refuses a body that does not fit, in the command and in the database, and any actor but the system on every delivery step', async () => {
     const { grantId } = await wakeUp();
     const ctx = { actor: { type: 'system' as const, component: 'test' }, orgId };
@@ -354,8 +429,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
       ['kernel.mcp.wake.enqueue', { id: randomUUID(), grantId, type: 'ping', body: good }],
       ['kernel.mcp.wake.queued', { id }],
       ['kernel.mcp.wake.record', { id, outcome: 'sent' }],
-      ['kernel.mcp.wake.signals_sync', { grantId, keys: [] }],
-      ['kernel.mcp.wake.schedule_advance', { grantId }],
+      ['kernel.mcp.wake.signals_check', { grantId, keys: [], complete: [] }],
     ] as const) {
       await expect(runtime.execute(name, input, { actor: owner(), orgId }), name).rejects.toMatchObject({ status: 403 });
     }

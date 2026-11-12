@@ -3,15 +3,17 @@
 // of the system actor and hands deliveries to the queue (mcp-wake.ts sends them).
 //   1. Deliveries the queue never got (the sweep stopped between storing one and handing it over) are handed over again three minutes on; one still waiting after eight
 //      hours, longer than the retries last, is failed. So a delivery is stored once and sent at least once.
-//   2. A schedule that is due sends `schedule.due` (the day, nothing else) and moves to its next time; a gap sends once, not once per missed day.
+//   2. A schedule that is due sends `schedule.due` (the day, nothing else); the event and the move to its next time are one transaction (a gap sends once, not once per missed day,
+//      and two passes never both send it).
 //   3. A grant's signals are looked at every five minutes: the rules of the kernel are run as the grant itself (an MCP actor), so a rule's read the grant may not reach
 //      answers nothing and the wake-up stays quiet (the signal reads declare `mcp` when their line has reviewed what leaves). A signal fires when its key first appears and again
-//      only after it went away; up to 20 items go in one event.
+//      only after it went away; up to 20 items go in one event, stored in one transaction with the keys it carries, so a failure fires it again and never loses it.
+//      A key is forgotten only when its rule answered in full; a rule that failed or answered in part leaves its keys as they were.
 // A failure for one grant never stops the others, and a failure of the queue leaves the delivery stored, to be handed over again.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@crove/kernel';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelQueries } from '@crove/kernel';
 import type { TodayItem } from '@crove/kernel-contract';
 import { WAKE_ITEMS_MAX, WAKE_RULES, wakeEvent, type WakeItem } from './mcp-wake-body.ts';
 import type { WakeJob } from './mcp-wake.ts';
@@ -31,7 +33,12 @@ export interface WakeGrant {
 }
 
 // What a rule gives for a grant: the items it flags, as the grant itself may read them. A rule the grant may not read, or a grant that no longer stands, gives none.
-export type SignalEvaluator = (grant: WakeGrant) => Promise<WakeItem[]>;
+export interface SignalAnswer {
+  items: WakeItem[];
+  // The short names (the part of a key before the first colon) of the rules that answered in full: no error, no grouped or unchecked placeholder, nothing cut.
+  complete: string[];
+}
+export type SignalEvaluator = (grant: WakeGrant) => Promise<SignalAnswer>;
 
 export interface WakeSweepDeps {
   runtime: Runtime;
@@ -64,7 +71,11 @@ export function wakeItemOf(rule: (typeof WAKE_RULES)[number], item: TodayItem): 
   if (!m) return null;
   const id = m[1] as string;
   const out: WakeItem = { rule, key: `${KEY_NAME[rule]}:${id}`, severity: item.severity ?? 'warn', [short.entity]: id };
-  if (item.amount !== undefined && AMOUNT.test(item.amount)) out.amount = item.amount;
+  if (item.amount !== undefined && AMOUNT.test(item.amount)) {
+    out.amount = item.amount;
+    // A Home item without a currency is in VND; the receiver is told so, as a bare number would read as the wrong unit.
+    out.currency = item.currency ?? 'VND';
+  }
   if (item.dueAt !== undefined) {
     const at = Date.parse(item.dueAt);
     // The day in Vietnam time (UTC+7, no daylight saving).
@@ -75,24 +86,37 @@ export function wakeItemOf(rule: (typeof WAKE_RULES)[number], item: TodayItem): 
   return out;
 }
 
-// The default evaluator: each rule of the kernel run as the grant. A rule that does not declare `mcp` is refused by the runtime (rule mcp_scope) and answers nothing.
-export function runtimeEvaluator(runtime: Runtime): SignalEvaluator {
+// The rules of the kernel whose query declares `mcp`, so a grant may run them. None does today (the lines declare it when they have reviewed what leaves), so the sweep
+// makes no call and the signal wake-ups stay quiet; a rule that does not declare it is never asked, which keeps a refusal from being written against the owner.
+export function declaredRules(queries: readonly { name: string; mcp?: unknown }[]): (typeof WAKE_RULES)[number][] {
+  return WAKE_RULES.filter((rule) => queries.some((q) => q.name === rule && q.mcp !== undefined));
+}
+
+// The grouped or unchecked items of a rule ("and N more", "not checked", "partial"): the rule did not answer in full.
+const PLACEHOLDER = /^signal:[a-z-]+:(more|partial|unchecked)$/;
+
+// The default evaluator: each declared rule run as the grant (an MCP actor, in the request's own transaction), a rule at a time. A rule that fails is left out of `complete`.
+export function runtimeEvaluator(runtime: Runtime, rules: readonly (typeof WAKE_RULES)[number][]): SignalEvaluator {
   return async (grant) => {
     const actor: UserActor = { type: 'user', userId: grant.userId, aal: 'aal1', mcp: { grantId: grant.grantId, clientId: 'wake-up', clientName: 'Wake-up', scopes: ['ludy.read'] } };
     const items: WakeItem[] = [];
-    for (const rule of WAKE_RULES) {
+    const complete: string[] = [];
+    for (const rule of rules) {
       try {
         const found = await runtime.query<TodayItem[]>(rule, {}, { actor, orgId: grant.orgId });
+        let whole = true;
         for (const item of found) {
+          if (PLACEHOLDER.test(item.id)) whole = false;
           const mapped = wakeItemOf(rule, item);
           if (mapped) items.push(mapped);
         }
+        if (whole) complete.push(KEY_NAME[rule]);
       } catch (error) {
-        // Refused (not declared for a grant) or the grant is no longer valid: quiet. Anything else is a fault worth a line.
-        if (!(error instanceof DomainError) || (error.status >= 500)) console.warn(`[mcp-wake-sweep] rule ${rule} for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+        // The grant is no longer valid, or the rule failed: its keys stay as they were. A fault is worth a line.
+        if (!(error instanceof DomainError) || error.status >= 500 || error.status === 403) console.warn(`[mcp-wake-sweep] rule ${rule} for ${grant.grantId.slice(0, 8)}`, codeOf(error));
       }
     }
-    return items;
+    return { items, complete };
   };
 }
 
@@ -100,15 +124,17 @@ export function runtimeEvaluator(runtime: Runtime): SignalEvaluator {
 export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: number; expired: number; schedules: number; signals: number; failures: number }> {
   const now = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => crypto.randomUUID());
-  const evaluate = deps.evaluate ?? runtimeEvaluator(deps.runtime);
+  const evaluate = deps.evaluate ?? runtimeEvaluator(deps.runtime, declaredRules(kernelQueries({ inboundDomain: null }) as readonly { name: string; mcp?: unknown }[]));
   const done = { handedOver: 0, expired: 0, schedules: 0, signals: 0, failures: 0 };
 
-  // Stores one event for a grant and hands it over; a replay of the id stores nothing.
-  const post = async (grant: WakeGrant, type: 'signal.fired' | 'schedule.due', data: unknown): Promise<void> => {
+  // Stores one event for a grant (with the keys it carries, or moving a due schedule on, in the same transaction) and hands it over; a replay of the id, or a schedule
+  // another pass already took, stores nothing.
+  const post = async (grant: WakeGrant, type: 'signal.fired' | 'schedule.due', data: unknown, keys?: string[]): Promise<boolean> => {
     const id = newId();
     const body = wakeEvent({ id, type, created_at: now().toISOString(), org: grant.orgId, grant: grant.grantId, data });
-    const stored = await deps.runtime.execute<{ stored: boolean }>('kernel.mcp.wake.enqueue', { id, grantId: grant.grantId, type, body }, { actor: ACTOR, orgId: grant.orgId });
+    const stored = await deps.runtime.execute<{ stored: boolean }>('kernel.mcp.wake.enqueue', { id, grantId: grant.grantId, type, body, ...(keys ? { keys } : {}) }, { actor: ACTOR, orgId: grant.orgId });
     if (stored.stored) await deps.send({ orgId: grant.orgId, id }).catch((error: unknown) => console.warn(`[mcp-wake-sweep] ${id.slice(0, 8)} not handed over, will be again`, codeOf(error)));
+    return stored.stored;
   };
 
   // 1. Deliveries that need the queue again, or have waited too long.
@@ -117,7 +143,7 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     const ctx = { actor: ACTOR, orgId: row.org_id };
     try {
       if (row.kind === 'expire') {
-        await deps.runtime.execute('kernel.mcp.wake.record', { id: row.id, outcome: 'failed' }, ctx);
+        await deps.runtime.execute('kernel.mcp.wake.record', { id: row.id, outcome: 'expired' }, ctx);
         done.expired += 1;
       } else {
         await deps.send({ orgId: row.org_id, id: row.id });
@@ -131,27 +157,21 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
   }
 
   // 2 and 3. The wake-ups with a schedule due or signals to look at.
-  const due = await sql<{ org_id: string; grant_id: string; user_id: string; schedule_due: boolean; signals_due: boolean }>`
-    SELECT org_id, grant_id, user_id, schedule_due, signals_due FROM crove_kernel.mcp_wake_due(${PER_PASS}::int)`.execute(deps.workerDb);
+  const due = await sql<{ org_id: string; grant_id: string; user_id: string; schedule_due: boolean; due_day: string | null; signals_due: boolean }>`
+    SELECT org_id, grant_id, user_id, schedule_due, due_day, signals_due FROM crove_kernel.mcp_wake_due(${PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of due.rows) {
     const grant: WakeGrant = { orgId: row.org_id, grantId: row.grant_id, userId: row.user_id };
     const ctx = { actor: ACTOR, orgId: grant.orgId };
     try {
-      if (row.schedule_due) {
-        const { day } = await deps.runtime.execute<{ day: string | null }>('kernel.mcp.wake.schedule_advance', { grantId: grant.grantId }, ctx);
-        if (day) {
-          await post(grant, 'schedule.due', { date: day });
-          done.schedules += 1;
-        }
-      }
+      if (row.schedule_due && row.due_day && (await post(grant, 'schedule.due', { date: row.due_day }))) done.schedules += 1;
       if (row.signals_due) {
-        const items = await evaluate(grant);
-        const unique = [...new Map(items.map((i) => [i.key, i])).values()];
-        const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.signals_sync', { grantId: grant.grantId, keys: unique.map((i) => i.key).slice(0, 200) }, ctx);
+        const { items, complete } = await evaluate(grant);
+        const unique = [...new Map(items.map((i) => [i.key, i])).values()].slice(0, 200);
+        const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.signals_check', { grantId: grant.grantId, keys: unique.map((i) => i.key), complete }, ctx);
         const news = unique.filter((i) => fresh.includes(i.key));
         for (let at = 0; at < news.length; at += WAKE_ITEMS_MAX) {
-          await post(grant, 'signal.fired', { items: news.slice(at, at + WAKE_ITEMS_MAX) });
-          done.signals += 1;
+          const chunk = news.slice(at, at + WAKE_ITEMS_MAX);
+          if (await post(grant, 'signal.fired', { items: chunk }, chunk.map((i) => i.key))) done.signals += 1;
         }
       }
     } catch (error) {
