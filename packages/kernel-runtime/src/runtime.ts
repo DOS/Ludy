@@ -64,6 +64,10 @@ export interface McpGrant {
   clientId: string;
   clientName: string;
   scopes: readonly string[];
+  // 'member' for a grant one member made for themself (ADR-0051 decision 2, slice 3b): it enters the sealed member-bound context
+  // (crove_kernel.enter_mcp_member_context) instead of the consenting user's own, reads in a read-only transaction and is re-entered on every request.
+  // Absent or 'company': the consenting owner or admin's grant. The database holds the kind; the edge only copies it.
+  kind?: 'company' | 'member';
 }
 
 // The declaration that opens a query to an MCP grant holding `scope` (and to no other scope).
@@ -592,6 +596,12 @@ export function isPreMembershipRefusal(refusal: DomainError): boolean {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The code a security event notes for a refusal: the specific reason an MCP member grant could not enter (kept out of the client's answer), else the code.
+function specificRefusal(refusal: DomainError): string {
+  const reason = refusal.audit?.mcpRefusal;
+  return typeof reason === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(reason) ? reason : refusal.code;
+}
 
 export function isSecurityRefusal(refusal: DomainError): boolean {
   return refusal.status === 404 || SECURITY_REFUSAL_CODES.has(refusal.code);
@@ -1901,6 +1911,8 @@ export class Runtime {
       // the org, the org active and not stopped, the user enabled, the deployment's AI switch off) is read here, in the request's own
       // transaction and before the context is entered, so a revoke, a lost role or a stop applies at once. It names one org.
       if (orgId === null) throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP chỉ dùng được trong tổ chức đã cấp', { rule: 'mcp_org' });
+      // A member-bound grant is checked by its own entry (enterContext), which reads the same standing plus the org's switch in this transaction.
+      if (actor.mcp.kind === 'member') return;
       await sql`SELECT crove_kernel.mcp_grant_check(${actor.mcp.grantId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
       return;
     }
@@ -1964,6 +1976,20 @@ export class Runtime {
         },
         memberVy: null,
       };
+    }
+    if (actor.mcp?.kind === 'member') {
+      // A member-bound MCP grant (ADR-0051 decision 2): the sealed context is the grant's, not the person's (no user in the seal, tainted, R0), and
+      // it is entered afresh in every request, so a revoke, a demotion or a switch turned off applies to the next call. Queries only: the transaction
+      // is already read-only here (query() sets it first) and no command reaches a grant.
+      const { rows } = await sql<{ entered: { role: string; member: string; maxRisk: string; tainted: boolean } }>`
+        SELECT crove_kernel.enter_mcp_member_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      // The member of the seal is the consenting user the edge named; anything else is a bug or tampering, never answered as a role.
+      if (!got || got.member !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin' && role !== 'member' && role !== 'viewer')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role, agent: null, memberVy: null };
     }
     if (this.#contextTokenKey !== null) {
       // Signed right before it is used, as a bind parameter (never in a statement's text).
@@ -3105,7 +3131,7 @@ export class Runtime {
       });
     } catch (error) {
       const domain = toDomainError(error);
-      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, specificRefusal(domain));
       else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`query ${name}`, error, options);
       throw domain;
@@ -3150,7 +3176,7 @@ export class Runtime {
         });
     } catch (error) {
       const domain = toDomainError(error);
-      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, specificRefusal(domain));
       else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`stream ${name}`, error, options);
       throw domain;
