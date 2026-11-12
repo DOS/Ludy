@@ -1,0 +1,366 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The signed wake-up webhook (ADR-0051 decision 4, issue #3024), pinned before it exists. Step 1 of the two-step plan: every case here passes today and
+// bites the moment the feature lands, so the feature's own PR cannot weaken what it must keep.
+//
+//   - What the egress guard gives a wake-up from the first day (it is code under test and exists now): one resolution per attempt, every answer checked,
+//     the connection pinned to the checked address (DNS rebinding: a name that is public at check time and private at connect time reaches nothing), a
+//     redirect is an answer and never followed, the answer is read to a byte limit and one deadline covers the attempt, https only and the default port.
+//   - What the feature must be, by its files: the delivery lives in `apps/kernel/src/mcp-wake.ts` and the body in `apps/kernel/src/mcp-wake-body.ts`; the
+//     delivery goes only through the guard, with no test-only hook, reads at most 4 KB of the receiver's answer and never parses it (it is not an
+//     instruction, ADR-0051 decision 8), gives each attempt at most 10 s, and its queue declares exactly `tenant_url`.
+//   - What a body may carry: ids, an event type, dates, a day count and decimal-string amounts, by a pinned list of keys and a pinned shape for every
+//     value, so no name, note, message or bank text can ride in a field whatever it is called.
+//   - What the grant's wake-up table may hold: secrets only sealed, in the two named columns; the table under row-level security.
+// A case whose feature does not exist yet passes by finding nothing; once any source or migration names the feature, the agreed files and shapes are
+// required (the tripwire at the start of "the files"). Part of the invariant suite; it imports package code under test, never helpers from outside
+// test/invariant/. Keep this directory self-contained.
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { join, relative } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+import { EgressError, egressFetch, guardedRequest, type EgressOptions } from '@crove/kernel-runtime';
+import { QUEUES, queueEgress } from '../../src/jobs-schema.ts';
+
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+const DELIVERY = 'apps/kernel/src/mcp-wake.ts';
+const BODY = 'apps/kernel/src/mcp-wake-body.ts';
+const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The egress guard, with a local server standing in for the receiver.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+const BASE: EgressOptions = { timeoutMs: 5_000, maxBytes: 4096, overLimit: 'truncate', anyPort: true };
+const LOOPBACK = [{ address: '127.0.0.1', family: 4 }];
+const servers: http.Server[] = [];
+
+interface Receiver {
+  port: number;
+  hits: string[];
+}
+
+async function receiver(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void): Promise<Receiver> {
+  const hits: string[] = [];
+  const server = http.createServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`);
+    handler(req, res);
+  });
+  servers.push(server);
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  return { port: (server.address() as AddressInfo).port, hits };
+}
+
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((s) => new Promise<void>((done) => s.close(() => done()))));
+});
+
+async function code(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toBeInstanceOf(EgressError);
+    return (error as EgressError).code;
+  }
+  throw new Error('expected the guard to refuse');
+}
+
+describe('what the egress guard gives a wake-up (#3024)', () => {
+  it('resolves the receiver once per attempt and connects to the address it checked, so a name that turns private after the check reaches nothing (DNS rebinding)', async () => {
+    const r = await receiver((_req, res) => res.end('ok'));
+    let asked = 0;
+    // The first answer is the checked one. Anything asked later says "private": a connect that resolves again would be sent there.
+    const resolve = async () => {
+      asked += 1;
+      return asked === 1 ? LOOPBACK : [{ address: '10.0.0.5', family: 4 }];
+    };
+    const answer = await guardedRequest(`http://wake.example.test:${r.port}/hook`, { method: 'POST', body: Buffer.from('{}') }, { ...BASE, resolve, allowed: (a) => a === '127.0.0.1' });
+    expect(answer.status).toBe(200);
+    expect(asked).toBe(1);
+    expect(r.hits).toEqual(['POST /hook']);
+  });
+
+  it('refuses a name that is private at check time before anything is sent, and one that has a single private address among its answers', async () => {
+    const r = await receiver((_req, res) => res.end('ok'));
+    const privateOnly = async () => [{ address: '10.0.0.5', family: 4 }];
+    expect(await code(guardedRequest(`http://wake.example.test:${r.port}/hook`, { method: 'POST', body: Buffer.from('{}') }, { ...BASE, resolve: privateOnly }))).toBe('blocked');
+    const mixed = async () => [...LOOPBACK, { address: '169.254.169.254', family: 4 }];
+    expect(await code(guardedRequest(`http://wake.example.test:${r.port}/hook`, { method: 'POST', body: Buffer.from('{}') }, { ...BASE, resolve: mixed, allowed: (a) => a === '127.0.0.1' }))).toBe('blocked');
+    expect(r.hits).toEqual([]);
+  });
+
+  it('never follows a redirect: it is an answer (3xx) for the caller to count as a failed attempt', async () => {
+    const r = await receiver((req, res) => {
+      res.statusCode = 302;
+      res.setHeader('location', `http://127.0.0.1:${(req.socket.localPort ?? 0).toString()}/elsewhere`);
+      res.end();
+    });
+    const answer = await guardedRequest(`http://wake.example.test:${r.port}/hook`, { method: 'POST', body: Buffer.from('{}') }, { ...BASE, resolve: async () => LOOPBACK, allowed: (a) => a === '127.0.0.1' });
+    expect(answer.status).toBe(302);
+    expect(r.hits).toEqual(['POST /hook']);
+  });
+
+  it('reads at most the byte limit of the answer and stops, and ends an attempt at its deadline', async () => {
+    const big = await receiver((_req, res) => res.end('x'.repeat(65_536)));
+    const answer = await guardedRequest(`http://wake.example.test:${big.port}/hook`, { method: 'POST', body: Buffer.from('{}') }, { ...BASE, resolve: async () => LOOPBACK, allowed: (a) => a === '127.0.0.1' });
+    expect(answer.body.length).toBe(4096);
+    expect(answer.truncated).toBe(true);
+    const silent = await receiver(() => {
+      // Never answers.
+    });
+    expect(await code(guardedRequest(`http://wake.example.test:${silent.port}/hook`, { method: 'POST', body: Buffer.from('{}') }, { ...BASE, timeoutMs: 300, resolve: async () => LOOPBACK, allowed: (a) => a === '127.0.0.1' }))).toBe('timeout');
+  });
+
+  it('sends only over https, on the default port, to a name or public address, with no credentials in the URL', async () => {
+    const send = egressFetch({ timeoutMs: 1_000, maxBytes: 4096, overLimit: 'truncate' });
+    const refused = (url: string) => code(send(url, { method: 'POST', body: '{}' }));
+    expect(await refused('http://hook.example.test/')).toBe('invalid_url');
+    expect(await refused('https://hook.example.test:8443/')).toBe('invalid_url');
+    expect(await refused('https://user:pw@hook.example.test/')).toBe('invalid_url');
+    for (const literal of ['https://127.0.0.1/', 'https://10.0.0.5/', 'https://169.254.169.254/latest/meta-data/', 'https://[::1]/', 'https://[fd00::1]/']) {
+      expect(await refused(literal), literal).toBe('blocked');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The files.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+function walk(dir: string, accept: (name: string) => boolean, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) walk(path, accept, out);
+    else if (accept(entry.name)) out.push(relative(ROOT, path).replaceAll('\\', '/'));
+  }
+  return out;
+}
+
+const SOURCES = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => walk(join(ROOT, d), (n) => /\.(ts|tsx|mts|mjs|js)$/.test(n) && !n.endsWith('.d.ts')));
+const MIGRATIONS = existsSync(join(ROOT, 'supabase/migrations')) ? walk(join(ROOT, 'supabase/migrations'), (n) => n.endsWith('.sql')) : [];
+const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const naming = (files: readonly string[], text: string) => files.filter((path) => read(path).includes(text)).sort();
+// Code only: the lines that are not comments.
+const codeOf = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
+
+// The wake-up feature exists once any source or migration names one of its marks.
+const MARKS = ['Ludy-Signature', 'kernel-mcp-wake', 'agent_grant_wake', 'agent_wake_delivery'];
+const featureFiles = [...new Set([...MARKS.flatMap((m) => naming(SOURCES, m)), ...MARKS.flatMap((m) => naming(MIGRATIONS, m))])].sort();
+const wakeQueues = Object.entries(QUEUES).filter(([, name]) => /mcp-wake/.test(name));
+
+// A number a source gives a limit: a literal, or a top-level constant of literals and products (`4 * 1024`, `10_000`).
+function limit(source: string, key: string): number | null {
+  const m = source.match(new RegExp(`\\b${key}\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*|[0-9_]+)`));
+  if (!m) return null;
+  let value = m[1] as string;
+  if (/^[A-Za-z_]/.test(value)) {
+    const c = source.match(new RegExp(`\\bconst\\s+${value}\\s*=\\s*([0-9_ *]+);`));
+    if (!c) return null;
+    value = c[1] as string;
+  }
+  return value.split('*').map((p) => Number(p.replaceAll('_', '').trim())).reduce((a, b) => a * b, 1);
+}
+
+describe('the files of the wake-up webhook (#3024)', () => {
+  it('has its delivery and its body builder at the agreed paths once anything names the feature (the tripwire)', () => {
+    if (featureFiles.length === 0) return;
+    expect(existsSync(join(ROOT, DELIVERY)), `${DELIVERY} is where the wake-up is delivered (named by ${featureFiles.join(', ')})`).toBe(true);
+    expect(existsSync(join(ROOT, BODY)), `${BODY} is the only builder of the body`).toBe(true);
+    expect(naming(SOURCES, 'Ludy-Signature').filter((f) => f !== DELIVERY), 'the signature header is set by the delivery file alone').toEqual([]);
+  });
+
+  it('declares exactly the tenant URL egress on every wake-up queue, and names the queue once', () => {
+    for (const [key, name] of wakeQueues) expect(queueEgress(name), key).toEqual(['tenant_url']);
+    if (featureFiles.length > 0) expect(wakeQueues.length, 'a queue named kernel-mcp-wake carries the deliveries').toBe(1);
+    expect(naming(SOURCES, "'kernel-mcp-wake'").filter((f) => f !== 'apps/kernel/src/jobs-schema.ts')).toEqual([]);
+  });
+
+  it('delivers only through the egress guard, with no test-only hook, a 4 KB read of the answer that is never parsed, and at most 10 s an attempt', () => {
+    if (!existsSync(join(ROOT, DELIVERY))) return;
+    const file = codeOf(DELIVERY);
+    expect(file).toMatch(/\b(egressFetch|guardedRequest)\(/);
+    // No raw network: not fetch(), not a Node or third-party client.
+    expect(file).not.toMatch(/(?<![A-Za-z_.])fetch\(/);
+    expect(read(DELIVERY)).not.toMatch(/from '(node:)?(https?|net|tls|http2|undici|axios|got|node-fetch)'/);
+    // The guard's test hooks are a test's to inject through the delivery's dependencies, never wired in the production file.
+    expect(file).not.toMatch(/\b(anyPort|allowed|resolve|hostAllowed)\s*:/);
+    expect(file).not.toMatch(/httpsOnly\s*:\s*false/);
+    // The answer is a status and nothing more: at most 4 KB read, truncated rather than refused, and no parse of it.
+    expect(limit(file, 'maxBytes'), 'maxBytes: a literal or a constant of literals, 4096 at most').toBeLessThanOrEqual(4096);
+    expect(file).toMatch(/overLimit\s*:\s*'truncate'/);
+    expect(file).not.toMatch(/JSON\.parse\(/);
+    expect(limit(file, 'timeoutMs'), 'timeoutMs: a literal or a constant of literals, 10 s at most').toBeLessThanOrEqual(10_000);
+    expect(file).toMatch(/Ludy-Event-Id/);
+    expect(file).toMatch(/Ludy-Timestamp/);
+    expect(file).toMatch(/createHmac\('sha256'/);
+  });
+
+  it('never logs a secret or the signed body: the delivery file writes only codes, ids and counts', () => {
+    if (!existsSync(join(ROOT, DELIVERY))) return;
+    for (const line of codeOf(DELIVERY).split('\n').filter((l) => /console\.(log|warn|error|info|debug)|logger?\./.test(l))) {
+      expect(line, line).not.toMatch(/secret|sealed|signature|body|url|payload/i);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The body.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+const UUID = '0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a10';
+const UUID2 = '0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a11';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const AMOUNT_RE = /^-?\d{1,18}(\.\d{1,4})?$/;
+const RULE_RE = /^kernel\.signals\.[a-z_]+$/;
+const KEY_RE = /^[A-Za-z0-9_.:-]{1,200}$/;
+const TYPES = ['signal.fired', 'schedule.due', 'ping'];
+const SEVERITIES = ['info', 'warn', 'block'];
+const TOP_KEYS = ['id', 'type', 'created_at', 'org', 'grant', 'data'];
+const ITEM_KEYS = ['rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'due_on', 'days'];
+
+// A body is exactly the pinned keys, each value of its pinned shape: an id, a date, a number or one of a few fixed words. A name, a note or a message
+// fits none of these, so none can ride in any field, whatever it is called. Returns what is wrong, or [].
+function bodyProblems(body: unknown): string[] {
+  const out: string[] = [];
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (!isObject(body)) return ['the body is not an object'];
+  for (const k of Object.keys(body)) if (!TOP_KEYS.includes(k)) out.push(`unknown key ${k}`);
+  for (const k of ['id', 'org', 'grant']) if (typeof body[k] !== 'string' || !UUID_RE.test(body[k])) out.push(`${k} is not an id`);
+  if (typeof body.created_at !== 'string' || !INSTANT_RE.test(body.created_at)) out.push('created_at is not an instant');
+  if (typeof body.type !== 'string' || !TYPES.includes(body.type)) out.push('type is not an event type');
+  const data = body.data;
+  if (!isObject(data)) return [...out, 'data is not an object'];
+  if (body.type === 'ping') {
+    if (Object.keys(data).length > 0) out.push('a ping carries no data');
+  } else if (body.type === 'schedule.due') {
+    for (const k of Object.keys(data)) if (k !== 'date') out.push(`unknown data key ${k}`);
+    if (typeof data.date !== 'string' || !DATE_RE.test(data.date)) out.push('date is not a date');
+  } else if (body.type === 'signal.fired') {
+    for (const k of Object.keys(data)) if (k !== 'items') out.push(`unknown data key ${k}`);
+    const items = data.items;
+    if (!Array.isArray(items) || items.length < 1 || items.length > 20) return [...out, 'items is not one to twenty items'];
+    for (const [i, item] of items.entries()) {
+      if (!isObject(item)) {
+        out.push(`item ${i} is not an object`);
+        continue;
+      }
+      for (const k of Object.keys(item)) if (!ITEM_KEYS.includes(k)) out.push(`item ${i}: unknown key ${k}`);
+      const str = (k: string, re: RegExp) => item[k] !== undefined && (typeof item[k] !== 'string' || !re.test(item[k])) && out.push(`item ${i}: ${k} has the wrong shape`);
+      if (typeof item.rule !== 'string' || !RULE_RE.test(item.rule)) out.push(`item ${i}: rule has the wrong shape`);
+      if (typeof item.key !== 'string' || !KEY_RE.test(item.key)) out.push(`item ${i}: key has the wrong shape`);
+      if (typeof item.severity !== 'string' || !SEVERITIES.includes(item.severity)) out.push(`item ${i}: severity is not one of the three`);
+      str('party_id', UUID_RE);
+      str('deal_id', UUID_RE);
+      str('invoice_id', UUID_RE);
+      str('amount', AMOUNT_RE);
+      str('due_on', DATE_RE);
+      if (item.days !== undefined && (typeof item.days !== 'number' || !Number.isInteger(item.days) || item.days < 0 || item.days > 3650)) out.push(`item ${i}: days is not a day count`);
+    }
+  }
+  return out;
+}
+
+const base = { id: UUID, org: UUID2, grant: UUID2, created_at: '2026-11-12T03:00:00.000Z' };
+const item = { rule: 'kernel.signals.deal_without_invoice', key: `deal_without_invoice:${UUID}`, severity: 'warn', party_id: UUID, deal_id: UUID2, amount: '12500000', due_on: '2026-11-19', days: 7 };
+const VALID = [
+  { ...base, type: 'signal.fired', data: { items: [item] } },
+  { ...base, type: 'schedule.due', data: { date: '2026-11-12' } },
+  { ...base, type: 'ping', data: {} },
+];
+// What a body must refuse, each with the thing that must not cross.
+const HOSTILE: Array<[string, unknown]> = [
+  ['a name beside the ids', { ...VALID[0], data: { items: [{ ...item, party_name: 'Công ty TNHH Nguyễn Văn A' }] } }],
+  ['a note in a key of its own', { ...VALID[0], data: { items: [{ ...item, note: 'gọi lại khách trước thứ sáu' }] } }],
+  ['text in the rule', { ...VALID[0], data: { items: [{ ...item, rule: 'Hợp đồng chưa có hóa đơn' }] } }],
+  ['text in the key', { ...VALID[0], data: { items: [{ ...item, key: 'Nguyen Van A owes 12 million' }] } }],
+  ['a bank account in the amount', { ...VALID[0], data: { items: [{ ...item, amount: '0123456789 Vietcombank' }] } }],
+  ['an amount as a JS number', { ...VALID[0], data: { items: [{ ...item, amount: 12500000 }] } }],
+  ['an email in an id', { ...VALID[0], data: { items: [{ ...item, party_id: 'khach@example.com' }] } }],
+  ['a message body at the top', { ...VALID[0], message: 'Xin chào, hóa đơn của anh' }],
+  ['free text in data beside the items', { ...VALID[0], data: { items: [item], summary: 'Hai khoản cần xem' } }],
+  ['more than twenty items', { ...VALID[0], data: { items: Array.from({ length: 21 }, () => item) } }],
+  ['a ping with data', { ...VALID[2], data: { note: 'x' } }],
+  ['an unknown event type', { ...VALID[1], type: 'note.created' }],
+  ['a date with text', { ...VALID[1], data: { date: 'thứ hai 12/11' } }],
+];
+
+describe('what a wake-up body may carry (#3024)', () => {
+  it('accepts the three bodies the design lists and refuses what must not cross, by the pinned shapes', () => {
+    for (const body of VALID) expect(bodyProblems(body), JSON.stringify(body)).toEqual([]);
+    for (const [name, body] of HOSTILE) expect(bodyProblems(body), name).not.toEqual([]);
+  });
+
+  it('is built by one function that returns a body of exactly these shapes and refuses every hostile input', async () => {
+    if (!existsSync(join(ROOT, BODY))) return;
+    const mod = (await import(pathToFileURL(join(ROOT, BODY)).href)) as { wakeBody?: (input: unknown) => string };
+    expect(typeof mod.wakeBody, `${BODY} exports wakeBody(event): string`).toBe('function');
+    const wakeBody = mod.wakeBody as (input: unknown) => string;
+    for (const body of VALID) {
+      const text = wakeBody(body);
+      expect(typeof text).toBe('string');
+      const parsed: unknown = JSON.parse(text);
+      expect(bodyProblems(parsed), text).toEqual([]);
+      expect(parsed).toEqual(body);
+    }
+    for (const [name, body] of HOSTILE) {
+      // Refused (a throw) or reduced to a body that still fits: never a body that carries the hostile part.
+      let text: string | null = null;
+      try {
+        text = wakeBody(body);
+      } catch {
+        text = null;
+      }
+      if (text !== null) expect(bodyProblems(JSON.parse(text) as unknown), name).toEqual([]);
+      for (const canary of ['Nguyễn', 'Nguyen Van A', 'khach@example.com', 'Vietcombank', 'Xin chào', 'gọi lại', 'Hai khoản', 'thứ hai']) {
+        expect(text ?? '', `${name}: ${canary}`).not.toContain(canary);
+      }
+    }
+  });
+
+  it('is the only producer of the body: no other file builds one by its keys', () => {
+    if (!existsSync(join(ROOT, DELIVERY))) return;
+    // The delivery signs and posts the text the builder gave; it does not shape a body of its own.
+    expect(codeOf(DELIVERY)).toMatch(/\bwakeBody\b/);
+    expect(codeOf(DELIVERY)).not.toMatch(/\bcreated_at\s*:/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The tables.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+// The statements of the migrations that create or alter a wake-up table, as text.
+function statements(table: string): string[] {
+  return MIGRATIONS.flatMap((path) => read(path).split(/;\s*\n/).filter((s) => new RegExp(`\\b${table}\\b`).test(s)).map((s) => `${path}: ${s}`));
+}
+
+describe('what the grant wake-up tables may hold (#3024)', () => {
+  it('keeps a secret only sealed, in the two named columns, and puts the wake-up table under row-level security', () => {
+    const tables = statements('agent_grant_wake');
+    if (tables.length === 0) return;
+    const create = tables.filter((s) => /CREATE TABLE/i.test(s)).join('\n');
+    expect(create, 'a migration creates crove_kernel.agent_grant_wake').toMatch(/crove_kernel\.agent_grant_wake/);
+    // Every column that could hold a secret is one of the sealed ones, a key id or the public hint; none is plain text.
+    const columns = [...create.matchAll(/^\s+([a-z_]+)\s+(text|bytea|jsonb|uuid|boolean|int|integer|bigint|timestamptz|date|time)\b/gim)].map((m) => [m[1] as string, (m[2] as string).toLowerCase()] as const);
+    expect(columns.length).toBeGreaterThan(5);
+    for (const [name, type] of columns.filter(([n]) => /secret|token|signing|hmac|key/i.test(n))) {
+      expect(['secret_sealed', 'previous_sealed', 'secret_key_id', 'secret_hint'], `${name} ${type}`).toContain(name);
+      if (name.endsWith('_sealed')) expect(['bytea', 'jsonb'], `${name} is sealed bytes or an envelope`).toContain(type);
+    }
+    const all = tables.join('\n');
+    expect(all, 'RLS through apply_tenant_rls or ENABLE ROW LEVEL SECURITY').toMatch(/apply_tenant_rls\(\s*'crove_kernel\.agent_grant_wake'|ALTER TABLE\s+crove_kernel\.agent_grant_wake\s+ENABLE ROW LEVEL SECURITY/i);
+    expect(all, 'the grant it belongs to').toMatch(/agent_grant/);
+  });
+
+  it('keeps the delivery rows free of any secret column and under row-level security', () => {
+    const tables = statements('agent_wake_delivery');
+    if (tables.length === 0) return;
+    const create = tables.filter((s) => /CREATE TABLE/i.test(s)).join('\n');
+    expect(create).not.toMatch(/\b(secret|signature|hmac)\w*\s+(text|bytea|jsonb)/i);
+    expect(tables.join('\n')).toMatch(/apply_tenant_rls\(\s*'crove_kernel\.agent_wake_delivery'|ALTER TABLE\s+crove_kernel\.agent_wake_delivery\s+ENABLE ROW LEVEL SECURITY/i);
+  });
+});
