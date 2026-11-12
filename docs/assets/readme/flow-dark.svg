@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="214" viewBox="0 0 880 214" role="img" aria-labelledby="t d" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">
+<title id="t">Invoice to books in five steps</title><desc id="d">Drop an invoice, the AI reads it, rules check every number, you approve, and the books are done.</desc>
+<rect width="880" height="214" rx="16" fill="#0c0c10"/>
+<text x="440" y="38" font-size="20" font-weight="700" fill="#f5f5f7" text-anchor="middle">From a pile of invoices to books you can hand your accountant</text>
+<rect x="28" y="66" width="148" height="112" rx="12" fill="#131318" stroke="#575760" stroke-width="1.5"/>
+<circle cx="52" cy="92" r="13" fill="#b19df9"/><text x="52" y="97" font-size="14" font-weight="700" fill="#0f0d1c" text-anchor="middle">1</text>
+<text x="74" y="97" font-size="15" font-weight="700" fill="#f5f5f7" text-anchor="start">Drop it in</text>
+<text x="42" y="128" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">An e-invoice, a PDF,</text>
+<text x="42" y="146" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">a photo, or an email</text>
+<rect x="42" y="156" width="58" height="22" rx="11" fill="#1b1b21" stroke="none" stroke-width="1.5"/><text x="71" y="171" font-size="12" font-weight="600" fill="#adadb5" text-anchor="middle">you</text>
+<path d="M180 122H187" fill="none" stroke="#575760" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M193 122l-8 -5v10z" fill="#575760"/>
+<rect x="197" y="66" width="148" height="112" rx="12" fill="#131318" stroke="#b19df9" stroke-width="1.5" stroke-dasharray="5 4"/>
+<circle cx="221" cy="92" r="13" fill="#b19df9"/><text x="221" y="97" font-size="14" font-weight="700" fill="#0f0d1c" text-anchor="middle">2</text>
+<text x="243" y="97" font-size="15" font-weight="700" fill="#f5f5f7" text-anchor="start">AI reads it</text>
+<text x="211" y="128" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">Fields and lines,</text>
+<text x="211" y="146" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">with your own AI</text>
+<rect x="211" y="156" width="96" height="22" rx="11" fill="#2f2749" stroke="none" stroke-width="1.5"/><text x="259" y="171" font-size="12" font-weight="600" fill="#b19df9" text-anchor="middle">AI proposes</text>
+<path d="M349 122H356" fill="none" stroke="#575760" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M362 122l-8 -5v10z" fill="#575760"/>
+<rect x="366" y="66" width="148" height="112" rx="12" fill="#131318" stroke="#575760" stroke-width="1.5"/>
+<circle cx="390" cy="92" r="13" fill="#b19df9"/><text x="390" y="97" font-size="14" font-weight="700" fill="#0f0d1c" text-anchor="middle">3</text>
+<text x="412" y="97" font-size="15" font-weight="700" fill="#f5f5f7" text-anchor="start">Rules check</text>
+<text x="380" y="128" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">Totals, VAT, tax</text>
+<text x="380" y="146" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">code, duplicates</text>
+<rect x="380" y="156" width="84" height="22" rx="11" fill="#1b1b21" stroke="none" stroke-width="1.5"/><text x="422" y="171" font-size="12" font-weight="600" fill="#adadb5" text-anchor="middle">fixed rules</text>
+<path d="M518 122H525" fill="none" stroke="#575760" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M531 122l-8 -5v10z" fill="#575760"/>
+<rect x="535" y="66" width="148" height="112" rx="12" fill="#131318" stroke="#575760" stroke-width="1.5"/>
+<circle cx="559" cy="92" r="13" fill="#b19df9"/><text x="559" y="97" font-size="14" font-weight="700" fill="#0f0d1c" text-anchor="middle">4</text>
+<text x="581" y="97" font-size="15" font-weight="700" fill="#f5f5f7" text-anchor="start">You approve</text>
+<text x="549" y="128" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">Fix an account,</text>
+<text x="549" y="146" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">then say yes</text>
+<rect x="549" y="156" width="58" height="22" rx="11" fill="#1b1b21" stroke="none" stroke-width="1.5"/><text x="578" y="171" font-size="12" font-weight="600" fill="#adadb5" text-anchor="middle">you</text>
+<path d="M687 122H694" fill="none" stroke="#575760" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M700 122l-8 -5v10z" fill="#575760"/>
+<rect x="704" y="66" width="148" height="112" rx="12" fill="#0f3329" stroke="#74d3b6" stroke-width="1.5"/>
+<circle cx="728" cy="92" r="13" fill="#74d3b6"/><text x="728" y="97" font-size="14" font-weight="700" fill="#0f0d1c" text-anchor="middle">5</text>
+<text x="750" y="97" font-size="15" font-weight="700" fill="#f5f5f7" text-anchor="start">Books done</text>
+<text x="718" y="128" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">A balanced entry,</text>
+<text x="718" y="146" font-size="12.5" font-weight="400" fill="#adadb5" text-anchor="start">ready for Excel</text>
+<rect x="718" y="156" width="58" height="22" rx="11" fill="#131318" stroke="none" stroke-width="1.5"/><text x="747" y="171" font-size="12" font-weight="600" fill="#74d3b6" text-anchor="middle">yours</text>
+<text x="440" y="204" font-size="13" font-weight="400" fill="#919199" text-anchor="middle">The AI only proposes. Every number is checked by fixed rules, and nothing is booked until a person approves.</text>
+</svg>
