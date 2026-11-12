@@ -10,6 +10,7 @@ import { resultCommands, resultQueries } from './results.ts';
 import { summaryCommands } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
   dayText,
@@ -367,13 +368,15 @@ export const meetingDelete = defineCommand({
     }
 
     await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016).
+    const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     await ctx.trx
       .deleteFrom('crove_meetings.meeting')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .execute();
 
-    ctx.audit({ meetingId: input.meetingId, shredded: true });
+    ctx.audit({ meetingId: input.meetingId, shredded: true, mailPayloads });
     return { meetingId: input.meetingId, shredded: true };
   },
 });
@@ -388,6 +391,8 @@ export const meetingOwnerDelete = defineCommand({
   handler: async (ctx, input) => {
     userOf(ctx.actor);
     await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016). A meeting that does not exist has none, and the delete below then says so.
+    const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
 
     const { rows } = await sql<{ deleted: boolean }>`
       SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
@@ -397,7 +402,7 @@ export const meetingOwnerDelete = defineCommand({
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
 
-    ctx.audit({ meetingId: input.meetingId, shredded: true, complianceOwnerDelete: true });
+    ctx.audit({ meetingId: input.meetingId, shredded: true, complianceOwnerDelete: true, mailPayloads });
     return { meetingId: input.meetingId, shredded: true };
   },
 });

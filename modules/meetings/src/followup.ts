@@ -38,6 +38,7 @@ import {
 } from '@crove/kernel-contract';
 import { createMailMessage, mailAddressHash } from '@crove/kernel';
 import { DomainError, defineCommand, defineQuery, sha256Hex, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { lockFollowup } from './followup-erase.ts';
 import { recorderMeeting } from './results.ts';
 import { vnDay } from './retention.ts';
 import { openMeeting, userOf } from './transcript.ts';
@@ -231,7 +232,7 @@ export const followupSend = defineCommand({
   handler: async (ctx: CommandContext, input): Promise<FollowupSent> => {
     const { userId } = await recorderMeeting(ctx, input.meetingId, 'send its follow-up');
     // One send per meeting at a time: a double click waits here and then meets the first one's mails.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
+    await lockFollowup(ctx, input.meetingId);
 
     // The facts are the published result's, rebuilt now; the recorder reviewed another version when the key differs.
     const published = await publishedFacts(ctx.trx, ctx.orgId, input.meetingId);
