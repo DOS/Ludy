@@ -53,7 +53,8 @@ export const mcpWakeSet = defineCommand({
   name: 'kernel.mcp.wake.set',
   input: zMcpWakeSetCommand,
   risk: 'R2',
-  sideEffect: 'internal',
+  // Business ids leave the deployment for the receiver it sets, once the delivery queue (which reaches the URL) has something to send.
+  sideEffect: 'external',
   access: GRANTORS,
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới cài được địa chỉ nhận của quyền kết nối MCP');

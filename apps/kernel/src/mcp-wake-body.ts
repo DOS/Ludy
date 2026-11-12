@@ -9,7 +9,6 @@ import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BAN
 
 // The rules the kernel runs: a new rule is a change here, in the database function and in the invariant test.
 export const WAKE_RULES = [DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ] as const;
-export const WAKE_TYPES = ['signal.fired', 'schedule.due', 'ping'] as const;
 export const WAKE_ITEMS_MAX = 20;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

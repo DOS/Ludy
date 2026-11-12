@@ -10561,9 +10561,16 @@ export const vi = {
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
         wake: {
           clear: 'Gỡ địa chỉ nhận báo thức của một ứng dụng AI',
+          delivery: 'Đọc một lần báo thức đang chờ gửi',
+          enqueue: 'Xếp hàng một lần báo thức cho ứng dụng AI',
           get: 'Xem địa chỉ nhận báo thức của các ứng dụng AI',
+          queued: 'Ghi nhận một lần báo thức đã chuyển vào hàng đợi',
+          record: 'Ghi kết quả một lần gửi báo thức',
           rotate_secret: 'Đổi khóa bí mật báo thức của một ứng dụng AI',
+          schedule_advance: 'Chuyển lịch báo thức sang lần kế',
           set: 'Cài địa chỉ nhận và lịch báo thức của một ứng dụng AI',
+          signals_sync: 'Đồng bộ các tín hiệu đã gửi báo thức',
+          target: 'Đọc địa chỉ nhận báo thức của một quyền kết nối',
         },
       },
       session: {
