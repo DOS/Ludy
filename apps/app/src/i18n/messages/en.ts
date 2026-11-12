@@ -5665,6 +5665,8 @@ export const en = {
     revokeHint: 'The permission lasts {days, number} days at most. You can disconnect it any time in Settings, under connected AI apps; the organization’s Stop AI switch cuts it at once too.',
   },
   orgMcpGrants: {
+    memberKind: 'Personal connection',
+    wakeHostOnly: 'A wake-up message goes to {host}. Only the person who connected can change it; disconnect to stop it.',
     title: 'Connected AI apps',
     intro: 'AI apps (Claude, ChatGPT, your own agent…) that an owner or admin let read this organization’s data. Disconnect one and it is refused from its next request. The name shown is the one the app gave itself.',
     introOwn: 'AI apps (Claude, ChatGPT, your own agent…) you connected to this organization, under your own rights. Disconnect one and it is refused from its next request.',

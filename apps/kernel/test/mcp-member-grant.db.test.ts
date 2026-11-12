@@ -141,6 +141,20 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     await refusal(about(users.viewerA, viewer));
   });
 
+  it('lists each grant with its kind and whether it is the viewer\'s own: a member sees only theirs, an owner the org\'s', async () => {
+    await setSwitch(users.ownerA, true);
+    const mine = (await consent(users.viewerA, 'member')).grantId;
+    const company = (await consent(users.ownerA, 'company')).grantId;
+    const list = (userId: string) => runtime.query<Array<{ id: string; kind: string; mine: boolean }>>('kernel.mcp.grant.list', {}, { actor: user(userId), orgId: orgA });
+    const asViewer = await list(users.viewerA);
+    expect(asViewer.find((g) => g.id === mine)).toMatchObject({ kind: 'member', mine: true });
+    expect(asViewer.some((g) => g.id === company)).toBe(false);
+    const asOwner = await list(users.ownerA);
+    expect(asOwner.find((g) => g.id === mine)).toMatchObject({ kind: 'member', mine: false });
+    expect(asOwner.find((g) => g.id === company)).toMatchObject({ kind: 'company', mine: true });
+    await runtime.execute('kernel.mcp.grant.revoke', { grantId: mine }, { actor: user(users.viewerA), orgId: orgA });
+  });
+
   it('ends every grant of an owner or admin who is demoted, a member grant of theirs too, and none of them comes back when the role does (stricter on purpose)', async () => {
     await setSwitch(users.ownerA, true);
     const demoted = users.capA;

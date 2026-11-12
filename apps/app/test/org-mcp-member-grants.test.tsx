@@ -29,12 +29,12 @@ vi.mock('../src/lib/api.ts', async () => {
 const { OrgMcpGrants } = await import('../src/components/org-mcp-grants.tsx');
 
 const members = [{ userId: 'u-1', displayName: 'Một', email: 'one@example.test' }];
-const grant = { id: 'g-1', userId: 'u-1', clientId: 'c', clientName: 'Claude', clientHost: 'claude.example.com', scopes: ['ludy.read'], createdAt: '2026-11-01T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', lastUsedAt: null, revokedAt: null };
+const grant = { id: 'g-1', userId: 'u-1', clientId: 'c', clientName: 'Claude', clientHost: 'claude.example.com', scopes: ['ludy.read'], createdAt: '2026-11-01T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', lastUsedAt: null, revokedAt: null, kind: 'company', mine: false };
 
-function render(role: string, locale: 'en' | 'vi' = 'en'): string {
-  client.current.setQueryData(['mcp', 'grant', 'list'], [grant]);
+function render(role: string, locale: 'en' | 'vi' = 'en', grants: Array<typeof grant> = [grant], wakes: unknown[] = []): string {
+  client.current.setQueryData(['mcp', 'grant', 'list'], grants);
   client.current.setQueryData(['mcp', 'memberGrants', 'get'], { enabled: false });
-  client.current.setQueryData(['mcp', 'wake', 'get'], []);
+  client.current.setQueryData(['mcp', 'wake', 'get'], wakes);
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
@@ -67,6 +67,29 @@ describe('OrgMcpGrants by role', () => {
     expect(html).not.toContain('org-mcp-wake');
     expect(html).toContain(en.orgMcpGrants.introOwn.slice(0, 30));
     expect(html).toContain('Claude');
+  });
+
+  it('gives a member the wake-up panel on their own member-bound connection and on no other', () => {
+    const own = { ...grant, id: 'g-own', kind: 'member' as const, mine: true };
+    const html = render('member', 'en', [own]);
+    expect(html).toContain('org-mcp-wake');
+    expect(html).toContain(en.orgMcpGrants.memberKind);
+    // A company connection the member somehow sees has no panel for them; neither does a connection that is not theirs.
+    expect(render('member', 'en', [{ ...grant, kind: 'company' as const, mine: false }])).not.toContain('org-mcp-wake');
+    expect(render('member', 'en', [{ ...own, mine: false }])).not.toContain('org-mcp-wake');
+  });
+
+  it('shows an owner or admin another member\'s wake-up as its host alone, with no panel to change it, and their own member-bound one whole', () => {
+    const other = { ...grant, id: 'g-other', kind: 'member' as const, mine: false };
+    const host = { grantId: 'g-other', url: 'https://hooks.example.com', enabled: true, schedule: 'off', secretHint: 'whk_00000000', consecutiveFailures: 0 };
+    const html = render('admin', 'en', [other], [host]);
+    expect(html).toContain('org-mcp-wake-host');
+    expect(html).toContain('hooks.example.com');
+    expect(html).not.toContain('data-testid="org-mcp-wake"');
+    // Nothing to show when that member set no wake-up.
+    expect(render('admin', 'en', [other], [])).not.toContain('org-mcp-wake-host');
+    // Their own member-bound connection has the panel.
+    expect(render('admin', 'en', [{ ...other, mine: true }])).toContain('org-mcp-wake');
   });
 
   it('speaks Vietnamese with the same keys as English, for the new strings too', () => {

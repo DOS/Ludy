@@ -24,6 +24,9 @@ export const zMcpGrantView = z.strictObject({
   expiresAt: z.string(),
   lastUsedAt: z.string().nullable(),
   revokedAt: z.string().nullable(),
+  // 'member' for a grant a member made for themself, 'company' for the org's (an owner's or admin's); and whether the grant is the viewer's own.
+  kind: z.enum(['company', 'member']),
+  mine: z.boolean(),
 });
 export type McpGrantView = z.infer<typeof zMcpGrantView>;
 
