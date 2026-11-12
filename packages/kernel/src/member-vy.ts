@@ -111,15 +111,47 @@ export const memberVyRunStart = defineCommand({
         .executeTakeFirstOrThrow();
     }
     // A run abandoned by a crashed request does not block the next one: a member has one live run PER FEATURE (ADR-0049 decision 1, amended 2026-11-12, #3029), so a start
-    // supersedes only a running run of the same feature. A run of another feature (a transcription that is still going) is left alone.
-    await ctx.trx
-      .updateTable('crove_kernel.ai_run')
-      .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_SUPERSEDED' })
+    // supersedes only a running run of the same feature. A run of another feature (a transcription that is still going) is left alone. A run whose result is already stored
+    // `ready` (the worker has not closed it yet, or died before it did) is not superseded but closed as succeeded, as the worker's finish would, with the result's private_read
+    // carried over (#3058): never a superseded run beside a ready result. The run row is locked first, then its result (the order of the store and the finish), and the result is
+    // read in a statement of its own, so a store in progress is waited for and its committed result seen.
+    const live = await ctx.trx
+      .selectFrom('crove_kernel.ai_run')
+      .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
       .where('feature', '=', input.feature)
       .where('status', '=', 'running')
+      .orderBy('id')
+      .forUpdate()
       .execute();
+    for (const old of live) {
+      const stored = await ctx.trx
+        .selectFrom('crove_kernel.member_vy_result')
+        .select(['status', 'private_read'])
+        .where('org_id', '=', ctx.orgId)
+        .where('run_id', '=', old.id)
+        .where('member_user_id', '=', userId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (stored?.status === 'ready') {
+        await ctx.trx
+          .updateTable('crove_kernel.ai_run')
+          .set({ status: 'succeeded', finished_at: ctx.now, error: null, ...(stored.private_read ? { private_read: true } : {}) })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', old.id)
+          .where('status', '=', 'running')
+          .execute();
+      } else {
+        await ctx.trx
+          .updateTable('crove_kernel.ai_run')
+          .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_SUPERSEDED' })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', old.id)
+          .where('status', '=', 'running')
+          .execute();
+      }
+    }
     const expiresAt = new Date(ctx.now.getTime() + feature.expiryMinutes * 60_000);
     // Two starts of one feature at the same moment: both see no live run, and the unique index (ai_run_one_running_feature_uq) lets one insert through. The other is told to
     // try again (a savepoint keeps the transaction usable for the refusal), never left with two running runs.
