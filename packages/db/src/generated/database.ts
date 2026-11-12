@@ -141,6 +141,7 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_event': KernelMailEventTable;
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
+  'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
   'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
@@ -2208,6 +2209,13 @@ export interface KernelMailSuppressionTable {
   lifted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   lifted_by: string | null;
   lift_reason: string | null;
+}
+
+/** crove_kernel.mcp_member_table */
+export interface KernelMcpMemberTableTable {
+  table_name: ColumnType<string, NotGranted, NotGranted>;
+  mode: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
 /** crove_kernel.member_availability */
