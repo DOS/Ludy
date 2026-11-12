@@ -21,6 +21,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EgressError, egressFetch, guardedRequest, type EgressOptions } from '@crove/kernel-runtime';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelCommands } from '@crove/kernel';
 import { QUEUES, queueEgress } from '../../src/jobs-schema.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -70,7 +71,8 @@ describe('what the egress guard gives a wake-up (#3024)', () => {
   it('resolves the receiver once per attempt and connects to the address it checked, so a name that turns private after the check reaches nothing (DNS rebinding)', async () => {
     const r = await receiver((_req, res) => res.end('ok'));
     let asked = 0;
-    // The first answer is the checked one. Anything asked later says "private": a connect that resolves again would be sent there.
+    // The first answer is the checked one. A connect that resolved the name again would use the system resolver, which cannot resolve a .test name: the
+    // request reaches the local server only through the pinned address, and the injected resolver is asked exactly once.
     const resolve = async () => {
       asked += 1;
       return asked === 1 ? LOOPBACK : [{ address: '10.0.0.5', family: 4 }];
@@ -143,25 +145,41 @@ const MIGRATIONS = existsSync(join(ROOT, 'supabase/migrations')) ? walk(join(ROO
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const naming = (files: readonly string[], text: string) => files.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
-const codeOf = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
+const codeOf = (path: string) =>
+  read(path)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
 
 // The wake-up feature exists once any source or migration names one of its marks.
 const MARKS = ['Ludy-Signature', 'kernel-mcp-wake', 'agent_grant_wake', 'agent_wake_delivery'];
 const featureFiles = [...new Set([...MARKS.flatMap((m) => naming(SOURCES, m)), ...MARKS.flatMap((m) => naming(MIGRATIONS, m))])].sort();
 const wakeQueues = Object.entries(QUEUES).filter(([, name]) => /mcp-wake/.test(name));
 
-// A number a source gives a limit: a literal, or a top-level constant of literals and products (`4 * 1024`, `10_000`).
-function limit(source: string, key: string): number | null {
-  const m = source.match(new RegExp(`\\b${key}\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*|[0-9_]+)`));
-  if (!m) return null;
-  let value = m[1] as string;
-  if (/^[A-Za-z_]/.test(value)) {
-    const c = source.match(new RegExp(`\\bconst\\s+${value}\\s*=\\s*([0-9_ *]+);`));
-    if (!c) return null;
-    value = c[1] as string;
+// Every number a source gives a limit: a literal, or a constant of literals and products (`4 * 1024`, `10_000`, `export const MAX: number = 4096 as const`).
+// None found is null (a limit that cannot be read is a failure, not a pass); a decoy elsewhere cannot hide a large one, since every match counts.
+function limits(source: string, key: string): number[] | null {
+  const found = [...source.matchAll(new RegExp(`\\b${key}\\b(?:\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*|[0-9_]+))?\\s*[,}\\n]`, 'g'))];
+  if (found.length === 0) return null;
+  const out: number[] = [];
+  for (const m of found) {
+    let value = m[1] ?? key;
+    if (/^[A-Za-z_]/.test(value)) {
+      const c = source.match(new RegExp(`\\bconst\\s+${value}\\s*(?::\\s*number)?\\s*=\\s*([0-9_ *]+)(?:\\s+as const)?;`));
+      if (!c) return null;
+      value = c[1] as string;
+    }
+    out.push(value.split('*').map((q) => Number(q.replaceAll('_', '').trim())).reduce((a, b) => a * b, 1));
   }
-  return value.split('*').map((p) => Number(p.replaceAll('_', '').trim())).reduce((a, b) => a * b, 1);
+  return out;
 }
+
+// The module specifiers a file imports or requires, by every form (static, dynamic, require).
+function specifiers(text: string): string[] {
+  return [...text.matchAll(/(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)['"]([^'"]+)['"]/gm)].map((m) => m[1] as string);
+}
+const RAW_NETWORK = /^(node:)?(https?|net|tls|http2|dgram|dns|undici|axios|got|node-fetch|ky|superagent|ws)$/;
 
 describe('the files of the wake-up webhook (#3024)', () => {
   it('has its delivery and its body builder at the agreed paths once anything names the feature (the tripwire)', () => {
@@ -171,36 +189,62 @@ describe('the files of the wake-up webhook (#3024)', () => {
     expect(naming(SOURCES, 'Ludy-Signature').filter((f) => f !== DELIVERY), 'the signature header is set by the delivery file alone').toEqual([]);
   });
 
-  it('declares exactly the tenant URL egress on every wake-up queue, and names the queue once', () => {
-    for (const [key, name] of wakeQueues) expect(queueEgress(name), key).toEqual(['tenant_url']);
-    if (featureFiles.length > 0) expect(wakeQueues.length, 'a queue named kernel-mcp-wake carries the deliveries').toBe(1);
+  it('declares exactly the tenant URL egress on the delivery queue, and never that egress on another wake-up queue, and names the queue once', () => {
+    // The delivery queue by its exact name; the sweep that decides what to send is another queue and reaches no URL.
+    for (const [key, name] of wakeQueues) expect(queueEgress(name), key).toEqual(name === 'kernel-mcp-wake' ? ['tenant_url'] : 'none');
+    if (featureFiles.length > 0) expect(wakeQueues.filter(([, name]) => name === 'kernel-mcp-wake').length, 'a queue named kernel-mcp-wake carries the deliveries').toBe(1);
     expect(naming(SOURCES, "'kernel-mcp-wake'").filter((f) => f !== 'apps/kernel/src/jobs-schema.ts')).toEqual([]);
   });
 
-  it('delivers only through the egress guard, with no test-only hook, a 4 KB read of the answer that is never parsed, and at most 10 s an attempt', () => {
+  it('puts the guard hooks and the delivery module nowhere in production wiring but through its own dependencies: no file that imports it sets a test-only hook', () => {
+    const importers = SOURCES.filter((f) => f !== DELIVERY && /mcp-wake(\.ts)?['"]/.test(read(f)));
+    for (const f of importers) expect(codeOf(f), f).not.toMatch(/\b(anyPort|allowed|resolve|hostAllowed)\s*:/);
+    // The one place a body is signed and posted: no other file both reaches the guard and signs.
+    const both = SOURCES.filter((f) => f !== DELIVERY && /\b(egressFetch|guardedRequest|guardedFetch)\(/.test(codeOf(f)) && /createHmac\(/.test(codeOf(f)));
+    expect(both, 'a file that reaches a tenant URL and signs with an HMAC').toEqual([]);
+  });
+
+  it('delivers only through egressFetch with httpsOnly, no test-only hook, a 4 KB read of the answer that is never read as data, and at most 10 s an attempt', () => {
     if (!existsSync(join(ROOT, DELIVERY))) return;
     const file = codeOf(DELIVERY);
-    expect(file).toMatch(/\b(egressFetch|guardedRequest)\(/);
-    // No raw network: not fetch(), not a Node or third-party client.
-    expect(file).not.toMatch(/(?<![A-Za-z_.])fetch\(/);
-    expect(read(DELIVERY)).not.toMatch(/from '(node:)?(https?|net|tls|http2|undici|axios|got|node-fetch)'/);
+    // The https-only fetch of the guard, and not the guard's plain-http entry points.
+    expect(file).toMatch(/\begressFetch\(/);
+    expect(file).not.toMatch(/\b(guardedRequest|guardedFetch)\b/);
+    const flags = [...file.matchAll(/\bhttpsOnly\b\s*:\s*([^,}\n]+)/g)].map((m) => (m[1] as string).trim());
+    expect(flags.length, 'httpsOnly: true is stated').toBeGreaterThan(0);
+    expect(flags.every((v) => v === 'true')).toBe(true);
+    // No raw network: not a bare or global fetch, no Node or third-party client, however it is imported.
+    expect(file.replace(/\begressFetch\b/g, '')).not.toMatch(/\bfetch\b/);
+    const imports = specifiers(read(DELIVERY));
+    for (const spec of imports) expect(spec, `import of ${spec}`).not.toMatch(RAW_NETWORK);
+    expect(file).not.toMatch(/\b(import|require)\s*\(/);
+    for (const spec of imports.filter((i) => i.startsWith('.'))) {
+      const target = join('apps/kernel/src', spec.replace(/^\.\//, ''));
+      if (existsSync(join(ROOT, target))) for (const inner of specifiers(read(target))) expect(inner, `${target} imports ${inner}`).not.toMatch(RAW_NETWORK);
+    }
     // The guard's test hooks are a test's to inject through the delivery's dependencies, never wired in the production file.
     expect(file).not.toMatch(/\b(anyPort|allowed|resolve|hostAllowed)\s*:/);
-    expect(file).not.toMatch(/httpsOnly\s*:\s*false/);
-    // The answer is a status and nothing more: at most 4 KB read, truncated rather than refused, and no parse of it.
-    expect(limit(file, 'maxBytes'), 'maxBytes: a literal or a constant of literals, 4096 at most').toBeLessThanOrEqual(4096);
+    // The answer is a status and nothing more: at most 4 KB read, truncated rather than refused, and never read as data in any form.
+    const bytes = limits(file, 'maxBytes');
+    expect(bytes, 'maxBytes: a literal or a constant of literals').not.toBeNull();
+    for (const n of bytes ?? []) expect(n, 'maxBytes is 4096 at most').toBeLessThanOrEqual(4096);
     expect(file).toMatch(/overLimit\s*:\s*'truncate'/);
-    expect(file).not.toMatch(/JSON\.parse\(/);
-    expect(limit(file, 'timeoutMs'), 'timeoutMs: a literal or a constant of literals, 10 s at most').toBeLessThanOrEqual(10_000);
-    expect(file).toMatch(/Ludy-Event-Id/);
-    expect(file).toMatch(/Ludy-Timestamp/);
+    expect(file).not.toMatch(/JSON\.parse\(|\.(json|text|arrayBuffer|blob|formData|body)\b|\bbody\.getReader\b/);
+    const times = limits(file, 'timeoutMs');
+    expect(times, 'timeoutMs: a literal or a constant of literals').not.toBeNull();
+    for (const n of times ?? []) expect(n, 'timeoutMs is 10 s at most').toBeLessThanOrEqual(10_000);
     expect(file).toMatch(/createHmac\('sha256'/);
+    // The headers a delivery sends are these and nothing else: no name or id can ride in a header of its own.
+    const sent = [...file.matchAll(/['"](Ludy-[A-Za-z-]+)['"]/gi)].map((m) => (m[1] as string).toLowerCase());
+    for (const h of new Set(sent)) expect(['ludy-event-id', 'ludy-timestamp', 'ludy-signature'], `header ${h}`).toContain(h);
+    for (const h of ['ludy-event-id', 'ludy-timestamp', 'ludy-signature']) expect(sent, h).toContain(h);
   });
 
   it('never logs a secret or the signed body: the delivery file writes only codes, ids and counts', () => {
     if (!existsSync(join(ROOT, DELIVERY))) return;
-    for (const line of codeOf(DELIVERY).split('\n').filter((l) => /console\.(log|warn|error|info|debug)|logger?\./.test(l))) {
-      expect(line, line).not.toMatch(/secret|sealed|signature|body|url|payload/i);
+    // Whole call expressions, so a call spread over several lines is read as one.
+    for (const call of codeOf(DELIVERY).matchAll(/(?:console\.(?:log|warn|error|info|debug)|\blogger?\.\w+)\s*\(([\s\S]*?)\)\s*;/g)) {
+      expect(call[0], call[0]).not.toMatch(/secret|sealed|signature|body|url|payload/i);
     }
   });
 });
@@ -214,9 +258,12 @@ const UUID2 = '0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a11';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
-const AMOUNT_RE = /^-?\d{1,18}(\.\d{1,4})?$/;
-const RULE_RE = /^kernel\.signals\.[a-z_]+$/;
-const KEY_RE = /^[A-Za-z0-9_.:-]{1,200}$/;
+// A decimal string with no leading zero, so an account number is no amount.
+const AMOUNT_RE = /^-?(0|[1-9]\d{0,17})(\.\d{1,4})?$/;
+// The rules the kernel runs, by their read names (code under test): a new rule is a change to this protected file.
+const RULES = [DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ];
+// An item's key is its rule's short name and the ids it is about: lower-case words, then ids, never anything a person typed.
+const KEY_RE = /^[a-z]+(_[a-z]+)*(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}){1,3}$/;
 const TYPES = ['signal.fired', 'schedule.due', 'ping'];
 const SEVERITIES = ['info', 'warn', 'block'];
 const TOP_KEYS = ['id', 'type', 'created_at', 'org', 'grant', 'data'];
@@ -250,7 +297,7 @@ function bodyProblems(body: unknown): string[] {
       }
       for (const k of Object.keys(item)) if (!ITEM_KEYS.includes(k)) out.push(`item ${i}: unknown key ${k}`);
       const str = (k: string, re: RegExp) => item[k] !== undefined && (typeof item[k] !== 'string' || !re.test(item[k])) && out.push(`item ${i}: ${k} has the wrong shape`);
-      if (typeof item.rule !== 'string' || !RULE_RE.test(item.rule)) out.push(`item ${i}: rule has the wrong shape`);
+      if (typeof item.rule !== 'string' || !RULES.includes(item.rule)) out.push(`item ${i}: rule has the wrong shape`);
       if (typeof item.key !== 'string' || !KEY_RE.test(item.key)) out.push(`item ${i}: key has the wrong shape`);
       if (typeof item.severity !== 'string' || !SEVERITIES.includes(item.severity)) out.push(`item ${i}: severity is not one of the three`);
       str('party_id', UUID_RE);
@@ -265,7 +312,7 @@ function bodyProblems(body: unknown): string[] {
 }
 
 const base = { id: UUID, org: UUID2, grant: UUID2, created_at: '2026-11-12T03:00:00.000Z' };
-const item = { rule: 'kernel.signals.deal_without_invoice', key: `deal_without_invoice:${UUID}`, severity: 'warn', party_id: UUID, deal_id: UUID2, amount: '12500000', due_on: '2026-11-19', days: 7 };
+const item = { rule: DEAL_WITHOUT_INVOICE_READ, key: `deal_without_invoice:${UUID}`, severity: 'warn', party_id: UUID, deal_id: UUID2, amount: '12500000', due_on: '2026-11-19', days: 7 };
 const VALID = [
   { ...base, type: 'signal.fired', data: { items: [item] } },
   { ...base, type: 'schedule.due', data: { date: '2026-11-12' } },
@@ -277,6 +324,9 @@ const HOSTILE: Array<[string, unknown]> = [
   ['a note in a key of its own', { ...VALID[0], data: { items: [{ ...item, note: 'gọi lại khách trước thứ sáu' }] } }],
   ['text in the rule', { ...VALID[0], data: { items: [{ ...item, rule: 'Hợp đồng chưa có hóa đơn' }] } }],
   ['text in the key', { ...VALID[0], data: { items: [{ ...item, key: 'Nguyen Van A owes 12 million' }] } }],
+  ['a name with underscores in the key', { ...VALID[0], data: { items: [{ ...item, key: 'Nguyen_Van_A_0912345678' }] } }],
+  ['a name with underscores in the rule', { ...VALID[0], data: { items: [{ ...item, rule: 'kernel.signals.nguyen_van_a_no_tien' }] } }],
+  ['an account number as the amount', { ...VALID[0], data: { items: [{ ...item, amount: '0123456789' }] } }],
   ['a bank account in the amount', { ...VALID[0], data: { items: [{ ...item, amount: '0123456789 Vietcombank' }] } }],
   ['an amount as a JS number', { ...VALID[0], data: { items: [{ ...item, amount: 12500000 }] } }],
   ['an email in an id', { ...VALID[0], data: { items: [{ ...item, party_id: 'khach@example.com' }] } }],
@@ -315,7 +365,7 @@ describe('what a wake-up body may carry (#3024)', () => {
         text = null;
       }
       if (text !== null) expect(bodyProblems(JSON.parse(text) as unknown), name).toEqual([]);
-      for (const canary of ['Nguyễn', 'Nguyen Van A', 'khach@example.com', 'Vietcombank', 'Xin chào', 'gọi lại', 'Hai khoản', 'thứ hai']) {
+      for (const canary of ['Nguyễn', 'Nguyen Van A', 'Nguyen_Van_A', 'nguyen_van_a', '0123456789', 'khach@example.com', 'Vietcombank', 'Xin chào', 'gọi lại', 'Hai khoản', 'thứ hai']) {
         expect(text ?? '', `${name}: ${canary}`).not.toContain(canary);
       }
     }
@@ -327,40 +377,87 @@ describe('what a wake-up body may carry (#3024)', () => {
     expect(codeOf(DELIVERY)).toMatch(/\bwakeBody\b/);
     expect(codeOf(DELIVERY)).not.toMatch(/\bcreated_at\s*:/);
   });
+
+  it('has user-only commands for the wake-up setup that the agent actor cannot run: each checks the actor is a user and not an MCP grant, and none is open to a member', () => {
+    for (const c of kernelCommands.filter((x) => x.name.startsWith('kernel.mcp.wake.'))) {
+      const access = c.access as readonly string[];
+      // The system's own steps (enqueue, record) have no role at all; every other command is for an owner or an admin.
+      if (access.length > 0) {
+        expect(access.every((r) => r === 'owner' || r === 'admin'), `${c.name} access`).toBe(true);
+        expect(String(c.handler), `${c.name} refuses a non-user actor`).toMatch(/actor\.type\s*!==\s*'user'/);
+        expect(String(c.handler), `${c.name} refuses an MCP grant`).toMatch(/actor\.mcp/);
+        expect(['R2', 'R3', 'R4'], `${c.name} risk`).toContain(c.risk);
+      }
+      expect((c as { mcp?: unknown }).mcp, c.name).toBeUndefined();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // The tables.
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-// The statements of the migrations that create or alter a wake-up table, as text.
+// The statements of the migrations that create or alter a wake-up table, as text, SQL comments taken out.
 function statements(table: string): string[] {
-  return MIGRATIONS.flatMap((path) => read(path).split(/;\s*\n/).filter((s) => new RegExp(`\\b${table}\\b`).test(s)).map((s) => `${path}: ${s}`));
+  return MIGRATIONS.flatMap((path) =>
+    read(path)
+      .replace(/--[^\n]*/g, '')
+      .split(/;\s*\n/)
+      .filter((st) => new RegExp(`\\b${table}\\b`).test(st))
+      .map((st) => `${path}: ${st}`),
+  );
 }
 
+// The columns a table gets, from its CREATE TABLE (a top-level comma list) and from every ADD COLUMN: [name, type].
+function columnsOf(tables: readonly string[], table: string): Array<readonly [string, string]> {
+  const out: Array<readonly [string, string]> = [];
+  for (const st of tables) {
+    const create = st.match(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)?\\s+crove_kernel\\.${table}\\s*\\(([\\s\\S]*)\\)\\s*$`, 'i'));
+    if (create) {
+      let depth = 0;
+      let current = '';
+      const parts: string[] = [];
+      for (const ch of create[1] as string) {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) {
+          parts.push(current);
+          current = '';
+        } else current += ch;
+      }
+      parts.push(current);
+      for (const part of parts) {
+        const m = part.trim().match(/^([a-z_][a-z0-9_]*)\s+([a-z]+(?:\[\])?)/i);
+        if (m && !/^(primary|unique|foreign|check|constraint)$/i.test(m[1] as string)) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
+      }
+    }
+    for (const m of st.matchAll(new RegExp(`ALTER TABLE\\s+(?:ONLY\\s+)?crove_kernel\\.${table}\\b[\\s\\S]*?ADD COLUMN(?: IF NOT EXISTS)?\\s+([a-z_][a-z0-9_]*)\\s+([a-z]+(?:\\[\\])?)`, 'gi'))) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
+  }
+  return out;
+}
+
+const RLS = (table: string) => new RegExp(`apply_tenant_rls\\(\\s*'crove_kernel\\.${table}'`);
+
 describe('what the grant wake-up tables may hold (#3024)', () => {
-  it('keeps a secret only sealed, in the two named columns, and puts the wake-up table under row-level security', () => {
+  it('keeps a secret only sealed, in the two named columns, puts the wake-up table under tenant row-level security and ties it to its grant', () => {
     const tables = statements('agent_grant_wake');
     if (tables.length === 0) return;
-    const create = tables.filter((s) => /CREATE TABLE/i.test(s)).join('\n');
-    expect(create, 'a migration creates crove_kernel.agent_grant_wake').toMatch(/crove_kernel\.agent_grant_wake/);
+    const columns = columnsOf(tables, 'agent_grant_wake');
+    expect(columns.length, 'a migration creates crove_kernel.agent_grant_wake with its columns').toBeGreaterThan(5);
     // Every column that could hold a secret is one of the sealed ones, a key id or the public hint; none is plain text.
-    const columns = [...create.matchAll(/^\s+([a-z_]+)\s+(text|bytea|jsonb|uuid|boolean|int|integer|bigint|timestamptz|date|time)\b/gim)].map((m) => [m[1] as string, (m[2] as string).toLowerCase()] as const);
-    expect(columns.length).toBeGreaterThan(5);
-    for (const [name, type] of columns.filter(([n]) => /secret|token|signing|hmac|key/i.test(n))) {
+    for (const [name, type] of columns.filter(([n]) => /secret|token|signing|hmac|key|password|credential/i.test(n))) {
       expect(['secret_sealed', 'previous_sealed', 'secret_key_id', 'secret_hint'], `${name} ${type}`).toContain(name);
       if (name.endsWith('_sealed')) expect(['bytea', 'jsonb'], `${name} is sealed bytes or an envelope`).toContain(type);
     }
     const all = tables.join('\n');
-    expect(all, 'RLS through apply_tenant_rls or ENABLE ROW LEVEL SECURITY').toMatch(/apply_tenant_rls\(\s*'crove_kernel\.agent_grant_wake'|ALTER TABLE\s+crove_kernel\.agent_grant_wake\s+ENABLE ROW LEVEL SECURITY/i);
-    expect(all, 'the grant it belongs to').toMatch(/agent_grant/);
+    expect(all, 'RLS through apply_tenant_rls, as every tenant table').toMatch(RLS('agent_grant_wake'));
+    expect(all, 'a foreign key to the grant, so revoking or expiring it reaches the wake-up').toMatch(/REFERENCES\s+crove_kernel\.agent_grant\s*\(/i);
   });
 
-  it('keeps the delivery rows free of any secret column and under row-level security', () => {
+  it('keeps the delivery rows free of any secret column and under tenant row-level security', () => {
     const tables = statements('agent_wake_delivery');
     if (tables.length === 0) return;
-    const create = tables.filter((s) => /CREATE TABLE/i.test(s)).join('\n');
-    expect(create).not.toMatch(/\b(secret|signature|hmac)\w*\s+(text|bytea|jsonb)/i);
-    expect(tables.join('\n')).toMatch(/apply_tenant_rls\(\s*'crove_kernel\.agent_wake_delivery'|ALTER TABLE\s+crove_kernel\.agent_wake_delivery\s+ENABLE ROW LEVEL SECURITY/i);
+    for (const [name, type] of columnsOf(tables, 'agent_wake_delivery')) expect(name, `${name} ${type}`).not.toMatch(/secret|signature|hmac|token|password|credential/i);
+    expect(tables.join('\n')).toMatch(RLS('agent_wake_delivery'));
   });
 });
