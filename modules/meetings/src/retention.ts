@@ -22,6 +22,7 @@ import {
   type MeetingSettings,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { dropFollowupPayloads } from './followup-erase.ts';
 
 // The retention periods count calendar days in Vietnam (UTC+7, no daylight saving), the zone the nightly job and the database's due check use.
 const VN_OFFSET_MS = 7 * 3_600_000;
@@ -152,6 +153,7 @@ export const meetingRetentionShred = defineCommand({
   handler: async (ctx, input): Promise<RetentionOutcome> => {
     requireSystem(ctx);
     let applied: boolean;
+    let mailPayloads = 0;
     if (input.kind === 'draft') {
       // Drafts the recorder never published, 30 days after they were made (one statement per table tests stage and age, so a row published meanwhile stays).
       const { rows } = await sql<{ n: number }>`
@@ -164,12 +166,14 @@ export const meetingRetentionShred = defineCommand({
       const { rows } = await sql<{ done: boolean }>`
         SELECT crove_meetings.meeting_text_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
       applied = rows[0]?.done === true;
+      // The follow-up mails hold a copy of the text the purge just deleted: it goes with it (#3016). Only when the purge ran (a meeting not yet due keeps its text).
+      if (applied) mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     } else {
       const { rows } = await sql<{ n: number }>`
         SELECT crove_meetings.meeting_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind}::text) AS n`.execute(ctx.trx);
       applied = (rows[0]?.n ?? 0) > 0;
     }
-    ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied });
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied, mailPayloads });
     return { applied, kind: input.kind };
   },
 });
@@ -187,7 +191,9 @@ export const meetingShredReplay = defineCommand({
     const { rows } = await sql<{ done: boolean }>`
       SELECT crove_meetings.meeting_replay_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
     const deleted = rows[0]?.done === true;
-    ctx.audit({ meetingId: input.meetingId, replayed: true, deleted });
+    // The same for the follow-up mails' copy of the text (#3016).
+    const mailPayloads = deleted ? await dropFollowupPayloads(ctx, input.meetingId) : 0;
+    ctx.audit({ meetingId: input.meetingId, replayed: true, deleted, mailPayloads });
     return { deleted };
   },
 });
