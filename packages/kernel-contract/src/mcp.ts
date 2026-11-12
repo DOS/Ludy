@@ -27,3 +27,76 @@ export type McpGrantView = z.infer<typeof zMcpGrantView>;
 
 export const zMcpGrantRevoke = z.strictObject({ grantId: zId });
 export const zMcpGrantRevoked = z.strictObject({ grantId: zId, revoked: z.literal(true) });
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The wake-up webhook of a grant (ADR-0051 decision 4, issue #3024): one HTTPS receiver an owner or admin sets, a secret shown once, an optional schedule.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+export const MCP_WAKE_SCHEDULES = ['off', 'daily', 'weekly'] as const;
+export type McpWakeSchedule = (typeof MCP_WAKE_SCHEDULES)[number];
+export const MCP_WAKE_URL_MAX = 2048;
+
+// Why a receiver URL is refused before any lookup, or null when it fits: https only, a name (never an address), the default port, no credentials, no fragment.
+// The database holds the same rule as a CHECK; the egress guard holds the rest (every address the name resolves to must be public) on every send.
+export function mcpWakeUrlProblem(raw: string): string | null {
+  if (raw.length > MCP_WAKE_URL_MAX || raw.length < 12) return 'length';
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return 'not a URL';
+  }
+  if (url.protocol !== 'https:') return 'only https';
+  if (url.username || url.password) return 'credentials in the URL';
+  if (url.hash) return 'a fragment';
+  if (url.port && url.port !== '443') return 'only the default port';
+  const host = url.hostname;
+  if (host.startsWith('[') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^[0-9.]+$/.test(host)) return 'an address, not a name';
+  if (!host.includes('.') || host === 'localhost' || /\.(localhost|local|internal|lan|home\.arpa)$/.test(host)) return 'not a public name';
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host)) return 'not a plain host name';
+  if (/\s/.test(url.href)) return 'whitespace';
+  return null;
+}
+
+export const zMcpWakeUrl = z.string().trim().max(MCP_WAKE_URL_MAX).refine((v) => mcpWakeUrlProblem(v) === null, 'Địa chỉ nhận phải là https, dùng tên miền công khai (không phải địa chỉ IP), cổng 443, không kèm tài khoản');
+
+export const zMcpWakeSet = z
+  .strictObject({
+    grantId: zId,
+    url: zMcpWakeUrl,
+    enabled: z.boolean().default(true),
+    schedule: z.enum(MCP_WAKE_SCHEDULES).default('off'),
+    // Minutes after midnight in Vietnam time, and the ISO weekday (1 Monday to 7 Sunday).
+    minute: z.number().int().min(0).max(1439).optional(),
+    weekday: z.number().int().min(1).max(7).optional(),
+  })
+  .refine((v) => v.schedule === 'off' || v.minute !== undefined, { message: 'Chọn giờ gửi', path: ['minute'] })
+  .refine((v) => v.schedule !== 'weekly' || v.weekday !== undefined, { message: 'Chọn ngày trong tuần', path: ['weekday'] });
+export type McpWakeSet = z.infer<typeof zMcpWakeSet>;
+
+export const zMcpWakeGrantRef = z.strictObject({ grantId: zId });
+export const zMcpWakeGetInput = z.strictObject({ grantId: zId.optional() });
+
+// The wake-up of one grant as an owner or admin reads it: the receiver, the schedule and how deliveries are going. Never a secret: only the public id beside it.
+export const zMcpWakeView = z.strictObject({
+  grantId: zId,
+  url: z.string(),
+  enabled: z.boolean(),
+  pausedReason: z.literal('failing').nullable(),
+  secretHint: z.string(),
+  // While a rotation overlaps, the instant the previous secret stops signing.
+  previousUntil: z.string().nullable(),
+  schedule: z.enum(MCP_WAKE_SCHEDULES),
+  minute: z.number().int().nullable(),
+  weekday: z.number().int().nullable(),
+  nextDueAt: z.string().nullable(),
+  failingSince: z.string().nullable(),
+  consecutiveFailures: z.number().int(),
+  lastDeliveryAt: z.string().nullable(),
+  lastStatus: z.enum(['sent', 'failed']).nullable(),
+});
+export type McpWakeView = z.infer<typeof zMcpWakeView>;
+
+// What set and rotate answer: the view and, only when a secret was just made, the secret itself, once. It is shown to the person who asked and kept nowhere in the clear.
+export const zMcpWakeWithSecret = zMcpWakeView.extend({ secret: z.string().nullable() });
+export type McpWakeWithSecret = z.infer<typeof zMcpWakeWithSecret>;
+export const zMcpWakeCleared = z.strictObject({ grantId: zId, cleared: z.literal(true) });

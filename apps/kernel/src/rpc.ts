@@ -5,6 +5,8 @@ import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOU
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
+import type { McpWakeView } from '@crove/kernel-contract';
+import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -239,6 +241,8 @@ export interface RpcChannels {
   broker: CredentialBroker;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
+  // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
+  wakeResolve?: WakeResolve;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
@@ -2123,6 +2127,36 @@ export function createRpcHandler(
       grant: {
         list: os.mcp.grant.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.grant.list', {}, { actor, orgId }))),
         revoke: os.mcp.grant.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.grant.revoke', input, { actor, orgId }))),
+      },
+      // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the secret is made and sealed here, and only the person who asked sees it, once.
+      wake: {
+        get: os.mcp.wake.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.wake.get', input, { actor, orgId }))),
+        set: os.mcp.wake.set.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            // The command checks the role again; checking first keeps a member from learning how the deployment resolves names.
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const made = makeWakeSecret(broker, orgId, input.grantId);
+            const done = await runtime.execute<{ created: boolean }>('kernel.mcp.wake.set', { ...input, credential: made.credential }, { actor, orgId });
+            const [view] = await runtime.query<McpWakeView[]>('kernel.mcp.wake.get', { grantId: input.grantId }, { actor, orgId });
+            if (!view) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+            // The secret goes back only when this call made the wake-up; a change to an existing one leaves its secret alone and the one made here is dropped.
+            return { ...view, secret: done.created ? made.secret : null };
+          }),
+        ),
+        rotateSecret: os.mcp.wake.rotateSecret.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            const made = makeWakeSecret(broker, orgId, input.grantId);
+            await runtime.execute('kernel.mcp.wake.rotate_secret', { grantId: input.grantId, credential: made.credential }, { actor, orgId });
+            const [view] = await runtime.query<McpWakeView[]>('kernel.mcp.wake.get', { grantId: input.grantId }, { actor, orgId });
+            if (!view) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+            return { ...view, secret: made.secret };
+          }),
+        ),
+        clear: os.mcp.wake.clear.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.clear', input, { actor, orgId }))),
       },
     },
     extension: {

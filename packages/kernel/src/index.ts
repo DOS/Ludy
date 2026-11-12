@@ -41,3 +41,4 @@ export { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, busyPieces, cutOut, wr
 export * from './numbering.ts';
 export * from './manifest.ts';
 export { zMcpPartiesInput } from './mcp.ts';
+export type { McpWakeCredential } from './mcp-wake.ts';
