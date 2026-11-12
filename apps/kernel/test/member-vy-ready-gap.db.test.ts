@@ -102,6 +102,26 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
     expect(await run(first.runId)).toMatchObject({ status: 'succeeded' });
   });
 
+  it('writes nothing else when it closes a stored run: the usage was counted at call time and is neither added nor removed, and no run row is left open', async () => {
+    const usage = async (who: string) => Number((await sqlAdmin<{ n: string; total: string }>(`SELECT count(*)::text AS n, COALESCE(sum(amount), 0)::text AS total FROM crove_kernel.org_usage u JOIN crove_kernel.agent a ON a.org_id = u.org_id AND a.id = u.agent_id WHERE u.org_id = $1 AND a.member_user_id = $2`, [orgId, who]))[0]?.n);
+    const stored = await start(users.alice, 'meetings.transcribe');
+    // The meter records each model call when it is made (kernel.member_vy.meter.record), long before the run is closed.
+    await exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'meetings.transcribe', inputTokens: 0, outputTokens: 0, cost: '0.250000' });
+    await storedNotClosed(stored.runId);
+    const before = await usage(users.alice);
+    expect(before).toBeGreaterThan(0);
+    await start(users.alice, 'meetings.transcribe');
+    expect(await run(stored.runId)).toMatchObject({ status: 'succeeded' });
+    expect(await usage(users.alice), 'closing a run adds and removes no usage').toBe(before);
+    // The same for the other path.
+    const next = await start(users.alice, 'meetings.transcribe');
+    await storedNotClosed(next.runId);
+    await exec(users.owner, 'kernel.member.permission.set', { userId: users.alice, permission: 'vy.use', allowed: false });
+    await exec(users.owner, 'kernel.member.permission.set', { userId: users.alice, permission: 'vy.use', allowed: null });
+    expect(await run(next.runId)).toMatchObject({ status: 'succeeded' });
+    expect(await usage(users.alice)).toBe(before);
+  });
+
   it('a new start still supersedes a run whose result is running, and leaves a stored run of another feature alone', async () => {
     const stuck = await start(users.bob, 'notes.summary');
     const other = await start(users.bob, 'meetings.summary');
