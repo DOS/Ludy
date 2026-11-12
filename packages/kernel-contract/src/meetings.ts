@@ -286,7 +286,7 @@ export const MEETING_SEARCH_QUERY_MAX = 200;
 export const MEETING_SEARCH_HITS_MAX = 200;
 export const MEETING_SEARCH_PAGE_MAX = 50;
 export const zMeetingSearchInput = z.strictObject({
-  q: z.string().trim().min(1).max(MEETING_SEARCH_QUERY_MAX),
+  q: z.string().trim().min(2).max(MEETING_SEARCH_QUERY_MAX),
   limit: z.number().int().min(1).max(MEETING_SEARCH_PAGE_MAX).default(20),
   offset: z.number().int().min(0).max(MEETING_SEARCH_HITS_MAX).default(0),
 });

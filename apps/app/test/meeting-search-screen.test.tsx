@@ -87,7 +87,8 @@ describe('the hits', () => {
     expect(html).toMatch(/<mark[^>]*>chiết<\/mark>/);
     expect(html).toMatch(/<mark[^>]*>khấu<\/mark>/);
     expect(html).toContain('href="/o/acme/meetings/0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b?seg=0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5c"');
-    expect(html).toContain('Mở cuộc họp Họp báo giá tại 1:12');
+    // The link's name is its content (meeting, line, speaker), not a fixed label.
+    expect(html).not.toContain('aria-label');
     // A draft line is marked as the member's own; a published one is not.
     expect(html.match(/Bản nháp của bạn/g)).toHaveLength(1);
     expect(html).not.toContain('Trang trước');
@@ -105,6 +106,8 @@ describe('the hits', () => {
     const capped = render(<SearchResults slug="acme" result={{ ...page, hasMore: true, capped: true }} typed="chiet" page={10} onPage={() => {}} />, 'en');
     expect(capped).toContain('Only the first 200 results are shown');
     expect(capped).toContain('Page 10');
+    // At the cap there is nothing after it: Next is disabled.
+    expect(capped).toMatch(/<button[^>]*disabled[^>]*>Next page<\/button>/);
   });
 });
 

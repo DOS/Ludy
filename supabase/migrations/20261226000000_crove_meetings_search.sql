@@ -43,9 +43,12 @@ BEGIN
   IF p_query IS NULL OR p_limit IS NULL OR p_offset IS NULL OR p_limit < 1 OR p_limit > 51 OR p_offset < 0 OR p_offset > 200 THEN
     RAISE EXCEPTION 'MEETINGS_SEARCH_INVALID' USING ERRCODE = '22023';
   END IF;
-  -- Nothing left to match once folded (only marks or punctuation): no hit, and no row is read.
+  -- Nothing left to match once folded (only marks or punctuation), or no word of two characters or more (a one-letter prefix would match most lines of every org
+  -- before the org is filtered): no hit, and no row is read.
   v_q := crove_kernel.search_query(pg_catalog.left(p_query, 200));
-  IF v_q IS NULL THEN
+  IF v_q IS NULL OR NOT EXISTS (
+    SELECT 1 FROM pg_catalog.unnest(pg_catalog.string_to_array(crove_kernel.search_fold(pg_catalog.left(p_query, 200)), ' ')) AS w WHERE pg_catalog.char_length(w) >= 2
+  ) THEN
     RETURN;
   END IF;
   RETURN QUERY

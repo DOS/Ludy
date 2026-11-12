@@ -1636,7 +1636,6 @@ export const vi = {
       tooShort: 'Hãy gõ ít nhất 2 ký tự.',
       none: 'Không thấy dòng nào có các từ này trong những cuộc họp bạn đọc được.',
       draft: 'Bản nháp của bạn',
-      open: 'Mở cuộc họp {title} tại {time}',
       previous: 'Trang trước',
       next: 'Trang sau',
       page: 'Trang {page}',

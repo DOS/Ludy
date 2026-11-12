@@ -31,7 +31,6 @@ function Hit({ slug, hit, typed }: { slug: string; hit: MeetingSearchHit; typed:
         to="/o/$slug/meetings/$id"
         params={{ slug, id: hit.meetingId }}
         search={{ seg: hit.segmentId }}
-        aria-label={t('open', { title: hit.meetingTitle, time })}
         className="block space-y-1 p-3 transition-colors hover:bg-muted/50 focus-visible:bg-muted/50"
         data-testid="meeting-search-hit"
       >
@@ -54,7 +53,7 @@ function Hit({ slug, hit, typed }: { slug: string; hit: MeetingSearchHit; typed:
 export function SearchResults({ slug, result, typed, page, onPage }: { slug: string; result: MeetingSearchResult; typed: string; page: number; onPage: (delta: -1 | 1) => void }) {
   const t = useTranslations('meetings.contentSearch');
   return (
-    <div className="space-y-2" aria-live="polite">
+    <div className="space-y-2">
       {result.hits.length === 0 ? (
         <p className="text-sm text-muted-foreground" data-testid="meeting-search-none">
           {t('none')}
@@ -73,7 +72,7 @@ export function SearchResults({ slug, result, typed, page, onPage }: { slug: str
             {t('previous')}
           </Button>
           <span className="text-xs text-muted-foreground">{t('page', { page: String(page) })}</span>
-          <Button type="button" size="sm" variant="outline" disabled={!result.hasMore} onClick={() => onPage(1)}>
+          <Button type="button" size="sm" variant="outline" disabled={!result.hasMore || result.capped} onClick={() => onPage(1)}>
             {t('next')}
           </Button>
         </div>
@@ -90,8 +89,8 @@ export function MeetingSearch({ slug }: { slug: string }) {
   const query = useQuery({
     ...orpc.meetings.search.queryOptions({ input: { q: asked?.q ?? '-', limit: SEARCH_PAGE, offset: asked?.offset ?? 0 } }),
     enabled: asked !== null,
-    // Each search leaves an audit row: asking again for the same page shows what is held, it does not search again.
-    staleTime: 5 * 60_000,
+    // Each search leaves an audit row: asking again for the same page within half a minute shows what is held; a removed reader loses the text on the next ask after that.
+    staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
 
@@ -134,6 +133,7 @@ export function MeetingSearch({ slug }: { slug: string }) {
       <p className="text-xs text-muted-foreground">{t('hint')}</p>
       {tooShort && <ErrorText>{t('tooShort')}</ErrorText>}
       {asked && query.error && <ErrorText>{errorMessage(query.error)}</ErrorText>}
+      <div aria-live="polite">
       {result && asked && (
         <SearchResults
           slug={slug}
@@ -143,6 +143,7 @@ export function MeetingSearch({ slug }: { slug: string }) {
           onPage={(delta) => setAsked({ q: asked.q, offset: asked.offset + delta * SEARCH_PAGE })}
         />
       )}
+      </div>
     </section>
   );
 }

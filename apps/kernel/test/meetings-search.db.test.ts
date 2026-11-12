@@ -118,7 +118,7 @@ suite('search across readable meetings (#2589, L2)', () => {
   });
 
   it('answers nothing, and no error, for text with no letter or digit and for characters that mean something to a text-search query', async () => {
-    for (const q of ['!!!', '...', '&', '| &', "'", '( ) :*', '!chiet', 'chiet:*', "a'b", '\\']) {
+    for (const q of ['!!!', '...', '&&', '| &', "''", '( ) :*', '!chiet', 'chiet:*', "a'b", '\\\\']) {
       const answered = await search('recorder', q);
       expect(answered.hasMore, q).toBe(false);
     }
@@ -230,6 +230,9 @@ suite('search across readable meetings (#2589, L2)', () => {
     await expect(search('owner', 'x', { limit: 51 })).rejects.toBeDefined();
     await expect(search('owner', 'x', { offset: 201 })).rejects.toBeDefined();
     await expect(search('owner', ' '.repeat(3))).rejects.toBeDefined();
+    await expect(search('owner', 'a')).rejects.toBeDefined();
+    // Words of one letter only match nothing, however many lines hold them.
+    expect((await search('owner', 'a b')).hits).toEqual([]);
     await expect(search('owner', 'a'.repeat(201))).rejects.toBeDefined();
   });
 

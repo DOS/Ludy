@@ -33,7 +33,7 @@ suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
   const pools: pg.Pool[] = [];
   let orgId = '';
   let otherOrgId = '';
-  const users = { owner: '', admin: '', recorder: '', attendee: '', stranger: '', viewer: '', outsider: '' };
+  const users = { owner: '', admin: '', recorder: '', attendee: '', stranger: '', viewer: '', outsider: '', limited: '' };
   const seg: Record<string, string> = {};
   let agent = { agentId: '', runId: '' };
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
@@ -118,16 +118,20 @@ suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
       seg[key] = randomUUID();
       await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 5, 'Hà', $4, $5)`, [org, seg[key], meetingId, text, stage]));
     };
-    await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer')`, [
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'viewer'), ($1, $7, 'member')`, [
         orgId,
         users.admin,
         users.recorder,
         users.attendee,
         users.stranger,
         users.viewer,
-      ]),
-    );
+        users.limited,
+      ]);
+      // A member whose role covers one branch only: the org-wide scope ('*') a meeting shared with the org needs is not theirs.
+      const branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id;
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.limited, branch, users.owner]);
+    });
     const hidden = randomUUID();
     const shared = randomUUID();
     const expired = randomUUID();
@@ -169,6 +173,8 @@ suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
       expect(await idsFor(actor, 'chiet khau'), actor.name).toEqual([seg.sharedPublished]);
       expect(await idsFor(actor, 'luong'), actor.name).toEqual([]);
     }
+    // A member limited to one branch has no org-wide scope: a meeting shared with the org is not theirs unless they are named, and nothing here names them.
+    expect(await idsFor(member('a member limited to a branch', () => users.limited), 'chiet khau')).toEqual([]);
     // Another org's user sees their own org's line only, in their own org's context.
     expect(await idsFor(member('another org', () => users.outsider, () => otherOrgId), 'chiet khau')).toEqual([seg.foreign]);
     // A word nobody wrote answers the same empty list as a line the caller may not read.
@@ -189,6 +195,9 @@ suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
     expect(await outcome(run(owner, (c) => c.query(`SELECT * FROM crove_meetings.search_segment_ids(NULL, 10, 0)`)))).toMatchObject({ ok: false, code: '22023' });
     // Text that folds to nothing is no hit, not an error; a page never holds more than it was asked for.
     expect(await idsFor(owner, '!!! ...')).toEqual([]);
+    // Words of one letter only could match most lines of every org before the org is filtered: no hit.
+    expect(await idsFor(owner, 'c')).toEqual([]);
+    expect(await idsFor(owner, 'c h')).toEqual([]);
     expect(await idsFor(owner, 'chiet', 1)).toHaveLength(1);
   });
 

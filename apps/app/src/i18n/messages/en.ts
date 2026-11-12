@@ -1639,7 +1639,6 @@ export const en = {
       tooShort: 'Type at least 2 characters.',
       none: 'No line with these words in the meetings you can read.',
       draft: 'Your draft',
-      open: 'Open meeting {title} at {time}',
       previous: 'Previous page',
       next: 'Next page',
       page: 'Page {page}',
