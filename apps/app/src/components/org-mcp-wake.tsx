@@ -80,7 +80,6 @@ export function OrgMcpWake({ grantId, view }: { grantId: string; view: McpWakeVi
       ...(schedule === 'weekly' ? { weekday } : {}),
     });
   const error = save.error ?? rotate.error ?? clear.error ?? test.error;
-  const error = save.error ?? rotate.error ?? clear.error;
   return (
     <div className="mt-2 space-y-2 text-xs" data-testid="org-mcp-wake">
       <p className="flex flex-wrap items-center gap-2 text-subtle-foreground">
