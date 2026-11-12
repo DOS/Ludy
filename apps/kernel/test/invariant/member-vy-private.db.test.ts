@@ -23,6 +23,10 @@ import { Runtime } from "@crove/kernel-runtime";
 import { financeCommands, financeQueries } from "@crove/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
+import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+
+// The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
+let FEAT: AiRunFeature = { cols: "", vals: "" };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(
@@ -196,6 +200,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    FEAT = await admin((c) => aiRunFeature(c));
     await setRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",
@@ -424,8 +429,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           );
         }
         await c.query(
-          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
-           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${FEAT.cols})
+           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${FEAT.vals})`,
           [orgId, ids.subject, agentId],
         );
         await c.query("SET session_replication_role = DEFAULT");
@@ -573,8 +578,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           );
         }
         await c.query(
-          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
-           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${FEAT.cols})
+           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${FEAT.vals})`,
           [orgId, runId, agentId],
         );
         await c.query(
@@ -796,7 +801,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         [orgId, agentId, randomUUID()],
       );
       await c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
         [orgId, runId, agentId],
       );
       return { agentId, runId };
@@ -967,7 +972,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
               [orgId, agentId, users.vyUser],
             );
             await c.query(
-              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
               [orgId, runId, agentId],
             );
             return { agentId, runId };
@@ -1036,7 +1041,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           const forged = await outcome(
             inContext(actor.url(), actor.enter, (c) =>
               c.query(
-                `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+                `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
                 [orgId, randomUUID(), agentId],
               ),
             ),
@@ -1261,8 +1266,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
             );
           }
           await c.query(
-            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
-             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${FEAT.cols})
+             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${FEAT.vals})`,
             [orgId, runId, agentId],
           );
         } finally {
