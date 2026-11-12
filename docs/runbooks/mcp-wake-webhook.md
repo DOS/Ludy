@@ -4,6 +4,16 @@ Decision: [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-gate.
 
 What it is: an owner or admin gives one connected AI app (Settings, "Connected AI apps") an https address. Ludy then sends one signed `POST` there when something new needs attention, or on a daily or weekly schedule. The message only wakes the app up: it carries ids, dates and amounts, never a name, a note or a message. The app then reads what it needs through the [MCP endpoint](mcp-endpoint.md), with its own, read-only access. Ludy runs without it and sends nothing until an address is saved.
 
+## A member's own connected app
+
+A member (or viewer) who connected their own AI app (a member-bound grant, ADR-0051 decision 2, issue #2975) may give it a wake-up too, for that grant and nothing else. The rules:
+
+- **Whose it is.** Only that member sets, reads, rotates, tests or clears it. An owner or admin does not: for another member's grant they see that a wake-up exists and the receiver's host (`https://host`, never the path, which can carry a token), and they cut it off by revoking the grant, which ends delivery at once. A company grant stays the owners' and admins' alone.
+- **What is sent.** A schedule (a date) and a test (a ping); never a signal. A member-bound grant is not asked for signals and a signal event for one is refused in the database, so no id of business data leaves for a receiver that reads no more than a member reads.
+- **The same address rules** as any other: https only, no address, no other port, no credentials, no private name; the delivery checks every address again on every send, and caps the answer and the time.
+- **Rates.** A grant rotates its secret once a minute at most and sends at most ten test pings an hour (besides the one a minute). Both answer `MCP_WAKE_TOO_SOON`.
+- **It stops** with the grant: revoked, expired, the member gone or disabled, or the org turned member grants off (an owner's or admin's own grant needs no switch). A demotion of an owner or admin ends every grant of theirs, member-bound ones too.
+
 ## What Ludy sends
 
 `POST <your address>`, `Content-Type: application/json`, a body of at most a few KB, and three headers:

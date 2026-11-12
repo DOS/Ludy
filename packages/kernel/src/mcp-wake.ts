@@ -14,7 +14,8 @@ import { mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, typ
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
 
-const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
+// Every role: the database decides whose wake-up it is (an owner or admin's for a company grant; a member's alone for their own member-bound grant), ADR-0051 slice 3c.
+const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 // The provider name a wake-up secret is sealed under (with the org and the grant), so it opens for nothing else.
 export const MCP_WAKE_PROVIDER = 'mcp-wake';
@@ -37,7 +38,7 @@ function wakeError(error: unknown): never {
   const message = (error as { message?: unknown } | null)?.message;
   switch (message) {
     case 'MCP_FORBIDDEN':
-      throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới cài được địa chỉ nhận của quyền kết nối MCP');
+      throw new DomainError('FORBIDDEN', 403, 'Bạn không cài được địa chỉ nhận cho quyền kết nối MCP này');
     case 'MCP_WAKE_GRANT':
       throw new DomainError('MCP_WAKE_GRANT_NOT_FOUND', 404, 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực');
     case 'MCP_WAKE_TOO_SOON':
@@ -57,7 +58,7 @@ export const mcpWakeSet = defineCommand({
   risk: 'R2',
   // Business ids leave the deployment for the receiver it sets, once the delivery queue (which reaches the URL) has something to send.
   sideEffect: 'external',
-  access: GRANTORS,
+  access: ALL,
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới cài được địa chỉ nhận của quyền kết nối MCP');
     // A receiver is where business ids leave the deployment: a member with a second factor sets it with a fresh one, as for a connection (ADR-0047 point 10).
@@ -84,7 +85,7 @@ export const mcpWakeRotate = defineCommand({
   input: z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, credential: zMcpWakeCredential }),
   risk: 'R2',
   sideEffect: 'internal',
-  access: GRANTORS,
+  access: ALL,
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới đổi được khóa bí mật của quyền kết nối MCP');
     if (ctx.actor.aal === 'aal2' && !hasFreshMfa(ctx.actor)) {
@@ -105,7 +106,7 @@ export const mcpWakeClear = defineCommand({
   input: zMcpWakeGrantRef,
   risk: 'R2',
   sideEffect: 'internal',
-  access: GRANTORS,
+  access: ALL,
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gỡ được địa chỉ nhận của quyền kết nối MCP');
     const { rows } = await sql<{ cleared: boolean }>`SELECT crove_kernel.mcp_wake_clear(${input.grantId}::uuid) AS cleared`.execute(ctx.trx).catch(wakeError);
@@ -122,7 +123,7 @@ export const mcpWakeTest = defineCommand({
   input: zMcpWakeGrantRef,
   risk: 'R2',
   sideEffect: 'external',
-  access: GRANTORS,
+  access: ALL,
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gửi thử được tin nhắn đánh thức');
     if (ctx.actor.aal === 'aal2' && !hasFreshMfa(ctx.actor)) {
@@ -158,7 +159,7 @@ const iso = (d: Date | null) => (d ? d.toISOString() : null);
 export const mcpWakeGet = defineQuery({
   name: 'kernel.mcp.wake.get',
   input: zMcpWakeGetInput,
-  access: GRANTORS,
+  access: ALL,
   handler: async (ctx, input): Promise<McpWakeView[]> => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được địa chỉ nhận của quyền kết nối MCP');
     const { rows } = await sql<WakeRow>`SELECT * FROM crove_kernel.mcp_wake_get(${input.grantId ?? null}::uuid)`.execute(ctx.trx).catch(wakeError);
