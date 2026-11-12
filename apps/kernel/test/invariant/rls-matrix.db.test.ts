@@ -43,6 +43,8 @@ const MACHINERY = new Set([
   'crove_ads.ad_token_seal',
   // #2975: the grant an owner or admin gave an MCP client (ADR-0051, ADR-0032): one org, the consenting user, a client, the scope `ludy.read`, R0. Definer-only, no login role grant.
   'crove_kernel.agent_grant',
+  // #3024: the wake-up receiver and sealed secret of an MCP grant (ADR-0051 decision 4): reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
+  'crove_kernel.agent_grant_wake',
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
@@ -77,6 +79,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
   'crove_kernel.agent_grant',
+  'crove_kernel.agent_grant_wake',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
@@ -1605,6 +1608,33 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         created_by: o.owner,
       },
     }),
+  },
+  // #3024: the wake-up of an MCP grant (ADR-0051 decision 4). Definer-only, in MACHINERY. It references a grant of the same org.
+  'crove_kernel.agent_grant_wake': {
+    make: (o) => {
+      const grantId = randomUUID();
+      return {
+        setup: [
+          {
+            table: 'crove_kernel.agent_grant',
+            values: {
+              org_id: o.id,
+              id: grantId,
+              user_id: o.owner,
+              client_id: `client-${randomUUID()}`,
+              client_name: 'Example MCP client',
+              client_host: 'client.example.com',
+              scopes: '{ludy.read}',
+              max_risk: 'R0',
+              created_at: '2026-10-01T00:00:00Z',
+              expires_at: '2026-12-30T00:00:00Z',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, grant_id: grantId, url: 'https://hooks.example.com/ludy', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000', created_by: o.owner },
+      };
+    },
   },
   'crove_kernel.agent_wakeup': {
     make: (o) => {
