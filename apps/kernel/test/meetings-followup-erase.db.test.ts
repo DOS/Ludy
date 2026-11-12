@@ -269,6 +269,26 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect(await lastAudit()).toMatchObject({ follow_up_mails: 1 });
       });
 
+      // The payload is matched as its jsonb text, in which a quote and a backslash are escaped (\" and \\): the value must still be found next to them, in Vietnamese text, and a phone
+      // number with the spaces and dots people write.
+      it('finds the value in the payload next to quotes, backslashes and Vietnamese text, for an address and for a phone number', async () => {
+        const value = 'trich.dan@erase.test';
+        const quoted = await seedSent({ recorder: 'owner', summary: `Khách nói: "${value}" là địa chỉ đúng; đường dẫn C:\\thu\\${value}\\ và 'nháy đơn'.` });
+        const phone = '0912345678';
+        const phoned = await seedSent({ recorder: 'owner', summary: 'Gọi khách theo số 091 234 5678 hoặc 0912.345.678 sau 3 giờ chiều.' });
+        // The meetings no longer mention either (the recorders edited them out), so only the mail's own text holds the value.
+        await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = ANY ($2::uuid[])", [orgId, [quoted, phoned]]);
+        expect(JSON.stringify((await mail(quoted))[0]?.payload)).toContain(value);
+        // The text form the database matches really holds the escapes.
+        const escaped = await sqlAdmin<{ q: boolean; b: boolean }>("SELECT position(E'\\\\\"' in payload::text) > 0 AS q, position(E'\\\\\\\\' in payload::text) > 0 AS b FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, quoted]);
+        expect(escaped.rows[0]).toEqual({ q: true, b: true });
+        await erase(value);
+        expect((await mail(quoted))[0]).toMatchObject({ payload: null, subject: null });
+        expect((await mail(phoned))[0]?.payload).not.toBeNull();
+        await erase(phone);
+        expect((await mail(phoned))[0]).toMatchObject({ payload: null, subject: null });
+      });
+
       it('drops the mail when the value is only in its subject', async () => {
         const value = 'chi.tieu.de@erase.test';
         const subjectOnly = await seedSent({ recorder: 'owner', summary: 'Chốt kế hoạch quý.' });
