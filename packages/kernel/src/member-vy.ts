@@ -181,16 +181,36 @@ export const memberVyRunCancel = defineCommand({
       .where('member_user_id', '=', userId)
       .executeTakeFirst();
     if (!agent) return { cancelled: false };
+    // The run row is locked first, the same order the result store and the worker's finish take (run, then result), so a store in progress is waited for. A background run's
+    // text is stored as `ready` in one transaction and the run is closed in another (the worker's run.finish): in the gap the run still reads `running`, and cancelling it then would
+    // leave a cancelled run beside a ready result, which the finish definer says never to record. So the result is read after the lock, in a statement of its own (READ COMMITTED
+    // sees what the store committed), and a result that is no longer running leaves the run to the worker's finish: `cancelled: false`.
     const run = await ctx.trx
+      .selectFrom('crove_kernel.ai_run')
+      .select(['id', 'feature'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.runId)
+      .where('agent_id', '=', agent.id)
+      .where('status', '=', 'running')
+      .forUpdate()
+      .executeTakeFirst();
+    if (!run) return { cancelled: false };
+    const result = await ctx.trx
+      .selectFrom('crove_kernel.member_vy_result')
+      .select('status')
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', input.runId)
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
+    if (result && result.status !== 'running') return { cancelled: false };
+    await ctx.trx
       .updateTable('crove_kernel.ai_run')
       .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_CANCELLED' })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.runId)
       .where('agent_id', '=', agent.id)
       .where('status', '=', 'running')
-      .returning(['id', 'feature'])
-      .executeTakeFirst();
-    if (!run) return { cancelled: false };
+      .execute();
     await ctx.trx
       .updateTable('crove_kernel.member_vy_result')
       .set({ status: 'failed', error_code: 'RUN_CANCELLED' })

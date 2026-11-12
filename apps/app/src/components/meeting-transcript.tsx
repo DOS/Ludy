@@ -167,7 +167,11 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
           <div className="space-y-2">
             <p role="status">{t('vy.running')}</p>
             <p className="text-xs text-muted-foreground">{t('vy.stopHint')}</p>
-            <Button size="sm" variant="outline" loading={stop.isPending} onClick={() => stop.mutate()}>
+            <Button size="sm" variant="outline" loading={stop.isPending} onClick={() => {
+                start.reset();
+                copy.reset();
+                stop.mutate();
+              }}>
               {t('vy.stop')}
             </Button>
           </div>
@@ -177,7 +181,11 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
           <div className="space-y-2">
             <p>{t('vy.ready')}</p>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
-            <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(data.runId as string)}>
+            <Button size="sm" loading={copy.isPending} onClick={() => {
+                start.reset();
+                stop.reset();
+                copy.mutate(data.runId as string);
+              }}>
               {t('vy.copy')}
             </Button>
           </div>
@@ -185,7 +193,11 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
         {data.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${codeText(t, data.errorCode) ?? t('vy.codes.default')}`}</ErrorText>}
         {(start.error || copy.error || stop.error) && <ErrorText>{refusalText(t, start.error ?? copy.error ?? stop.error)}</ErrorText>}
         {!running && (
-          <Button size="sm" variant={data.state === 'none' ? 'default' : 'outline'} loading={start.isPending} onClick={() => start.mutate()}>
+          <Button size="sm" variant={data.state === 'none' ? 'default' : 'outline'} loading={start.isPending} onClick={() => {
+              copy.reset();
+              stop.reset();
+              start.mutate();
+            }}>
             {data.state === 'none' ? t('vy.start') : t('vy.restart')}
           </Button>
         )}

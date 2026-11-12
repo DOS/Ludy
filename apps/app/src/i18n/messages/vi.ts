@@ -1754,7 +1754,7 @@ export const vi = {
           TRANSCRIPT_EMPTY: 'Bản ghi âm không có tiếng nói.',
           TRANSCRIPT_TOO_LONG: 'Cuộc họp quá dài để ghi lời một lần.',
           RUN_ENDED: 'Lượt ghi lời đã dừng trước khi xong. Hãy nhờ Vy làm lại.',
-          RUN_CANCELLED: 'Bạn đã dừng lượt ghi lời này. Bạn có thể nhờ Vy ghi lời lại bất cứ lúc nào.',
+          RUN_CANCELLED: 'Lượt ghi lời này đã bị dừng. Bạn có thể nhờ Vy ghi lời lại bất cứ lúc nào.',
           default: 'Có lỗi khi ghi lời. Hãy nhờ Vy làm lại.',
         },
       },

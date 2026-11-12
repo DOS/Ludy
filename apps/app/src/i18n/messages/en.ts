@@ -1756,7 +1756,7 @@ export const en = {
           TRANSCRIPT_EMPTY: 'The recording holds no speech.',
           TRANSCRIPT_TOO_LONG: 'The meeting is too long to transcribe in one go.',
           RUN_ENDED: 'The run ended before it finished. Start it again.',
-          RUN_CANCELLED: 'You stopped this run. You can ask Vy to transcribe it again at any time.',
+          RUN_CANCELLED: 'This run was stopped. You can ask Vy to transcribe it again at any time.',
           default: 'Something went wrong while transcribing. Start it again.',
         },
       },

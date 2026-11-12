@@ -548,6 +548,22 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     await clearRuns();
   });
 
+  it('does not cancel a run whose result is already stored: the worker has not closed the run yet, and it is then recorded as succeeded, never as cancelled beside a ready result (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    // The gap of a background run: the text is stored as ready in one transaction and the run is closed by the worker's finish in another.
+    await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'x' WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect((await runRow(runId))?.status).toBe('running');
+    expect(await cancel('recorder', meetingId)).toEqual({ meetingId, cancelled: false });
+    expect(await runRow(runId)).toEqual({ status: 'running', error: null });
+    expect(await resultOf(runId)).toEqual({ status: 'ready', error_code: null });
+    const closed = await worker.execute<{ closed: boolean }>('kernel.member_vy.run.finish', { runId, errorCode: null }, { actor: { type: 'system', component: 'meetings.transcribe' }, orgId });
+    expect(closed.closed).toBe(true);
+    expect((await runRow(runId))?.status).toBe('succeeded');
+    expect(await resultOf(runId)).toEqual({ status: 'ready', error_code: null });
+  });
+
   it('stops a run whose time has passed but is still marked running, which the screen already shows as ended (#3033)', async () => {
     await clearRuns();
     const meetingId = await seedMeeting('recorder');
@@ -586,12 +602,29 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     await clearRuns();
   });
 
-  it('does not make two members wait for each other: starts of two recorders run side by side (#3033)', async () => {
+  it('keys the lock on the member: while one recorder\'s lock is held, that recorder\'s start waits and another recorder\'s start does not (#3033)', async () => {
     await clearRuns();
     const mine = await seedMeeting('recorder');
     const theirs = await seedMeeting('other');
-    const results = await Promise.allSettled([start('recorder', mine), start('other', theirs)]);
-    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      // The same key the module takes: 'meetings.transcribe:<org>:<member>'.
+      await holder.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, [`meetings.transcribe:${orgId}:${users.recorder}`]);
+      const waiting = start('recorder', mine);
+      const settled = { done: false };
+      void waiting.then(() => (settled.done = true), () => (settled.done = true));
+      // Another member is not held up by it.
+      expect(await start('other', theirs)).toMatchObject({ runId: expect.any(String) });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(settled.done).toBe(false);
+      await holder.query('COMMIT');
+      expect(await waiting).toMatchObject({ runId: expect.any(String) });
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      await holder.end();
+    }
     await clearRuns();
   });
 });
