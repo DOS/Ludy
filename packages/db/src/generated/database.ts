@@ -2798,6 +2798,7 @@ export interface MeetingsTranscriptSegmentTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  search: ColumnType<string | null, never, NotGranted>;
 }
 
 /** crove_notes.link */

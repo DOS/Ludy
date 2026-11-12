@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
+import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
@@ -980,6 +981,7 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingMediaOrphanKeys,
   transcriptGet,
+  meetingSearch,
   ...transcribeRunQueries,
   ...resultQueries,
   ...summaryRunQueries,

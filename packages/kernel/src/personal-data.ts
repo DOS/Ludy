@@ -296,6 +296,9 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The name a transcript line is attributed to (the recorder may set it to a real name): found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
+  // The folded words of a line's text (search across meetings, L2 #2589): a generated column rebuilt from the text by every UPDATE of it, so the erasure of a mention in a line
+  // takes it out of the words in the same statement, and it goes with its row. Not searched itself.
+  'crove_meetings.transcript_segment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a transcript line's text, rebuilt from it by the database (a generated column): an erasure of a mention in the text takes it out of the words in the same statement, and they go with the line" },
   // The summary, the decisions and the action items (issue #2580): what was said, drafted by the recorder or copied from the result of their own Vy.
   'crove_meetings.meeting_result.summary': {
     kind: 'free_text',

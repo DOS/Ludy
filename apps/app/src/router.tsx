@@ -570,7 +570,13 @@ const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: '
     ...(typeof search.calendarEventId === 'string' ? { calendarEventId: search.calendarEventId } : {}),
   }),
 });
-const meetingDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/$id', component: MeetingDetailPage });
+const meetingDetailRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: 'meetings/$id',
+  component: MeetingDetailPage,
+  // A search hit opens the transcript at its line (L2, #2589): ?seg= the transcript line to scroll to and mark. Only the shape is checked here; the transcript shows the line only to a reader.
+  validateSearch: (search: Record<string, unknown>): { seg?: string } => (typeof search.seg === 'string' && /^[0-9a-f-]{36}$/i.test(search.seg) ? { seg: search.seg.toLowerCase() } : {}),
+});
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
