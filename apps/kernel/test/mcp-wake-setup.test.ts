@@ -3,7 +3,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { CredentialVault, DomainError, parseVaultKey } from '@crove/kernel-runtime';
-import { WAKE_PROVIDER, assertWakeHostPublic, makeWakeSecret } from '../src/mcp-wake-setup.ts';
+import { MCP_WAKE_PROVIDER as WAKE_PROVIDER } from '@crove/kernel';
+import { assertWakeHostPublic, makeWakeSecret } from '../src/mcp-wake-setup.ts';
 import { noCredentialBroker } from '../src/credentials.ts';
 
 const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);

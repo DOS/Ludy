@@ -110,20 +110,36 @@ export const memberVyRunStart = defineCommand({
         .returning(['id', 'status'])
         .executeTakeFirstOrThrow();
     }
-    // A run abandoned by a crashed request does not block the next one: the member has one run at a time.
+    // A run abandoned by a crashed request does not block the next one: a member has one live run PER FEATURE (ADR-0049 decision 1, amended 2026-11-12, #3029), so a start
+    // supersedes only a running run of the same feature. A run of another feature (a transcription that is still going) is left alone.
     await ctx.trx
       .updateTable('crove_kernel.ai_run')
       .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_SUPERSEDED' })
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
+      .where('feature', '=', input.feature)
       .where('status', '=', 'running')
       .execute();
     const expiresAt = new Date(ctx.now.getTime() + feature.expiryMinutes * 60_000);
-    const run = await ctx.trx
-      .insertInto('crove_kernel.ai_run')
-      .values({ org_id: ctx.orgId, agent_id: agent.id, module: feature.module, status: 'running', tainted: true, started_at: ctx.now, expires_at: expiresAt })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    // Two starts of one feature at the same moment: both see no live run, and the unique index (ai_run_one_running_feature_uq) lets one insert through. The other is told to
+    // try again (a savepoint keeps the transaction usable for the refusal), never left with two running runs.
+    await sql`SAVEPOINT member_vy_run_start`.execute(ctx.trx);
+    let run: { id: string };
+    try {
+      run = await ctx.trx
+        .insertInto('crove_kernel.ai_run')
+        .values({ org_id: ctx.orgId, agent_id: agent.id, module: feature.module, feature: input.feature, status: 'running', tainted: true, started_at: ctx.now, expires_at: expiresAt })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+    } catch (error: unknown) {
+      const e = error as { code?: string; constraint?: string };
+      if (e.code === '23505' && (e.constraint === 'ai_run_one_running_feature_uq' || e.constraint === 'ai_run_one_running_agent_uq')) {
+        await sql`ROLLBACK TO SAVEPOINT member_vy_run_start`.execute(ctx.trx);
+        throw new DomainError('VY_RUN_BUSY', 409, 'Vy đang làm việc này cho bạn; hãy thử lại sau ít giây');
+      }
+      throw error;
+    }
+    await sql`RELEASE SAVEPOINT member_vy_run_start`.execute(ctx.trx);
     const result = await ctx.trx
       .insertInto('crove_kernel.member_vy_result')
       .values({

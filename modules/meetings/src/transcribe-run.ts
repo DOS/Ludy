@@ -65,10 +65,13 @@ export const transcriptStart = defineCommand({
       await ctx.trx.selectFrom('crove_meetings.meeting').select('audio_retention_date').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow()
     ).audio_retention_date;
     if (String(audioDay) <= vnDay(ctx.now)) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
-    // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. (Another use of Vy by the
-    // recorder, a note summary for one, also supersedes a live run: the member has one run at a time, ADR-0049 decision 1; the screen then shows the run as ended.)
+    // A run of this meeting that is still going is not started over: the kernel's start would cancel it after it spent budget. Nor is a transcription of ANOTHER meeting of
+    // the recorder that is still going (live and not expired) cut off by this one (#3029): the kernel's rule is that a start supersedes a run of the same feature, which is
+    // meant for a crashed or abandoned run, so a transcript is never lost to a second recording. Other uses of Vy (a summary, a note) no longer touch it at all.
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: FEATURE, subjectId: input.meetingId });
     if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is already being transcribed');
+    const other = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: FEATURE });
+    if (other.status !== 'ok' || other.value.live) throw new DomainError('TRANSCRIBE_OTHER_RUNNING', 409, 'Another meeting of yours is still being transcribed; wait for it to finish');
     // The kernel's start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget (AI_BUDGET_EXHAUSTED), and makes the
     // member's Vy and this run (a result row in status running, the subject this meeting).
     const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
