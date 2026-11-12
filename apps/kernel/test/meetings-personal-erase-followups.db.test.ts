@@ -161,7 +161,8 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
 
   // N4: the finder reads the decisions as text, so the column takes string elements only (a number or a nested value would be found but never cleared); the erasure redacts every string.
   it('refuses decision elements that are not strings and redacts the strings', async () => {
-    const value = '12345678';
+    // 10 digits: a shorter number is left alone (#3064).
+    const value = '1234567890';
     const shared = await meeting('recorder', 'Họp quyết định lẫn kiểu', 'org');
     for (const bad of [[12345678], [{ gia: 12345678 }], [true], [null], ['ok', 7], [['x']], [[]]]) {
       await expect(result(shared, 'Tóm tắt', bad as unknown as string[], 'published')).rejects.toMatchObject({ code: '23514' });
