@@ -492,6 +492,26 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     await clearRuns();
   });
 
+  it('a cancel while the job is at the provider stops the AI cost: chunk 1 was admitted and paid, chunk 2 is refused at its admit, and the result stays as the cancel left it (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const before = providerCalls;
+    afterFirstCall = async () => void (await cancel('recorder', meetingId));
+    const outcome = await runJob('recorder', meetingId, runId);
+    afterFirstCall = null;
+    expect(outcome).toBe('failed');
+    // One provider call (the chunk already in flight), no second: the admit before chunk 2 found the run no longer live.
+    expect(providerCalls - before).toBe(1);
+    expect(await runRow(runId)).toEqual({ status: 'cancelled', error: 'RUN_CANCELLED' });
+    expect(await resultOf(runId)).toEqual({ status: 'failed', error_code: 'RUN_CANCELLED' });
+    expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: 'RUN_CANCELLED' });
+    // The text of the chunk in flight was not stored anywhere the recorder reads.
+    const body = await admin((c) => c.query<{ body: string | null }>(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(body.rows[0]?.body ?? null).toBeNull();
+    await clearRuns();
+  });
+
   it('answers the same when there is nothing to stop: no run, a stopped run, a finished run (#3033)', async () => {
     await clearRuns();
     const idle = await seedMeeting('recorder');
