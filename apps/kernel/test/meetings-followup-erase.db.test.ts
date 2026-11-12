@@ -175,6 +175,7 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
   describe('kernel.personal_data.erase', () => {
     const MENTION = 'khach.hang@erase.test';
     const asMfa = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
+    const OTHER = 'nguoi.khac@erase.test';
     const erase = (value = MENTION) => runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
     const lastAudit = () =>
       sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1", [orgId]).then((r) => r.rows[0]?.detail);
@@ -211,13 +212,34 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
 
     it('drops nothing when the erasure changed no row of the meeting', async () => {
       // A meeting the owner cannot read (another recorder's, the owner is no reader): the mention stays there, counted, and so does the mail.
-      const hidden = await seedSent({ recorder: 'recorder', summary: `Nhắc ${MENTION} ký hợp đồng.`, subject: 'Tóm tắt' });
-      const result = await erase();
+      const hidden = await seedSent({ recorder: 'recorder', summary: `Nhắc ${OTHER} ký hợp đồng.`, subject: 'Tóm tắt' });
+      const result = await erase(OTHER);
       expect(result.erased.find((e) => e.column === 'crove_meetings.meeting_result.summary')).toBeUndefined();
       const kept = (await mail(hidden))[0];
       expect(kept?.payload).not.toBeNull();
       expect(kept?.subject).toBe('Tóm tắt');
       expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
+    });
+
+    it('answers a retry and changes nothing while a send of that meeting holds the follow-up lock', async () => {
+      const BUSY = 'dang.ban@erase.test';
+      const busy = await seedSent({ recorder: 'owner', summary: `Gửi ${BUSY} bản ghi.` });
+      const holder = new pg.Client({ connectionString: adminUrl });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))', [`meetings.followup:${orgId}:${busy}`]);
+        await expect(erase(BUSY)).rejects.toMatchObject({ code: 'PERSONAL_DATA_BUSY' });
+      } finally {
+        await holder.query('ROLLBACK');
+        await holder.end();
+      }
+      // The whole erasure rolled back: the summary still holds the value and the mail its copy.
+      expect((await sqlAdmin<{ summary: string }>('SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, busy])).rows[0]?.summary).toContain(BUSY);
+      expect((await mail(busy))[0]?.payload).not.toBeNull();
+      // Asked again once the lock is free, it goes through.
+      await erase(BUSY);
+      expect((await mail(busy))[0]).toMatchObject({ payload: null, subject: null });
     });
   });
 });

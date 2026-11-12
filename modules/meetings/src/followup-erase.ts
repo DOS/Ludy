@@ -11,9 +11,9 @@ import type { QueryContext } from '@crove/kernel-runtime';
 type Ctx = { trx: QueryContext['trx']; orgId: string };
 
 /** The lock one meeting's follow-up send and the drop below share: a send running while the meeting is deleted either finishes first (its mails are then seen and dropped) or
- * waits and finds the meeting gone, so no mail with the text outlives the delete. Held to the end of the transaction. */
+ * waits and finds the meeting gone, so no mail with the text outlives the delete. Held to the end of the transaction. The id is lowercased, as the database writes a uuid, so an upper case id of a command input takes the same lock. */
 export async function lockFollowup(ctx: Ctx, meetingId: string): Promise<void> {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${meetingId}`}, 0))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${meetingId.toLowerCase()}`}, 0))`.execute(ctx.trx);
 }
 
 /** Drops the payload of every follow-up mail of the meeting; answers how many were dropped (a count for the audit row, never text). */
