@@ -133,6 +133,14 @@ suite('a run beside a ready result is closed as succeeded (#3058)', () => {
     expect(await result(other.runId)).toEqual({ status: 'ready', error_code: null });
   });
 
+  it('supersedes a run whose result failed, and leaves that result as it was', async () => {
+    const failedRun = await start(users.carol, 'notes.todo_suggest');
+    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'failed', error_code = 'MODEL_FAILED' WHERE org_id = $1 AND run_id = $2`, [orgId, failedRun.runId]);
+    await start(users.carol, 'notes.todo_suggest');
+    expect(await run(failedRun.runId)).toMatchObject({ status: 'cancelled', error: 'RUN_SUPERSEDED' });
+    expect(await result(failedRun.runId)).toEqual({ status: 'failed', error_code: 'MODEL_FAILED' });
+  });
+
   it('closes a stored run as succeeded and cancels the others when vy.use is denied, a kill switch is engaged and the member is removed, and the finish after finds nothing', async () => {
     // `wholeMember`: the trigger ends every run of the member (a module kill switch ends only that module's runs, so the notes run is left running).
     const check = async (who: string, trigger: () => Promise<unknown>, wholeMember = true) => {
