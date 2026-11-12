@@ -91,7 +91,7 @@ const THEMES = {
 };
 
 const FONT = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 // A small SVG toolkit: everything is drawn on a W by H canvas with the theme's colours; text is plain and never wider than its box.
 function svg(w, h, title, desc, body, t) {
