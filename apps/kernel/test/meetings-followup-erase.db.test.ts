@@ -409,6 +409,17 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect(out.kept.find((k) => k.column === 'crove_meetings.followup_mail')).toBeUndefined();
       });
 
+      // #3064: the meeting rows of a short number are not redacted either, so the per-meeting pass finds no changed row and drops nothing: the mail keeps its payload and subject.
+      it('keeps the follow-up mail of a meeting whose rows hold a number of fewer than 10 digits, as the rows themselves are kept', async () => {
+        const dated = await seedSent({ recorder: 'owner', summary: 'Hẹn ngày 2026-11-12 gửi báo giá.', subject: 'Báo giá hạn 2026-11-12' });
+        const out = await erase('20261112');
+        expect(await sqlAdmin<{ summary: string }>('SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, dated]).then((r) => r.rows[0]?.summary)).toBe('Hẹn ngày 2026-11-12 gửi báo giá.');
+        expect((await mail(dated))[0]).toMatchObject({ subject: 'Báo giá hạn 2026-11-12' });
+        expect((await mail(dated))[0]?.payload).not.toBeNull();
+        expect(await lastAudit()).toMatchObject({ follow_up_mails: 0 });
+        expect(out.erased.filter((r) => r.column.startsWith('crove_meetings.'))).toEqual([]);
+      });
+
       // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to
       // bite by one follow-up mail with a very large payload (about 54 MB of text: the matcher needs over a second for it, against the 400 ms below).
       it('skips the by-text pass and says so when the scan hits the statement timeout, and still erases the rest', async () => {
