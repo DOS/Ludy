@@ -1266,8 +1266,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
             );
           }
           await c.query(
-            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${FEAT.cols})
-             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${FEAT.vals})`,
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${opts.agentKind === "member_vy" ? FEAT.cols : ""})
+             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${opts.agentKind === "member_vy" ? FEAT.vals : ""})`,
             [orgId, runId, agentId],
           );
         } finally {

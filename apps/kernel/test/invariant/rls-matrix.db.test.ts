@@ -3270,6 +3270,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           status: 'running',
           started_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+          ...AI_RUN_FEATURE,
         },
       },
     ]);
@@ -3307,6 +3308,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           status: 'running',
           started_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+          ...AI_RUN_FEATURE,
         },
       },
     ]);
