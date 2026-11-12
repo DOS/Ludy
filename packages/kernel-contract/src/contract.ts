@@ -366,7 +366,7 @@ import {
 } from './meetings.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
-import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
+import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -551,6 +551,11 @@ export const contract = {
     grant: {
       list: oc.input(z.strictObject({})).output(z.array(zMcpGrantView)),
       revoke: oc.input(zMcpGrantRevoke).output(zMcpGrantRevoked),
+    },
+    // Whether members may connect their own AI app (an owner turns it on; off by default).
+    memberGrants: {
+      get: oc.input(z.strictObject({})).output(zMcpMemberGrantsView),
+      set: oc.input(zMcpMemberGrantsSet).output(zMcpMemberGrantsView),
     },
     // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the receiver and schedule an owner or admin sets, and a secret shown once.
     wake: {

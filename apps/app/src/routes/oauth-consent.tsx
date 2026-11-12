@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The consent page of an MCP client (/oauth/interaction/<uid>, ADR-0051 decision 2, issue #2975). The person, signed in as usual, sees who is asking (the
 // name the client gave itself, marked as not verified, and the address it returns to, which is the one fact they can check), picks the org, reads in plain words
-// what the connection may read, and answers. Only an owner or admin may answer for an org. The client never sees a password or a session: it gets a one-time
+// what the connection may read, and answers. An owner or admin may answer for the company or for themself; a member or viewer only for themself, and only where an owner turned that on. The client never sees a password or a session: it gets a one-time
 // code, which it trades for its own tokens. No AI takes part on this page.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -20,15 +20,19 @@ export function OauthConsentPage({ uid }: { uid: string }) {
     queryFn: async () => (await (await apiFetch(`/oauth/interaction/${encodeURIComponent(uid)}/details`)).json()) as ConsentDetails,
   });
   const [chosen, setChosen] = useState<string | null>(null);
+  const [chosenKind, setChosenKind] = useState<'company' | 'member'>('company');
   const orgs = details.data?.orgs ?? [];
   const org = orgs.find((o) => o.orgId === chosen) ?? (orgs.length === 1 ? orgs[0] : undefined);
+  // A member or viewer can only connect for themself; an owner or admin picks.
+  const privileged = org?.role === 'owner' || org?.role === 'admin';
+  const kind: 'company' | 'member' = privileged ? chosenKind : 'member';
 
   const answer = useMutation({
     mutationFn: async (decision: 'approve' | 'deny') => {
       const response = await apiFetch(`/oauth/interaction/${encodeURIComponent(uid)}/consent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(decision === 'approve' ? { decision, orgId: org?.orgId } : { decision }),
+        body: JSON.stringify(decision === 'approve' ? { decision, orgId: org?.orgId, kind } : { decision }),
       });
       const body = (await response.json()) as { redirectTo?: string };
       return safeResume(body.redirectTo ?? '', window.location.origin);
@@ -64,7 +68,23 @@ export function OauthConsentPage({ uid }: { uid: string }) {
                 </label>
               ))}
             </fieldset>
+            {org && privileged && (
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium text-foreground">{t('chooseKind')}</legend>
+                {(['company', 'member'] as const).map((k) => (
+                  <label key={k} className="flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-sm text-foreground">
+                    <input type="radio" name="kind" value={k} checked={kind === k} onChange={() => setChosenKind(k)} />
+                    <span>{t(k === 'company' ? 'kindCompany' : 'kindMember')}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
             {org && <p className="text-sm font-medium text-foreground">{t('allow', { client: details.data.client.name, org: org.name })}</p>}
+            {org && kind === 'member' && (
+              <p className="text-sm text-foreground" data-testid="oauth-consent-member-only">
+                {t('memberOnly', { org: org.name })}
+              </p>
+            )}
             <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
               <li>{t('scope.read')}</li>
               <li>{t('limits')}</li>

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Connected AI apps" in Settings (ADR-0051 decision 2, issue #2975): for owners and admins, the MCP clients that were given read access to this org, each with
-// a one-click disconnect and, per client, an optional signed wake-up webhook (OrgMcpWake). The kernel lists and revokes with kernel.mcp.grant.list and revoke and never returns a token; a disconnected client is refused on its next
+// a one-click disconnect and, per client, an optional signed wake-up webhook (OrgMcpWake). A member sees only their own connections; an owner also holds the org's
+// switch for member-bound connections (off by default). The kernel lists and revokes with kernel.mcp.grant.list and revoke and never returns a token; a disconnected client is refused on its next
 // request (its tokens stop at once) and the revoke writes an audit row. The name a client shows is the one it gave itself. No AI takes part on this screen.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -14,7 +15,7 @@ import { OrgMcpWake } from './org-mcp-wake.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Message keys cannot hold a dot, so a scope id has its own key.
-const SCOPE_KEY = { 'ludy.read': 'ludy_read' } as const;
+const SCOPE_KEY = { 'ludy.read': 'ludy_read', 'ludy.member.read': 'ludy_member_read' } as const;
 
 export interface GrantMember {
   userId: string;
@@ -22,11 +23,36 @@ export interface GrantMember {
   email: string;
 }
 
-export function OrgMcpGrants({ members }: { members: readonly GrantMember[] }) {
+// The org's switch for member-bound grants: an owner turns it on or off. Off by default. Turning it off ends every non-admin member's connection at its next request.
+function MemberGrantsSwitch() {
+  const t = useTranslations('orgMcpGrants');
+  const current = useQuery(orpc.mcp.memberGrants.get.queryOptions({ input: {} }));
+  const set = useMutation(
+    orpc.mcp.memberGrants.set.mutationOptions({
+      onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() }),
+      onError: () => void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() }),
+    }),
+  );
+  if (!current.data) return null;
+  return (
+    <div className="space-y-1 rounded-lg border p-3 text-sm" data-testid="org-mcp-member-grants">
+      <label className="flex items-center gap-2 text-foreground">
+        <input type="checkbox" checked={current.data.enabled} disabled={set.isPending} onChange={(e) => set.mutate({ enabled: e.target.checked })} />
+        <span className="font-medium">{t('memberSwitch')}</span>
+      </label>
+      <p className="text-xs text-subtle-foreground">{t('memberSwitchHint')}</p>
+      {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// `viewerRole` decides what is shown: an owner or admin sees every connection of the org, with its wake-up; any other member only their own, and an owner also has the switch.
+export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: readonly GrantMember[]; viewerRole?: string }) {
+  const canManage = viewerRole === 'owner' || viewerRole === 'admin';
   const t = useTranslations('orgMcpGrants');
   const f = useFormat();
   const grants = useQuery(orpc.mcp.grant.list.queryOptions({ input: {} }));
-  const wakes = useQuery(orpc.mcp.wake.get.queryOptions({ input: {} }));
+  const wakes = useQuery({ ...orpc.mcp.wake.get.queryOptions({ input: {} }), enabled: canManage });
   const [confirm, setConfirm] = useState<string | null>(null);
   const revoke = useMutation(
     orpc.mcp.grant.revoke.mutationOptions({
@@ -54,7 +80,8 @@ export function OrgMcpGrants({ members }: { members: readonly GrantMember[] }) {
   return (
     <Card className="block space-y-3 p-4" data-testid="org-mcp-grants">
       <h2 className="text-base font-semibold text-foreground">{t('title')}</h2>
-      <p className="text-sm text-muted-foreground">{t('intro')}</p>
+      <p className="text-sm text-muted-foreground">{t(canManage ? 'intro' : 'introOwn')}</p>
+      {viewerRole === 'owner' && <MemberGrantsSwitch />}
       {grants.isPending && <RowsSkeleton rows={2} />}
       {grants.error && <ErrorText>{errorMessage(grants.error)}</ErrorText>}
       {grants.data && live.length === 0 && <p className="text-sm text-muted-foreground">{t('none')}</p>}
@@ -73,7 +100,7 @@ export function OrgMcpGrants({ members }: { members: readonly GrantMember[] }) {
                 {t('givenBy', { name: nameOf(r.userId) })}
                 {` · ${r.lastUsedAt ? t('lastUsed', { at: f.dateTime(r.lastUsedAt) }) : t('neverUsed')} · ${t('expiresAt', { at: f.dateTime(r.expiresAt) })}`}
               </p>
-              {wakes.data && <OrgMcpWake key={`${r.id}:${wakes.dataUpdatedAt}`} grantId={r.id} view={wakes.data.find((w) => w.grantId === r.id)} />}
+              {canManage && wakes.data && <OrgMcpWake key={`${r.id}:${wakes.dataUpdatedAt}`} grantId={r.id} view={wakes.data.find((w) => w.grantId === r.id)} />}
               {revoke.error && revoke.variables?.grantId === r.id && <ErrorText>{errorMessage(revoke.error)}</ErrorText>}
             </div>
             {confirm === r.id ? (

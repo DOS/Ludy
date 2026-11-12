@@ -1255,10 +1255,8 @@ export function SettingsPage() {
         {getConfig().modules.includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
           <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />
         )}
-        {/* The AI apps connected over MCP (#2975), when the deployment runs the endpoint; owners and admins. */}
-        {getConfig().mcpEnabled === true && canManage && org.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
-          <OrgMcpGrants key={`org-mcp-grants:${org.data.slug}`} members={org.data.members} />
-        )}
+        {/* The AI apps connected over MCP (#2975), when the deployment runs the endpoint: an owner or admin sees the org's, a member only their own. */}
+        {getConfig().mcpEnabled === true && org.data && <OrgMcpGrants key={`org-mcp-grants:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} />}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}
       </div>
     </>

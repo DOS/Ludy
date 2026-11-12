@@ -2644,6 +2644,7 @@ export interface KernelTenantTable {
   meeting_audio_retention_days: Generated<number>;
   meeting_video_retention_days: Generated<number>;
   meeting_text_retention_days: Generated<number>;
+  mcp_member_grants: Generated<boolean>;
 }
 
 /** crove_kernel.today_mail */

@@ -26,7 +26,7 @@ const CONTROL_PLANE: ModuleManifest = {
   tables: {
     crove_kernel: {
       // The MCP endpoint's grants (#2975): a client's name and host as it declared them, never a secret.
-      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'rows_day', 'rows_used']),
+      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'kind', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'rows_day', 'rows_used']),
       // The wake-up receiver of an MCP grant (#3024): the URL can carry a token in its path and the secrets are sealed; none of the three is ever returned to a member who is not an owner or admin.
       agent_grant_wake: columns(['org_id', 'id', 'grant_id', 'enabled', 'paused_reason', 'previous_until', 'secret_hint', 'schedule', 'schedule_minute', 'schedule_weekday', 'next_due_at', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'signals_checked_at', 'created_at', 'updated_at', 'created_by'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
       // One wake-up to send (#3024): its body holds ids, dates and amounts of the org's records, no text; and the keys of the signals already sent for a grant.

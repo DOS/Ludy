@@ -2124,6 +2124,10 @@ export function createRpcHandler(
       ),
     },
     mcp: {
+      memberGrants: {
+        get: os.mcp.memberGrants.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.member_grants.get', {}, { actor, orgId }))),
+        set: os.mcp.memberGrants.set.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.member_grants.set', input, { actor, orgId }))),
+      },
       grant: {
         list: os.mcp.grant.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.grant.list', {}, { actor, orgId }))),
         revoke: os.mcp.grant.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.grant.revoke', input, { actor, orgId }))),
