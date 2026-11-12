@@ -346,12 +346,16 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     let grant: { orgId: string; userId: string; scopes: string[]; clientName: string; kind: 'company' | 'member' } | null = null;
     try {
       const { rows } = await runtime.orgless((db) =>
-        sql<{ org_id: string; user_id: string; scopes: string[]; client_name: string; kind: string }>`
-          SELECT org_id, user_id, scopes, client_name, kind FROM crove_kernel.mcp_grant_verify(${claims.grantId}::uuid, ${claims.clientId}::text)`.execute(db),
+        sql<{ org_id: string; user_id: string; scopes: string[]; client_name: string }>`
+          SELECT org_id, user_id, scopes, client_name FROM crove_kernel.mcp_grant_verify(${claims.grantId}::uuid, ${claims.clientId}::text)`.execute(db),
       );
       const row = rows[0];
-      if (row && row.org_id === claims.orgId && row.user_id === claims.userId && claims.scopes.every((s) => row.scopes.includes(s))) {
-        grant = { orgId: row.org_id, userId: row.user_id, scopes: claims.scopes, clientName: row.client_name, kind: row.kind === 'member' ? 'member' : 'company' };
+      // The grant's kind, read in the database for a grant in good standing; no answer is a refusal like any other.
+      const kindRow = row
+        ? (await runtime.orgless((db) => sql<{ kind: string | null }>`SELECT crove_kernel.mcp_grant_kind(${claims.grantId}::uuid, ${claims.clientId}::text) AS kind`.execute(db))).rows[0]
+        : undefined;
+      if (row && kindRow && (kindRow.kind === 'company' || kindRow.kind === 'member') && row.org_id === claims.orgId && row.user_id === claims.userId && claims.scopes.every((s) => row.scopes.includes(s))) {
+        grant = { orgId: row.org_id, userId: row.user_id, scopes: claims.scopes, clientName: row.client_name, kind: kindRow.kind };
       }
     } catch (error) {
       return problem(c, error);
