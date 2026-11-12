@@ -102,10 +102,12 @@ describe('app pages', () => {
   });
 
   it('are linked from the home page card and the footer in each language', () => {
-    const modules = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'modules.tsx'), 'utf8');
     const footer = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'site-footer.tsx'), 'utf8');
-    // The footer lists every page from the registry; the cards name theirs one by one.
+    // The footer lists every page from the registry; the home page's app cards (components/landing/app-cards.tsx) name theirs in the copy, so
+    // every page has a card in each language, and the card component links it through the registry.
     expect(footer).toContain('Object.keys(APP_PAGES)');
-    for (const key of KEYS) expect(modules, key).toContain(`appPagePath('${key}')`);
+    const cards = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'app-cards.tsx'), 'utf8');
+    expect(cards).toContain('appPagePath(item.page');
+    for (const dict of [vi, en]) for (const key of KEYS) expect(dict.appCards.items.some((item) => item.page === key), `${dict.lang} ${key}`).toBe(true);
   });
 });
