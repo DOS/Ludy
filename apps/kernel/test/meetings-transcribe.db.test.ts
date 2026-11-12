@@ -335,6 +335,23 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]));
   });
 
+  it('does not start the transcription of another meeting while one of the recorder\'s is still going, and the first one is not cut off (#3029)', async () => {
+    const first = await seedMeeting('recorder');
+    const second = await seedMeeting('recorder');
+    const { runId } = await start('recorder', first);
+    expect(await refuses(start('recorder', second))).toBe('TRANSCRIBE_OTHER_RUNNING');
+    const first1 = await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    expect(first1.rows[0]).toEqual({ status: 'running', error: null });
+    // The refused start made no run and no result for the second meeting.
+    const made = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, second]));
+    expect(made.rows[0]?.n).toBe('0');
+    // Once the first has ended (finished, failed or cancelled), the second starts.
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    expect(await start('recorder', second)).toMatchObject({ runId: expect.any(String) });
+    // Cleaned up for the tests after this one.
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running'`, [orgId]));
+  });
+
   const resultRows = (runId: string) => admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
 
   it('a meeting deleted while it is transcribed stops the run before the next chunk and leaves no result row', async () => {
