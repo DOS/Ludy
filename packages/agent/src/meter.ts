@@ -37,6 +37,8 @@ export const AI_FEATURES = {
   'conversation.contact_rank': 'conversation',
   // The finance coworker's wording of a payment reminder (#2488): the lead-in and the closing only, never a fact of the books.
   'finance.payment_reminder': 'finance',
+  // The meetings coworker's wording of a follow-up email after a meeting (L3, #2590): the lead-in and the closing only, told none of the meeting's content.
+  'meetings.followup_words': 'meetings',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder
