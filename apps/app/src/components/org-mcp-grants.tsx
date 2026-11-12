@@ -47,12 +47,19 @@ function MemberGrantsSwitch() {
 }
 
 // `viewerRole` decides what is shown: an owner or admin sees every connection of the org, with its wake-up; any other member only their own, and an owner also has the switch.
+// The receiver's host of a wake-up an owner or admin may not change: the kernel sends `https://host` and no more.
+function hostOf(url: string | undefined): string | null {
+  const host = url?.replace(/^https:\/\//, '').split('/')[0] ?? '';
+  return host === '' ? null : host;
+}
+
 export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: readonly GrantMember[]; viewerRole?: string }) {
   const canManage = viewerRole === 'owner' || viewerRole === 'admin';
   const t = useTranslations('orgMcpGrants');
   const f = useFormat();
   const grants = useQuery(orpc.mcp.grant.list.queryOptions({ input: {} }));
-  const wakes = useQuery({ ...orpc.mcp.wake.get.queryOptions({ input: {} }), enabled: canManage });
+  // Every role asks: the kernel answers an owner or admin the org's wake-ups (another member's by host only) and anyone else their own.
+  const wakes = useQuery(orpc.mcp.wake.get.queryOptions({ input: {} }));
   const [confirm, setConfirm] = useState<string | null>(null);
   const revoke = useMutation(
     orpc.mcp.grant.revoke.mutationOptions({
@@ -92,6 +99,7 @@ export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: reado
               <p className="flex flex-wrap items-center gap-2 text-foreground">
                 <span className="truncate font-medium">{r.clientName}</span>
                 <span className="truncate text-muted-foreground">{r.clientHost}</span>
+                {r.kind === 'member' && <Badge variant="outline">{t('memberKind')}</Badge>}
                 {r.scopes.map((s) => (
                   <Badge key={s}>{t(`scope.${SCOPE_KEY[s]}`)}</Badge>
                 ))}
@@ -100,7 +108,13 @@ export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: reado
                 {t('givenBy', { name: nameOf(r.userId) })}
                 {` · ${r.lastUsedAt ? t('lastUsed', { at: f.dateTime(r.lastUsedAt) }) : t('neverUsed')} · ${t('expiresAt', { at: f.dateTime(r.expiresAt) })}`}
               </p>
-              {canManage && wakes.data && <OrgMcpWake key={`${r.id}:${wakes.dataUpdatedAt}`} grantId={r.id} view={wakes.data.find((w) => w.grantId === r.id)} />}
+              {wakes.data && (r.kind === 'company' ? canManage : r.mine) && <OrgMcpWake key={`${r.id}:${wakes.dataUpdatedAt}`} grantId={r.id} view={wakes.data.find((w) => w.grantId === r.id)} />}
+              {/* Another member's wake-up: an owner or admin sees that there is one and its host, and cuts it off by disconnecting; they cannot change it. */}
+              {r.kind === 'member' && !r.mine && canManage && hostOf(wakes.data?.find((w) => w.grantId === r.id)?.url) && (
+                <p className="mt-1 text-xs text-subtle-foreground" data-testid="org-mcp-wake-host">
+                  {t('wakeHostOnly', { host: hostOf(wakes.data?.find((w) => w.grantId === r.id)?.url) ?? '' })}
+                </p>
+              )}
               {revoke.error && revoke.variables?.grantId === r.id && <ErrorText>{errorMessage(revoke.error)}</ErrorText>}
             </div>
             {confirm === r.id ? (

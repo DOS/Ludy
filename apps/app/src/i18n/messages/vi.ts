@@ -5660,6 +5660,8 @@ export const vi = {
     revokeHint: 'Quyền có hiệu lực tối đa {days, number} ngày. Bạn ngắt bất cứ lúc nào ở Cài đặt, mục ứng dụng AI đã kết nối; nút Dừng AI của tổ chức cũng cắt quyền ngay.',
   },
   orgMcpGrants: {
+    memberKind: 'Kết nối riêng',
+    wakeHostOnly: 'Có tin đánh thức gửi tới {host}. Chỉ người đã kết nối mới đổi được; ngắt kết nối để dừng.',
     title: 'Ứng dụng AI đã kết nối',
     intro: 'Các ứng dụng AI (Claude, ChatGPT, agent của bạn…) được chủ sở hữu hoặc quản trị viên cho đọc dữ liệu tổ chức này. Ngắt kết nối thì ứng dụng bị từ chối ngay từ yêu cầu tiếp theo. Tên hiển thị do ứng dụng tự đặt.',
     introOwn: 'Các ứng dụng AI (Claude, ChatGPT, agent của bạn…) bạn đã kết nối với tổ chức này, với đúng quyền của bạn. Ngắt kết nối thì ứng dụng bị từ chối ngay từ yêu cầu tiếp theo.',
