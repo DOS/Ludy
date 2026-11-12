@@ -69,6 +69,7 @@ export const kernelManifest = defineModule({
       mail_message: columns(['org_id', 'id', 'stream', 'source', 'source_id', 'template_key', 'template_version', 'to_hash', 'message_id_header', 'status', 'attempts', 'provider', 'provider_message_id', 'error_code', 'created_by', 'created_at', 'updated_at', 'sent_at'], { to_address: 'contact', subject: 'pii', payload: 'pii' }),
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
+      mcp_member_table: columns(['table_name', 'mode', 'adr']),
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
       member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_by_owner', 'set_at']),
