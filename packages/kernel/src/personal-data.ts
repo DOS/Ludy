@@ -16,7 +16,7 @@
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { NOTE_BODY_MAX, NOTE_TITLE_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, NOTE_BODY_MAX, NOTE_TITLE_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -924,6 +924,27 @@ export const personalDataErase = defineCommand({
       }
       if (r.audio_until || r.video_until) mediaOf.push({ id: r.meeting_id, audio: r.audio_until, video: r.video_until });
     }
+    // The copy of a meeting's text in its follow-up mails (#3020, ADR-0047 point 7): meetings.followup.send stores the shared summary, decisions and owners as the mail's payload, and the
+    // recorder may type meeting content into its subject. When the redaction changed rows of a meeting, those two columns of that meeting's follow-up mails are dropped in the same
+    // transaction (the mail guard lets them only be dropped; the tenant role holds UPDATE on exactly them). A meeting where nothing changed keeps its mails. The lock is the one of
+    // modules/meetings/src/followup-erase.ts, so a send running at the same moment either finishes first (its mail is dropped too) or is refused its retry. The definer above already holds the
+    // meeting rows, while the meeting delete commands take this lock first and the row after: waiting for the lock here could deadlock with them, so it is only tried, and a busy meeting
+    // answers the same retryable PERSONAL_DATA_BUSY as a deadlock in the scan (the whole erasure rolls back, nothing is half done). Only the count reaches the audit row.
+    let followupMails = 0;
+    for (const r of redaction ?? []) {
+      if (Number(r.lines) + Number(r.results) + Number(r.items) + Number(r.titles) === 0) continue;
+      const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${r.meeting_id}`}, 0)) AS ok`.execute(ctx.trx);
+      if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa cùng lúc; hãy thử lại sau ít phút');
+      const dropped = await ctx.trx
+        .updateTable('crove_kernel.mail_message')
+        .set({ payload: null, subject: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('source', '=', FOLLOWUP_MAIL_SOURCE)
+        .where('source_id', '=', r.meeting_id)
+        .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
+        .executeTakeFirst();
+      followupMails += Number(dropped.numUpdatedRows);
+    }
     // The retention dates of the meetings the owner reads (row security shows only those); the others are counted, their dates never shown.
     const readable = new Set(
       mediaOf.length === 0
@@ -1015,7 +1036,7 @@ export const personalDataErase = defineCommand({
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
     // Counts and ids only: the value and the text never reach the audit log.
-    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
+    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
     return result;
   },
 });
