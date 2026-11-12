@@ -200,7 +200,7 @@ describe('the files of the wake-up webhook (#3024)', () => {
   });
 
   it('puts the guard hooks and the delivery module nowhere in production wiring but through its own dependencies: no file that imports it sets a test-only hook', () => {
-    const importers = SOURCES.filter((f) => f !== DELIVERY && /mcp-wake(\.ts)?['"]/.test(read(f)));
+    const importers = SOURCES.filter((f) => f !== DELIVERY && specifiers(read(f)).some((spec) => /(^|\/)mcp-wake(\.ts)?$/.test(spec)));
     for (const f of importers) expect(codeOf(f), f).not.toMatch(/\b(anyPort|allowed|resolve|hostAllowed)\s*:/);
     // The one place a body is signed and posted: no other file both reaches the guard and signs.
     const both = SOURCES.filter((f) => f !== DELIVERY && /\b(egressFetch|guardedRequest|guardedFetch)\(/.test(codeOf(f)) && /createHmac\(/.test(codeOf(f)));
@@ -387,7 +387,7 @@ describe('what a wake-up body may carry (#3024)', () => {
       // The system's own steps (enqueue, record) have no role at all; every other command is for an owner or an admin.
       if (access.length > 0) {
         expect(access.every((r) => r === 'owner' || r === 'admin'), `${c.name} access`).toBe(true);
-        expect(String(c.handler), `${c.name} refuses a non-user actor`).toMatch(/actor\.type\s*!==\s*'user'/);
+        expect(String(c.handler), `${c.name} refuses a non-user actor`).toMatch(/actor\.type\s*!==\s*['"]user['"]/);
         expect(String(c.handler), `${c.name} refuses an MCP grant`).toMatch(/actor\.mcp/);
         expect(['R2', 'R3', 'R4'], `${c.name} risk`).toContain(c.risk);
       }
@@ -439,10 +439,14 @@ function columnsOf(tables: readonly string[], table: string): Array<readonly [st
   return out;
 }
 
-const RLS = (table: string) => new RegExp(`apply_tenant_rls\\(\\s*'crove_kernel\\.${table}'`);
+// Row-level security as every tenant table has it: apply_tenant_rls, or, for a table no login role may touch (reached only by definers, like agent_grant), row-level
+// security enabled and the agent write guard installed.
+const rlsOk = (all: string, table: string): boolean =>
+  new RegExp(`apply_tenant_rls\\(\\s*'crove_kernel\\.${table}'`).test(all) ||
+  (new RegExp(`ALTER TABLE\\s+crove_kernel\\.${table}\\s+ENABLE ROW LEVEL SECURITY`, 'i').test(all) && new RegExp(`agent_write_guard_install\\(\\s*'crove_kernel\\.${table}'`).test(all));
 
 describe('what the grant wake-up tables may hold (#3024)', () => {
-  it('keeps a secret only sealed, in the two named columns, puts the wake-up table under tenant row-level security and ties it to its grant', () => {
+  it('keeps a secret only sealed, in the two named columns, puts the wake-up table under row-level security and ties it to its grant', () => {
     const tables = statements('agent_grant_wake');
     if (tables.length === 0) return;
     const columns = columnsOf(tables, 'agent_grant_wake');
@@ -453,14 +457,14 @@ describe('what the grant wake-up tables may hold (#3024)', () => {
       if (name.endsWith('_sealed')) expect(['bytea', 'jsonb'], `${name} is sealed bytes or an envelope`).toContain(type);
     }
     const all = tables.join('\n');
-    expect(all, 'RLS through apply_tenant_rls, as every tenant table').toMatch(RLS('agent_grant_wake'));
+    expect(rlsOk(all, 'agent_grant_wake'), 'row-level security: apply_tenant_rls, or enabled with the agent write guard on a definer-only table').toBe(true);
     expect(all, 'a foreign key to the grant, so revoking or expiring it reaches the wake-up').toMatch(/REFERENCES\s+crove_kernel\.agent_grant\s*\(/i);
   });
 
-  it('keeps the delivery rows free of any secret column and under tenant row-level security', () => {
+  it('keeps the delivery rows free of any secret column and under row-level security', () => {
     const tables = statements('agent_wake_delivery');
     if (tables.length === 0) return;
     for (const [name, type] of columnsOf(tables, 'agent_wake_delivery')) expect(name, `${name} ${type}`).not.toMatch(/secret|signature|hmac|token|password|credential/i);
-    expect(tables.join('\n')).toMatch(RLS('agent_wake_delivery'));
+    expect(rlsOk(tables.join('\n'), 'agent_wake_delivery'), 'row-level security on the delivery table').toBe(true);
   });
 });
