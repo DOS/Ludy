@@ -158,7 +158,7 @@ const codeOf = (path: string) =>
 // the delivery table) additionally needs its two files and its queue. So the setup can land before the delivery, and the delivery cannot land half-built.
 const MARKS = ['Ludy-Signature', 'kernel-mcp-wake', 'agent_wake_delivery'];
 const featureFiles = [...new Set([...MARKS.flatMap((m) => naming(SOURCES, m)), ...MARKS.flatMap((m) => naming(MIGRATIONS, m))])].sort();
-const wakeQueues = Object.entries(QUEUES).filter(([, name]) => /mcp-wake/.test(name));
+const wakeQueues: Array<[string, string]> = Object.entries(QUEUES).filter(([, name]) => /mcp-wake/.test(name));
 
 // Every number a source gives a limit: a literal, or a constant of literals and products (`4 * 1024`, `10_000`, `export const MAX: number = 4096 as const`).
 // None found is null (a limit that cannot be read is a failure, not a pass); a decoy elsewhere cannot hide a large one, since every match counts.
