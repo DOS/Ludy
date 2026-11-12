@@ -51,15 +51,15 @@ Every number comes from the repository, not from a slide. `node tools/readme-ass
 | Number | How it is counted |
 |---|---|
 | 7 modules | The directories under `modules/` (ads, crm, finance, hr, meetings, notes, social), on top of the always-on `kernel`. |
-| 929 commands and queries | The lengths of the command and query lists the kernel and each module register with the runtime: 601 commands and 328 queries. |
+| 931 commands and queries | The lengths of the command and query lists the kernel and each module register with the runtime: 602 commands and 329 queries. |
 | 535 database migrations | The tracked `supabase/migrations/*.sql` files. |
-| 10,000+ test cases | Lines that open an `it(` or `test(` case in tracked `*.test.ts(x)` files (10,025). A table-driven case counts once, so the number of runs is higher. |
+| 10,000+ test cases | Lines that open an `it(` or `test(` case in tracked `*.test.ts(x)` files (10,057). A table-driven case counts once, so the number of runs is higher. |
 | 136 invariant test suites | Test files in `test/invariant/` directories, plus the pgTAP gate files `supabase/tests/database/_*.test.sql` ([what they guard](docs/security/invariant-suite.md)). |
 | 36 design decisions | The tracked `docs/adr/NNNN-*.md` files. |
 | 2 app languages | The message files in `apps/app/src/i18n/messages/` (Vietnamese and English). |
 | 4 AI coworkers | The coworkers on the landing page's roster that have shipped work (Vy, Ly, Dy, Uy; a coworker with none is not listed). |
 | 3 read-only MCP tools | The `ludy_*` tools in `apps/kernel/src/mcp-endpoint.ts`. An AI app such as Claude or ChatGPT can read customers and invoices only after an owner or admin allows it. The [connection guide](docs/runbooks/mcp-connect-claude-chatgpt.md) marks which steps were checked with the official MCP client and which are not yet checked against the real apps. |
-| 580k+ lines of TypeScript | `git ls-files '*.ts' '*.tsx' \| xargs cat \| wc -l` (581,302), tests and generated code included. |
+| 580k+ lines of TypeScript | `git ls-files '*.ts' '*.tsx' \| xargs cat \| wc -l` (582,939), tests and generated code included. |
 
 </details>
 

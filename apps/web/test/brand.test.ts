@@ -92,7 +92,7 @@ describe('brand on the landing page (#1683)', () => {
       expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
       expect(dict.modules.sales.suggest, dict.lang).toContain(N.sales);
       expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toContain(N.finance);
-      expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
+      expect(dict.agents.team.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
   });
 
