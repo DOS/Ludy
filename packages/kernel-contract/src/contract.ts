@@ -366,7 +366,7 @@ import {
 } from './meetings.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
-import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpWakeCleared, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
+import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -558,6 +558,8 @@ export const contract = {
       set: oc.input(zMcpWakeSet).output(zMcpWakeWithSecret),
       rotateSecret: oc.input(zMcpWakeGrantRef).output(zMcpWakeWithSecret),
       clear: oc.input(zMcpWakeGrantRef).output(zMcpWakeCleared),
+      // A `ping` to the receiver, to see it arrive: at most one a minute per grant.
+      test: oc.input(zMcpWakeGrantRef).output(zMcpWakeTested),
     },
   },
   extension: {

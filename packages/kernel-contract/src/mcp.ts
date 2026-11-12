@@ -99,4 +99,5 @@ export type McpWakeView = z.infer<typeof zMcpWakeView>;
 // What set and rotate answer: the view and, only when a secret was just made, the secret itself, once. It is shown to the person who asked and kept nowhere in the clear.
 export const zMcpWakeWithSecret = zMcpWakeView.extend({ secret: z.string().nullable() });
 export type McpWakeWithSecret = z.infer<typeof zMcpWakeWithSecret>;
+export const zMcpWakeTested = z.strictObject({ grantId: zId, eventId: zId, queued: z.literal(true) });
 export const zMcpWakeCleared = z.strictObject({ grantId: zId, cleared: z.literal(true) });

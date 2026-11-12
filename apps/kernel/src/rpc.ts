@@ -2157,6 +2157,7 @@ export function createRpcHandler(
           }),
         ),
         clear: os.mcp.wake.clear.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.clear', input, { actor, orgId }))),
+        test: os.mcp.wake.test.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.test', input, { actor, orgId }))),
       },
     },
     extension: {
