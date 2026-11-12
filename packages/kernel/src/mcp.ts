@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
@@ -239,5 +240,5 @@ export const mcpParties = defineQuery({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke];
-export const mcpQueries = [mcpGrantList, mcpAbout, mcpParties];
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, ...mcpWakeCommands];
+export const mcpQueries = [mcpGrantList, mcpAbout, mcpParties, ...mcpWakeQueries];

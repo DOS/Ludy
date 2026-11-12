@@ -8711,6 +8711,8 @@ export const en = {
       EXTENSION_TOKEN_INVALID: 'The extension is no longer authorized. Sign in to the extension again.',
       EXTENSION_TOKEN_NOT_FOUND: 'This device was not found, or it is already disconnected.',
       MCP_GRANT_NOT_FOUND: 'This connection was not found, or it is already disconnected.',
+      MCP_WAKE_GRANT_NOT_FOUND: 'This connection was not found, or it is no longer valid.',
+      MCP_WAKE_NOT_FOUND: 'This connection has no wake-up receiver yet.',
       EXTENSION_TOO_MANY: 'Too many extension sign-ins are open. Try again in a few minutes.',
       FORBIDDEN: 'You are not allowed to do this.',
       NOT_FOUND: 'Not found.',
@@ -10560,6 +10562,12 @@ export const en = {
           revoke: 'Disconnect an AI app',
         },
         parties: 'Show an AI app the list of customers, suppliers and contacts',
+        wake: {
+          clear: 'Remove the wake-up receiver of an AI app',
+          get: 'See the wake-up receivers of the AI apps',
+          rotate_secret: 'Rotate the wake-up secret of an AI app',
+          set: 'Set the wake-up receiver and schedule of an AI app',
+        },
       },
       session: {
         revoke: 'Revoke a session',
