@@ -691,7 +691,7 @@ export function createHttpApp(deps: HttpDeps) {
       bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox) },
       // Ad platforms (ADR-0040): which this deployment offers; none leaves the Ads screen with nothing to connect.
       ads: { sandbox: Object.hasOwn(deps.channels?.adsPlatforms ?? {}, 'sandbox_ads') },
-      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), whatsapp: Boolean(deps.channels?.whatsapp), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
+      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), ...(deps.channels?.whatsapp ? { whatsapp: true } : {}), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
     }),
   );
 
