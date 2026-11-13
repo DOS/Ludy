@@ -40,6 +40,7 @@ import { paymentReminderCommands, paymentReminderQueries } from './payment-remin
 import { financeOverviewQuery } from './overview.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
+import { marketplaceBalanceQueries } from './marketplace-balance.ts';
 import { marketplaceIncomeCommands, marketplaceIncomeQueries } from './marketplace-income.ts';
 import { marketplaceRetentionCommands, marketplaceRetentionQueries } from './marketplace-retention.ts';
 import { marketplaceCommands, marketplaceQueries } from './marketplace-orders.ts';
@@ -240,6 +241,7 @@ export const financeQueries = [
   ...stockCountQueries,
   ...marketplaceQueries,
   ...marketplaceIncomeQueries,
+  ...marketplaceBalanceQueries,
   ...marketplaceRetentionQueries,
   financeToday,
   searchQuery,

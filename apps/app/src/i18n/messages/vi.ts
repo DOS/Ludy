@@ -990,7 +990,20 @@ export const vi = {
     eraseHint: 'Sau thời hạn lưu trữ, chủ có thể xóa hồ sơ người đã nghỉ: tên, địa chỉ và khóa mã hóa bị xóa, các dòng lương ở lại mà không gắn với ai. Việc này không hoàn tác được.',
     eraseConfirm: 'Xóa hồ sơ này',
   },
+  marketplaceBalance: {
+    title: 'Sàn',
+    subtitle: 'Tiền của từng sàn thương mại điện tử trong sổ sách: doanh thu đã ghi, số đã đối trừ qua các kỳ thanh toán, số còn chờ và phí chờ hóa đơn. Chỉ đọc từ sổ cái, không có gì để bấm.',
+    platform: 'Sàn',
+    salesPosted: 'Doanh thu đã ghi (131)',
+    paidOut: 'Đã đối trừ qua kỳ thanh toán',
+    awaitingPayout: 'Còn chờ sàn trả',
+    feesAwaitingInvoice: 'Phí chờ hóa đơn (1388)',
+    empty: 'Chưa có sàn nào được ghi sổ',
+    emptyHint: 'Khi kỳ đối soát đầu tiên của một sàn được ghi sổ, tiền của sàn đó hiện ở đây.',
+    note: 'Số liệu đọc từ sổ cái theo đối tượng của từng sàn; bút toán bị đảo được trừ lại, chưa ghi thì là 0.',
+  },
   stock: {
+    marketplaceLink: 'Xem tiền của từng sàn trong sổ sách',
     title: 'Hàng hóa',
     subtitle: 'Mặt hàng, số lượng còn trong kho và các dòng hóa đơn chưa gán hàng. Kho chỉ phản ánh những gì sổ sách đã ghi: không đổi bút toán nào.',
     items: 'Mặt hàng',
@@ -10002,6 +10015,7 @@ export const vi = {
         suggest_source: 'Tìm khách hàng, thuế suất gần đây và các dòng của hóa đơn trước cho bản nháp hóa đơn bán ra',
       },
       marketplace: {
+        balance: 'Xem tiền của từng sàn trong sổ sách',
         assign: 'Gán dòng đơn hàng của sàn cho mặt hàng',
         unassign: 'Bỏ gán dòng đơn hàng của sàn khỏi mặt hàng',
         confirm: 'Nhập báo cáo đơn hàng của sàn',
