@@ -160,7 +160,7 @@ function dayKeys(text: string): string[] {
 const AMOUNT = /(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?!\d)/gu;
 const amountKeys = (text: string): string[] => [...text.matchAll(AMOUNT)].map((m) => m[0].replace(/[.,]/gu, ''));
 // A clock time read as hour and minute, so "9:30" and "09:30" are one time: each whole time of a brief must be the meeting's, not two numbers that happen to be among the facts' digits.
-const TIME = /(?<![\d:.,/-])\d{1,2}:\d{2}(?![\d:])/gu;
+const TIME = /(?<!\d)\d{1,2}:\d{2}(?![\d:])/gu;
 const timeKeys = (text: string): string[] => [...text.matchAll(TIME)].map((m) => {
   const [h = '', mm = ''] = m[0].split(':');
   return `${Number(h)}:${mm}`;

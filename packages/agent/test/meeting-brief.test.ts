@@ -77,6 +77,8 @@ describe('the checks on what the model wrote', () => {
 
   it('checks a whole time, not its digits: 09:20 is refused when the meeting is at 09:30 and a date holds a 20', () => {
     expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc 09:20.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc:09:20.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách (09:20) nhé.' })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc 9:30.' }).kind).toBe('brief');
     expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc 09:30.' }).kind).toBe('brief');
   });
