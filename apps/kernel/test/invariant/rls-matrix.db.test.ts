@@ -197,6 +197,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_draft', ['update', 'delete']],
   ['crove_finance.einvoice_draft_line', ['update', 'delete']],
   ['crove_finance.einvoice_series', ['update', 'delete']],
+  ['crove_finance.marketplace_connection', ['update', 'delete']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
   ['crove_finance.stock_count_line', ['update']],
