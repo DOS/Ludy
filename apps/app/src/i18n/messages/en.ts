@@ -9878,6 +9878,9 @@ export const en = {
         rename: 'Rename a stage of the sales pipeline',
         reorder: 'Reorder the stages of the sales pipeline',
       },
+      signals: {
+        open_deals: 'Read the open deals, to check them against overdue receivables',
+      },
       today: 'Read the CRM items that need you today',
     },
     finance: {

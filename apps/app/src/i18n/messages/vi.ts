@@ -9875,6 +9875,9 @@ export const vi = {
         rename: 'Đổi tên giai đoạn của quy trình bán hàng',
         reorder: 'Sắp xếp lại các giai đoạn của quy trình bán hàng',
       },
+      signals: {
+        open_deals: 'Xem các deal đang mở, để đối chiếu với công nợ quá hạn',
+      },
       today: 'Xem việc CRM cần bạn trong hôm nay',
     },
     finance: {
