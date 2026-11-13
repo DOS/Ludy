@@ -98,3 +98,13 @@ JOY trả lời "Đồng ý" ngày 2026-11-04, nên cả sáu câu dưới đây
 
 - **Để sau** (issue #2587, #2589, #2590, #2592 trong Icebox, #2594 trước khi mở đăng ký công khai): gắn cuộc họp với khách hàng, cơ hội bán hàng, lịch hẹn; tìm kiếm trong các cuộc họp; Vy soạn email sau họp (người bấm gửi); bot tự vào Meet, Zoom, Teams và ghi chú trực tiếp (JOY thấy bot phiền nên để sau); tìm dữ liệu cá nhân trong bản chép lời khi có yêu cầu xóa; ghi âm bằng ứng dụng điện thoại; đưa tiện ích lên cửa hàng của Edge nếu cần.
 - **Không làm**: ứng dụng cài trên máy tính (một ứng dụng chỉ để ghi âm không đáng công duy trì, và Ludy hiện chưa có ứng dụng máy tính nào); nhận diện giọng nói giữa các cuộc họp; ghi mà không báo trước.
+
+## Tình trạng ngày 2026-11-12
+
+Mảng Ghi chú cuộc họp tạm dừng ngày 2026-11-12 (chủ sở hữu chuyển sang máy mới). Không còn phiên làm việc nào chạy, không còn PR (gói thay đổi mã) nào đang mở.
+
+- **Đã xong và đã gộp vào mã:** ghi âm và ghi hình, hộp cát xử lý tệp (crove-media), tự xóa theo thời hạn, tóm tắt cùng quyết định và việc cần làm, ghi trong ứng dụng, tiện ích Chrome (có biểu tượng, tiếng Anh, quy trình đóng gói), liên kết cuộc họp với khách hàng và cơ hội bán hàng (L1), thư cảm ơn sau cuộc họp (L3), tìm dữ liệu cá nhân trong bản chép lời (L5), xóa bản sao trong thư khi xóa cuộc họp (#3016), tên tính năng AI trên trang sử dụng (#3017). Mã chép lời cũng đã gộp nhưng chưa đo độ chính xác.
+- **Đang chạy ở máy chủ thử nghiệm:** bản v0.3.1 (2026-11-11), đã có phần tóm tắt nhưng chưa bật; các phần sau đó sẽ lên ở bản phát hành tiếp theo.
+- **Chờ chủ sở hữu:** duyệt bật tóm tắt trong phiên "0: Điều phối"; tải tiện ích lên Chrome Web Store và gửi mã tiện ích (#2584, #3010); bản ghi mẫu có đồng ý, câu trả lời của luật sư và khóa nhà cung cấp chép lời (#2585, #2578); luật sư xem trang quyền riêng tư (#328).
+- **Để sau:** tìm kiếm trên nhiều cuộc họp (L2), bot tham gia cuộc họp (L4).
+

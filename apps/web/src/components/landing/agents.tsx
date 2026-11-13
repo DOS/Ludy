@@ -1,18 +1,27 @@
-import { Lock } from 'lucide-react';
+// SPDX-License-Identifier: AGPL-3.0-only
+import { Eye, Lock, ShieldCheck, Sparkles, type LucideIcon } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { Section, SectionHead } from './ui';
 
-// The AI team (the general manager and the department coworkers with their roles, from content/roster.ts), then what an agent may do (the org chart itself is
-// the hero): which risk levels it handles alone and which go to a person, plus what agents can never touch.
+const LANE_ICONS: Record<string, LucideIcon> = { self: Sparkles, review: Eye, locked: ShieldCheck };
+// The lanes read left to right as the AI hands over more: dashed (it acts), plain (a person approves), solid and warm (a person with a code).
+const LANE_LOOK: Record<string, string> = {
+  self: 'border-dashed border-accent/70',
+  review: 'border-line-strong/60',
+  locked: 'border-warn/50 bg-warn-soft',
+};
+
+// The AI team (the general manager and the department coworkers with their roles, from content/roster.ts), then what an AI coworker may do in
+// everyday words: three lanes from "does it alone" to "always you", plus what it can never touch (the org chart itself is the hero).
 export function Agents({ dict }: { dict: Dictionary }) {
   const a = dict.agents;
   const m = a.matrix;
   return (
     <Section id="agents" labelledBy="agents-title">
       <SectionHead id="agents-title" title={a.team.title} lead={a.team.lead} />
-      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {a.team.members.map((member) => (
-          <li key={member.name} className="rounded-lg border border-line bg-surface p-4">
+          <li key={member.name} className="rounded-xl border border-line bg-surface p-4">
             <div className="flex items-baseline gap-2">
               <span className="font-display text-lg font-semibold">{member.name}</span>
               <span className="text-sm text-accent-ink">{member.role}</span>
@@ -21,77 +30,51 @@ export function Agents({ dict }: { dict: Dictionary }) {
           </li>
         ))}
       </ul>
-      <h3 id="agents-rules-title" className="mt-12 font-display text-xl font-semibold">
+      <h3 id="agents-rules-title" className="mt-14 font-display text-xl font-semibold">
         {m.title}
       </h3>
       <p className="mt-2 mb-6 max-w-[62ch] text-muted">{m.lead}</p>
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-10">
-        <div className="min-w-0">
-          {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1, #1629). */}
-          <div role="group" aria-labelledby="agents-rules-title" tabIndex={0} className="overflow-x-auto rounded-lg border border-line bg-surface">
-            <table className="w-full min-w-[640px] border-collapse text-sm">
-              <thead>
-                <tr className="text-left text-xs">
-                  <th scope="col" rowSpan={2} className="border-b border-line px-4 py-2 align-bottom font-medium text-subtle">
-                    {m.taskCol}
-                  </th>
-                  <th scope="colgroup" colSpan={2} className="border-b border-line bg-accent-soft/60 px-3 pt-2.5 pb-1 font-medium text-accent-ink">
-                    {m.selfLabel}
-                  </th>
-                  <th scope="colgroup" colSpan={2} className="border-b border-l-2 border-line border-l-accent/60 px-3 pt-2.5 pb-1 font-medium text-warn">
-                    {m.humanLabel}
-                  </th>
-                </tr>
-                <tr className="text-left">
-                  {m.levels.map((level, i) => (
-                    <th key={level.code} scope="col" className={`border-b border-line px-3 pt-1 pb-2.5 align-top font-normal ${i < 2 ? 'bg-accent-soft/60' : ''} ${i === 2 ? 'border-l-2 border-l-accent/60' : ''}`}>
-                      <span className="block font-display text-base font-semibold">{level.code}</span>
-                      <span className="block text-xs text-subtle">{level.label}</span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {m.rows.map((row) => (
-                  <tr key={row.task} className="border-b border-line last:border-b-0">
-                    <th scope="row" className="px-4 py-3 text-left font-normal">
-                      {row.task}
-                    </th>
-                    {m.levels.map((level, i) => (
-                      <td key={level.code} className={`px-3 py-3 ${i < 2 ? 'bg-accent-soft/60' : ''} ${i === 2 ? 'border-l-2 border-l-accent/60' : ''}`}>
-                        {row.level === i ? (
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${
-                              i < 2 ? 'border-accent/50 text-accent-ink' : 'border-warn/50 bg-warn-soft text-warn'
-                            }`}
-                          >
-                            {i === 3 ? <Lock className="size-3" aria-hidden="true" /> : null}
-                            {row.label}
-                          </span>
-                        ) : null}
-                      </td>
-                    ))}
-                  </tr>
+      <ol className="grid gap-4 lg:grid-cols-3">
+        {m.lanes.map((lane, i) => {
+          const Icon = LANE_ICONS[lane.key] ?? Sparkles;
+          return (
+            <li key={lane.key} className={`flex flex-col rounded-xl border bg-surface p-5 ${LANE_LOOK[lane.key] ?? ''}`}>
+              <div className="flex items-center gap-3">
+                <span className="flex size-10 items-center justify-center rounded-lg bg-surface-2 text-accent-ink">
+                  <Icon className="size-5" aria-hidden="true" />
+                </span>
+                <h4 className="font-display text-base leading-snug font-semibold">
+                  <span className="num mr-1.5 text-muted">{i + 1}.</span>
+                  {lane.title}
+                </h4>
+              </div>
+              <p className="mt-3 text-sm text-muted">{lane.body}</p>
+              <ul className="mt-4 flex flex-col gap-2 border-t border-line pt-3 text-sm">
+                {lane.examples.map((example) => (
+                  <li key={example} className="flex gap-2">
+                    <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 rounded-full bg-line-strong" />
+                    {example}
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-3 text-xs text-subtle">{m.note}</p>
-        </div>
-        <aside className="h-fit rounded-lg border border-line bg-surface p-5">
-          <h3 className="font-display text-lg font-semibold">{m.neverTitle}</h3>
-          <ul className="mt-4 flex flex-col gap-4">
-            {m.never.map((item) => (
-              <li key={item.title} className="flex gap-3">
-                <Lock className="mt-1 size-4 shrink-0 text-muted" aria-hidden="true" />
-                <div>
-                  <div className="text-sm font-medium">{item.title}</div>
-                  <p className="text-sm text-muted">{item.body}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </aside>
+              </ul>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-3 text-xs text-subtle">{m.note}</p>
+      <div className="mt-8 rounded-xl border border-line bg-surface p-5">
+        <h3 className="font-display text-lg font-semibold">{m.neverTitle}</h3>
+        <ul className="mt-4 grid gap-4 md:grid-cols-3">
+          {m.never.map((item) => (
+            <li key={item.title} className="flex gap-3">
+              <Lock className="mt-1 size-4 shrink-0 text-muted" aria-hidden="true" />
+              <div>
+                <div className="text-sm font-medium">{item.title}</div>
+                <p className="text-sm text-muted">{item.body}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
     </Section>
   );

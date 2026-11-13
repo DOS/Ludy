@@ -16,6 +16,7 @@ import { metered } from './meter.ts';
 import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
+import { checkFollowupWords, followupInstructions, followupPrompt, type FollowupWordsRequest, type FollowupWordsResult } from './followup.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 import {
   STOCK_MATCH_ITEMS_MAX,
@@ -93,6 +94,7 @@ const zReminderOut = z.object({
 // The model calls, replaceable in tests: what it answered and the tokens it used (for the org's AI cost limit).
 export type IntentGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zIntentOut> | null; usage?: AiUsage }>;
 export type RankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zRankOut> | null; usage?: AiUsage }>;
+export type FollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
@@ -197,6 +199,7 @@ export class InboxReader {
   private readonly generateRank: RankGenerator;
   private readonly generateCompanyRank: CompanyRankGenerator;
   private readonly generateReminder: ReminderGenerator;
+  private readonly generateFollowup: FollowupGenerator;
   private readonly generateOverview: OverviewGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
@@ -206,7 +209,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -237,6 +240,14 @@ export class InboxReader {
       generators.reminder ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.payment_reminder', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateFollowup =
+      generators.followup ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('meetings.followup_words', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
@@ -348,6 +359,14 @@ export class InboxReader {
     const { output, usage } = await this.generateReminder({ system: reminderInstructions(request), prompt: reminderPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkReminderWords(request, output);
+  }
+
+  /** The lead-in and the closing of a meeting's follow-up email (L3, #2590), or why there are none: the model is told nothing of the meeting and its text is refused when it
+   * holds a figure, a link or an address, or is empty or too long (followup.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async followupWords(request: FollowupWordsRequest, onUsage?: (usage: AiUsage) => void): Promise<FollowupWordsResult> {
+    const { output, usage } = await this.generateFollowup({ system: followupInstructions(request), prompt: followupPrompt(request) });
+    if (usage) onUsage?.(usage);
+    return checkFollowupWords(output);
   }
 
   /** The finance coworker on payroll (#2534): what probably changes this month, the anomalies code found in a sentence each, and one payslip explained, from the pseudonymized sheet only

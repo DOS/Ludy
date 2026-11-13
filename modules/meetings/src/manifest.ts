@@ -49,6 +49,8 @@ export const meetingsManifest = defineModule({
         ],
         { title: 'pii' },
       ),
+      // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
+      meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
       meeting_result: columns(['org_id', 'id', 'meeting_id', 'feature', 'stage', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { summary: 'pii', decisions: 'pii' }),
       meeting_video: columns([
@@ -62,8 +64,8 @@ export const meetingsManifest = defineModule({
       ]),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
       transcript_segment: columns(
-        ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'created_at', 'updated_at'],
-        { speaker_label: 'pii', text: 'pii' },
+        ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'tainted', 'source_run_id', 'created_at', 'updated_at'],
+        { speaker_label: 'pii', text: 'pii', search: 'pii' },
       ),
     },
   },

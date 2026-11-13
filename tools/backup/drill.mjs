@@ -106,6 +106,8 @@ function stack(name, port, storage, scratch) {
       ]),
       '  crove-extract:',
       `    image: crove-extract:${TAG}`,
+      '  crove-media:',
+      `    image: crove-media:${TAG}`,
       '  mailpit:',
       '    ports: !reset []',
       'volumes:',
@@ -419,7 +421,7 @@ function teardown() {
   quietly(() => docker(['rm', '-f', TARGET.name]));
   quietly(() => docker(['network', 'rm', TARGET.network]));
   quietly(() => docker(['volume', 'rm', '-f', ARCHIVE_VOLUME]));
-  quietly(() => docker(['image', 'rm', `crove:${TAG}`, `crove-extract:${TAG}`]));
+  quietly(() => docker(['image', 'rm', `crove:${TAG}`, `crove-extract:${TAG}`, `crove-media:${TAG}`]));
   rmSync(work, { recursive: true, force: true });
   log('torn down: both stacks with their volumes and networks, the backup target, the images and the work directory');
 }

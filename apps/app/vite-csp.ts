@@ -53,6 +53,8 @@ export function metaCsp(origins: CspOrigins): string {
     origins.turnstile ? `script-src 'self' ${TURNSTILE_ORIGIN}` : "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' blob: data:",
+    // Audio plays from a blob URL, and a meeting's video from the API's stream route by ticket (#2703).
+    `media-src 'self' blob: ${origins.apiOrigin}`,
     `connect-src ${connect.join(' ')}`,
     ...(origins.turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
     origins.turnstile ? 'trusted-types crove-sw crove-turnstile' : 'trusted-types crove-sw',

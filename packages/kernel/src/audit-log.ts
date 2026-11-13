@@ -161,6 +161,16 @@ async function actorNames(db: Db, orgId: string, rows: readonly AuditRow[]): Pro
   return names;
 }
 
+// The MCP call a row records, when it is one: written by crove_kernel.mcp_call_audit and by the runtime for a refused MCP request, both with
+// mcpCall: true and the client's self-declared name.
+export function auditVia(detail: unknown): AuditEntry['via'] {
+  const raw = typeof detail === 'string' ? safeParse(detail) : detail;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const d = raw as Record<string, unknown>;
+  if (d.mcpCall !== true) return null;
+  return { kind: 'mcp', clientName: typeof d.mcpClientName === 'string' && d.mcpClientName.replace(/\p{Cf}/gu, '') !== '' ? cleanValue(d.mcpClientName.replace(/\p{Cf}/gu, '')) : '?' };
+}
+
 function entry(r: AuditRow, names: ReadonlyMap<string, string>): AuditEntry {
   return {
     id: r.id,
@@ -173,6 +183,7 @@ function entry(r: AuditRow, names: ReadonlyMap<string, string>): AuditEntry {
     targetType: r.target_type,
     targetId: r.target_id,
     proposalId: r.proposal_id,
+    via: auditVia(r.detail),
     detail: auditDetailLine(r.detail),
   };
 }
@@ -215,10 +226,10 @@ export function csvCell(value: string | null): string {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export const AUDIT_CSV_HEAD = ['occurred_at', 'actor_type', 'actor_id', 'actor_name', 'command', 'outcome', 'target_type', 'target_id', 'proposal_id', 'detail'];
+export const AUDIT_CSV_HEAD = ['occurred_at', 'actor_type', 'actor_id', 'actor_name', 'command', 'outcome', 'target_type', 'target_id', 'proposal_id', 'via', 'detail'];
 
 export function auditCsv(entries: readonly AuditEntry[]): string {
-  const lines = entries.map((e) => [e.at, e.actorType, e.actorId, e.actorName, e.command, e.outcome, e.targetType, e.targetId, e.proposalId, e.detail].map(csvCell).join(','));
+  const lines = entries.map((e) => [e.at, e.actorType, e.actorId, e.actorName, e.command, e.outcome, e.targetType, e.targetId, e.proposalId, e.via ? `mcp:${e.via.clientName}` : null, e.detail].map(csvCell).join(','));
   // A byte order mark, so a spreadsheet opens Vietnamese text as UTF-8.
   return `﻿${[AUDIT_CSV_HEAD.join(','), ...lines].join('\r\n')}\r\n`;
 }

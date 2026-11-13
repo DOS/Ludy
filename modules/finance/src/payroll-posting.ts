@@ -75,7 +75,7 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promis
   return { legalEntityId, total: journalVoucherTotal(input.lines) };
 }
 
-// The posting of a run that stands: a voucher naming the run whose entry was not reversed (a reversed one no longer holds the run, #2931; the database rule is the trigger of 20261212124500).
+// The posting of a run that stands: a voucher naming the run whose entry was not reversed (a reversed one no longer holds the run, #2931; the database rule is the trigger of 20261227014500).
 async function livePosting(ctx: QueryContext, runId: string): Promise<{ id: string } | undefined> {
   return ctx.trx
     .selectFrom('crove_finance.journal_voucher as j')

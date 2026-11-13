@@ -675,7 +675,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(insertPosting()).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
   });
 
-  it('makes a writer of a run wait while another holds the posting slot of that run, once an earlier posting was reversed (the advisory lock of 20261212124500, held alone so no other lock explains the wait) (#2931)', async () => {
+  it('makes a writer of a run wait while another holds the posting slot of that run, once an earlier posting was reversed (the advisory lock of 20261227014500, held alone so no other lock explains the wait) (#2931)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const [voucher] = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);

@@ -66,6 +66,16 @@ export class RateLimiter {
     return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((1 - tokens) / rate / 1000)) };
   }
 
+  // Gives back one token a take(key) spent: for a limit that reserves a token before the work and keeps it only when the work fails.
+  // A key with no bucket (dropped since) has all its tokens already.
+  refund(key: string): void {
+    const known = this.buckets.get(key);
+    if (!known) return;
+    const now = this.now();
+    const tokens = Math.min(this.perMinute, known.tokens + Math.max(0, now - known.at) * (this.perMinute / MINUTE_MS));
+    this.buckets.set(key, { tokens: Math.min(this.perMinute, tokens + 1), at: now });
+  }
+
   // What take(key) would answer now, without spending or recording anything. For limits that charge only some
   // requests, such as failed stream ticket redeems (issue #281): peek before the work, take after a failure. An
   // unknown key is allowed (its take may still be refused while the map is full).

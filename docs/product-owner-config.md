@@ -21,6 +21,15 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   English, with no em dashes.
 - agent_account: every runtime posts as the JOY GitHub account, so
   Assignees stay empty; the claim comment is the lock (AGENTS.md).
+- Owner decision 2026-11-10 (Platform PO chat, relayed by the Platform PO to
+  this record): "Tại sao phải chờ tao? Tao có biết code đâu mà chờ?" (Why
+  wait for me? I do not know the code.) A PO merges its line's PRs itself
+  once its own review passes and CI is green on the final head, and does not
+  ask JOY first, a Vy hardening PR included. Unchanged: Production, secret
+  and credential steps still need JOY's own approval in the coordinator's
+  chat, one approval per run (AGENTS.md), for example granting a bucket key a
+  new permission such as `s3:PutObjectTagging` or applying a lifecycle rule
+  to a real bucket. A sub-session still does not merge.
 
 ## Board
 
@@ -49,7 +58,7 @@ turn on `sprint_review` with `line_scopes`.
 | Notes & CRM (notes, to-dos, bookings and calendar) | `line:notes-crm` | `b8743ac2` | `Notes & CRM Product Owner` |
 | Engage (Ludy Engage: Social in `modules/social`, Ads, Hộp thư/Help Desk and the CRM folded in, DESIGN.md 2026-11-03) | `line:social-management` | `735657ce` | `Ludy Engage Product Owner` |
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
-| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
+| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
 
 - Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
   "no for Social" (backlog review, Decision 17), and JOY confirmed on
@@ -66,6 +75,32 @@ turn on `sprint_review` with `line_scopes`.
   CI, deploy and operations. Its PO reviews the shared-core files of any
   line's PR (below); it does not review or approve the rest of another
   line's PR.
+- Owner decision 2026-11-10 (Platform PO chat): "Vy thuộc Platform nha."
+  Vy, the AI general manager across every app (DESIGN.md 1.1), belongs to
+  the Platform line: the agent core (`packages/agent`, the kernel's agents,
+  runs, metering and budgets), member-scoped Vy (ADR-0049, `vy.use`) and
+  Vy's own cross-app work. A line's feature that uses Vy (for example
+  the meeting summary, or Ly's invoice drafts) stays with that line.
+- Owner decisions 2026-11-10 on Vy's architecture and packaging (ADR-0051):
+  Vy's agent brain is a DOS Claw agent on work.dos.ai and Ludy is the gate
+  (MCP endpoint, deterministic signal rules, signed wake-up webhook); Ludy
+  Cloud includes one Vy by default, and the other AI coworkers are paid
+  per-org add-ons.
+- Owner decision 2026-11-13: slice 3d of the member-bound MCP grant (the first private tool
+  and signal for member grants) is deferred, because of the risk of exposing private
+  data. No private tool is built; the member catalog stays empty and the scope
+  `ludy.member.read` stays dark until the owner reopens it.
+- Owner decision 2026-11-11 (Platform PO chat, popup "Đồng ý"): an AI app
+  connected over MCP sees full customer and invoice data like a HubSpot or
+  Twenty MCP does (person names, email, phone, address, tax code, invoice
+  lines), within what the consenting owner or admin can see. Salaries,
+  separately stored bank account records and member-private notes stay out.
+  The consent screen says so.
+- Owner request 2026-11-12: the landing page `apps/web` below the hero is
+  visual and plain-language (no accounting jargon), and its numbers band and
+  the README's are counted from the repository by `tools/readme-assets.mjs`
+  (`--check` in CI keeps them true). Frontend owns the page; the Platform PO
+  built it while Frontend had no live PO session.
 - Line POs are peers (JOY, Platform PO chat, 2026-11-07: "Tại sao PO khác
   lại phải qua mày mà ko làm việc với tao trực tiếp. Mày chỉ ngang hàng thôi
   mà", then option 1 of the PO's recommendation: "Cách 1 mày đề xuất đi").
@@ -119,6 +154,23 @@ The DOS organization ids are the same in every DOS repository.
     tag of `main`. Pushing that tag is a Production step that JOY approves
     in the coordinator's chat (AGENTS.md, "Production, secret and
     credential steps").
+  - Who pushes the tag (learned 2026-11-11): a cloud session cannot. Its
+    git proxy allows writes only to its own branch and pull requests (the
+    GitHub API answers "Write access to this GitHub API path is not
+    permitted", and `git push` of a tag gets 403), and auto mode refuses a
+    Production deploy anyway. So JOY creates the release, or a local
+    session on JOY's machine does it with his approval: open
+    `https://github.com/DOS/Ludy/releases/new?tag=vX.Y.Z&target=main&title=vX.Y.Z`
+    and press Publish. Tag `main` itself: a coordinator that wants an older
+    commit pushes it to its own branch first and passes that branch as
+    `target`, since the form cannot find a commit by its short SHA.
+  - One-time step before the first deploy of a release that carries #2991
+    (every tag after `v0.3.1`): link the GHCR package `ghcr.io/dos/ludy-media`
+    to the repository (Package settings, "Manage Actions access", as
+    `-extract` is), so the read-only deploy token can pull it. Until then
+    that deploy fails at pull and changes nothing; rerun it after linking.
+  - Release history: `CHANGELOG.md` at the repository root, one section per
+    `v*` tag, written by the coordinator when the tag is cut.
 - test_environment: none yet (a beta instance from a `dev` branch is
   planned in plan §3.5).
 

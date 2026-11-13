@@ -145,17 +145,29 @@ services:
       MEETINGS_TRANSCRIBE: ${MEETINGS_TRANSCRIBE:-off}
       # The recorder's Vy summarizing a meeting (#2580): off unless MEETINGS_SUMMARY=on; the meetings module works without it.
       MEETINGS_SUMMARY: ${MEETINGS_SUMMARY:-off}
+      # Meeting videos streamed at once by this process, over all members (3 each, or this many if it is lower); a request over it is told to retry (#2965).
+      MEETINGS_VIDEO_STREAMS_MAX: ${MEETINGS_VIDEO_STREAMS_MAX:-64}
       TRANSCRIBE_BASE_URL: ${TRANSCRIBE_BASE_URL:-}
+      # https by default; set 1 only for a provider on a private network reached over plain http (the audio and the key then travel unencrypted).
+      TRANSCRIBE_ALLOW_INSECURE_HTTP: ${TRANSCRIBE_ALLOW_INSECURE_HTTP:-0}
       TRANSCRIBE_API_KEY: ${TRANSCRIBE_API_KEY:-}
       TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-}
+      # audio_transcriptions (default, a Whisper-class /audio/transcriptions endpoint) or chat_input_audio (/chat/completions with the audio as input_audio, for Gemini's OpenAI-compatible endpoint).
+      TRANSCRIBE_API_MODE: ${TRANSCRIBE_API_MODE:-audio_transcriptions}
       AI_PRICE_AUDIO_PER_MIN: ${AI_PRICE_AUDIO_PER_MIN:-0}
       AI_VISION: ${AI_VISION:-false}
       # The product name users see in the app and in mails (#1040); empty keeps "Ludy".
       BRAND_NAME: ${BRAND_NAME:-}
       # The app's feedback and support link (https: or mailto:); empty hides it.
       SUPPORT_URL: ${SUPPORT_URL:-}
-      # The browser extension ids that may sign in (#2740); empty keeps the store's id (none until the listing exists).
+      # The browser extension ids that may sign in (#2740); empty keeps the Chrome Web Store build's id (#3010); a list replaces it.
       EXTENSION_IDS: ${EXTENSION_IDS:-}
+      # The MCP endpoint and its OAuth 2.1 authorization server (ADR-0051, #2975): off unless OAUTH_SERVER=on, which needs OAUTH_JWKS and OAUTH_COOKIE_KEYS
+      # (docs/runbooks/mcp-endpoint.md) and APP_URL, when set, to be PUBLIC_URL's own origin.
+      OAUTH_SERVER: ${OAUTH_SERVER:-off}
+      OAUTH_JWKS: ${OAUTH_JWKS:-}
+      OAUTH_COOKIE_KEYS: ${OAUTH_COOKIE_KEYS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       TERMS_URL: ${TERMS_URL:-}
       PRIVACY_URL: ${PRIVACY_URL:-}
       # The public status page PUBLIC_URL/status (#678): the prober's last result, on the shared `status` volume.
@@ -274,6 +286,12 @@ services:
       UPLOAD_BEGIN_LIMIT_PER_MINUTE: ${UPLOAD_BEGIN_LIMIT_PER_MINUTE:-20}
       # Every PDF, XML and MIME parse happens in crove-extract (External-tenant gate T12).
       EXTRACT_URL: http://crove-extract:8090
+      # The length of every meeting recording is measured in crove-media (#2985): without it meeting
+      # uploads are refused, because a recording whose length is unknown would bypass the AI meter.
+      MEDIA_URL: ${MEDIA_URL:-http://crove-media:8095}
+      # The same value as crove-media's own: the API refuses a larger recording before it is read (#2989).
+      MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-2147483648}
+      MEDIA_CALL_TIMEOUT_MS: ${MEDIA_CALL_TIMEOUT_MS:-}
       # Extract jobs the worker runs at once, and the sandbox's parser slots it never exceeds (#2119; set the same value on
       # crove-extract below). Unset worker value: 4, or the slots if fewer. AI_MAX_RETRIES: times a failing AI call is sent again.
       EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
@@ -285,9 +303,10 @@ services:
       CREDENTIAL_KEY_PREVIOUS: ${CREDENTIAL_KEY_PREVIOUS:-}
       CREDENTIAL_KEY_FILE: /data/keys/credential.key
       CHANNEL_SANDBOX: ${CHANNEL_SANDBOX:-true}
-      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-true}
+      # Empty means unset: the kernel turns the sandboxes on for a local PUBLIC_URL and off for a public one.
+      EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-}
       BANK_FEED_SANDBOX: ${BANK_FEED_SANDBOX:-false}
-      ADS_SANDBOX: ${ADS_SANDBOX:-true}
+      ADS_SANDBOX: ${ADS_SANDBOX:-}
       BANK_FEED_SANDBOX_WEBHOOK_SECRET: ${BANK_FEED_SANDBOX_WEBHOOK_SECRET:-}
       CHANNEL_BLUESKY: ${CHANNEL_BLUESKY:-true}
       CHANNEL_TELEGRAM: ${CHANNEL_TELEGRAM:-true}
@@ -342,6 +361,7 @@ services:
     networks:
       - default
       - extract
+      - media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -352,7 +372,7 @@ services:
       crove-extract:
         condition: service_healthy
 
-  # The parsing sandbox (plan §7.6). Bytes in, JSON out; only the worker calls it. No credentials on purpose: it refuses
+  # The parsing sandbox (plan §7.6). Bytes in, JSON out; only the kernel (API at upload, worker at transcription) calls it. No credentials on purpose: it refuses
   # to start with any variable but its own EXTRACT_* settings. Its only network is `extract`, which has no route out,
   # and no port is published. Each parse also runs in a short-lived process with no network permission.
   # EXTRACT_CONCURRENCY parser slots (#2119, 1 to 8, default 4): the worker runs that many extract jobs at once. Memory,
@@ -381,30 +401,35 @@ services:
   # Media processing sandbox for AI Meeting Notes (plan §6, ADR-0047, #2577). Bytes in, normalized Opus and segments out;
   # only the worker calls it. No credentials on purpose: it refuses to start with any variable outside its allowlist.
   # Its only network is `media`, which has no route out, and no port is published.
-  # Profiles 'media': M4 wires the worker meetings job and the deploy image override; until then, deploy.sh ignores it.
+  # In the default stack and the pilot layout: the kernel (API and worker) measures every meeting recording in it (#2985), so without it the
+  # Meetings module could store no recording. The release publishes its image and deploy.sh pins it by digest (#2988).
   crove-media:
-    profiles:
-      - media
     build:
       context: .
       dockerfile: apps/media/Dockerfile
     image: crove-media:local
     restart: unless-stopped
     read_only: true
+    # Where a recording sits decrypted while it is measured (#2989): memory, never a disk. A killed or removed container leaves nothing behind. Sized for
+    # the largest measure (a 2 GB video, MEDIA_MAX_INPUT_BYTES) plus slack; it counts against the memory limit below while a recording is there.
+    # The user is the image's `node` (uid 1000). The size and the memory limit scale with MEDIA_CONCURRENCY times the largest recording. A route that
+    # keeps two copies (`/repackage-video`, no caller yet) needs twice the room.
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
-    volumes:
-      - media-scratch:/data/scratch
+      - /data/scratch:size=${MEDIA_SCRATCH_SIZE:-2304m},mode=0700,uid=1000,gid=1000,noexec,nosuid
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 2g
-    memswap_limit: 2g
+    mem_limit: ${MEDIA_MEM_LIMIT:-4g}
+    memswap_limit: ${MEDIA_MEM_LIMIT:-4g}
     cpus: 1
     pids_limit: 128
     environment:
       MEDIA_CONCURRENCY: ${MEDIA_CONCURRENCY:-1}
+      MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-2147483648}
+      MEDIA_TIMEOUT_MS: ${MEDIA_TIMEOUT_MS:-300000}
+      MEDIA_BODY_TIMEOUT_MS: ${MEDIA_BODY_TIMEOUT_MS:-300000}
     networks:
       - media
 
@@ -523,4 +548,3 @@ volumes:
   keys:
   # The prober's last result for the status page (#678): written by the prober, read by the API.
   status:
-  media-scratch:

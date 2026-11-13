@@ -124,7 +124,9 @@ import {
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
-import { onepiece, sealMedia, streamPieces } from './media-seal.ts';
+import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
+import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
+import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { appUrl, publicAuthUrl, type Config } from './config.ts';
@@ -145,6 +147,8 @@ import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
+import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
+import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
@@ -205,11 +209,15 @@ const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 export interface HttpDeps {
   config: Config;
+  // The MCP endpoint's authorization server (ADR-0051, #2975), made when OAUTH_SERVER=on: its routes and POST /mcp exist only then.
+  oauth?: OauthServer;
   // /readyz fails while a live worker runs a build older than this one (#1952, plan §3.5); off for the "all" process.
   workerBuildCheck?: boolean;
   runtime: Runtime;
   store: BlobStore;
   broker?: CredentialBroker;
+  // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
+  mediaMeasurer?: MediaMeasurer;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -283,6 +291,10 @@ export interface HttpDeps {
   videoUploads?: ConcurrencyLimiter;
   // How long a raw meeting upload may go without receiving a byte before it is cancelled (tests shorten it).
   mediaStallMs?: number;
+  // Refused meeting video tickets per client address (#2703). Default: STREAM_REDEEM_FAILURES_PER_MINUTE.
+  videoTicketFailures?: RateLimiter;
+  // Meeting video responses being read at once, per user (#2703). Default: VIDEO_STREAMS_PER_USER each, MEETINGS_VIDEO_STREAMS_MAX in all.
+  videoStreams?: ConcurrencyLimiter;
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
@@ -335,6 +347,9 @@ export const STREAM_RETRY_SECONDS = 15;
 // it by up to the per-address in-flight cap. The in-flight cap bounds the database work of many addresses at once (503 STREAM_BUSY past it), and
 // one address may hold only a quarter of it.
 export const STREAM_REDEEM_FAILURES_PER_MINUTE = 20;
+// Meeting video responses one user may be reading at once through a ticket (#2703): a player opens a few ranges together.
+export const VIDEO_STREAMS_PER_USER = 3;
+const VIDEO_STREAMS_RETRY_SECONDS = 2;
 export const STREAM_REDEEMS_IN_FLIGHT = 32;
 export const STREAM_REDEEMS_IN_FLIGHT_PER_CLIENT = 8;
 
@@ -470,7 +485,9 @@ export const UPLOAD_BUSY_RETRY_SECONDS = 3;
 export const EXPORT_BUSY_RETRY_SECONDS = 5;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
-export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false): string {
+// apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
+// ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
+export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
   const authOrigin = new URL(authUrl, 'http://localhost').origin;
@@ -488,6 +505,9 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     turnstile ? `script-src 'self' ${TURNSTILE_ORIGIN}` : "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' blob: data:",
+    // A meeting's audio plays from a blob URL the app makes, and its video from the stream route by ticket (#2703): media-src
+    // would otherwise fall back to default-src, which refuses blob: and, apart from the API, the API's origin.
+    `media-src 'self' blob:${apiOrigin ? ` ${apiOrigin}` : ''}`,
     `connect-src 'self' ${authOrigin}${storageOrigin ? ` ${storageOrigin}` : ''}`,
     ...(turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
     "object-src 'none'",
@@ -517,6 +537,17 @@ export function createHttpApp(deps: HttpDeps) {
   const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
+
+  // The authorization server's own routes (ADR-0032, #2975), before the global middleware below: the provider writes its answer on the Node response itself.
+  if (deps.oauth) {
+    mountOauthProvider(app, {
+      oauth: deps.oauth,
+      clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
+      registerPerMinute: config.OAUTH_REGISTER_PER_MINUTE,
+      registerGlobalPerMinute: config.OAUTH_REGISTER_GLOBAL_PER_MINUTE,
+      allowedOrigins: (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0),
+    });
+  }
 
   // A request id per request (#2175): in every log line the request makes (JSON logs), and in the `x-request-id` answer
   // header, so a report ("the upload failed at 10:42") can be matched to its lines. Always generated here: an id a caller
@@ -592,12 +623,27 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // The MCP endpoint and its authorization server (ADR-0051 decision 2, #2975): POST /mcp, the metadata, the /oauth routes and the consent page's two calls.
+  // They sit outside /api: they take no browser session (an access token of the embedded authorization server, or the signed-in user's own bearer on the consent calls).
+  if (deps.oauth) {
+    mountMcp(app, {
+      config,
+      runtime,
+      oauth: deps.oauth,
+      authenticate,
+      clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
+      serverVersion: config.CROVE_BUILD ?? 'dev',
+    });
+  }
+
   const allowedExtensionIds = config.EXTENSION_IDS ?? [...DEFAULT_EXTENSION_IDS];
   app.get('/api/config', (c) =>
     c.json({
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
       aiEnabled: deps.aiEnabled,
+      // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
+      mcpEnabled: deps.oauth !== undefined,
       // presigned: the app uploads to a staging key and downloads from the bucket (plan §7.6); direct: through the kernel.
       uploads: store.direct ? 'presigned' : 'direct',
       // The store can sign a short-lived URL for a platform that fetches media (Zalo OA, Instagram, Threads), also when
@@ -1400,6 +1446,108 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // Playback of one meeting's video by a short-lived signed ticket (#2703). A `<video>` cannot send the bearer header, so this
+  // route runs before the bearer middleware below and the credential is the ticket POST /api/meetings/:id/video/ticket
+  // issued (stateless: an HMAC under a key the credential broker derives for this one purpose). The ticket only says who
+  // asked, for which meeting, video file and key, until when. EVERY request, each range included, then checks again that
+  // the session is live (kernel.stream.check) and runs the reader-checked media query as the ticket's user, so a revoked
+  // session or a removed reader loses access on the next request. One answer, 401 VIDEO_TICKET_INVALID, for every
+  // refusal; each one counts against a per-client budget. GET and HEAD only. The ticket is read from the query and goes to
+  // no log (the access line names the route pattern); no CORS headers (a media element makes a no-cors request).
+  const videoTicketFailures = deps.videoTicketFailures ?? new RateLimiter({ perMinute: STREAM_REDEEM_FAILURES_PER_MINUTE });
+  const videoStreams = deps.videoStreams ?? new ConcurrencyLimiter({ total: config.MEETINGS_VIDEO_STREAMS_MAX, perKey: VIDEO_STREAMS_PER_USER });
+  const videoTicketKey = (keyId: string): Buffer | null => {
+    try {
+      const broker = deps.broker ?? createCredentialBroker(config);
+      if (broker.deriveKey) return broker.deriveKey(keyId, MEDIA_TICKET_KEY_LABEL);
+      return broker.derive && broker.keyId === keyId ? broker.derive(MEDIA_TICKET_KEY_LABEL) : null;
+    } catch {
+      // An unknown key id (a rotated-out key) is no key.
+      return null;
+    }
+  };
+  const VIDEO_TICKET_RESPONSE_HEADERS = {
+    'referrer-policy': 'no-referrer',
+    'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+    'content-disposition': 'inline',
+  } as const;
+  app.get('/api/meetings/:id/video/stream', async (c) => {
+    for (const [name, value] of Object.entries(VIDEO_TICKET_RESPONSE_HEADERS)) c.header(name, value);
+    const client = clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS));
+    // A refusal costs the client one token of the failure budget, and its check awaits the database. So the token is reserved here, before
+    // anything is awaited, and given back when the request is not refused: parallel requests cannot all pass a peek before the first
+    // refusal is charged (#2965), and a valid request costs nothing in the end.
+    const budget = videoTicketFailures.take(client);
+    if (!budget.allowed) {
+      c.header('retry-after', String(budget.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: budget.retryAfterSeconds }, 429);
+    }
+    const outcome = { refused: false };
+    try {
+      return await streamByTicket(c, outcome);
+    } finally {
+      if (!outcome.refused) videoTicketFailures.refund(client);
+    }
+  });
+
+  // The checks of a ticket request and, once they pass, the answer. A refusal marks the outcome, so its reserved token stays spent.
+  async function streamByTicket(c: Context, outcome: { refused: boolean }): Promise<Response> {
+    // The same answer for every refusal, and a failure against the client's budget.
+    const refused = () => {
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      outcome.refused = true;
+      return c.json({ code: 'VIDEO_TICKET_INVALID' }, 401);
+    };
+    const ticket = c.req.query('ticket');
+    if (!wellFormedMediaTicket(ticket)) return refused();
+    const keyId = peekMediaTicketKeyId(ticket);
+    const key = keyId === null ? null : videoTicketKey(keyId);
+    if (!key) return refused();
+    const payload = verifyMediaTicket(ticket, key, Math.floor(Date.now() / 1000));
+    key.fill(0);
+    const meetingId = c.req.param('id') ?? '';
+    if (!payload || payload.purpose !== MEDIA_TICKET_PURPOSE || payload.meetingId !== meetingId.toLowerCase()) return refused();
+    // The request limit of the user the ticket proves, as the bearer routes have.
+    const decision = limiter?.take(payload.userId);
+    if (decision && !decision.allowed) {
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    }
+    setLogContext({ orgId: payload.orgId });
+    const actor: UserActor = { type: 'user', userId: payload.userId, aal: payload.aal, sessionId: payload.sessionId, mfaAt: payload.mfaAt };
+    // A refusal of the database (session gone, member gone, reader removed, retention over, key shredded) is the same 401;
+    // anything else (the database down) is an error of ours.
+    const fail = (error: unknown) => (error instanceof DomainError && error.status >= 400 && error.status < 500 ? refused() : problem(c, error));
+    try {
+      await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId: payload.orgId });
+    } catch (error) {
+      return fail(error);
+    }
+    const release = videoStreams.tryAcquire(payload.userId);
+    if (!release) {
+      c.header('retry-after', String(VIDEO_STREAMS_RETRY_SECONDS));
+      return c.json({ code: 'RATE_LIMITED', message: 'Quá nhiều luồng video đang mở, hãy thử lại sau', retryAfterSeconds: VIDEO_STREAMS_RETRY_SECONDS }, 429);
+    }
+    return serveMeetingMedia(c, {
+      kind: 'video',
+      actor,
+      orgId: payload.orgId,
+      meetingId: payload.meetingId,
+      headOnly: c.req.method === 'HEAD',
+      headers: { ...VIDEO_TICKET_RESPONSE_HEADERS },
+      expect: { fileId: payload.fileId, keyId: payload.keyId },
+      // A player sends several overlapping ranges: the per-user cap above bounds it, not the one-slot large-transfer limiter.
+      ownLimit: true,
+      recheck: async () => {
+        if (Math.floor(Date.now() / 1000) >= payload.exp) throw new DomainError('VIDEO_TICKET_INVALID', 401, 'The video ticket expired');
+        await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId: payload.orgId });
+      },
+      onFinished: release,
+      fail,
+    });
+  }
+
   // The Ludy extension trades the one-time code the signed-in member approved in the app for its token (issue #2582,
   // ADR-0047 point 10). Public by necessity: the extension holds no session, and the credential is the code, 256 random
   // bits that live five minutes, work once and are bound by PKCE (S256) to the verifier only the extension holds. A
@@ -1526,6 +1674,47 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   }
+
+  // A short-lived ticket for GET /api/meetings/:id/video/stream (#2703), behind the bearer check above (so the per-user
+  // request limit applies, and an extension token never gets here: the route is in no extension scope). It is issued only to a
+  // current reader of a meeting that keeps video (the same reader-checked query the playback runs), bound to the org, the
+  // user, the session, the meeting, the video file and its key, for at most ten minutes and never past the bearer token's own
+  // expiry. No body is read.
+  app.post('/api/meetings/:id/video/ticket', async (c) => {
+    c.header('cache-control', 'no-store');
+    try {
+      if (!runtime.installed('meetings')) return c.notFound();
+      const user = c.get('user');
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      // Fail closed: without the token's exp a ticket could outlive the token (jwt mode trusts it until then).
+      const tokenExp = user.tokenExp;
+      if (tokenExp === undefined) throw new DomainError('VIDEO_TICKET_UNAVAILABLE', 503, 'Không thể cấp vé xem video lúc này');
+      if (tokenExp <= nowSeconds) throw new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id');
+      const media = await runtime.query<{ fileId: string; keyId: string }>('meetings.meeting.media_meta', { meetingId, kind: 'video' }, { actor: actorOf(user), orgId });
+      const key = videoTicketKey(media.keyId);
+      if (!key) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
+      const exp = Math.min(nowSeconds + MEDIA_TICKET_MAX_TTL_SECONDS, tokenExp);
+      const ticket = signMediaTicket(key, {
+        keyId: media.keyId,
+        orgId,
+        userId: user.userId,
+        sessionId: user.sessionId,
+        aal: user.aal,
+        mfaAt: user.mfaAt,
+        meetingId: meetingId.toLowerCase(),
+        fileId: media.fileId,
+        purpose: MEDIA_TICKET_PURPOSE,
+        iat: nowSeconds,
+        exp,
+      });
+      key.fill(0);
+      return c.json({ ticket, expiresInSeconds: exp - nowSeconds });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
 
   // The member approves the Ludy extension for the org of the request (issue #2582): the sign-in page of the app calls this
   // with the member's own session after they chose the org and pressed "Cho phép". The code is made here and returned
@@ -1761,7 +1950,10 @@ export function createHttpApp(deps: HttpDeps) {
         actor: actorOf(user),
         orgId,
       });
-      const form = await direct.presignUpload(grant.stagingKey, grant.maxBytes);
+      // A meeting's media grant is no larger than crove-media takes (#2989): a recording over it is refused here, before the browser sends it to the bucket.
+      const purpose = uploadPurpose(input?.purpose);
+      const grantBytes = purpose === 'meeting_audio' || purpose === 'meeting_video' ? Math.min(grant.maxBytes, meetingMediaCap(purpose === 'meeting_video' ? 'video' : 'audio')) : grant.maxBytes;
+      const form = await direct.presignUpload(grant.stagingKey, grantBytes);
       c.header('cache-control', 'private, no-store');
       return c.json({ uploadId: grant.uploadId, url: form.url, fields: form.fields, expiresAt: form.expiresAt.toISOString(), maxBytes: form.maxBytes });
     } catch (error) {
@@ -1887,28 +2079,65 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
+  const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
+  // The most bytes one meeting recording may have: the plan's limit, or the lower cap of this deployment's crove-media (#2989).
+  const meetingMediaCap = (kind: 'audio' | 'video') => Math.min(kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
   const playbackAudited = new Map<string, number>();
-  async function streamMeetingMedia(c: Context, kind: 'audio' | 'video') {
-    if (!runtime.installed('meetings')) return c.notFound();
+  // What the two playback routes share (the bearer route and the ticket route, #2703): the range handling, the audit window,
+  // the decryption and the response headers, so a ticket plays exactly what the bearer route plays. The caller has already
+  // proved who the actor is; this runs the reader-checked media query as that actor on every request, ranges included.
+  interface MeetingMediaServe {
+    kind: 'audio' | 'video';
+    actor: UserActor;
+    orgId: string;
+    meetingId: string;
+    // Answer the headers a GET would, without reading or decrypting the body.
+    headOnly?: boolean;
+    // Added to every success answer.
+    headers?: Record<string, string>;
+    // The video file and key id a ticket was issued for: the media now named must be the same.
+    expect?: { fileId: string; keyId: string };
+    // Called once when the response is finished or was never started (a body read to the end, cancelled, or an error).
+    onFinished?: () => void;
+    // The caller holds its own concurrency limit, so the shared large-transfer slot is not taken.
+    ownLimit?: boolean;
+    // Run before every window after the first of a stream read without a Range: it throws to end the stream (a ticket past its
+    // expiry, a revoked session), so a long answer does not outlive what let it start.
+    recheck?: () => Promise<void>;
+    // The answer for any error thrown on the way.
+    fail: (error: unknown) => Response;
+  }
+  async function serveMeetingMedia(c: Context, p: MeetingMediaServe): Promise<Response> {
+    const { kind, actor, orgId, meetingId } = p;
+    if (!runtime.installed('meetings')) {
+      p.onFinished?.();
+      return c.notFound();
+    }
 
-    const user = c.get('user');
-    const releaseLarge = large ? large.tryAcquire(user.userId) : () => undefined;
-    if (!releaseLarge) return problem(c, busy(c));
+    const slot = large && !p.ownLimit ? large.tryAcquire(actor.userId) : () => undefined;
+    if (!slot) {
+      p.onFinished?.();
+      return p.fail(busy(c));
+    }
+    let finished = false;
+    const releaseLarge = () => {
+      if (finished) return;
+      finished = true;
+      slot();
+      p.onFinished?.();
+    };
 
     let dataKey: Buffer | null = null;
     let wrapSubkey: Buffer | null = null;
     let heldReturned = false;
 
     try {
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      const meetingId = c.req.param('id');
-
       const rangeHeader = c.req.header('range');
 
       // The first request of a (member, meeting, kind) in a window is the audited sensitive read, whatever its Range; the
       // continuation ranges of the same playback then use the unaudited metadata read, so scrubbing writes one audit row.
-      const auditKey = `${orgId}:${user.userId}:${meetingId}:${kind}`;
+      const auditKey = `${orgId}:${actor.userId}:${meetingId}:${kind}`;
       const now = Date.now();
       const auditedUntil = playbackAudited.get(auditKey);
       const continuation = auditedUntil !== undefined && auditedUntil > now;
@@ -1928,7 +2157,10 @@ export function createHttpApp(deps: HttpDeps) {
         contentType: string;
         keyId: string;
         wrappedKey: Buffer;
-      }>(queryName, queryInput, { actor: actorOf(user), orgId });
+      }>(queryName, queryInput, { actor, orgId });
+      if (p.expect && (media.fileId !== p.expect.fileId || media.keyId !== p.expect.keyId)) {
+        throw new DomainError('VIDEO_TICKET_INVALID', 401, 'The ticket is for another video');
+      }
       // Marked only after the audited read succeeded, so a failed audit write cannot let the retry skip it.
       if (!continuation) {
         if (playbackAudited.size >= 10_000) for (const [k, until] of playbackAudited) if (until <= now) playbackAudited.delete(k);
@@ -1970,7 +2202,12 @@ export function createHttpApp(deps: HttpDeps) {
         'content-security-policy': "default-src 'none'; sandbox",
         'cross-origin-resource-policy': 'same-site',
         'cache-control': 'private, no-store',
+        ...p.headers,
       };
+
+      if (p.headOnly) {
+        return new Response(null, { status: 200, headers: { ...mediaHeaders, 'content-length': String(totalPlaintextLength) } });
+      }
 
       if (rangeHeader && rangeHeader.startsWith('bytes=')) {
         const spec = rangeHeader.slice(6).trim();
@@ -1982,7 +2219,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (isNaN(suffix) || suffix <= 0 || totalPlaintextLength === 0) {
             return new Response(null, {
               status: 416,
-              headers: { 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
+              headers: { ...p.headers, 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
             });
           }
           start = Math.max(0, totalPlaintextLength - suffix);
@@ -1994,7 +2231,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (isNaN(start) || isNaN(end) || start < 0 || start > end || start >= totalPlaintextLength) {
             return new Response(null, {
               status: 416,
-              headers: { 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
+              headers: { ...p.headers, 'content-range': `bytes */${totalPlaintextLength}`, 'x-content-type-options': 'nosniff' },
             });
           }
           end = Math.min(end, totalPlaintextLength - 1);
@@ -2087,7 +2324,8 @@ export function createHttpApp(deps: HttpDeps) {
             // the media key this stream holds, so the id is not compared. The file is compared: retention deletes the media
             // rows (#2579), so the segment or video the meeting names now may not be the object this stream reads.
             if (streamOffset > 0) {
-              const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor: actorOf(user), orgId });
+              await p.recheck?.();
+              const current = await runtime.query<{ fileId: string }>('meetings.meeting.media_meta', { meetingId, kind }, { actor, orgId });
               if (current.fileId !== media.fileId) throw new DomainError('MEDIA_REPLACED', 409, 'The meeting media changed while it was playing');
             }
             if (streamOffset >= totalPlaintextLength) {
@@ -2132,7 +2370,7 @@ export function createHttpApp(deps: HttpDeps) {
         },
       });
     } catch (error) {
-      return problem(c, error);
+      return p.fail(error);
     } finally {
       dataKey?.fill(0);
       wrapSubkey?.fill(0);
@@ -2140,6 +2378,18 @@ export function createHttpApp(deps: HttpDeps) {
         releaseLarge();
       }
     }
+  }
+
+  async function streamMeetingMedia(c: Context, kind: 'audio' | 'video'): Promise<Response> {
+    if (!runtime.installed('meetings')) return c.notFound();
+    const user = c.get('user');
+    let orgId: string;
+    try {
+      orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+    } catch (error) {
+      return problem(c, error);
+    }
+    return serveMeetingMedia(c, { kind, actor: actorOf(user), orgId, meetingId: c.req.param('id') ?? '', fail: (error) => problem(c, error) });
   }
 
   app.get('/api/meetings/:id/audio', (c) => streamMeetingMedia(c, 'audio'));
@@ -2175,7 +2425,7 @@ export function createHttpApp(deps: HttpDeps) {
       const hint = c.req.query('kind');
       if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
       const videoSize = !json && meeting.keepVideo && hint !== 'audio';
-      const cap = json ? META_BODY_MAX_BYTES : (videoSize ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES) + 1024 * 1024;
+      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize ? 'video' : 'audio') + 1024 * 1024;
       // The raw body of the file (#2780) is sealed as it streams, so its size is declared up front: a body without a
       // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
       // count it, which is what streaming is for). Browsers send the length of a File they upload.
@@ -2226,9 +2476,10 @@ export function createHttpApp(deps: HttpDeps) {
       let releaseJsonVideo: (() => void) | null = null;
 
       try {
+        // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
+        if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
-        let lengthSeconds: number | undefined;
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
@@ -2280,11 +2531,11 @@ export function createHttpApp(deps: HttpDeps) {
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
             if (!releaseJsonVideo) throw busy(c);
           }
+          // The client's lengthSeconds is a hint at most and never stored: the sandbox measures the length (#2985).
           if (body.lengthSeconds !== undefined) {
             if (typeof body.lengthSeconds !== 'number' || !Number.isInteger(body.lengthSeconds) || body.lengthSeconds <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = body.lengthSeconds;
           }
 
           await verifyRecorderAndKind(kind);
@@ -2306,7 +2557,7 @@ export function createHttpApp(deps: HttpDeps) {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
             throw error;
           };
-          const cap = Math.min(claim.maxBytes, kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES);
+          const cap = Math.min(claim.maxBytes, meetingMediaCap(kind));
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
             const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
@@ -2333,9 +2584,9 @@ export function createHttpApp(deps: HttpDeps) {
           if (!fileVal || !(fileVal instanceof Blob)) {
             throw new DomainError('NO_FILE', 400, 'Tệp tải lên không hợp lệ');
           }
-          const maxBytes = kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
+          const maxBytes = meetingMediaCap(kind);
           if (fileVal.size > maxBytes) {
-            throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${kind === 'video' ? '2 GB' : '300 MB'})`);
+            throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${sizeText(maxBytes)})`);
           }
           const lengthVal = formData.get('lengthSeconds');
           if (typeof lengthVal === 'string' && lengthVal.trim().length > 0) {
@@ -2343,7 +2594,6 @@ export function createHttpApp(deps: HttpDeps) {
             if (!Number.isInteger(parsedLen) || parsedLen <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = parsedLen;
           }
           prepareKeys(kind);
           // The form was parsed whole by the body reader (use the raw body below for a large file); the sealing still streams.
@@ -2362,7 +2612,6 @@ export function createHttpApp(deps: HttpDeps) {
             if (lengthVal.trim() === '' || !Number.isInteger(parsedLen) || parsedLen <= 0) {
               throw new DomainError('BAD_REQUEST', 400, 'lengthSeconds must be a positive integer');
             }
-            lengthSeconds = parsedLen;
           }
           const rawBody = c.req.raw.body;
           if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
@@ -2387,11 +2636,24 @@ export function createHttpApp(deps: HttpDeps) {
           kind,
           dataKey,
           binding,
-          maxBytes: kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES,
+          maxBytes: meetingMediaCap(kind),
           store,
           orgId,
         });
         const { key: storageKey, generation, sha256, contentType: sniffedContentType } = sealed;
+
+        // The sandbox measures the sealed media (read back and decrypted a window at a time, never held whole or written out). It
+        // refuses a file it cannot read, one that is too long, or when it is down; the sealed bytes then have no row, so drop them.
+        let measuredSeconds: number;
+        try {
+          measuredSeconds = await mediaMeasurer.measure(
+            kind,
+            decryptedWindows(store, { storageKey, generation, sizeBytes: sealed.size }, dataKey, binding),
+          );
+        } catch (error) {
+          if (sealed.created) await store.delete(storageKey).catch((err) => console.error('[http] meeting media cleanup failed', err));
+          throw error;
+        }
 
         let result: { fileId: string };
         try {
@@ -2407,7 +2669,7 @@ export function createHttpApp(deps: HttpDeps) {
               sizeBytes: sealed.size,
               sha256,
               contentType: sniffedContentType,
-              lengthSeconds: lengthSeconds ?? 1800,
+              lengthSeconds: measuredSeconds,
             },
             { actor: actorOf(user), orgId },
           );
@@ -3015,10 +3277,10 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
-  // The bank bulk-salary file of an approved pay run (#2532, payroll plan 6.4): GET /api/payroll-bank-file/<runId>.xlsx?bank=<the bank's name>&columns=seq,name,account,bank,amount,content (columns optional, in the
-  // order wanted). Ludy never initiates a payment: the file is for the accountant to upload to the bank. Built only in the requesting owner's or admin's own context by the sensitive query
+  // The bank bulk-salary file of an approved pay run (#2532, payroll plan 6.4): GET /api/payroll-bank-file/<runId>.xlsx?bank=<a bank code of the bank list>&columns=seq,name,account,bank,amount,content (columns optional, in the
+  // order wanted; or template=<id> of a saved template of the run's legal entity, #2893, which decides the columns, their headers and the remark; one file is for one bank, #2897). Ludy never initiates a payment: the file is for the accountant to upload to the bank. Built only in the requesting owner's or admin's own context by the sensitive query
   // hr.payroll.bank_file.get (its audit row is committed before the sealed account numbers are opened; nothing decrypted reaches an audit fact or a log), never a worker, a stored job or a stored blob,
-  // and no email. No account number is ever in the URL or the query string: only the run, the bank's name and the column choice are. It needs a second factor used in the last 5 minutes
+  // and no email. No account number is ever in the URL or the query string: only the run, the bank's code, the template's id and the column choice are. It needs a second factor used in the last 5 minutes
   // (STEP_UP_REQUIRED), takes a slot of the export limiter like the other exports, is bounded (a run with more people than the cap, or a person with no account number, is refused, never cut short)
   // and is built whole; the audit row of the download (a count only) is written before the bytes are sent: no row, no download. The slot is held until the bytes are taken. `private, no-store`: the file
   // holds names and account numbers. Nothing is sent to any bank.
@@ -3035,12 +3297,14 @@ export function createHttpApp(deps: HttpDeps) {
         // Refused before a slot or an audit row: the query checks it again for every caller.
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
         const columnsParam = c.req.query('columns');
+        const templateParam = c.req.query('template');
         const parsed = zHrBankFileQuery.safeParse({
           runId: file.slice(0, -'.xlsx'.length),
           bankName: c.req.query('bank') ?? '',
           ...(columnsParam ? { columns: columnsParam.split(',') } : {}),
+          ...(templateParam ? { templateId: templateParam } : {}),
         });
-        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, `Yêu cầu không hợp lệ: cần số hiệu bảng lương, tên ngân hàng và các cột trong ${HR_BANK_FILE_COLUMNS.join(', ')}`);
+        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, `Yêu cầu không hợp lệ: cần số hiệu bảng lương, mã ngân hàng và các cột trong ${HR_BANK_FILE_COLUMNS.join(', ')} (hoặc một mẫu, không kèm cột)`);
         const release = exportSlots.tryAcquire(user.userId);
         if (!release) {
           c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
@@ -3054,7 +3318,7 @@ export function createHttpApp(deps: HttpDeps) {
           return new Response(held(new Uint8Array(bytes), release), {
             headers: {
               'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-luong', document.month, ORG_SLUG], 'xlsx'),
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-luong', document.month, document.bankCode.toLowerCase(), ORG_SLUG], 'xlsx'),
               'x-content-type-options': 'nosniff',
               'cache-control': 'private, no-store',
             },

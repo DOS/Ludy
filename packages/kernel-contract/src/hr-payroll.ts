@@ -273,20 +273,26 @@ export type HrCoworkerExplained = z.infer<typeof zHrCoworkerExplained>;
 // of the download holds counts only.
 export const HR_BANK_FILE_COLUMNS = ['seq', 'name', 'account', 'bank', 'amount', 'content'] as const;
 export type HrBankFileColumn = (typeof HR_BANK_FILE_COLUMNS)[number];
+/** The headers of the generic layout (no saved template), in Vietnamese as a bank's import expects them. */
+export const HR_BANK_FILE_HEADERS: Record<HrBankFileColumn, string> = { seq: 'STT', name: 'Tên người nhận', account: 'Số tài khoản', bank: 'Ngân hàng', amount: 'Số tiền', content: 'Nội dung' };
 // More people than this is refused with a message, never cut short: a file with some people missing must not exist.
 export const HR_BANK_FILE_MAX_PEOPLE = 500;
-export const zHrBankFileQuery = z.strictObject({
-  runId: zId,
-  // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
-  // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
-  bankName: z.string().trim().min(1).max(60),
-  columns: z
-    .array(z.enum(HR_BANK_FILE_COLUMNS))
-    .min(1)
-    .max(HR_BANK_FILE_COLUMNS.length)
-    .refine((list) => new Set(list).size === list.length, 'a column once')
-    .optional(),
-});
+export const zHrBankFileQuery = z
+  .strictObject({
+    runId: zId,
+    // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
+    // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
+    bankName: z.string().trim().min(1).max(60),
+    columns: z
+      .array(z.enum(HR_BANK_FILE_COLUMNS))
+      .min(1)
+      .max(HR_BANK_FILE_COLUMNS.length)
+      .refine((list) => new Set(list).size === list.length, 'a column once')
+      .optional(),
+    // A saved template of the run's legal entity (#2893): the file follows its columns, their order, its headers and its remark text. It decides the columns, so it excludes `columns`.
+    templateId: zId.optional(),
+  })
+  .refine((query) => query.templateId === undefined || query.columns === undefined, { message: 'a saved template decides the columns', path: ['columns'] });
 export type HrBankFileQuery = z.infer<typeof zHrBankFileQuery>;
 export interface HrBankFile {
   runId: string;
@@ -294,6 +300,8 @@ export interface HrBankFile {
   // The code of the bank this file is for (a bank of VN_BANKS); the rows are the people of the run at that bank, and the `bank` column of a row is that bank's short name from the list.
   bankCode: string;
   columns: HrBankFileColumn[];
+  // The header text of each column, in the order of `columns`: the generic headers, or the saved template's (user text: a string cell, never a formula).
+  headers: string[];
   rows: { seq: string; name: string; account: string; bank: string; amount: string; content: string }[];
   // The total of this file's amounts, a decimal string. The whole run's total (every bank) equals the net pay frozen at approval, which the query checks before it answers.
   total: string;

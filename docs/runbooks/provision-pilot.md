@@ -17,7 +17,7 @@ How to set up the one server that runs the pilot (backlog item M1-5, issue #306)
 
 | | Pilot (5 to 20 orgs) |
 |---|---|
-| CPU, memory | 4 vCPU, 8 GB (PostgreSQL, Supabase Auth, the kernel, and `crove-extract`, which alone may take 1 GB) |
+| CPU, memory | 4 vCPU, 8 GB (PostgreSQL, Supabase Auth, the kernel, `crove-extract`, which alone may take 1 GB, and `crove-media`, up to 4 GB while it measures a long video, its scratch included: it always runs, and the Meetings module is why; lower `MEDIA_MEM_LIMIT` with `MEDIA_SCRATCH_SIZE` on a smaller host; after an upgrade from a release that kept its scratch in the `media-scratch` volume, remove that volume once: `docker volume rm <project>_media-scratch`) |
 | Disk | 80 GB SSD: the database, Docker images, logs and local backup runs; the files live in the bucket |
 | OS | Ubuntu Server 24.04 LTS (any current Linux with Docker Engine works; the commands below are for Ubuntu) |
 | Region | as decided in #122 |
@@ -70,10 +70,10 @@ Then the deploy user, its SSH key for the workflow, the stack directory `/opt/cr
 
 Create the bucket in the region of the server, private, with versioning on **before the first write** (ADR-0013: Ludy refuses a write that comes back without an object version) and **Object Lock enabled**, so that the worker can hold the original file of every posted invoice for 10 years (`EVIDENCE_LOCK_DAYS`, [evidence-holds.md](evidence-holds.md)). Do not set a default retention on the bucket: Ludy holds only posted files. Give Ludy its own access key, limited to this bucket:
 
-- on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload`, `s3:GetObjectRetention`, `s3:PutObjectRetention` (never `s3:BypassGovernanceRetention`). Meeting media is written as a multipart upload to `staging/` and copied to its content address: `s3:PutObject` covers the parts and the copy, `s3:GetObject` the copy's source, and `s3:AbortMultipartUpload` the cleanup after a refused or failed write. Without it the cleanup fails silently and the incomplete upload stays until the lifecycle rule below removes it;
+- on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload`, `s3:GetObjectRetention`, `s3:PutObjectRetention`, `s3:PutObjectTagging` (never `s3:BypassGovernanceRetention`; nothing else for tagging: no `s3:GetObjectTagging`, no `s3:DeleteObjectTagging`, no `s3:PutObjectVersionTagging`). `s3:PutObjectTagging` is for one thing: a retention delete (the marketplace originals, 90 days after the decision, ADR-0045 point 8) first tags the object `ludy-retention=expired`, so the rule `crove-retention-expired` below can remove the version the delete leaves. If the tag cannot be set, Ludy deletes nothing and the job retries on its next run (it alerts), so a missing permission stops that deletion instead of leaving a readable copy. Meeting media is written as a multipart upload to `staging/` and copied to its content address: `s3:PutObject` covers the parts and the copy, `s3:GetObject` the copy's source, and `s3:AbortMultipartUpload` the cleanup after a refused or failed write. Without it the cleanup fails silently and the incomplete upload stays until the lifecycle rule below removes it;
 - on the bucket: `s3:ListBucket`, `s3:ListBucketVersions`, `s3:GetBucketObjectLockConfiguration`. `s3:ListBucketVersions` also serves the WORM archive bucket when `ARCHIVE_STORE=s3` uses this key: its nightly verifier reads each key's versions (#2020, [worm-archive.md](worm-archive.md)), and fails with `AccessDenied` without it.
 
-Ludy never deletes object versions, so three lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket: without it the noncurrent version stays), and one more removes abandoned browser uploads. The `AbortIncompleteMultipartUpload` action of the `crove-staging` rule below is **required**, not optional: a crash in the middle of a meeting upload leaves an incomplete multipart upload under `staging/`, which the daily staging sweep cannot see (listing objects never lists incomplete uploads) and only this rule removes. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
+Ludy never deletes object versions, so lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket: without it the noncurrent version stays; the `ludy-retention=expired` tag rule does the same for the marketplace originals under `org/`, whose delete marker rule is separate because S3 allows `ExpiredObjectDeleteMarker` only without a tag filter), and one more removes abandoned browser uploads. The `AbortIncompleteMultipartUpload` action of the `crove-staging` rule below is **required**, not optional: a crash in the middle of a meeting upload leaves an incomplete multipart upload under `staging/`, which the daily staging sweep cannot see (listing objects never lists incomplete uploads) and only this rule removes. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
 
 ```bash
 aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
@@ -93,7 +93,11 @@ cat > lifecycle.json <<'EOF'
     { "ID": "crove-export-deleted", "Status": "Enabled", "Filter": { "Prefix": "export/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
     { "ID": "crove-conversation-deleted", "Status": "Enabled", "Filter": { "Prefix": "conversation/" },
-      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } }
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
+    { "ID": "crove-retention-expired", "Status": "Enabled", "Filter": { "Tag": { "Key": "ludy-retention", "Value": "expired" } },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 } },
+    { "ID": "crove-org-markers", "Status": "Enabled", "Filter": { "Prefix": "org/" },
+      "Expiration": { "ExpiredObjectDeleteMarker": true } }
   ]
 }
 EOF
@@ -109,9 +113,25 @@ aws s3api put-bucket-cors --bucket <bucket> --cors-configuration file://cors.jso
 | Prefix | What it holds | The rule |
 |---|---|---|
 | `org/` | documents and attachments, the evidence | none: Ludy never deletes them, and their versions are the record. The worker holds the original file of every posted invoice with Object Lock in GOVERNANCE mode for `EVIDENCE_LOCK_DAYS` from its posting (#1009, [evidence-holds.md](evidence-holds.md)) |
+| `org/` with the tag `ludy-retention=expired` | a marketplace original after its 90 days (#2789): Ludy tags the object, then deletes it | `crove-retention-expired`: the noncurrent version goes 1 day after the delete. An Object Lock hold on a version still wins until its retain-until date; a version Ludy never tagged is untouched. `crove-org-markers` removes a delete marker only when no version of the key is left; a retention run deletes twice, so a second marker can stay (a few bytes, harmless; do not add a noncurrent expiry on `org/` to clear it) |
 | `staging/` | browser uploads before the server checks them (5 minutes) | expire after a day, with their old versions and delete markers |
 | `inbound/` | raw inbound mail until it is filed (the worker deletes it after 30 days at most) | delete old versions 7 days after Ludy deleted the object |
 | `export/` | sealed org exports (`EXPORT_RETENTION_DAYS`, then the worker deletes them) | the same, 7 days |
+
+**Applying the retention rules to a bucket that is already in use is a production step: the owner approves it, and the Platform PO runs it.** Checklist for that step:
+
+- [ ] **before the release that carries #2789 is deployed**, the access key has `s3:PutObjectTagging` on the objects (and nothing more for tagging), added by the account that owns the bucket policy. Without it every marketplace retention run fails closed: it deletes nothing, alerts, and retries the next night, so originals stay readable past 90 days until the permission is there;
+- [ ] `put-bucket-lifecycle-configuration` replaces the whole configuration: start from `get-bucket-lifecycle-configuration`, keep every existing rule, and add `crove-retention-expired` and `crove-org-markers`;
+- [ ] a drill object: put a file under `org/`, delete it through a retention run, read `list-object-versions` and see the noncurrent version carry the tag `ludy-retention=expired` (`get-object-tagging --version-id`), and a day after the rule first runs see it gone, while a version under Object Lock is still there;
+- [ ] **originals deleted before this release** left their version untagged and noncurrent. Either accept that leftover, or tag it once, as an admin account (not Ludy's key): list the files with `SELECT storage_key FROM crove_kernel.file WHERE original_deleted_at IS NOT NULL`, and for each key whose current version is a delete marker (`list-object-versions --prefix <key>`), run `put-object-tagging --version-id <noncurrent version> --tagging 'TagSet=[{Key=ludy-retention,Value=expired}]'`. Never tag a version of a key that still has a live current object, and never a version under Object Lock you mean to keep (the lock still wins, so tagging one only lets it go at its retain-until date). The owner approves this step and the Platform PO runs it;
+- [ ] know the limit: only the version that is current at the retention delete is tagged. An older noncurrent version of the same key (left by an earlier ordinary delete, such as the cleanup of a failed write) is not expired by the rule; the drill object must start from a key with one version;
+- [ ] the rule stays off any version without the tag: `org/` evidence is never tagged by Ludy, and no browser upload can set the tag (the upload form names no tagging field, and the copy to the content address replaces the tags).
+
+**Stores where the tag does not apply** (decided in the review of #2789: no failing closed here, because a stalled retention job would keep the originals readable past 90 days, which is worse):
+
+- **GCS (interoperability) on a versioned bucket:** Ludy deletes without the tag, because GCS has no object tagging in this API. The operator adds a lifecycle rule on the `org/` prefix that deletes noncurrent versions (`isLive: false`) after the days they choose, or removes the versions by hand. This also drops noncurrent evidence versions under that prefix unless the bucket's retention policy holds them, so set the rule with that in mind;
+- **`S3_VERSIONING=off` on a bucket that has versioning on:** the delete leaves a noncurrent version that nothing expires. Set `S3_VERSIONING=required` on a versioned bucket; `off` is for stores that have no versioning (Cloudflare R2);
+- **a store that does not support tagging** (its tag request answers 405 on a live object): the retention delete fails closed, alerts and retries every night. Use a store that supports object tagging, or one of the two cases above.
 
 The CORS rule lets the browser post files straight to the bucket (`S3_PRESIGNED_URLS=true`, the default) and download them. MinIO has no per-bucket CORS: it answers every origin unless `MINIO_API_CORS_ALLOW_ORIGIN` narrows it to `https://<your domain>`. On Cloudflare R2, which has neither versioning nor presigned POST, set `S3_VERSIONING=off` and `S3_PRESIGNED_URLS=false` instead and skip the CORS rule (`.env.example` explains the trade-off).
 
@@ -176,7 +196,7 @@ Write `/opt/crove/.env` (owner the deploy user, mode 600) from `.env.example`. G
 | `AI_*` | per #312; empty until then (e-invoice XML works without it). With `AI_API_KEY` set, set `AI_PRICE_INPUT_PER_MTOK` or `AI_PRICE_OUTPUT_PER_MTOK` too, or the AI cost cap counts nothing |
 | `BACKUP_*` | [backup-and-restore.md](backup-and-restore.md); `BACKUP_ENCRYPTION_KEY` (`openssl rand -base64 32`, its own key) is required |
 
-The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sample `AUTH_JWT_SECRET`, a database URL with a password shipped in `.env.example` or the compose files, `AUTH_AUTOCONFIRM=true`, `ADS_SANDBOX=true` with the ads module on (compose falls back to true, so set `ADS_SANDBOX=false` when `CROVE_MODULES` includes `ads`), `AUTH_SESSION_CHECK=off`, `AUTH_STEP_UP=off`, presigned transfers to a plain-http bucket endpoint, an email budget a few client addresses could use up, or no `EXPORT_ENCRYPTION_KEY`. Those are the production config guards of the acceptance criteria; `pnpm pilot:check` (section 10) checks the rest.
+The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sample `AUTH_JWT_SECRET`, a database URL with a password shipped in `.env.example` or the compose files, `AUTH_AUTOCONFIRM=true`, `ADS_SANDBOX=true` or `EINVOICE_SANDBOX=true` with the ads or finance module on (unset, both are off on a public address), `AUTH_SESSION_CHECK=off`, `AUTH_STEP_UP=off`, presigned transfers to a plain-http bucket endpoint, an email budget a few client addresses could use up, or no `EXPORT_ENCRYPTION_KEY`. Those are the production config guards of the acceptance criteria; `pnpm pilot:check` (section 10) checks the rest.
 
 ## 8. The TLS reverse proxy
 

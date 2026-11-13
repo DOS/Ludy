@@ -46,9 +46,10 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
       try {
         const key = await deps.runtime.query<{ storageKey: string; shared: boolean } | null>('finance.marketplace_retention.key', { fileId: row.file_id }, options);
         if (key) {
-          // An object another file row also names is left; only this file's original is marked gone.
+          // An object another file row also names is left; only this file's original is marked gone. The tag is per version: a same-bytes upload that dedupes onto the object just before this
+          // delete is deleted with it (the file row clears its marker and the next run deletes again), and a version written after the delete is untagged until a run tags and deletes it.
           if (!key.shared) {
-            await deps.store.delete(key.storageKey);
+            await deps.store.delete(key.storageKey, { retention: 'expire' });
             run.objects += 1;
           }
           const out = await deps.runtime.execute<{ applied: boolean; versions: number }>('finance.marketplace_retention.apply', { fileId: row.file_id }, options);
@@ -58,7 +59,7 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
             progress += 1;
             // The same bytes uploaded between the first delete and the marker are stored under the same key (the file was still unmarked, so nothing cleared or refused it): deleting once more
             // after the marker closes that window. From here on a duplicate upload clears the marker (file_original_restore) and the next run deletes it again.
-            if (!key.shared) await deps.store.delete(key.storageKey);
+            if (!key.shared) await deps.store.delete(key.storageKey, { retention: 'expire' });
           }
         }
       } catch (error) {
@@ -72,6 +73,6 @@ export async function runMarketplaceRetention(deps: { runtime: Runtime; workerDb
     if (progress === 0 || listed.length < limit) break;
   }
   log.log(`${TAG} originals=${run.deleted} objects=${run.objects} versions=${run.versions} failed=${run.failed}`);
-  if (run.failed > 0) opsAlert(`${TAG} ALERT ${run.failed} original file(s) could not be removed; the next run tries again`);
+  if (run.failed > 0) opsAlert(`${TAG} ALERT ${run.failed} original file(s) could not be removed (the tag or the delete failed); the next run tries the ones not yet marked again, and for one whose second delete failed after its marker the object may remain, so check the bucket`);
   return run;
 }

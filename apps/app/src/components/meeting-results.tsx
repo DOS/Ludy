@@ -14,6 +14,7 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
+import { MeetingFollowup } from './meeting-followup.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
@@ -268,6 +269,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
             <SummaryText summary={published.summary} decisions={published.decisions} />
           </section>
         )}
+        {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">

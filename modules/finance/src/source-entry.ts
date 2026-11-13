@@ -9,7 +9,7 @@ import { sql, type RawBuilder, type SqlBool } from 'kysely';
 
 // True for the source row `voucher` (a table alias, with org_id and id) when it has been reversed: it has an original entry (source type `source`, reverses nothing) and every original entry of it has
 // a reversal entry pointing at it. A source with no entry yet, or with an original that stands, is not reversed. It says in SQL what the database's own rules say (20261212114500: one live payment voucher
-// per pay run and kind; 20261212124500: one live posting voucher per pay run), as the caller sees the books; the payroll payment and posting checks and the card of the month share it (#2854, #2931).
+// per pay run and kind; 20261227014500: one live posting voucher per pay run), as the caller sees the books; the payroll payment and posting checks and the card of the month share it (#2854, #2931).
 export function reversedSource(voucher: string, source: string): RawBuilder<SqlBool> {
   const col = (name: string) => sql.ref(`${voucher}.${name}`);
   return sql<SqlBool>`(

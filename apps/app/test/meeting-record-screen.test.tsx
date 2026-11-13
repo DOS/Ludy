@@ -28,6 +28,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   return {
     ...(await importOriginal<object>()),
     useParams: () => ({ slug: 'acme' }),
+    useSearch: () => ({}),
     useNavigate: () => vi.fn(),
     Link: ({ children, to }: { children?: ReactNode; to: string }) => createElement('a', { href: to }, children),
   };
