@@ -9878,12 +9878,16 @@ export const en = {
         rename: 'Rename a stage of the sales pipeline',
         reorder: 'Reorder the stages of the sales pipeline',
       },
+      signals: {
+        won_deals: 'Read the won deals, to check them against sales invoices',
+      },
       today: 'Read the CRM items that need you today',
     },
     finance: {
       today: 'Read what needs you in accounting today',
       signals: {
         overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',
+        sales: 'Read which customers have a sales invoice, to check them against won deals',
       },
       account: {
         create: 'Add a ledger account',

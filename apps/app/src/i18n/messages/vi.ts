@@ -9875,12 +9875,16 @@ export const vi = {
         rename: 'Đổi tên giai đoạn của quy trình bán hàng',
         reorder: 'Sắp xếp lại các giai đoạn của quy trình bán hàng',
       },
+      signals: {
+        won_deals: 'Xem các deal đã thắng, để đối chiếu với hóa đơn bán hàng',
+      },
       today: 'Xem việc CRM cần bạn trong hôm nay',
     },
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
       signals: {
         overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',
+        sales: 'Xem khách nào đã có hóa đơn bán hàng, để đối chiếu với deal đã thắng',
       },
       account: {
         create: 'Thêm tài khoản kế toán',

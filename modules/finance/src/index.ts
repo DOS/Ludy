@@ -1,5 +1,6 @@
 import { mcpFinanceQueries } from './mcp.ts';
 import { financeOverdueReceivablesSignals } from './signals-overdue-receivables.ts';
+import { financeSalesSignals } from './signals-sales.ts';
 export { MCP_LINES_PER_INVOICE, zMcpInvoicesInput } from './mcp.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
@@ -178,6 +179,7 @@ export const financeCommands = [recordPurchase, revisePurchase, prepareReversal,
 export const financeQueries = [
   ...mcpFinanceQueries,
   financeOverdueReceivablesSignals,
+  financeSalesSignals,
   payrollSettlement,
   ...fixedAssetQueries,
   ...bankFeedQueries,
