@@ -833,7 +833,7 @@ export const vi = {
     settlePending: 'Đang chờ duyệt trong Hộp thư',
     settlePosted: 'Đã ghi sổ',
     settleReversed: 'Bút toán đã bị đảo',
-    settleReversedNote: 'Bút toán của tháng này đã bị đảo nên không thể ghi chi từ đây.',
+    settleReversedNote: 'Bút toán của tháng này đã bị đảo nên chưa ghi chi được. Hạch toán lại để tiếp tục.',
     settlePayAfterPosting: 'Sau khi tháng đã được ghi sổ, bạn mới xin ghi chi lương và các khoản phải nộp.',
     payKind: { net_pay: 'Lương thực lĩnh trả cho nhân viên', insurance: 'Bảo hiểm nộp cho cơ quan bảo hiểm', union: 'Kinh phí công đoàn', tax: 'Thuế thu nhập cá nhân nộp cho cơ quan thuế' },
     payAsk: 'Xin ghi chi',

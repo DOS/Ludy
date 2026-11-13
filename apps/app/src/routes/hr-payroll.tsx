@@ -619,7 +619,7 @@ function Settlement({ runId }: { runId: string }) {
                 {t('settlePending')}
               </Link>
             )}
-            {s.posting.status === 'none' && (
+            {(s.posting.status === 'none' || s.posting.status === 'reversed') && (
               <Button variant="outline" size="sm" loading={post.isPending} onClick={() => post.mutate()} data-testid="hr-settle-post">
                 {t('settlePost')}
               </Button>
