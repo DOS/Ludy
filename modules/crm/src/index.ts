@@ -15,6 +15,7 @@ import { quoteSuggestSource } from './quote-suggest.ts';
 import { quoteReport } from './quote-report.ts';
 import { salesOrderCommands, salesOrderQueries } from './sales-orders.ts';
 import { crmOpenDealsSignals } from './signals-open-deals.ts';
+import { crmWonDealsSignals } from './signals-won-deals.ts';
 import { crmToday } from './today.ts';
 
 export { dealCommands, dealConversations, dealCreate, dealDelete, dealGet, dealList, dealMove, dealQueries, dealUpdate, partyConversations, partyDeals, partySearch, pipelineSetup, pipelineStages } from './deals.ts';
@@ -43,5 +44,5 @@ export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrde
 export { crmToday } from './today.ts';
 
 export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands, ...salesOrderCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmOpenDealsSignals];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals];
 export { crmManifest } from './manifest.ts';
