@@ -384,16 +384,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     await root.end();
   });
 
-  // The context of a member-bound MCP grant (ADR-0051, design note on #2975 slice 3) adds one writer of the sealed context and one reader of the sealed member, each its own kind: they
-  // are accepted here once they exist, and only these two names (`enter_mcp_member_context`, `ctx_mcp_member_id`); a third writer or reader still fails the exact sets below.
+  // The context of a member-bound MCP grant (ADR-0051, design note on #2975 slice 3) adds one writer of the sealed context and one reader of the sealed member, each its own kind, and the
+  // context of a company MCP grant (slice 3e) adds one more writer (it seals no member and has no catalog, so no reader): they are accepted here once they exist, and only these three
+  // names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context`); a fourth writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean }>(
-        `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper`,
+      c.query<{ entry: boolean; helper: boolean; company: boolean }>(
+        `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
+                to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company`,
       ),
     );
     const row = found.rows[0];
-    return { entry: row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : [], helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [] };
+    return {
+      entry: [...(row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : []), ...(row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : [])],
+      helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
+    };
   };
 
   // ---- Unconditional: nothing here needs a stage B object ----------------------------------------------------------------
