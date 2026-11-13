@@ -29,6 +29,8 @@ test.beforeAll(async () => {
     // The browser's language drives the popup's language (#3008): Vietnamese here, so the texts below hold. Under Playwright it is the context's `locale` that a page's
     // chrome.i18n.getUILanguage answers (the flag alone does not change it), so the locale decides what the tests see; a real browser's interface language is not tested here.
     locale: 'vi-VN',
+    // The manifest's name and description are resolved from _locales by the browser's own interface language, which on Linux comes from LANGUAGE (not from --lang or the context locale).
+    env: { ...process.env, LANGUAGE: 'vi' },
   });
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   extensionId = new URL(worker.url()).host;
@@ -82,9 +84,14 @@ test('the popup is Vietnamese in a Vietnamese browser and English in an English 
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
     args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--lang=en-US'],
     locale: 'en-US',
+    env: { ...process.env, LANGUAGE: 'en_US' },
   });
   try {
     const worker = english.serviceWorkers()[0] ?? (await english.waitForEvent('serviceworker'));
+    // The localized manifest: the browser resolves the __MSG_ references from _locales, English here.
+    const englishManifest = await worker.evaluate(() => chrome.runtime.getManifest());
+    expect(englishManifest.name).toBe('Ludy');
+    expect(englishManifest.description).toBe("Record a browser meeting's tab audio and your microphone into Ludy, and upload it when you stop.");
     const page = await english.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
     await expect(page.getByText('Connect to Ludy')).toBeVisible();
@@ -93,6 +100,9 @@ test('the popup is Vietnamese in a Vietnamese browser and English in an English 
     await english.close();
     rmSync(englishProfile, { recursive: true, force: true });
   }
+  const vietnameseManifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
+  expect(vietnameseManifest.name).toBe('Ludy');
+  expect(vietnameseManifest.description).toBe('Ghi lại cuộc họp trên trình duyệt vào Ludy: ghi âm tab họp cùng micro, tải lên khi dừng.');
   const vietnamese = await context.newPage();
   await vietnamese.goto(`chrome-extension://${extensionId}/popup.html`);
   await expect(vietnamese.getByText('Kết nối với Ludy')).toBeVisible();

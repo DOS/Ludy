@@ -49,6 +49,8 @@ function emit(file) {
 
 for (const entry of ENTRIES) emit(entry);
 for (const name of STATIC) cpSync(join(src, name), join(dist, name));
+// The store's per-language listing and the browser's own name and description come from _locales/<lang>/messages.json, which the manifest names with __MSG_key__ references.
+cpSync(join(root, '_locales'), join(dist, '_locales'), { recursive: true });
 mkdirSync(join(dist, 'icons'), { recursive: true });
 for (const name of ICONS) cpSync(join(root, 'icons', name), join(dist, 'icons', name));
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
