@@ -10024,6 +10024,10 @@ export const en = {
         apply: 'Delete the original file and per-order amounts of a marketplace report decided over 90 days ago',
         key: 'Read the storage key of a marketplace report original due for deletion',
       },
+      marketplace_settlement: {
+        prepare: "Check a marketplace platform's settlement before proposing its posting",
+        record: "Post a marketplace platform's settlement as one journal entry",
+      },
       einvoice: {
         draft_from_order: 'Make a sales invoice draft from a sales order',
         issue: 'Issue a sales invoice',

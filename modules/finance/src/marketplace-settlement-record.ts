@@ -188,7 +188,7 @@ async function platformParty(ctx: CommandContext, built: Built): Promise<{ id: s
     .where('m.legal_entity_id', '=', built.legalEntityId)
     .where('m.platform', '=', built.platform)
     .executeTakeFirstOrThrow();
-  if (linked.id === partyId) await ctx.activity('kernel.party', partyId, 'party.created', `Thêm đối tượng của sàn ${name}`);
+  if (linked.id === partyId) await ctx.activity('kernel.party', partyId, 'party.created', `Thêm đối tượng của sàn ${built.platform}`);
   return { id: linked.id, name: linked.name, taxCode: linked.tax_code };
 }
 

@@ -10021,6 +10021,10 @@ export const vi = {
         apply: 'Xóa tệp gốc và số tiền từng đơn của báo cáo sàn đã quyết định quá 90 ngày',
         key: 'Lấy khóa lưu trữ của tệp gốc báo cáo sàn đến hạn xóa',
       },
+      marketplace_settlement: {
+        prepare: 'Kiểm tra kỳ đối soát của sàn trước khi đề xuất ghi sổ',
+        record: 'Ghi sổ kỳ đối soát của sàn thành một bút toán',
+      },
       einvoice: {
         draft_from_order: 'Lập bản nháp hóa đơn bán ra từ đơn bán hàng',
         issue: 'Phát hành hóa đơn bán ra',
