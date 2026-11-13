@@ -21,6 +21,8 @@ export const financeSalesSignals = defineQuery({
   name: 'finance.signals.sales',
   input: zFinanceSalesSignalsInput,
   access: ALL,
+  // An AI app the owner or an admin connected may run this read (ADR-0051, #2975, step S2): ids, dates and amounts only, run in the sealed context of the grant (no user, so nothing bound to a user answers).
+  mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<FinanceSalesSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     // The whole org or nothing: the scope is the one the sealed context carries, read as the row policies of the books read it.

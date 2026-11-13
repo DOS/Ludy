@@ -24,6 +24,8 @@ export const financeOverdueReceivablesSignals = defineQuery({
   name: 'finance.signals.overdue_receivables',
   input: zFinanceSalesSignalsInput,
   access: ALL,
+  // An AI app the owner or an admin connected may run this read (ADR-0051, #2975, step S2): ids, dates and amounts only, run in the sealed context of the grant (no user, so nothing bound to a user answers).
+  mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<FinanceOverdueReceivableSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
