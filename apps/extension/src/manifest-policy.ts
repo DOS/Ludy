@@ -35,3 +35,38 @@ export function manifestViolations(manifest: Record<string, unknown>): string[] 
   if (typeof csp !== 'string' || /unsafe-eval|unsafe-inline|https?:|\*/.test(csp)) problems.push('content_security_policy.extension_pages must allow scripts from the package only');
   return problems;
 }
+
+// The store's limits (Chrome Web Store, confirmed in the dashboard): the item name is at most 75 characters, the short description at most 132.
+export const NAME_MAX = 75;
+export const DESCRIPTION_MAX = 132;
+// The languages the store listing offers: the default (Vietnamese) and English.
+export const LISTING_LOCALES = ['en', 'vi'] as const;
+
+const MESSAGE_REF = /^__MSG_([A-Za-z0-9_@]+)__$/;
+type Messages = Record<string, { message?: unknown } | undefined>;
+
+// A localized manifest: `default_locale` is set, the name, the description and the toolbar title are `__MSG_key__` references (a hard-coded text would
+// show in every language and leave the store with one listing), and each language in the list has a message for every reference, within the store's limits.
+// `locales` maps a language folder name to its parsed messages.json. Adds no permission and changes none.
+export function localeViolations(manifest: Record<string, unknown>, locales: Record<string, Messages>): string[] {
+  const problems: string[] = [];
+  const action = manifest.action as { default_title?: unknown } | undefined;
+  const refs = { name: manifest.name, description: manifest.description, 'action.default_title': action?.default_title };
+  if (typeof manifest.default_locale !== 'string') problems.push('default_locale must be set');
+  else if (!(manifest.default_locale in locales)) problems.push(`default_locale ${manifest.default_locale} has no _locales/${manifest.default_locale}/messages.json`);
+  for (const lang of LISTING_LOCALES) if (!(lang in locales)) problems.push(`_locales/${lang}/messages.json is missing`);
+  for (const [field, value] of Object.entries(refs)) {
+    const key = typeof value === 'string' ? MESSAGE_REF.exec(value)?.[1] : undefined;
+    if (key === undefined) {
+      problems.push(`${field} must be a __MSG_key__ reference, found ${JSON.stringify(value)}`);
+      continue;
+    }
+    for (const [lang, messages] of Object.entries(locales)) {
+      const text = messages[key]?.message;
+      if (typeof text !== 'string' || text.trim() === '') problems.push(`_locales/${lang} has no message ${key} for ${field}`);
+      else if (field === 'description' && text.length > DESCRIPTION_MAX) problems.push(`_locales/${lang} ${key} is ${text.length} characters, over the store's ${DESCRIPTION_MAX}`);
+      else if (field === 'name' && text.length > NAME_MAX) problems.push(`_locales/${lang} ${key} is ${text.length} characters, over the store's ${NAME_MAX}`);
+    }
+  }
+  return problems;
+}

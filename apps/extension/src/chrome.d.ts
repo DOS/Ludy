@@ -6,7 +6,7 @@ declare namespace chrome {
     const id: string | undefined;
     const lastError: { message?: string } | undefined;
     function getURL(path: string): string;
-    function getManifest(): { version: string; permissions?: string[]; optional_permissions?: string[]; host_permissions?: string[]; icons?: Record<string, string> };
+    function getManifest(): { name?: string; description?: string; version: string; permissions?: string[]; optional_permissions?: string[]; host_permissions?: string[]; icons?: Record<string, string> };
     function sendMessage(message: unknown): Promise<unknown>;
     const onMessage: {
       addListener(listener: (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => boolean | void): void;
