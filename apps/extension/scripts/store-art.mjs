@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Regenerates the Chrome Web Store images in apps/extension/store (docs/runbooks/extension-store.md): three 1280x800
-// screenshots, the 440x280 small tile and the 1400x560 marquee, each in Vietnamese and English, as JPEG (the store refuses
+// screenshots, the 440x280 small tile and the 1400x560 marquee, each in Vietnamese and English, as PNG with no alpha channel (the store refuses
 // an alpha channel). Screenshots 1 and 2 are the real popup, loaded unpacked in Chromium against the e2e fake Ludy
 // (e2e/fake-ludy.ts), so they hold no customer data; the fake server's local address is shown as https://app.ludy.vn, the
 // address a Ludy Cloud member sees. Screenshot 3 (the consent step) is text only: the consent form needs the tabCapture
@@ -100,7 +100,7 @@ try {
     const page = await browser.newPage({ viewport: { width, height } });
     await page.setContent(`<html><head><style>${css} html,body{width:${width}px;height:${height}px}</style></head><body>${html}</body></html>`);
     await page.waitForTimeout(200);
-    await page.screenshot({ path: `${out}/${name}.jpg`, type: 'jpeg', quality: 95 });
+    await page.screenshot({ path: `${out}/${name}.png`, type: 'png' });
     await page.close();
   };
   for (const lang of ['en', 'vi']) {
