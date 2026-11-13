@@ -140,18 +140,21 @@ function hiddenOf(v: ReplyValue): boolean | undefined {
   return undefined;
 }
 
-function eventFromValue(accountId: string, entryTime: unknown, v: ReplyValue | null | undefined, now: number): InboundConversationEvent | null {
+function eventFromValue(accountId: string, entryTime: unknown, v: ReplyValue | null | undefined, now: number, ownUsername: string | null = null): InboundConversationEvent | null {
   if (!v || typeof v !== 'object') return null;
   const replyId = idOf(v.id);
   const postId = idOf(refId(v.root_post)) ?? idOf(v.root_post_id);
   const parentId = refId(v.replied_to) ?? idOf(v.reply_to_id);
   const at = atOf(v.timestamp ?? v.created_time ?? entryTime, now);
   if (!replyId || !postId || !at || replyId.length > ID_MAX || postId.length > ID_MAX || !NUMERIC_ID.test(replyId) || !NUMERIC_ID.test(postId)) return null;
-  // A reply to a reply names its parent: the thread is that parent (a webhook does not give the whole chain; the reconcile read fixes a deeper one).
+  // A reply to a reply names its parent: the thread is that parent for now. A webhook does not give the whole chain, so the core moves a reply whose
+  // parent is a stored message into that message's thread (nestedThreadId in packages/kernel/src/conversations.ts); the reconcile read follows the chain itself.
   const threadId = parentId && parentId !== postId && NUMERIC_ID.test(parentId) && parentId.length <= ID_MAX ? parentId : replyId;
   const fromId = idOf(v.from?.id);
-  const own = v.is_reply_owned_by_me === true || fromId === accountId;
   const author = authorOf(v.username);
+  // The profile's own reply: the platform says so, or its id is the profile's, or (the reconcile read, which knows the profile's username) the
+  // username is: an answer written in the Threads app is not a customer.
+  const own = v.is_reply_owned_by_me === true || fromId === accountId || (ownUsername !== null && author !== null && author.id === ownUsername);
   const text = typeof v.text === 'string' ? clean(v.text).slice(0, TEXT_MAX) : '';
   const hidden = hiddenOf(v);
   return {
@@ -233,7 +236,8 @@ interface RepliesAnswer {
   paging?: { next?: unknown; cursors?: { after?: unknown } };
 }
 interface PostsAnswer {
-  data?: Array<{ id?: unknown; timestamp?: unknown }>;
+  data?: Array<{ id?: unknown; timestamp?: unknown; is_reply?: unknown }>;
+  paging?: { next?: unknown };
 }
 
 export class ThreadsConversations implements ConversationAdapter {
@@ -293,28 +297,33 @@ export class ThreadsConversations implements ConversationAdapter {
       const code = result.kind === 'rejected' || result.kind === 'unknown' ? result.code : undefined;
       return { kind: 'failed', retry: true, ...(code ? { code } : {}) };
     };
+    // The recent posts, whatever the time of the last read: a reply to an old post is new even when the post is not, so the posts are not filtered by
+    // `since` here; the replies are (below). A reply of the profile's own is listed beside its posts: it is not one.
     let posts: PostsAnswer;
     try {
-      posts = await this.api.call<PostsAnswer>('GET', `${this.api.version}/${input.externalAccountId}/threads`, {
-        token,
-        params: { fields: 'id,timestamp', since: String(Math.floor(input.since.getTime() / 1000)), limit: String(maxPosts) },
-      });
+      posts = await this.api.call<PostsAnswer>('GET', `${this.api.version}/${input.externalAccountId}/threads`, { token, params: { fields: 'id,timestamp,is_reply', limit: String(maxPosts) } });
     } catch (error) {
       return failed(error);
     }
+    // The profile's own username, to tell an answer written in the Threads app from a customer's reply [M]; without it the platform's own flag decides.
+    const me = await this.api.call<{ username?: unknown }>('GET', `${this.api.version}/me`, { token, params: { fields: 'username' }, timeoutMs: 10_000 }).catch(() => null);
+    const ownUsername = authorOf(me?.username)?.id ?? null;
     const now = Date.now();
     const sinceMs = input.since.getTime();
     const events: InboundConversationEvent[] = [];
     let complete = true;
     let oldestMs: number | null = null;
-    for (const post of (Array.isArray(posts.data) ? posts.data : []).slice(0, maxPosts)) {
+    const postRows = Array.isArray(posts.data) ? posts.data : [];
+    // More recent posts than one pass reads: the rest are a gap the next pass shows as one.
+    if (postRows.length > maxPosts || (postRows.length >= maxPosts && typeof posts.paging?.next === 'string')) complete = false;
+    for (const post of postRows.slice(0, maxPosts)) {
       const postId = idOf(post.id);
-      if (!postId || !NUMERIC_ID.test(postId)) continue;
+      if (!postId || !NUMERIC_ID.test(postId) || post.is_reply === true) continue;
       let answer: RepliesAnswer;
       try {
         answer = await this.api.call<RepliesAnswer>('GET', `${this.api.version}/${postId}/conversation`, {
           token,
-          params: { fields: 'id,text,username,timestamp,replied_to,is_reply_owned_by_me,hide_status', limit: String(RECONCILE_REPLIES_PER_POST) },
+          params: { fields: 'id,text,username,timestamp,replied_to,is_reply_owned_by_me,hide_status', reverse: 'true', limit: String(RECONCILE_REPLIES_PER_POST) },
         });
       } catch (error) {
         // A post that is gone has nothing to read; any other failure ends the pass.
@@ -348,7 +357,7 @@ export class ThreadsConversations implements ConversationAdapter {
           if (!parent || parent === postId) break;
           top = parent;
         }
-        const event = eventFromValue(input.externalAccountId, at, { ...row, id, root_post: postId, replied_to: top === id ? postId : top, timestamp: at }, now);
+        const event = eventFromValue(input.externalAccountId, at, { ...row, id, root_post: postId, replied_to: top === id ? postId : top, timestamp: at }, now, ownUsername);
         if (event) events.push(event);
       }
       if (!reachedSince && rows.length >= RECONCILE_REPLIES_PER_POST && typeof answer.paging?.next === 'string') complete = false;

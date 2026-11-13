@@ -143,16 +143,25 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     expect(await runConversationSync(sendDeps, { action: 'history', orgId, connectionId })).toBe('none');
     expect(platformCalls).toEqual([]);
 
-    // The webhook: signed with the Threads secret it is parked and read; signed with the Pages secret a Threads object is not read.
-    const app = buildApp();
     const nowSec = Math.floor(Date.now() / 1000);
     const notice = JSON.stringify({
       object: 'threads',
       entry: [{ id: USER, time: nowSec, changes: [{ field: 'replies', value: { id: '18100000000000010', text: SECRET_TEXT, username: 'le.thi.hoa', timestamp: nowSec - 20, root_post: { id: POST }, replied_to: { id: POST } } }] }],
     });
+    const asOwner = { actor: asUser(owner), orgId };
+    // Without the opt-in a reply the platform pushes is acknowledged and stored nowhere.
+    const early = buildApp();
+    expect((await post(early, notice, THREADS_SECRET)).status).toBe(200);
+    await runConversationIntake({ workerDb, runtime: worker });
+    expect((await rt.query<ConversationListed>('kernel.conversation.list', {}, asOwner)).conversations).toHaveLength(0);
+    // The opt-in: a reconnect that holds threads_read_replies.
+    await connect([...SCOPES, 'threads_read_replies']);
+
+    // The webhook: signed with the Threads secret it is parked and read; signed with the Pages secret a Threads object is not read.
+    const app = buildApp();
     expect((await post(app, notice, PAGES_SECRET)).status).toBe(200);
     await runConversationIntake({ workerDb, runtime: worker });
-    expect((await rt.query<ConversationListed>('kernel.conversation.list', {}, { actor: asUser(owner), orgId })).conversations).toHaveLength(0);
+    expect((await rt.query<ConversationListed>('kernel.conversation.list', {}, asOwner)).conversations).toHaveLength(0);
     expect((await post(app, notice, 'wrong-secret-0123456789abcdef')).status).toBe(401);
     expect((await post(app, notice, THREADS_SECRET)).status).toBe(200);
     // A replay is parked only once (the cache) and stored only once (the core), so one thread with one message and one unread mark.
@@ -160,7 +169,6 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     await runConversationIntake({ workerDb, runtime: worker });
     await runConversationIntake({ workerDb, runtime: worker });
 
-    const asOwner = { actor: asUser(owner), orgId };
     const listed = await rt.query<ConversationListed>('kernel.conversation.list', {}, asOwner);
     expect(listed.conversations).toHaveLength(1);
     expect(listed.conversations[0]).toMatchObject({ kind: 'comment_thread', unread: true, channel: { provider: 'threads' }, contact: { displayName: '@le.thi.hoa' } });
@@ -201,7 +209,7 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     const { messageId } = await rt.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: convId, body: 'Dạ tiệm còn size M ạ!', lastSeenSeq: 1 }, asOwner);
     expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId, action: 'reply' })).toBe('accepted');
     // Sent exactly once: the job run again makes no second publish.
-    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId, action: 'reply' })).not.toBe('accepted');
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId, action: 'reply' })).toBe('settled');
     expect(platformCalls.filter((c) => c.method === 'POST' && c.path === `/v1.0/${USER}/threads_publish`)).toHaveLength(1);
     expect(platformCalls.find((c) => c.method === 'POST' && c.path === `/v1.0/${USER}/threads`)?.form.get('reply_to_id')).toBe('18100000000000010');
     detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
@@ -209,8 +217,19 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     const storedId = await admin(async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM crove_kernel.conversation_message WHERE id = $1', [messageId])).rows[0]?.external_message_id);
     expect(storedId).toBe(replyId);
 
-    // The opt-in: a reconnect that holds threads_read_replies lets the reconcile read the replies and store the one the webhook missed.
-    await connect([...SCOPES, 'threads_read_replies']);
+    // The customer answers the business's answer: Threads names the answer as the parent, and the reply stays in the same thread (one conversation
+    // per top-level reply, however deep the replies go), also when the answer was sent from Ludy and its id is the one the platform gave.
+    const deep = (id: string, parent: string, text: string) =>
+      JSON.stringify({ object: 'threads', entry: [{ id: USER, time: nowSec, changes: [{ field: 'replies', value: { id, text, username: 'le.thi.hoa', timestamp: nowSec - 5, root_post: { id: POST }, replied_to: { id: parent } } }] }] });
+    for (const [id, parent] of [['18100000000000101', replyId], ['18100000000000102', '18100000000000101']] as const) {
+      expect((await post(app, deep(id, parent, `Cảm ơn shop ${id}`), THREADS_SECRET)).status).toBe(200);
+    }
+    await runConversationIntake({ workerDb, runtime: worker });
+    expect((await rt.query<ConversationListed>('kernel.conversation.list', { posts: [{ connectionId, externalPostId: POST }] }, asOwner)).conversations).toHaveLength(1);
+    detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
+    expect(detail.messages.map((m) => m.direction)).toEqual(['in', 'out', 'in', 'in']);
+
+    // The reconcile read stores the reply the webhook missed.
     expect(await runConversationSync(sendDeps, { action: 'history', orgId, connectionId })).toBe('complete');
     const after = await rt.query<ConversationListed>('kernel.conversation.list', { posts: [{ connectionId, externalPostId: POST }] }, asOwner);
     expect(after.conversations).toHaveLength(2);

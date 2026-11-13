@@ -277,17 +277,22 @@ describe('ThreadsConversations.history (#3133)', () => {
   const since = new Date('2026-11-10T00:00:00Z');
   const posts = `GET /v1.0/${USER}/threads`;
   const conversation = `GET /v1.0/${POST}/conversation`;
+  const me = 'GET /v1.0/me';
   const row = (id: string, parent: string, at: string, over: Record<string, unknown> = {}) => ({ id, text: `text ${id}`, username: 'Khach.Hang_1', timestamp: at, replied_to: { id: parent }, ...over });
   const input = { externalAccountId: USER, secret: SECRET, since, maxChats: 20 };
 
   it('stores the replies it finds under recent posts, each in its top-level reply, the profile own as out', async () => {
     const { fetchImpl, calls } = threads({
-      [posts]: [{ body: { data: [{ id: POST, timestamp: '2026-11-12T09:00:00+0000' }] } }],
+      // The post is older than the last read: a reply to it is new all the same, so posts are not filtered by `since`.
+      [posts]: [{ body: { data: [{ id: POST, timestamp: '2026-10-01T09:00:00+0000' }, { id: '18100000000000777', timestamp: '2026-11-12T09:00:00+0000', is_reply: true }] } }],
+      [me]: [{ body: { id: USER, username: 'Shop.Cua.Toi' } }],
       [conversation]: [
         {
           body: {
             data: [
-              row('18100000000000030', '18100000000000020', '2026-11-12T10:30:00+0000', { username: 'shop' , is_reply_owned_by_me: true }),
+              row('18100000000000030', '18100000000000020', '2026-11-12T10:30:00+0000', { username: 'shop.cua.toi', is_reply_owned_by_me: true }),
+              // Written in the Threads app: no flag, but the profile's own username.
+              row('18100000000000035', '18100000000000030', '2026-11-12T10:40:00+0000', { username: 'Shop.Cua.Toi' }),
               row('18100000000000020', POST, '2026-11-12T10:00:00+0000'),
               row('18100000000000025', '18100000000000020', '2026-11-12T10:10:00+0000', { username: 'Nguoi.Khac', hide_status: 'HIDDEN' }),
               row('18100000000000040', '18100000000000030', '2026-11-12T11:00:00+0000'),
@@ -306,10 +311,16 @@ describe('ThreadsConversations.history (#3133)', () => {
       ['18100000000000020', '18100000000000020', POST, 'in', undefined],
       ['18100000000000025', '18100000000000020', POST, 'in', true],
       ['18100000000000030', '18100000000000020', POST, 'out', undefined],
+      ['18100000000000035', '18100000000000020', POST, 'out', undefined],
       ['18100000000000040', '18100000000000020', POST, 'in', undefined],
     ]);
-    expect(calls[0]?.query.get('since')).toBe(String(Math.floor(since.getTime() / 1000)));
-    expect(calls[1]?.query.get('fields')).toBe('id,text,username,timestamp,replied_to,is_reply_owned_by_me,hide_status');
+    expect(calls[0]?.query.get('since')).toBeNull();
+    expect(calls[0]?.query.get('fields')).toBe('id,timestamp,is_reply');
+    // Only the one real post's conversation is read (the profile's own reply listed beside its posts is skipped), newest first.
+    const conversationCalls = calls.filter((c) => c.route === conversation);
+    expect(conversationCalls).toHaveLength(1);
+    expect(conversationCalls[0]?.query.get('fields')).toBe('id,text,username,timestamp,replied_to,is_reply_owned_by_me,hide_status');
+    expect(conversationCalls[0]?.query.get('reverse')).toBe('true');
   });
 
   it('says it is incomplete when a post has more replies than one read, and fails by kind', async () => {
@@ -326,6 +337,9 @@ describe('ThreadsConversations.history (#3133)', () => {
     expect(await failing({ body: { data: [{ id: POST }] } }, err(2, 500))).toMatchObject({ kind: 'failed', retry: true });
     // A post that is gone is skipped.
     expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 400))).toMatchObject({ kind: 'ok', events: [] });
+    // More recent posts than one pass reads is a gap, not a complete read.
+    const morePosts = threads({ [posts]: [{ body: { data: [{ id: POST }], paging: { next: 'https://graph.threads.net/next' } } }], [conversation]: [{ body: { data: [] } }] });
+    expect(await new ThreadsPublisher(morePosts.fetchImpl, fast).conversations.history?.({ ...input, maxChats: 1 })).toMatchObject({ kind: 'ok', complete: false });
     const noToken = await new ThreadsPublisher(threads({}).fetchImpl, fast).conversations.history?.({ ...input, secret: '{}' });
     expect(noToken).toMatchObject({ kind: 'failed', retry: false, code: 'NO_TOKEN' });
   });
