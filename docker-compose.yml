@@ -305,6 +305,7 @@ services:
       CHANNEL_SANDBOX: ${CHANNEL_SANDBOX:-true}
       # Empty means unset: the kernel turns the sandboxes on for a local PUBLIC_URL and off for a public one.
       EINVOICE_SANDBOX: ${EINVOICE_SANDBOX:-}
+      MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS-sandbox}
       BANK_FEED_SANDBOX: ${BANK_FEED_SANDBOX:-false}
       ADS_SANDBOX: ${ADS_SANDBOX:-}
       BANK_FEED_SANDBOX_WEBHOOK_SECRET: ${BANK_FEED_SANDBOX_WEBHOOK_SECRET:-}

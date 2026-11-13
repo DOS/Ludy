@@ -73,6 +73,19 @@ describe('readMarketplaceOrders', () => {
     for (const value of Object.values(BUYER)) expect(JSON.stringify(read)).not.toContain(value);
   });
 
+  it('reads one point and exactly three digits as a thousands group, and a four-digit fraction as a decimal (what the provider file relies on, #2519)', () => {
+    const csv = ['Order ID;Order Status;Seller SKU;Product Name;Quantity;SKU Unit Original Price;SKU Subtotal After Discount;Created Time']
+      .concat([['T1', 'Completed', 'S1', 'Mau', '2', '100.125', '200.250', '2026-11-01'], ['T2', 'Completed', 'S1', 'Mau', '2', '100.1250', '200.2500', '2026-11-01']].map((row) => row.map((cell) => `"${cell}"`).join(';')))
+      .join('\n');
+    const read = readMarketplaceOrders(new TextEncoder().encode(csv));
+    expect(read).toMatchObject({ recognized: true, platform: 'tiktok_shop' });
+    // Three digits after one point are a thousands group, so the provider writes a value with three decimals with a zero added: the four-digit text is read as the value it is.
+    expect(read.lines.map((l) => [l.orderNo, l.unitPrice, l.amount])).toEqual([
+      ['T1', '100125', '200250'],
+      ['T2', '100.125', '200.25'],
+    ]);
+  });
+
   it('reads a Lazada workbook one unit to a row, and tells TikTok Shop by its headers', () => {
     const lazada = readMarketplaceOrders(
       buildXlsx([

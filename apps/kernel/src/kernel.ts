@@ -79,6 +79,7 @@ import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
+import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -374,6 +375,17 @@ export function metaConversationSecrets(config: Pick<Config, 'CHANNEL_META_APP_I
 // its own switch when it is built (#2503); until then no host is ever called.
 export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
   return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
+}
+
+// The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is
+// added here with its own entry when it is built; an id this build does not know is left out, so a typo offers nothing.
+export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDERS'>): Readonly<Record<string, MarketplaceProvider>> {
+  const out: Record<string, MarketplaceProvider> = {};
+  for (const raw of config.MARKETPLACE_PROVIDERS.split(',')) {
+    const id = raw.trim();
+    if (id === 'sandbox' && isMarketplaceAdapter(id)) out[id] = createSandboxMarketplaceProvider();
+  }
+  return out;
 }
 
 export function adPlatformsOf(
@@ -684,7 +696,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -735,7 +747,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

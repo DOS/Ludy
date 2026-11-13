@@ -1,13 +1,13 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -57,7 +57,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
-import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -249,6 +249,8 @@ export interface RpcChannels {
   bankFeedSandbox?: boolean;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
   einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
+  // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the offline sandbox when MARKETPLACE_PROVIDERS names it.
+  marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
@@ -424,6 +426,7 @@ export function createRpcHandler(
     return inOrg(context, fn);
   };
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
+  const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
   // The commands check the role again; this answers first, in words, before anything is sealed or called.
   const requireOwnerOrAdmin = async (context: RpcContext, message: string) => {
@@ -2624,6 +2627,106 @@ export function createRpcHandler(
       },
     },
     marketplace: {
+      // What the connect card may offer (#2519): the adapters this deployment enabled with the platforms each serves, and every platform with whether an adapter serves it. A platform with
+      // none is read from the report file the org brings. Never a credential or a host.
+      providers: os.marketplace.providers.handler(({ context }) =>
+        inFinance(context, async () => {
+          const adapters = Object.entries(channels?.marketplaceProviders ?? {}).map(([id, provider]) => ({
+            id,
+            offline: provider.hosts.length === 0,
+            connectFields: [...provider.connectFields],
+            platforms: (Object.keys(provider.capabilities.platforms) as Array<(typeof MARKETPLACE_PLATFORM_KEYS)[number]>).sort(),
+          }));
+          return {
+            adapters,
+            platforms: MARKETPLACE_PLATFORM_KEYS.map((platform) => {
+              const serving = adapters.filter((a) => a.platforms.includes(platform)).map((a) => a.id);
+              return { platform, adapter: serving.length > 0, adapters: serving };
+            }),
+          };
+        }),
+      ),
+      // The org's own seller account at a marketplace (ADR-0045 point 7). The fields it types are sealed here, once; the command gets the envelope, never the secret, and only the worker opens it.
+      connections: {
+        list: os.marketplace.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_connection.list', {}, { actor, orgId }))),
+        connect: os.marketplace.connections.connect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được sàn thương mại điện tử');
+            const provider = marketplaceProviderOf(input.adapter);
+            if (!provider || !channels) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            if (!Object.hasOwn(provider.capabilities.platforms, input.platform)) throw new DomainError('MARKETPLACE_PLATFORM', 422, 'Bộ kết nối này chưa đọc được sàn đã chọn; hãy nhập file báo cáo của sàn');
+            if (Object.keys(input.fields).length !== provider.connectFields.length || !provider.connectFields.every((name) => Object.hasOwn(input.fields, name))) {
+              throw new DomainError('MARKETPLACE_FIELDS', 422, 'Hãy nhập đủ các thông tin mà sàn yêu cầu, không thêm thông tin khác');
+            }
+            const target = await runtime.query<{ legalEntityId: string }>(
+              'finance.marketplace_connection.target',
+              { adapter: input.adapter, platform: input.platform, legalEntityId: input.legalEntityId },
+              { actor, orgId },
+            );
+            const channelProvider = `marketplace_${input.adapter}`;
+            const externalAccountId = `${target.legalEntityId}:${input.platform}`;
+            // The offline provider has no account: it is sealed with its own fixed word, so a credential row exists for the flow and holds nothing of the org's.
+            const secret = provider.hosts.length === 0 ? SANDBOX_MARKETPLACE_SECRET : JSON.stringify(input.fields);
+            const sealed = channels.broker.seal(secret, { orgId, provider: channelProvider, externalAccountId });
+            const connected = await runtime.execute<{ id: string }>(
+              'finance.marketplace_connection.connect',
+              {
+                adapter: input.adapter,
+                platform: input.platform,
+                legalEntityId: target.legalEntityId,
+                displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              },
+              { actor, orgId },
+            );
+            return { id: connected.id };
+          }),
+        ),
+        test: os.marketplace.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            // The API never opens a credential: a provider reached over the network is tested by the worker (a later build, with its adapter). The offline provider reaches no host and needs
+            // no credential, so its test runs here.
+            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            let state: MarketplaceTestResult;
+            try {
+              state = await provider.testConnection(SANDBOX_MARKETPLACE_SECRET);
+            } catch (error) {
+              state = error instanceof MarketplaceProviderError && error.kind === 'credentials' ? 'wrong_credentials' : 'unreachable';
+            }
+            return runtime.execute('finance.marketplace_connection.record_test', { id: row.id, state }, { actor, orgId });
+          }),
+        ),
+        disconnect: os.marketplace.connections.disconnect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới ngắt được kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) return { removed: false };
+            // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
+            await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
+            return runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+          }),
+        ),
+        pollNow: os.marketplace.connections.pollNow.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới lấy đơn từ sàn được');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            // Only the offline provider is pulled from a button: a real adapter is polled by the worker on its own schedule, once it is built and reviewed.
+            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa lấy đơn được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            return runtime.execute<{ queued: boolean }>('finance.marketplace_connection.request_poll', { id: row.id }, { actor, orgId });
+          }),
+        ),
+      },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
