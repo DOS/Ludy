@@ -298,6 +298,39 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     expect(await o.links()).toHaveLength(0);
   });
 
+  it('never carries a quote made to the deal\'s earlier customer: a deal moved to another customer has no quote facts and no link', async () => {
+    const o = await org();
+    const [a, b] = [await o.party('Công ty A', 'a@khach.test'), await o.party('Công ty B', 'b@khach.test')];
+    const deal = await o.newDeal(o.member, a);
+    await o.sentQuote(deal.id, 6, 20, 'BG-2026-0500');
+    await o.raise();
+    const step = await o.stepOf(deal.id);
+    expect(step.reason).toBe('quote_unanswered');
+    expect((await o.source(o.member, step.id)).quote?.label).toBe('BG-2026-0500');
+    // The deal moves to customer B (the quote keeps A as its customer); its step is a quote step whose quote is not B's.
+    await rows('UPDATE crove_crm.deal SET party_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, deal.id, b]);
+    const linksBefore = (await o.links()).length;
+    await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_WAITING' });
+    expect(await o.links()).toHaveLength(linksBefore);
+    // A quiet deal that has a sent quote to customer A, then moved to B: its draft says only the days, with B's name and address and none of A's quote.
+    const quiet = await o.newDeal(o.member, a, { title: 'Đơn lẻ' });
+    await o.sentQuote(quiet.id, 0, 20, 'BG-2026-0501');
+    await o.age(quiet.id, 30);
+    await o.raise();
+    const quietStep = await o.stepOf(quiet.id);
+    expect(quietStep.reason).toBe('no_activity');
+    expect((await o.source(o.member, quietStep.id)).quote?.label).toBe('BG-2026-0501');
+    await rows('UPDATE crove_crm.deal SET party_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, quiet.id, b]);
+    const facts = await o.source(o.member, quietStep.id);
+    expect(facts).toMatchObject({ contactName: 'Công ty B', contactEmail: 'b@khach.test', quote: null });
+    const got = await o.draft(o.member, quietStep.id, null);
+    expect(got).toMatchObject({ quoteId: null, hasLink: false, email: 'b@khach.test' });
+    expect(got.text).not.toContain('đồng');
+    expect(got.text).not.toContain('BG-2026-0501');
+    expect(got.text).not.toContain('http');
+    expect(await o.links()).toHaveLength(linksBefore);
+  });
+
   it('gives a draft with no link, not an error, when the quote already has the most live links', async () => {
     const o = await org();
     const deal = await o.newDeal(o.member, await o.party('Công ty Hoa Mai'));

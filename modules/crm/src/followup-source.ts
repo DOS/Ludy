@@ -44,7 +44,8 @@ export const followupSource = defineQuery({
     if (!step) throw new DomainError('NEXT_STEP_NOT_FOUND', 404, 'Không tìm thấy việc cần theo dõi này');
     if (step.status !== 'open' || step.closed) throw new DomainError('NEXT_STEP_NOT_OPEN', 409, 'Việc này đã xong hoặc đã đóng, không cần soạn tin nhắc nữa');
     const quoteStep = step.reason === 'quote_unanswered' || step.reason === 'quote_expiring';
-    // Only a quote that is still valid today (expiry is not stored, so an expired quote stays `sent`: it is never reminded about). Each step takes the quote its own reason is about, so the days
+    // Only a quote to the deal's customer as they are now (a deal moved to another customer keeps the quotes made to the first one: their total and private link are not the new customer's to read),
+    // and only one that is still valid today (expiry is not stored, so an expired quote stays `sent`: it is never reminded about). Each step takes the quote its own reason is about, so the days
     // and the quote of one draft are always the same quote's: an unanswered step the one sent longest ago, an expiring step the one that expires first, any other step the latest sent.
     const order =
       step.reason === 'quote_unanswered'
@@ -57,7 +58,7 @@ export const followupSource = defineQuery({
              greatest((q.valid_until - (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS left_days,
              greatest(((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - (coalesce(q.sent_at, q.created_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS sent_days
       FROM crove_crm.quote q
-      WHERE q.org_id = ${ctx.orgId}::uuid AND q.deal_id = ${step.deal_id}::uuid AND q.status = 'sent' AND q.number IS NOT NULL
+      WHERE q.org_id = ${ctx.orgId}::uuid AND q.deal_id = ${step.deal_id}::uuid AND q.party_id = ${step.party_id}::uuid AND q.status = 'sent' AND q.number IS NOT NULL
         AND q.valid_until >= (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
       ORDER BY ${order}
       LIMIT 1`.execute(ctx.trx);
