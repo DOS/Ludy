@@ -45,6 +45,8 @@ const SIGNALS = [
   'finance.signals.supplier_payments_waiting:ludy.read',
   'crm.signals.won_deals:ludy.read',
   'crm.signals.open_deals:ludy.read',
+  // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
+  'kernel.mcp.signals:ludy.read',
 ];
 
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
