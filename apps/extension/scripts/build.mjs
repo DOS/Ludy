@@ -18,7 +18,14 @@ const ICONS = ['icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png'];
 
 // The only package import the sources may make, mapped to its file; any other bare import fails the build (no bundler, no node_modules in the package).
 const PACKAGES = { '@crove/meeting-recorder': join(root, '..', '..', 'packages', 'meeting-recorder', 'src', 'index.ts') };
-const outputPath = (file) => (file.startsWith(`${src}/`) ? join(dist, relative(src, file)) : join(dist, 'shared', file.includes('/packages/') ? `${basename(dirname(dirname(file)))}.ts` : basename(file))).replace(/\.ts$/, '.js');
+// A package's index.ts is dist/shared/<package>.js; any other file of the package is dist/shared/<package>-<name>.js, so a package of several files keeps one output each.
+const sharedName = (file) => {
+  if (!file.includes('/packages/')) return basename(file);
+  const pkg = basename(dirname(dirname(file)));
+  const name = basename(file, '.ts');
+  return name === 'index' ? `${pkg}.ts` : `${pkg}-${name}.ts`;
+};
+const outputPath = (file) => (file.startsWith(`${src}/`) ? join(dist, relative(src, file)) : join(dist, 'shared', sharedName(file))).replace(/\.ts$/, '.js');
 
 const argVersion = process.argv.indexOf('--version') > 0 ? process.argv[process.argv.indexOf('--version') + 1] : undefined;
 const version = (argVersion ?? JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).replace(/^v/, '');
