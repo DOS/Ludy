@@ -9887,6 +9887,7 @@ export const en = {
     finance: {
       today: 'Read what needs you in accounting today',
       signals: {
+        overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',
         sales: 'Read which customers have a sales invoice, to check them against won deals',
       },
       account: {

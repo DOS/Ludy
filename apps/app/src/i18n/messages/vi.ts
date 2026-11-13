@@ -9884,6 +9884,7 @@ export const vi = {
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
       signals: {
+        overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',
         sales: 'Xem khách nào đã có hóa đơn bán hàng, để đối chiếu với deal đã thắng',
       },
       account: {
