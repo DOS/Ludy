@@ -450,6 +450,30 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     });
   });
 
+  describe('a customer with a WhatsApp username (a BSUID, no phone number)', () => {
+    it('is stored under their BSUID with the name they gave, matches no CRM contact by phone, and is answered with `recipient` and no `to`', async () => {
+      const o = await org();
+      const bsuid = 'US.13491208655302741918';
+      const m = { from_user_id: bsuid, id: `wamid.test${tick++}-${randomUUID().slice(0, 8)}`, timestamp: secondsAgo(60), type: 'text', text: { body: BODY } };
+      expect((await post(app, noticeOf(o, { contacts: [{ profile: { name: 'Khách Mỹ', username: 'khach.my' }, user_id: bsuid }], messages: [m] }))).status).toBe(200);
+      expect(await waiting()).toBe(1);
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+      const thread = await threadOf(o, bsuid);
+      const seen = await detail(o, thread.id);
+      expect(seen.conversation.contact).toMatchObject({ displayName: 'Khách Mỹ' });
+      const none = await api.query<{ phone: unknown[] }>('kernel.conversation.contact_candidates', { conversationId: thread.id }, { actor: asUser(o.owner), orgId: o.orgId });
+      expect(none.phone).toEqual([]);
+      // The reply goes to the BSUID: `recipient`, never `to`, and is sent once.
+      const platform = graph();
+      const { messageId } = await reply(o, thread);
+      expect(await runConversationJob(jobDeps(platform.adapter), jobOf(o, messageId))).toBe('accepted');
+      expect(platform.calls).toHaveLength(1);
+      expect(platform.calls[0]).toMatchObject({ method: 'POST', path: `/v24.0/${o.phoneId}/messages`, body: { messaging_product: 'whatsapp', recipient: bsuid, type: 'text' } });
+      expect(platform.calls[0]?.body).not.toHaveProperty('to');
+      expect(await messageRow(messageId)).toMatchObject({ send_state: 'sent' });
+    });
+  });
+
   describe('a reply', () => {
     it('goes out once with the sealed token inside the 24 hours, its wamid is stored, and a second job calls nothing', async () => {
       const o = await org();

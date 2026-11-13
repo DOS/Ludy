@@ -124,6 +124,24 @@ describe('the channel’s name', () => {
     expect(providerName('email')).toBe('email');
   });
 
+  it('warns on the connect screen that replies past 1,000 a month per number are billed by Meta to the business, in both languages, and the form shows it', async () => {
+    const find = (node: unknown, key: string): string | null => {
+      if (typeof node !== 'object' || node === null) return null;
+      for (const [k, value] of Object.entries(node)) {
+        if (k === key && typeof value === 'string') return value;
+        const inner = find(value, key);
+        if (inner !== null) return inner;
+      }
+      return null;
+    };
+    expect(find(catalog('vi'), 'whatsappBilling')).toMatch(/1\.000.*Meta tính phí trên tài khoản WhatsApp của chính bạn.*phương thức thanh toán/);
+    expect(find(catalog('en'), 'whatsappBilling')).toMatch(/1,000 free replies.*bills your own WhatsApp account.*no payment method/);
+    // The screen renders the note under the form's hint.
+    const { readFile } = await import('node:fs/promises');
+    const screen = await readFile(new URL('../src/routes/social-channels.tsx', import.meta.url), 'utf8');
+    expect(screen).toContain("t('whatsappBilling')");
+  });
+
   it('is said in the "a customer is waiting" line of Home, in both languages', () => {
     // The key's place in the catalog is Home's; the select names the channel, and WhatsApp has its own words.
     const find = (node: unknown): string | null => {

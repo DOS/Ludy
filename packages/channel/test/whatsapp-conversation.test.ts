@@ -23,6 +23,9 @@ const PHONE_ID = '104123456789012';
 const WABA_ID = '204987654321098';
 const CUSTOMER = '84900000001';
 const OTHER = '84900000002';
+// A business-scoped user id, the id of a customer with a WhatsApp username [S: Meta's "Business-scoped user IDs"].
+const BSUID = 'US.13491208655302741918';
+const BSUID_2 = 'VN.20481208655302741999';
 const TOKEN = 'EAAG' + 'x'.repeat(40);
 const SECRET = JSON.stringify({ accessToken: TOKEN, wabaId: WABA_ID });
 // 2026-11-13 07:00:00 UTC in seconds, as WhatsApp dates a message [M]; "now" is a minute later.
@@ -186,6 +189,53 @@ describe('parseWhatsAppNotices', () => {
     ]);
   });
 
+  it('takes a customer known only by a BSUID (a username, no phone number) as themselves, with their name', () => {
+    const [n] = parse(
+      notice({
+        contacts: [{ profile: { name: 'Khách Mỹ', username: 'khach.my' }, user_id: BSUID }],
+        messages: [{ from_user_id: BSUID, id: 'wamid.bsuid1', timestamp: String(T0), type: 'text', text: { body: 'Hi, do you ship abroad?' } }],
+      }),
+    );
+    expect(n?.events).toEqual([
+      expect.objectContaining({ kind: 'direct', threadId: BSUID, messageId: 'wamid.bsuid1', direction: 'in', contact: { id: BSUID, name: 'Khách Mỹ' }, text: 'Hi, do you ship abroad?' }),
+    ]);
+  });
+
+  it('keeps the phone number as the id when the notice has both, and matches each of several customers to their own contact by phone or by BSUID', () => {
+    const [both] = parse(
+      notice({
+        contacts: [{ profile: { name: 'Lan' }, wa_id: CUSTOMER, user_id: BSUID }],
+        messages: [{ from: CUSTOMER, from_user_id: BSUID, id: 'wamid.both', timestamp: String(T0), type: 'text', text: { body: 'x' } }],
+      }),
+    );
+    expect(both?.events[0]).toMatchObject({ threadId: CUSTOMER, contact: { id: CUSTOMER, name: 'Lan' } });
+    const [many] = parse(
+      notice({
+        contacts: [
+          { profile: { name: 'Lan' }, wa_id: CUSTOMER },
+          { profile: { name: 'Khách Mỹ' }, user_id: BSUID_2 },
+        ],
+        messages: [
+          { from: CUSTOMER, id: 'wamid.m1', timestamp: String(T0), type: 'text', text: { body: 'a' } },
+          { from_user_id: BSUID_2, id: 'wamid.m2', timestamp: String(T0 + 1), type: 'text', text: { body: 'b' } },
+        ],
+      }),
+    );
+    expect(many?.events.map((e) => [e.threadId, e.contact.name])).toEqual([
+      [CUSTOMER, 'Lan'],
+      [BSUID_2, 'Khách Mỹ'],
+    ]);
+  });
+
+  it('reads no customer from an id that is not a BSUID, and marks a failed status sent to a BSUID by the BSUID', () => {
+    const none = (id: string) => parse(notice({ messages: [{ from_user_id: id, id: 'wamid.bad', timestamp: String(T0), type: 'text', text: { body: 'x' } }] })).flatMap((n) => n.events);
+    expect(none('us.13491208655302741918')).toEqual([]);
+    expect(none('US.ENT.13491208655302741918')).toEqual([]);
+    expect(none('US.')).toEqual([]);
+    const failed = parse(notice({ statuses: [{ id: 'wamid.sentout', status: 'failed', timestamp: String(T0), recipient_user_id: BSUID, errors: [{ code: 131026 }] }] })).flatMap((n) => n.events);
+    expect(failed).toEqual([expect.objectContaining({ direction: 'out', threadId: BSUID, messageId: 'wamid.sentout', deliveryFailed: { code: 'WA_131026' } })]);
+  });
+
   it('is no notice of ours for another object, and malformed for a body that is not a notice', () => {
     expect(parse(JSON.stringify({ object: 'page', entry: [] }))).toEqual([]);
     expect(parse(JSON.stringify({ object: 'whatsapp_business_account', entry: [] }))).toEqual([]);
@@ -314,6 +364,17 @@ describe('WhatsAppConversations.reply', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('sends to a customer known only by a BSUID with `recipient` and no `to`, and to a phone number with `to` and no `recipient`', async () => {
+    const { fetchImpl, calls } = stub([{ body: { messages: [{ id: 'wamid.byid' }] } }, { body: { messages: [{ id: 'wamid.byphone' }] } }]);
+    const wa = adapter(fetchImpl);
+    expect(await wa.reply(replyInput({ threadId: BSUID }))).toEqual({ kind: 'accepted', externalId: 'wamid.byid' });
+    expect(calls[0]?.body).toMatchObject({ messaging_product: 'whatsapp', recipient_type: 'individual', recipient: BSUID, type: 'text' });
+    expect(calls[0]?.body).not.toHaveProperty('to');
+    expect(await wa.reply(replyInput())).toEqual({ kind: 'accepted', externalId: 'wamid.byphone' });
+    expect(calls[1]?.body).toMatchObject({ to: CUSTOMER });
+    expect(calls[1]?.body).not.toHaveProperty('recipient');
+  });
+
   it('treats a thread with no known last message as closed: the window is never presumed open', async () => {
     const { fetchImpl, calls } = stub([{ body: {} }]);
     const wa = adapter(fetchImpl);
@@ -330,7 +391,8 @@ describe('WhatsAppConversations.reply', () => {
     expect(await wa.reply(replyInput({ text: '   ', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'EMPTY' });
     expect(await wa.reply(replyInput({ text: 'a'.repeat(4097), lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'WA_TEXT_LENGTH' });
     expect(await wa.reply(replyInput({ kind: 'comment_thread', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'WA_NOT_DIRECT' });
-    expect(await wa.reply(replyInput({ threadId: 'US.13491208655302741918', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'WA_BAD_RECIPIENT' });
+    expect(await wa.reply(replyInput({ threadId: 'US.ENT.13491208655302741918', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'WA_BAD_RECIPIENT' });
+    expect(await wa.reply(replyInput({ threadId: 'us.13491208655302741918', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'WA_BAD_RECIPIENT' });
     expect(await wa.reply(replyInput({ externalAccountId: 'abc', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', code: 'BAD_PHONE_NUMBER_ID' });
     expect(await wa.reply(replyInput({ secret: '{}', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', error: 'token_expired', code: 'NO_WHATSAPP_TOKEN' });
     expect(await wa.reply(replyInput({ secret: 'not json', lastInboundAt: recent }))).toMatchObject({ kind: 'rejected', error: 'token_expired' });

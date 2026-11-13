@@ -39,10 +39,15 @@ export const WHATSAPP_MEDIA_HOSTS: readonly string[] = ['fbsbx.com', 'fbcdn.net'
 
 const PHONE_NUMBER_ID = /^\d{5,32}$/;
 const WABA_ID = /^\d{5,32}$/;
-// A customer's WhatsApp id [M]: the phone number in digits (`wa_id`). If Meta later gives another identifier, the identity keeps whatever the webhook gives and
-// the phone match finds nothing; a reply goes only to a digits id.
+// A customer's WhatsApp id: the phone number in digits (`wa_id`, `from`) when the notice has it, else the business-scoped user id (BSUID, `user_id`,
+// `from_user_id`) [S: Meta's "Business-scoped user IDs" and the messages webhook reference, read 2026-11-13]. A customer who has adopted a WhatsApp username
+// comes with a BSUID and may come without a phone number, so a notice with a BSUID and no phone is theirs all the same. A BSUID is a two-letter country code,
+// a period and up to 128 letters and digits (`US.13491208655302741918`); the parent form (`US.ENT.1181...`) is not used as an id here.
 const CUSTOMER_ID = /^[A-Za-z0-9._:-]{1,100}$/;
-const SENDABLE_ID = /^\d{5,20}$/;
+const PHONE_ID = /^\d{5,20}$/;
+const BSUID = /^[A-Z]{2}\.[A-Za-z0-9]{1,128}$/;
+// What a reply can be sent to: a phone number goes in `to`, a BSUID in `recipient` (and `to` is left out).
+const SENDABLE_ID = PHONE_ID;
 const MEDIA_ID = /^\d{1,32}$/;
 const ACCESS_TOKEN = /^[A-Za-z0-9_-]{20,600}$/;
 const TEXT_MAX = 20_000;
@@ -72,6 +77,7 @@ interface WaMedia {
 interface WaMessage {
   id?: unknown;
   from?: unknown;
+  from_user_id?: unknown;
   timestamp?: unknown;
   type?: unknown;
   text?: { body?: unknown } | null;
@@ -86,11 +92,12 @@ interface WaStatus {
   status?: unknown;
   timestamp?: unknown;
   recipient_id?: unknown;
+  recipient_user_id?: unknown;
   errors?: Array<{ code?: unknown }> | null;
 }
 interface WaValue {
   metadata?: { phone_number_id?: unknown } | null;
-  contacts?: Array<{ wa_id?: unknown; profile?: { name?: unknown } | null }> | null;
+  contacts?: Array<{ wa_id?: unknown; user_id?: unknown; profile?: { name?: unknown } | null }> | null;
   messages?: WaMessage[] | null;
   statuses?: WaStatus[] | null;
 }
@@ -183,30 +190,33 @@ export function parseWhatsAppNotices(body: Uint8Array, now: number = Date.now())
       const phoneNumberId = idOf(value.metadata?.phone_number_id, PHONE_NUMBER_ID);
       if (!phoneNumberId) continue;
       const list = byAccount.get(phoneNumberId) ?? [];
-      // The customer is their `wa_id` [M: contacts[].wa_id], with the name they gave [M: contacts[].profile.name]. `messages[].from` is the same number in most
-      // cases and not in all (Meta writes some countries' numbers differently there): when a notice names one sender and one contact, the contact's wa_id is the
-      // customer's id, which is also the id a reply is sent to; with several, a message is matched to the contact whose wa_id is its `from`.
-      const contacts: Array<{ id: string; name: string }> = [];
+      // The customer is their `wa_id` [M: contacts[].wa_id], with the name they gave [M: contacts[].profile.name]; when the notice has no phone number for them
+      // (a customer with a WhatsApp username) they are their BSUID [S: contacts[].user_id, messages[].from_user_id]. `messages[].from` is the same number as the
+      // contact's wa_id in most cases and not in all (Meta writes some countries' numbers differently there): when a notice names one sender and one contact,
+      // the contact is that sender, and its wa_id is the customer's id, which is also the id a reply is sent to; with several, a message is matched to the
+      // contact whose wa_id is its `from` or whose user_id is its `from_user_id`.
+      const contacts: Array<{ phone: string | null; bsuid: string | null; name: string }> = [];
       for (const contact of Array.isArray(value.contacts) ? value.contacts : []) {
-        const id = idOf(contact?.wa_id, CUSTOMER_ID);
-        if (id) contacts.push({ id, name: typeof contact?.profile?.name === 'string' ? clean(contact.profile.name).trim().slice(0, NAME_MAX) : '' });
+        const phone = idOf(contact?.wa_id, CUSTOMER_ID);
+        const bsuid = idOf(contact?.user_id, BSUID);
+        if (phone || bsuid) contacts.push({ phone, bsuid, name: typeof contact?.profile?.name === 'string' ? clean(contact.profile.name).trim().slice(0, NAME_MAX) : '' });
       }
       const messages = Array.isArray(value.messages) ? value.messages : [];
-      const senders = new Set(messages.map((m) => idOf(m?.from, CUSTOMER_ID)).filter((id): id is string => id !== null));
-      const [onlySender] = senders;
-      const onlyContact = contacts.length === 1 && senders.size === 1 ? (contacts[0] as { id: string; name: string }) : null;
-      const names = new Map(contacts.filter((c) => c.name !== '').map((c) => [c.id, c.name]));
+      const senderOf = (m: WaMessage | null | undefined): { from: string | null; fromUser: string | null } => ({ from: idOf(m?.from, CUSTOMER_ID), fromUser: idOf(m?.from_user_id, BSUID) });
+      const senders = new Set(messages.map((m) => senderOf(m)).map((s) => s.from ?? s.fromUser).filter((id): id is string => id !== null));
+      const onlyContact = contacts.length === 1 && senders.size === 1 ? (contacts[0] as { phone: string | null; bsuid: string | null; name: string }) : null;
       for (const message of messages) {
         if (!message || typeof message !== 'object') continue;
-        const from = idOf(message.from, CUSTOMER_ID);
-        const customer = from !== null && from === onlySender && onlyContact ? onlyContact.id : from;
+        const { from, fromUser } = senderOf(message);
+        const contact = contacts.find((c) => (fromUser !== null && c.bsuid === fromUser) || (from !== null && c.phone === from)) ?? onlyContact;
+        const customer = contact?.phone ?? from ?? fromUser ?? contact?.bsuid ?? null;
         const messageId = idOf(message.id, /^[A-Za-z0-9._=+/-]{1,300}$/);
         const at = atOf(message.timestamp, now);
         // The customer is never the business's own number: a message "from" the account is not a customer's.
         if (!customer || !messageId || !at || customer === phoneNumberId || messageId.length > MESSAGE_ID_MAX) continue;
         const content = textOf(message);
         if (!content) continue;
-        const name = names.get(customer);
+        const name = contact?.name;
         list.push({
           kind: 'direct',
           threadId: customer,
@@ -220,7 +230,8 @@ export function parseWhatsAppNotices(body: Uint8Array, now: number = Date.now())
       }
       for (const status of Array.isArray(value.statuses) ? value.statuses : []) {
         if (!status || typeof status !== 'object' || status.status !== 'failed') continue;
-        const customer = idOf(status.recipient_id, CUSTOMER_ID);
+        // A failed status omits the contacts block; the customer is the phone number it was sent to, or the BSUID when it was sent to one.
+        const customer = idOf(status.recipient_id, CUSTOMER_ID) ?? idOf(status.recipient_user_id, BSUID);
         const messageId = idOf(status.id, /^[A-Za-z0-9._=+/-]{1,300}$/);
         const at = atOf(status.timestamp, now);
         if (!customer || !messageId || !at) continue;
@@ -341,7 +352,9 @@ export class WhatsAppConversations implements ConversationAdapter {
     if (input.kind !== 'direct') return { kind: 'rejected', error: 'bad_request', code: 'WA_NOT_DIRECT' };
     if (input.text.trim().length === 0) return { kind: 'rejected', error: 'bad_request', code: 'EMPTY' };
     if (input.text.length > WHATSAPP_TEXT_MAX) return { kind: 'rejected', error: 'bad_request', code: 'WA_TEXT_LENGTH' };
-    if (!SENDABLE_ID.test(input.threadId)) return { kind: 'rejected', error: 'bad_request', code: 'WA_BAD_RECIPIENT' };
+    // A phone number is sent to by `to`; a customer known only by a BSUID by `recipient`, and `to` is left out [S: Meta's "Send message requests"].
+    const byPhone = SENDABLE_ID.test(input.threadId);
+    if (!byPhone && !BSUID.test(input.threadId)) return { kind: 'rejected', error: 'bad_request', code: 'WA_BAD_RECIPIENT' };
     // Closed unless the customer's last message is known and within 24 hours: with no date the window cannot be shown open, and a free-form send outside it is
     // what Meta refuses (131047) and the business must never be billed for.
     const inboundMs = typeof input.lastInboundAt === 'string' ? Date.parse(input.lastInboundAt) : NaN;
@@ -349,7 +362,7 @@ export class WhatsAppConversations implements ConversationAdapter {
     try {
       const answer = await this.graph.call<{ messages?: Array<{ id?: unknown }> }>('POST', `${input.externalAccountId}/messages`, {
         token: secret.accessToken,
-        json: { messaging_product: 'whatsapp', recipient_type: 'individual', to: input.threadId, type: 'text', text: { preview_url: false, body: input.text } },
+        json: { messaging_product: 'whatsapp', recipient_type: 'individual', ...(byPhone ? { to: input.threadId } : { recipient: input.threadId }), type: 'text', text: { preview_url: false, body: input.text } },
       });
       const id = answer.messages?.[0]?.id;
       if (typeof id !== 'string' || id === '' || id.length > MESSAGE_ID_MAX) return { kind: 'unknown', code: 'WA_NO_MESSAGE_ID' };

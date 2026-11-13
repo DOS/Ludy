@@ -881,6 +881,9 @@ export function SocialChannelsPage() {
               <Label htmlFor="wa-waba">{t('whatsappWabaId')}</Label>
               <Input id="wa-waba" autoComplete="off" inputMode="numeric" value={wa.wabaId} onChange={(e) => setWa({ ...wa, wabaId: e.target.value })} />
               <p className="text-xs text-subtle-foreground">{t('whatsappHint')}</p>
+              <p className="text-xs text-warning" data-testid="whatsapp-billing">
+                {t('whatsappBilling')}
+              </p>
               <Button type="submit" variant="outline" size="sm" disabled={!wa.accessToken.trim() || !wa.phoneNumberId.trim() || !wa.wabaId.trim() || connectWhatsApp.isPending}>
                 {t('connectWith', { provider: providerName('whatsapp') })}
               </Button>
