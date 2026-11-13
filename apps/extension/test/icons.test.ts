@@ -14,6 +14,16 @@ const pngSize = (file: Buffer): { width: number; height: number } => {
   return { width: file.readUInt32BE(16), height: file.readUInt32BE(20) };
 };
 
+describe('extension locales', () => {
+  it('the build copies _locales into the package, and both languages hold the three messages the manifest names', () => {
+    expect(build).toMatch(/cpSync\(join\(root, '_locales'\), join\(dist, '_locales'\)/);
+    for (const lang of ['vi', 'en']) {
+      const messages = JSON.parse(readFileSync(new URL(`_locales/${lang}/messages.json`, root), 'utf8')) as Record<string, { message: string }>;
+      expect(Object.keys(messages).sort()).toEqual(['extActionTitle', 'extDescription', 'extName']);
+    }
+  });
+});
+
 describe('extension icons', () => {
   it('the manifest names the four sizes for the extension and for the toolbar button', () => {
     expect(Object.keys(manifest.icons ?? {}).sort()).toEqual(['128', '16', '32', '48']);
