@@ -36,6 +36,7 @@ describe('the Inbox items of Home, in words', () => {
     expect(vi('today.items.conversations.unanswered', { count: 3 })).toBe('3 tin nhắn của khách đang chờ bạn trả lời');
     expect(en('today.items.conversations.oneUnanswered', { provider: 'facebook_page' })).toBe('A customer on Facebook is waiting for a reply');
     expect(vi('today.items.conversations.oneUnanswered', { provider: 'zalo_oa' })).toBe('Một khách trên Zalo đang chờ bạn trả lời');
+    expect(vi('today.items.conversations.oneUnanswered', { provider: 'telegram' })).toBe('Một khách trên Telegram đang chờ bạn trả lời');
     // A channel with no name of its own in the copy reads as a customer.
     expect(en('today.items.conversations.oneUnanswered', { provider: 'sandbox' })).toBe('A customer is waiting for a reply');
     expect(vi('today.items.conversations.oneUnanswered', { provider: 'sandbox' })).toBe('Một khách đang chờ bạn trả lời');

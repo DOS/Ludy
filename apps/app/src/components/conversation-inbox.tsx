@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { conversationRules, CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -687,7 +687,9 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         : CONVERSATION_INSTAGRAM_COMMENT_MAX
       : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
         ? CONVERSATION_FACEBOOK_DIRECT_MAX
-        : CONVERSATION_REPLY_MAX;
+        : detail.conversation.channel.provider === 'telegram'
+          ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
+          : CONVERSATION_REPLY_MAX;
   const [insertTooLong, setInsertTooLong] = useState(false);
   // The listener below reads what is in the box now without being set up again at every keystroke.
   const textNow = useRef(text);

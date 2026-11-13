@@ -71,7 +71,6 @@ const PLACEHOLDERS: ReadonlyArray<readonly [string, string]> = [
   ['poll', '[Khách gửi một cuộc khảo sát]'],
   ['dice', '[Khách gửi một biểu tượng]'],
 ];
-const FALLBACK_PLACEHOLDER = '[Khách gửi một tệp đính kèm]';
 
 const TEXT_MAX = 20_000;
 const NAME_MAX = 200;
