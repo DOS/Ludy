@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The worker's side of the live notes of a meeting being recorded (issue #3110, ADR-0052 L4a-2, ADR-0049 stage B). One job per window the recorder's tick
-// started, and a window is at most LIVE_WINDOW_PIECES pieces of about fifteen seconds:
+// started, and a window is one or two pieces (LIVE_WINDOW_PIECES) of about fifteen seconds:
 //   1. the run is the recorder's member-scoped agent context (memberVyRuntime): every call enters it afresh, so the member being active, vy.use, the org,
 //      module and agent kill switches, the global `ai` switch, a spent hard-stop budget and the run being live are re-checked at every step;
 //   2. kernel.member_vy.meeting_audio.open, in its live mode, answers the ids and the per-piece wrapped keys of the pieces after the one the preview reached (never plaintext), and
@@ -187,7 +187,8 @@ export async function runMeetingsLiveNotes(deps: MeetingsLiveNotesDeps, job: Mee
           .join(' ')
           .slice(0, LIVE_LINE_TEXT_MAX);
         // Where the piece sits in the recording: the lengths of the pieces before it (the recorder's clock), and its own length as measured.
-        if (text !== '') lines.push([piece.seq, piece.startOffsetSeconds, piece.startOffsetSeconds + Math.max(1, seconds), text]);
+        // A silent piece is a line with no text: the window reports how far it read, so the next one starts after it.
+        lines.push([piece.seq, piece.startOffsetSeconds, piece.startOffsetSeconds + Math.max(1, seconds), text]);
       } finally {
         opened.input.audio.fill(0);
       }

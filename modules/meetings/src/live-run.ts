@@ -158,6 +158,9 @@ export const liveStart = defineCommand({
   },
 });
 
+// Stops the live notes: a window that is running is cancelled; with none running (the usual case between two windows) a run of its own is started and cancelled at once and
+// stays the latest, the marker the next tick reads as "stopped", so it starts nothing. Nothing is spent and no audio goes to the provider afterwards; the recording and its upload
+// are never touched. A finished window the tick had not copied yet is not: it is at most a window of text of a preview the batch transcript replaces. Start begins again.
 export const liveStop = defineCommand({
   name: 'meetings.live.stop',
   input: zLiveRef,
@@ -171,10 +174,13 @@ export const liveStop = defineCommand({
     await openLiveMeeting(ctx, input.meetingId, 'stop its live notes');
     await lockLive(ctx.trx, ctx.orgId, userId);
     const latest = await latestWindow(ctx, input.meetingId);
-    if (latest === null) return zLiveStopped.parse({ meetingId: input.meetingId, stopped: false });
-    const stopped = await ctx.run<{ cancelled: boolean }>('kernel.member_vy.run.cancel', { runId: latest.runId });
-    ctx.audit({ meetingId: input.meetingId, runId: latest.runId, stopped: stopped.cancelled });
-    return zLiveStopped.parse({ meetingId: input.meetingId, stopped: stopped.cancelled });
+    // Nothing ever started, or already stopped (a failed or cancelled run is the latest).
+    if (latest === null || latest.state === 'failed') return zLiveStopped.parse({ meetingId: input.meetingId, stopped: false });
+    let runId = latest.runId;
+    if (latest.state !== 'running') runId = (await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: LIVE_NOTES_FEATURE, subjectType: 'meeting', subjectId: input.meetingId })).runId;
+    const cancelled = await ctx.run<{ cancelled: boolean }>('kernel.member_vy.run.cancel', { runId });
+    ctx.audit({ meetingId: input.meetingId, runId, stopped: cancelled.cancelled });
+    return zLiveStopped.parse({ meetingId: input.meetingId, stopped: cancelled.cancelled });
   },
 });
 
@@ -209,6 +215,8 @@ export const liveStatus = defineQuery({
       .select(['id', 'seq', 'start_seconds', 'end_seconds', 'text'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
+      // A silent piece is a line with no text: it marks how far the preview has read and is not shown.
+      .where('text', '<>', '')
       .orderBy('seq')
       .execute();
     const notes = await ctx.trx
@@ -232,8 +240,10 @@ export const liveStatus = defineQuery({
 });
 
 // The lines the running notes have not read yet, with the notes as they stand: what the model is given and all it is given (the new text and the previous notes
-// only, ADR-0052 section 2, so the cost of a refresh does not grow with the meeting). The notes' age is the draft's own `updated_at`; a line is new when it was written
-// after it. Read in the recorder's own context, so only the recorder can ask.
+// only, ADR-0052 section 2, so the cost of a refresh does not grow with the meeting). A line is new when it was written after the run that made the live draft was
+// STARTED (not after the draft was copied: a line the ticks copy while the model is working must be read by the next refresh, not skipped); a line the last refresh also
+// read may come back once, which the previous notes absorb. Read in the recorder's own context, so only the recorder can ask. When the recorder holds a draft of their own
+// the live notes do not fight it and read nothing, so nothing is spent.
 async function notesInput(ctx: CommandContext | QueryContext, meetingId: string): Promise<LiveNotesInput> {
   const meeting = await ctx.trx
     .selectFrom('crove_meetings.meeting')
@@ -241,14 +251,22 @@ async function notesInput(ctx: CommandContext | QueryContext, meetingId: string)
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', meetingId)
     .executeTakeFirstOrThrow();
-  const draft = await ctx.trx
+  const drafts = await ctx.trx
     .selectFrom('crove_meetings.meeting_result')
-    .select(['summary', 'decisions', 'updated_at'])
+    .select(['summary', 'decisions', 'updated_at', 'feature', 'source_run_id'])
     .where('org_id', '=', ctx.orgId)
     .where('meeting_id', '=', meetingId)
-    .where('feature', '=', LIVE_NOTES_FEATURE)
     .where('stage', '=', 'draft')
-    .executeTakeFirst();
+    .execute();
+  const other = drafts.some((d) => d.feature !== LIVE_NOTES_FEATURE);
+  const draft = drafts.find((d) => d.feature === LIVE_NOTES_FEATURE);
+  let since: Date | null = null;
+  if (draft) {
+    const run = draft.source_run_id
+      ? await ctx.trx.selectFrom('crove_kernel.ai_run').select('started_at').where('org_id', '=', ctx.orgId).where('id', '=', draft.source_run_id).executeTakeFirst()
+      : undefined;
+    since = new Date(run ? run.started_at : draft.updated_at);
+  }
   const items = draft
     ? await ctx.trx
         .selectFrom('crove_meetings.action_item')
@@ -260,13 +278,19 @@ async function notesInput(ctx: CommandContext | QueryContext, meetingId: string)
         .orderBy('created_at')
         .execute()
     : [];
-  let query = ctx.trx
-    .selectFrom('crove_meetings.live_line')
-    .select(['start_seconds', 'end_seconds', 'text'])
-    .where('org_id', '=', ctx.orgId)
-    .where('meeting_id', '=', meetingId);
-  if (draft) query = query.where('created_at', '>', draft.updated_at);
-  const lines = await query.orderBy('seq').limit(LIVE_NOTES_LINES_MAX).execute();
+  let lines: Array<{ start_seconds: number; end_seconds: number; text: string }> = [];
+  if (!other) {
+    let query = ctx.trx
+      .selectFrom('crove_meetings.live_line')
+      .select(['start_seconds', 'end_seconds', 'text'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', meetingId)
+      .where('text', '<>', '');
+    if (since) query = query.where('created_at', '>', since);
+    // At most the latest LIVE_NOTES_LINES_MAX lines: a gap longer than that (the page was closed, the budget was out) is not read by the live notes; the batch summary
+    // after the meeting reads the whole transcript.
+    lines = (await query.orderBy('seq', 'desc').limit(LIVE_NOTES_LINES_MAX).execute()).reverse();
+  }
   const decisions = draft ? ((typeof draft.decisions === 'string' ? JSON.parse(draft.decisions) : draft.decisions) as unknown) : [];
   return zLiveNotesInput.parse({
     meetingId,
@@ -276,7 +300,7 @@ async function notesInput(ctx: CommandContext | QueryContext, meetingId: string)
   });
 }
 
-// The most lines one refresh reads: about forty minutes of speech at one line per piece. A longer gap is read in the next refreshes, never cut.
+// The most lines one refresh reads: about forty minutes of speech at one line per piece.
 export const LIVE_NOTES_LINES_MAX = 160;
 
 export const liveNotesInput = defineQuery({

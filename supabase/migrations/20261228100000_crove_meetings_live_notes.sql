@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS crove_meetings.live_line (
   seq integer NOT NULL CHECK (seq >= 0 AND seq < 100000),
   start_seconds integer NOT NULL CHECK (start_seconds >= 0),
   end_seconds integer NOT NULL CHECK (end_seconds >= 0),
-  text text NOT NULL CHECK (pg_catalog.length(text) BETWEEN 1 AND 4000),
+  -- '' is a silent piece: it marks how far the preview has read (so a silence is not transcribed again) and is never shown.
+  text text NOT NULL CHECK (pg_catalog.length(text) BETWEEN 0 AND 4000),
   -- The model's words (a transcription of untrusted audio): tainted for as long as the line exists, and never shown to anyone but the recorder; there is no review that clears it
   -- (the preview is replaced by the batch transcript, never published). The run it was copied from is the taint's source (ADR-0049 decision 4); nullable so a line outlives its run row.
   tainted boolean NOT NULL DEFAULT true CHECK (tainted),

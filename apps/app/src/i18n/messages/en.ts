@@ -1791,7 +1791,8 @@ export const en = {
       start: 'Start live notes',
       stop: 'Stop',
       notesNow: 'Update notes now',
-      empty: 'No lines yet. Lines appear after each few-minute window.',
+      pageOpen: 'Live notes run only while this page is open.',
+      empty: 'No lines yet. Lines appear every few tens of seconds.',
       lineTime: 'From {start} to {end}',
       states: {
         off: 'Not started',

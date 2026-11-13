@@ -1789,7 +1789,8 @@ export const vi = {
       start: 'Bắt đầu ghi chú trực tiếp',
       stop: 'Dừng',
       notesNow: 'Cập nhật ghi chú ngay',
-      empty: 'Chưa có dòng nào. Các dòng sẽ hiện ra sau mỗi đoạn vài phút.',
+      pageOpen: 'Ghi chú trực tiếp chỉ chạy khi trang này đang mở.',
+      empty: 'Chưa có dòng nào. Các dòng sẽ hiện ra sau mỗi đoạn vài chục giây.',
       lineTime: 'Từ {start} đến {end}',
       states: {
         off: 'Chưa bắt đầu',

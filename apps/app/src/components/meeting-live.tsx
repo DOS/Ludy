@@ -24,6 +24,8 @@ export function liveNotice(status: Pick<LiveStatus, 'enabled' | 'state' | 'error
   if (!status.enabled) return { key: 'notEnabled', code: null };
   if (status.errorCode === 'AI_BUDGET_EXHAUSTED') return { key: 'budget', code: null };
   if (status.errorCode === 'AI_STOPPED') return { key: 'aiStopped', code: null };
+  // The recorder's own stop is not a failure.
+  if (status.errorCode === 'RUN_CANCELLED') return null;
   if (status.errorCode) return { key: 'otherStopped', code: status.errorCode };
   return null;
 }
@@ -118,9 +120,10 @@ function LivePane({ meetingId }: { meetingId: string }) {
           </div>
         )}
         {error && <ErrorText>{errorMessage(error)}</ErrorText>}
+        {data.enabled && <p className="text-xs text-muted-foreground" data-testid="live-page-open">{t('pageOpen')}</p>}
         {data.enabled && (
           <div className="flex flex-wrap gap-2">
-            {data.state === 'off' && (
+            {(data.state === 'off' || data.state === 'stopped') && (
               <Button size="sm" loading={start.isPending} onClick={() => start.mutate()}>
                 {t('start')}
               </Button>

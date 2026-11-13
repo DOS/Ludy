@@ -21,8 +21,9 @@ import {
   zSummaryResult,
   type LiveNotesDone,
   type LiveTicked,
+  type SummaryResult,
 } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { matchAttendee, parseWhen } from './summary.ts';
 import { vnDay } from './retention.ts';
@@ -96,7 +97,7 @@ export const liveTick = defineCommand({
               })
               .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'seq']).doNothing())
               .execute();
-            lines += 1;
+            if (text !== '') lines += 1;
           }
           copiedRunId = latest.runId;
         }
@@ -127,10 +128,10 @@ export const liveTick = defineCommand({
 // The running notes of this meeting, replaced by the fresh ones. Only the live draft Vy wrote is replaced: a summary the recorder typed or kept, and
 // the batch summary's own draft, are left alone, and an item the recorder already accepted keeps its task.
 async function replaceLiveNotes(
-  ctx: Parameters<typeof startWindow>[0],
+  ctx: CommandContext,
   meetingId: string,
   runId: string,
-  notes: import('@crove/kernel-contract').SummaryResult,
+  notes: SummaryResult,
   userId: string,
 ): Promise<boolean> {
   const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at']).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
@@ -166,7 +167,7 @@ async function replaceLiveNotes(
           .select('r.id')
           .whereRef('r.id', '=', 'crove_meetings.action_item.source_run_id')
           .where('r.org_id', '=', ctx.orgId)
-          .where('r.feature', '=', LIVE_NOTES_FEATURE),
+          .where('r.feature', '=', LIVE_SUMMARY_FEATURE),
       ),
     )
     .execute();
@@ -179,13 +180,13 @@ async function replaceLiveNotes(
     .where('meeting_id', '=', meetingId)
     .where('stage', '=', 'draft')
     .executeTakeFirst();
-  if (!mine && (notes.summary !== '' || notes.decisions.length > 0)) {
+  if (!mine) {
     await ctx.trx
       .insertInto('crove_meetings.meeting_result')
       .values({
         org_id: ctx.orgId,
         meeting_id: meetingId,
-        summary: notes.summary === '' ? notes.decisions[0] ?? '-' : notes.summary,
+        summary: notes.summary === '' ? notes.decisions[0] ?? notes.items[0]?.title ?? '-' : notes.summary,
         decisions: sql`${JSON.stringify(notes.decisions)}::jsonb`,
         feature: LIVE_NOTES_FEATURE,
         stage: 'draft',
@@ -260,7 +261,7 @@ export const liveNotesCopy = defineCommand({
       throw new DomainError('LIVE_RESULT_INVALID', 422, 'The live notes result cannot be read');
     }
     // One copy of a run: the rows carry the run they came from (source_run_id) and the taint, so a second click is not a second copy.
-    const already = await ctx.trx
+    const alreadyResult = await ctx.trx
       .selectFrom('crove_meetings.meeting_result')
       .select('id')
       .where('org_id', '=', ctx.orgId)
@@ -268,11 +269,16 @@ export const liveNotesCopy = defineCommand({
       .where('source_run_id', '=', input.runId)
       .where('tainted', '=', true)
       .executeTakeFirst();
-    if (already) throw new DomainError('LIVE_NOTES_ALREADY_COPIED', 409, 'These live notes were already copied into the draft');
+    // Notes that held only items left no result row: their items carry the run too.
+    const alreadyItem = alreadyResult
+      ? undefined
+      : await ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
+    if (alreadyResult || alreadyItem) throw new DomainError('LIVE_NOTES_ALREADY_COPIED', 409, 'These live notes were already copied into the draft');
     await replaceLiveNotes(ctx, input.meetingId, input.runId, notes, userId);
     ctx.audit({ meetingId: input.meetingId, runId: input.runId, decisionCount: notes.decisions.length, itemCount: notes.items.length, dropped: notes.dropped });
     return zLiveNotesDone.parse({ meetingId: input.meetingId, state: 'ready', runId: input.runId, errorCode: null, decisions: notes.decisions.length, items: notes.items.length });
   },
 });
+
 
 export const liveNotesCommands = [liveTick, liveNotesCopy];

@@ -71,7 +71,11 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
   };
   // The sandbox measures every piece as fifteen seconds (and keeps what it was given, so a test can see the file each piece reached it as); the deployment's price is half a unit a minute.
   const measured: Uint8Array[] = [];
-  const measurer: MediaMeasurer = { ...fakeMediaMeasurer(15), measureBytes: async (_kind, bytes) => void measured.push(Uint8Array.from(bytes)) ?? 15 };
+  const measurer: MediaMeasurer = { ...fakeMediaMeasurer(15), measureBytes: async (_kind, bytes) => {
+      measured.push(Uint8Array.from(bytes));
+      return 15;
+    },
+  };
   const deps = (): MeetingsLiveNotesDeps => ({ runtime: worker, store, broker, measurer, provider, price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0.5' } });
   // What a MediaRecorder stream looks like cut into pieces: the first has the header, the others start at a Cluster.
   const HEADER = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 0x84, 0x42, 0x82, 0x81, 0x77, 0x18, 0x53, 0x80, 0x67, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x15, 0x49, 0xa9, 0x66, 0x83, 0x2a, 0xd7, 0xb1]);
@@ -214,8 +218,14 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
 
     const before = providerCalls;
     measured.length = 0;
+    // A window is one or two pieces (about 30 seconds): the first reads pieces 0 and 1.
     expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
-    // One provider call per piece, each admitted on its measured length and charged to the recorder's Vy by audio minutes.
+    expect(providerCalls - before).toBe(2);
+    expect(await tick('recorder', meetingId)).toMatchObject({ copiedRunId: runId, lines: 2, state: 'running' });
+    // The tick copied the window and started the next at once, because piece 2 is already there; it reads what follows the preview.
+    const second = (await status('recorder', meetingId)).runId as string;
+    expect(second).not.toBe(runId);
+    expect(await runWindow('recorder', meetingId, second, 1)).toBe('succeeded');
     expect(providerCalls - before).toBe(3);
     // Each piece reached the sandbox and the provider as a file they can read: the first as it is, the others behind the header of the first (they are the middle of a stream).
     expect(measured).toHaveLength(3);
@@ -227,8 +237,7 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     const usage = await sql<{ amount: string }>(`SELECT amount::text FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'meetings.transcribe' ORDER BY created_at DESC LIMIT 3`, [orgId]);
     expect(usage.rows.length).toBeGreaterThan(0);
 
-    const copied = await tick('recorder', meetingId);
-    expect(copied).toMatchObject({ copiedRunId: runId, lines: 3, state: 'waiting', runId: null });
+    expect(await tick('recorder', meetingId)).toMatchObject({ copiedRunId: second, lines: 1, state: 'waiting', runId: null });
     const shown = await status('recorder', meetingId);
     expect(shown.lines.map((l) => [l.seq, l.endSeconds - l.startSeconds > 0])).toEqual([
       [0, true],
@@ -236,8 +245,9 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       [2, true],
     ]);
     expect(shown.lines[0]?.text).toContain('xin chào');
-    // The same window is not copied twice.
+    // The same window is not copied twice, and a tick with nothing new starts nothing.
     expect((await tick('recorder', meetingId)).copiedRunId).toBeNull();
+    expect((await tick('recorder', meetingId)).runId).toBeNull();
     expect(await count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId])).toBe(3);
 
     // Two more pieces arrive: the next tick starts a window that reads only what follows the preview.
@@ -254,6 +264,40 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
     // The later window read the header of the first piece too, and each line sits where its piece does: after the 15 second pieces before it.
     expect(measured.slice(-2).every((file) => [...file.subarray(0, HEADER.length)].join() === [...HEADER].join())).toBe(true);
     expect(all.map((l) => l.startSeconds)).toEqual([0, 15, 30, 45, 60]);
+  });
+
+  it('a silent start does not freeze the preview: the window reports how far it read, and a stop between two windows stops for good until the recorder starts again', async () => {
+    const meetingId = await seedMeeting('recorder', { pieces: 4 });
+    const heard = provider.fetch as typeof fetch;
+    // The provider hears nothing in the first two pieces.
+    provider.fetch = (async () => new Response(JSON.stringify({ text: '', segments: [] }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    const { runId } = await start('recorder', meetingId);
+    expect(await runWindow('recorder', meetingId, runId)).toBe('succeeded');
+    provider.fetch = heard;
+    // The silent pieces are lines with no text: nothing is shown, but the next window starts after them (not over the same two pieces again).
+    const afterSilence = await tick('recorder', meetingId);
+    expect(afterSilence).toMatchObject({ copiedRunId: runId, lines: 0, state: 'running' });
+    expect((await status('recorder', meetingId)).lines).toEqual([]);
+    expect(await sql<{ seq: number }>('SELECT seq FROM crove_meetings.live_line WHERE meeting_id = $1 ORDER BY seq', [meetingId]).then((r) => r.rows.map((x) => x.seq))).toEqual([0, 1]);
+    const calls = providerCalls;
+    expect(await runWindow('recorder', meetingId, afterSilence.runId as string, 1)).toBe('succeeded');
+    expect(providerCalls - calls).toBe(2);
+    expect((await status('recorder', meetingId)).lines.map((l) => l.seq)).toEqual([]);
+
+    // Stop with no window running (the usual moment: the last one is done, the next tick has not run): it stops, and the next tick starts nothing.
+    expect(await app.execute('meetings.live.stop', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ stopped: true });
+    const after = await tick('recorder', meetingId);
+    expect(after).toMatchObject({ state: 'stopped', runId: null });
+    expect(await status('recorder', meetingId)).toMatchObject({ state: 'stopped', errorCode: 'RUN_CANCELLED' });
+    expect(await tick('recorder', meetingId)).toMatchObject({ state: 'stopped', runId: null });
+    // A second stop is not an error and changes nothing.
+    expect(await app.execute('meetings.live.stop', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ stopped: false });
+    // Start begins again, after the pieces the preview has read.
+    const again = await start('recorder', meetingId);
+    expect(again.runId).not.toBeNull();
+    expect(await status('recorder', meetingId)).toMatchObject({ state: 'running' });
+    // Leave nothing running for the next test (a recorder has one live window at a time).
+    expect(await app.execute('meetings.live.stop', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ stopped: true });
   });
 
   it('shows the preview to the recorder only: another member, a named reader, an owner and the worker read none of it', async () => {
@@ -391,15 +435,27 @@ suite("live notes as the recorder's own Vy (#3110, L4a-2)", () => {
       expect(await route('recorder', meetingId)).toMatchObject({ state: 'nothing', runId: null });
       expect(prompts).toHaveLength(1);
 
-      // A new line arrives later: the model is given it and the previous notes, not the lines it read before.
-      await new Promise((r) => setTimeout(r, 20));
-      await seedLines(meetingId, [[2, 20, 'Khách đồng ý']]);
+      // A new line the ticks copied while the model was still working (written after the run started, before its notes were copied): the next refresh must read it, not skip it.
+      await seedLines(meetingId, [[2, 20, 'Khách đồng ý']], `(SELECT started_at + interval '1 millisecond' FROM crove_kernel.ai_run WHERE id = '${done.runId}')`);
       expect((await route('recorder', meetingId)).state).toBe('ready');
       expect(prompts).toHaveLength(2);
+      // The earlier suggestions are replaced by the new ones, not piled up next to them.
+      expect(await count(`SELECT 1 FROM crove_meetings.action_item WHERE meeting_id = $1`, [meetingId])).toBe(1);
+      expect(await count(`SELECT 1 FROM crove_meetings.meeting_result WHERE meeting_id = $1`, [meetingId])).toBe(1);
       expect(prompts[1]).toContain('Khách đồng ý');
       expect(prompts[1]).toContain('Hà gửi báo giá.');
       expect(prompts[1]).not.toContain(OLD_LINE);
       expect(prompts[1]).not.toContain(NEW_LINE);
+    });
+
+    it('notes that hold only an item still mark how far they read, so the same lines are not read and paid for again', async () => {
+      prompts = [];
+      const meetingId = await seedMeeting('recorder', { pieces: 0 });
+      await seedLines(meetingId, [[0, 0, NEW_LINE]]);
+      const onlyItems = model(JSON.stringify({ summary: '', decisions: [], items: [{ title: 'Gửi báo giá', who: 'Hà', when: 'thứ sáu', seconds: 5 }] }));
+      expect(await route('recorder', meetingId, onlyItems)).toMatchObject({ state: 'ready', items: 1 });
+      expect(await route('recorder', meetingId, onlyItems)).toMatchObject({ state: 'nothing', runId: null });
+      expect(prompts).toHaveLength(1);
     });
 
     it('drops a figure no line holds, refuses another member and a meeting that did not opt in, and is off when the deployment has no model', async () => {

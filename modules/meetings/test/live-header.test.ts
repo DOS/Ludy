@@ -12,7 +12,7 @@ const SEGMENT_UNKNOWN = [0x18, 0x53, 0x80, 0x67, 0x01, 0xff, 0xff, 0xff, 0xff, 0
 const INFO = element([0x15, 0x49, 0xa9, 0x66], [0x2a, 0xd7, 0xb1, 0x83, 0x0f, 0x42, 0x40]);
 const TRACKS = element([0x16, 0x54, 0xae, 0x6b], [0xae, 0x85, 0xd7, 0x81, 0x01, 0x83, 0x81]);
 const CLUSTER_ID = [0x1f, 0x43, 0xb6, 0x75];
-const cluster = (fill: number, n = 20) => [...CLUSTER_ID, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, ...new Array<number>(n).fill(fill)];
+const cluster = (fill: number, n = 20) => [...CLUSTER_ID, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, ...Array.from({ length: n }, () => fill)];
 
 describe('liveContainerHeader', () => {
   it('cuts a WebM stream at its first Cluster: the EBML header and the Segment elements before it', () => {
@@ -29,13 +29,13 @@ describe('liveContainerHeader', () => {
   });
 
   it('cuts a fragmented MP4 before its first moof: ftyp and moov', () => {
-    const box = (type: string, size: number) => [0, 0, 0, size, ...[...type].map((c) => c.charCodeAt(0)), ...new Array<number>(size - 8).fill(0)];
+    const box = (type: string, size: number) => [0, 0, 0, size, ...[...type].map((c) => c.charCodeAt(0)), ...Array.from({ length: size - 8 }, () => 0)];
     const header = bytes(box('ftyp', 16), box('moov', 24));
     expect([...(liveContainerHeader(bytes(header, box('moof', 16), box('mdat', 20))) ?? [])]).toEqual([...header]);
   });
 
   it('answers null for a container it does not know, a stream cut short and a header with no Cluster', () => {
-    expect(liveContainerHeader(bytes([0x4f, 0x67, 0x67, 0x53], new Array<number>(40).fill(0)))).toBeNull();
+    expect(liveContainerHeader(bytes([0x4f, 0x67, 0x67, 0x53], Array.from({ length: 40 }, () => 0)))).toBeNull();
     expect(liveContainerHeader(bytes(EBML_HEADER.slice(0, 5)))).toBeNull();
     expect(liveContainerHeader(bytes(EBML_HEADER, SEGMENT_UNKNOWN, INFO, TRACKS))).toBeNull();
     expect(liveContainerHeader(new Uint8Array(0))).toBeNull();

@@ -525,15 +525,17 @@ export type Summarized = z.infer<typeof zSummarized>;
 // replaced by the batch transcript; the notes are ordinary draft rows (feature meetings.live_notes), so a task still needs the recorder's click.
 export const LIVE_LINE_TEXT_MAX = 4000;
 export const LIVE_LINES_MAX = 100_000;
-// The pieces one window takes: 20 pieces of about 15 seconds is about 5 minutes, the window the notes are refreshed on.
-export const LIVE_WINDOW_PIECES = 20;
+// The pieces one window takes: one or two of about 15 seconds each, so a line is never more than about one window behind the speech (the target of ADR-0052 is about
+// 30 seconds). A tick with no new piece starts nothing.
+export const LIVE_WINDOW_PIECES = 2;
 // How often the running notes are refreshed, unless the recorder asks for them sooner.
 export const LIVE_NOTES_EVERY_SECONDS = 5 * 60;
 // What one window's run stores in its result row, read back strictly by the tick, as a transcript result is.
 export const zLiveResult = z.strictObject({
   v: z.literal(1),
-  // [piece order, start seconds, end seconds, text] of each line this window produced.
-  lines: z.array(z.tuple([z.number().int().min(0).max(LIVE_LINES_MAX), z.number().int().min(0).max(86_400), z.number().int().min(0).max(86_400), z.string().min(1).max(LIVE_LINE_TEXT_MAX)])).max(200),
+  // [piece order, start seconds, end seconds, text] of each piece this window read. A silent piece has the text '': it is still a line, so the next window starts after it
+  // (a silent start or a pause must not be read again at every tick), and it is not shown.
+  lines: z.array(z.tuple([z.number().int().min(0).max(LIVE_LINES_MAX - 1), z.number().int().min(0).max(86_400), z.number().int().min(0).max(86_400), z.string().max(LIVE_LINE_TEXT_MAX)])).max(200),
 });
 export type LiveResult = z.infer<typeof zLiveResult>;
 

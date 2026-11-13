@@ -66,6 +66,8 @@ describe('MeetingLive', () => {
     );
     expect(html).toContain('Bản nháp trực tiếp');
     expect(html).toContain('thay thế');
+    // The tick runs from this page: the pane says live notes run only while it is open.
+    expect(html).toContain('Ghi chú trực tiếp chỉ chạy khi trang này đang mở.');
     expect(html.indexOf('Xin chào')).toBeGreaterThan(-1);
     expect(html.indexOf('Xin chào')).toBeLessThan(html.indexOf('Tiếp theo'));
     expect(html).toContain('1:05');
