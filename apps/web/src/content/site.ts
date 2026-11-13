@@ -37,6 +37,10 @@ export type LegalPageKey = keyof typeof LEGAL_PAGES;
 // privacy-page.test.ts checks that they do. Change them in the same commit as any change to what the page says.
 export const PRIVACY_VERSION = '1.0';
 export const PRIVACY_UPDATED = '2026-11-13';
-// Where a privacy request goes by email. There is none yet (the owner has not named one), so the page sends requests
-// through the organization's owner in Ludy; set this to an address and the page shows it. Never invent one.
-export const PRIVACY_CONTACT_EMAIL: string | null = null;
+// Where a privacy request goes by email (deletion, export, questions): the address the owner gave on 2026-11-13. null hides the
+// contact line, so a deployment of this site with no address shows none. Never invent one.
+export const PRIVACY_CONTACT_EMAIL: string | null = 'hi@ludy.so';
+// Who operates Ludy Cloud, as the privacy page names it: the English form of the legal name the owner gave on 2026-11-13. The
+// Vietnamese page uses it too until the owner gives a Vietnamese registered name: change this one constant then. No address
+// is shown, because none has been given.
+export const PRIVACY_OPERATOR = 'DOS LTD';

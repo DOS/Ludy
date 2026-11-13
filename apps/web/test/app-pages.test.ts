@@ -18,7 +18,7 @@ import { notesVi } from '../src/content/notes-vi';
 import type { PrivacyBlock, PrivacyCopy } from '../src/content/privacy';
 import { privacyEn } from '../src/content/privacy-en';
 import { privacyVi } from '../src/content/privacy-vi';
-import { APP_PAGES, LEGAL_PAGES, PRIVACY_CONTACT_EMAIL, PRIVACY_UPDATED, PRIVACY_VERSION, RETIRED_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
+import { APP_PAGES, LEGAL_PAGES, PRIVACY_CONTACT_EMAIL, PRIVACY_OPERATOR, PRIVACY_UPDATED, PRIVACY_VERSION, RETIRED_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
 import { vi } from '../src/content/vi';
 
 const COPY: Record<AppPageKey, { vi: AppPageCopy; en: AppPageCopy }> = {
@@ -191,9 +191,22 @@ describe('privacy page', () => {
     }
   });
 
-  it('shows a contact email only when the owner named one, and then it is a plain address', () => {
-    if (PRIVACY_CONTACT_EMAIL !== null) expect(PRIVACY_CONTACT_EMAIL).toMatch(/^[\w.+-]+@[\w-]+(\.[\w-]+)+$/);
+  it('names the operator and the owner-given contact email, and shows no address', () => {
+    expect(PRIVACY_OPERATOR).toBe('DOS LTD');
+    expect(PRIVACY_CONTACT_EMAIL).toMatch(/^[\w.+-]+@[\w-]+(\.[\w-]+)+$/);
+    // The operator is read from the one constant by both languages (no name typed into a string), so the Vietnamese registered name is a one-line change.
+    for (const file of ['privacy-vi.ts', 'privacy-en.ts']) {
+      const source = readFileSync(join(import.meta.dirname, '..', 'src', 'content', file), 'utf8');
+      expect(source, file).toContain('${PRIVACY_OPERATOR}');
+      expect(source, file).not.toContain('DOS LTD');
+    }
+    expect(textOf(privacyVi)).not.toMatch(/địa chỉ trụ sở|trụ sở chính/i);
+  });
+
+  it('shows the contact line as a mailto link only when an address is set, so a page is never published with an invented one', () => {
     const page = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'privacy-page.tsx'), 'utf8');
     expect(page).toContain('contactEmail !== null');
+    expect(page).toContain('href={`mailto:${contactEmail}`}');
+    expect(page).toContain("contactEmail = PRIVACY_CONTACT_EMAIL");
   });
 });

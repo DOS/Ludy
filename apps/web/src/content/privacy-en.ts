@@ -3,6 +3,7 @@
 // typed from it. The Vietnamese text is the source; keep the two in step (privacy-page.test.ts checks the shape).
 import type { PrivacyCopy } from './privacy';
 import { N } from './roster';
+import { PRIVACY_OPERATOR } from './site';
 
 export const privacyEn: PrivacyCopy = {
   meta: {
@@ -27,14 +28,14 @@ export const privacyEn: PrivacyCopy = {
           items: [
             'The extension records only when you press "Start recording" on the meeting tab, after you confirm that everyone taking part was told and agreed.',
             'A recording goes to one Ludy address that you chose: app.ludy.vn, or your company\'s own Ludy server.',
-            'Each meeting is stored encrypted with its own key. When the retention period ends the key is destroyed and the recording can no longer be read.',
+            'The audio and video of each meeting are stored encrypted with their own key. When the retention period ends the key is destroyed and the recording can no longer be read; the text is deleted at its own date.',
             'Ludy does not sell data, run ads, track you, or use data to decide credit or lending.',
             'You can revoke the extension at any time in Ludy, under connected devices.',
           ],
         },
         {
           kind: 'p',
-          text: 'Ludy is open-source software. It runs on Ludy Cloud (app.ludy.vn), or on a company\'s own server. The organization that records a meeting decides to record and must tell the participants; on Ludy Cloud, Ludy processes that data on the organization\'s instructions. A company that runs Ludy on its own server is responsible for the data on that server. This page describes the extension and Ludy Cloud, and does not replace that company\'s own policy.',
+          text: `Ludy is open-source software. Ludy Cloud (app.ludy.vn) is operated by ${PRIVACY_OPERATOR}. Ludy can also run on a company's own server. The organization that records a meeting decides to record and must tell the participants; on Ludy Cloud, Ludy processes that data on the organization's instructions. A company that runs Ludy on its own server is responsible for the data on that server. This page describes the extension and Ludy Cloud, and does not replace that company's own policy.`,
         },
       ],
     },
@@ -104,8 +105,8 @@ export const privacyEn: PrivacyCopy = {
           kind: 'list',
           items: [
             'A recording reaches Ludy over an https connection.',
-            'Each meeting is encrypted (AES-256-GCM) with its own key before it sits in storage. That key is wrapped under the system\'s key. The original upload is deleted once it has been normalized; the normalized audio stays.',
-            'Video is kept only when you tick "Record video too". Without the tick the picture is dropped during processing and never stored. Video has its own key, so it is destroyed earlier than the audio.',
+            'The audio and video of each meeting are encrypted (AES-256-GCM) with their own key before they sit in storage. That key is wrapped under the system\'s key. The original upload is deleted once it has been normalized; the normalized audio stays. The transcript, summary, decisions and action items are text in the database and are deleted when their period ends.',
+            'Video is kept only when you tick "Record video too". Without the tick the picture is dropped during processing and never stored. Video has its own key, so it can be destroyed earlier than the audio, and never later.',
             'Checking and converting files runs in a separate container with no network and no secrets.',
           ],
         },
@@ -121,7 +122,7 @@ export const privacyEn: PrivacyCopy = {
             'Readers: the person who recorded it, and the members named as attendees. The recorder can share the meeting with the whole organization.',
             'Owners and admins see that a meeting exists (date, length, recorder) to manage budgets and retention, but do not read the content of a meeting shared only with its attendees. An owner can delete a meeting to answer a personal-data request without reading it.',
             'Viewers, the AI coworkers of the org chart and the system read nothing from a meeting.',
-            `${N.gm}, working for the recorder, reads what the recorder reads. ${N.gm}'s output (transcript, summary, decisions, action items) is a draft that only the recorder sees, until the recorder publishes it to the readers of the meeting. A draft that is never published expires after 30 days. ${N.gm} does not create tasks, send mail or send notifications from a meeting's content on its own.`,
+            `${N.gm}, working for the recorder, reads what the recorder reads, only within the meeting being processed. ${N.gm}'s output (transcript, summary, decisions, action items) is a draft that only the recorder sees, until the recorder publishes it to the readers of the meeting. A draft that is never published expires after 30 days. ${N.gm} does not create tasks, send mail or send notifications from a meeting's content on its own.`,
           ],
         },
       ],
@@ -133,8 +134,9 @@ export const privacyEn: PrivacyCopy = {
         {
           kind: 'list',
           items: [
-            'It runs only when your workspace has turned it on. With AI off, the recording is still stored and nothing is sent to any provider.',
+            'It runs only when your organization has turned it on and the deployment has an AI model configured. With AI off, the recording is still stored and nothing is sent to any AI provider.',
             'When it is on, the transcription provider that the workspace is set to receives the audio in segments (each at most 10 minutes) and a language hint, and nothing else. The provider\'s name and where it processes are a setting of each deployment.',
+            'The summary uses the deployment\'s text model: it receives the transcript text, the meeting date and the names of the attendees of that meeting.',
             'A company that runs Ludy on its own server can point transcription at a model on its own machine; then the audio never leaves the company\'s machine.',
             'A provider outside Vietnam is a transfer of data abroad, which the organization must assess itself.',
             'AI output is unverified content. The recorder reviews it and decides whether to publish it.',
@@ -161,8 +163,8 @@ export const privacyEn: PrivacyCopy = {
           items: [
             'An owner or admin changes these settings. A change applies only to meetings recorded afterwards, so the period the participants were told stays true.',
             'If the transcript is never ready (AI off, AI budget spent), the audio and video still get an end date counted from the recording, so no recording waits forever.',
-            'When the period ends, or when the meeting is deleted, the encryption key is destroyed. The audio and video can no longer be read at that moment, backups included. The unencrypted upload is removed from staging within one day.',
-            'Text (transcript, summary, decisions, action items) is deleted the night after its end date, and disappears from database backups when those backups expire.',
+            'When the period ends, or when the meeting is deleted, the encryption key is destroyed. The audio and video can no longer be read at that moment. If the system has to restore an old backup, a meeting that was destroyed is deleted again by the next nightly run or when its deletion record is replayed. The unencrypted upload is removed from staging within one day.',
+            'Text (transcript, summary, decisions, action items) is deleted by the nightly job when its period ends, and disappears from database backups when those backups expire.',
             'A task created from an action item is the organization\'s work record: it stays with the text the person confirmed, and its link back to the meeting reads "Meeting deleted".',
             'When an organization is deleted from Ludy, all of its meetings and keys are deleted.',
           ],
@@ -179,7 +181,7 @@ export const privacyEn: PrivacyCopy = {
             'Stop recording: turn off "Record meetings" in the extension to give the tab permission back, or remove the extension at any time.',
             'Revoke the extension: in Ludy go to Settings, connected devices, and revoke the device. The extension\'s token stops working at once.',
             'Delete a meeting: the recorder deletes their own meeting in Ludy. Deleting destroys the audio key at once. The owner of an organization can delete any meeting of the organization (after a fresh sign-in check) without reading it.',
-            'You took part in a meeting but do not use Ludy (a customer, a supplier, a candidate): tell the person who recorded it, or their company. They decide on recording, can pause it, and can delete the meeting if you object.',
+            'You took part in a meeting but do not use Ludy (a customer, a supplier, a candidate): tell the person who recorded it, or their company. They decide on recording, can stop the recording, and can delete the meeting if you object.',
             'To see, copy, correct or delete your data in an organization\'s books: contact that organization\'s owner or admin in Ludy first, because the organization decides on the processing. Ludy helps the organization carry out your request.',
             'Under Law 91/2025/QH15 on Personal Data Protection you have the right to be informed, to consent or withdraw consent, to see and correct your data, to ask for deletion, to restrict or object to processing, to receive a copy, and to complain, denounce and claim compensation. Some rights are limited where the law requires the data to be kept, for example accounting records.',
           ],
@@ -192,14 +194,14 @@ export const privacyEn: PrivacyCopy = {
       blocks: [
         {
           kind: 'p',
-          text: 'Ludy Cloud (app.ludy.vn) is the Ludy that we operate. This part is a summary and does not replace the extension part above. The policy is written under Law 91/2025/QH15 on Personal Data Protection and Decree 356/2025/NĐ-CP.',
+          text: `Ludy Cloud (app.ludy.vn) is the Ludy that ${PRIVACY_OPERATOR} operates. This part is a summary and does not replace the extension part above. The policy is written under Law 91/2025/QH15 on Personal Data Protection and Decree 356/2025/NĐ-CP.`,
         },
         {
           kind: 'list',
           items: [
             'Account data: name, email, password (stored only as a hash), two-factor method; and activity such as sign-in times, IP address, browser and an action log. For this data Ludy is the data controller.',
             'Data in an organization\'s books (documents, invoices, bank statements, journal entries, and meetings): the organization decides why it is processed. Ludy is the processor and acts only on the organization\'s instructions.',
-            'Google Calendar: only when a member connects their own calendar. Ludy reads busy time slots, not titles or attendees.',
+            'Google Calendar: only when a member connects their own calendar. Ludy reads busy time slots, not titles or attendees. Every member of the organization sees these busy slots (without any content).',
             'Purposes: to provide the service, security (sign-in checks, two-factor, audit log), support and operations, and answering valid requests from public authorities.',
             'Ludy does not sell personal data, does not use your documents or books for advertising, and does not use them to train AI models.',
             'AI with documents: e-invoices in XML are read directly, without AI. PDFs and photos of documents are sent to the deployment\'s AI provider to be read. The result is always checked by rules and approved by a person before it is booked.',
@@ -221,5 +223,5 @@ export const privacyEn: PrivacyCopy = {
       ],
     },
   ],
-  contact: { emailLead: 'Send a personal-data request to' },
+  contact: { emailLead: 'To ask for deletion or export of your data, or with a question about personal data, email' },
 };

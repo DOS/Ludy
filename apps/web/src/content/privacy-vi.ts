@@ -3,6 +3,7 @@
 // xem privacy.ts. Phiên bản và ngày nằm ở content/site.ts.
 import type { PrivacyCopy } from './privacy';
 import { N } from './roster';
+import { PRIVACY_OPERATOR } from './site';
 
 export const privacyVi: PrivacyCopy = {
   meta: {
@@ -27,14 +28,14 @@ export const privacyVi: PrivacyCopy = {
           items: [
             'Tiện ích chỉ ghi khi bạn bấm "Bắt đầu ghi" trên tab họp, sau khi bạn xác nhận rằng mọi người tham gia đã được báo và đồng ý.',
             'Bản ghi chỉ đi tới một địa chỉ Ludy mà bạn đã chọn: app.ludy.vn, hoặc máy chủ Ludy riêng của công ty bạn.',
-            'Mỗi cuộc họp được lưu mã hóa bằng khóa riêng. Hết thời hạn giữ, khóa bị hủy và bản ghi không còn đọc được.',
+            'Âm thanh và video của mỗi cuộc họp được lưu mã hóa bằng khóa riêng. Hết thời hạn giữ, khóa bị hủy và bản ghi không còn đọc được; phần văn bản bị xóa theo thời hạn của nó.',
             'Ludy không bán dữ liệu, không chạy quảng cáo, không theo dõi bạn, và không dùng dữ liệu để đánh giá tín dụng hay cho vay.',
             'Bạn có thể thu hồi tiện ích bất cứ lúc nào trong Ludy, ở mục thiết bị đã kết nối.',
           ],
         },
         {
           kind: 'p',
-          text: 'Ludy là phần mềm mã nguồn mở. Nó chạy trên Ludy Cloud (app.ludy.vn), hoặc trên máy chủ riêng của một công ty. Tổ chức ghi cuộc họp là bên quyết định việc ghi và phải báo cho người tham gia; trên Ludy Cloud, Ludy xử lý dữ liệu đó theo chỉ dẫn của tổ chức. Công ty chạy Ludy trên máy chủ riêng tự chịu trách nhiệm về dữ liệu trên máy chủ đó. Trang này mô tả tiện ích và Ludy Cloud, không thay chính sách của công ty ấy.',
+          text: `Ludy là phần mềm mã nguồn mở. Ludy Cloud (app.ludy.vn) do ${PRIVACY_OPERATOR} vận hành. Ludy cũng chạy được trên máy chủ riêng của một công ty. Tổ chức ghi cuộc họp là bên quyết định việc ghi và phải báo cho người tham gia; trên Ludy Cloud, Ludy xử lý dữ liệu đó theo chỉ dẫn của tổ chức. Công ty chạy Ludy trên máy chủ riêng tự chịu trách nhiệm về dữ liệu trên máy chủ đó. Trang này mô tả tiện ích và Ludy Cloud, không thay chính sách của công ty ấy.`,
         },
       ],
     },
@@ -104,8 +105,8 @@ export const privacyVi: PrivacyCopy = {
           kind: 'list',
           items: [
             'Bản ghi đi tới Ludy qua kết nối https.',
-            'Mỗi cuộc họp được mã hóa (AES-256-GCM) bằng khóa riêng của nó trước khi nằm trong kho lưu trữ. Khóa này được bọc bằng khóa của hệ thống. Tệp tải lên gốc bị xóa khi đã được chuẩn hóa; âm thanh đã chuẩn hóa ở lại.',
-            'Video chỉ được giữ khi bạn tick "Ghi cả video". Nếu không tick, phần hình bị bỏ khi xử lý và không bao giờ được lưu. Video có khóa riêng, nên bị hủy sớm hơn âm thanh.',
+            'Âm thanh và video của mỗi cuộc họp được mã hóa (AES-256-GCM) bằng khóa riêng của nó trước khi nằm trong kho lưu trữ. Khóa này được bọc bằng khóa của hệ thống. Tệp tải lên gốc bị xóa khi đã được chuẩn hóa; âm thanh đã chuẩn hóa ở lại. Bản ghi lời, tóm tắt, quyết định và việc cần làm là văn bản trong cơ sở dữ liệu và bị xóa khi hết thời hạn.',
+            'Video chỉ được giữ khi bạn tick "Ghi cả video". Nếu không tick, phần hình bị bỏ khi xử lý và không bao giờ được lưu. Video có khóa riêng, nên có thể bị hủy sớm hơn âm thanh, và không bao giờ muộn hơn.',
             'Việc kiểm tra và chuyển đổi tệp chạy trong một container riêng, không có mạng và không có khóa bí mật.',
           ],
         },
@@ -121,7 +122,7 @@ export const privacyVi: PrivacyCopy = {
             'Người đọc được: người ghi, và các thành viên được nêu là người tham dự. Người ghi có thể chia sẻ cuộc họp cho cả tổ chức.',
             'Chủ sở hữu và quản trị viên thấy cuộc họp có tồn tại (ngày, độ dài, người ghi) để quản lý ngân sách và thời hạn lưu, nhưng không đọc nội dung của cuộc họp chỉ chia sẻ cho người tham dự. Chủ sở hữu có thể xóa một cuộc họp để đáp ứng yêu cầu về dữ liệu cá nhân mà không cần đọc nó.',
             'Thành viên chỉ xem, các nhân viên AI trong sơ đồ tổ chức và hệ thống không đọc gì từ cuộc họp.',
-            `${N.gm}, làm việc cho chính người ghi, đọc những gì người ghi đọc. Kết quả của ${N.gm} (bản ghi lời, tóm tắt, quyết định, việc cần làm) là bản nháp chỉ người ghi thấy, cho đến khi người ghi bấm xuất bản cho những người đọc cuộc họp. Bản nháp chưa xuất bản hết hạn sau 30 ngày. ${N.gm} không tự tạo việc, gửi thư hay gửi thông báo từ nội dung cuộc họp.`,
+            `${N.gm}, làm việc cho chính người ghi, đọc những gì người ghi đọc, chỉ trong cuộc họp đang xử lý. Kết quả của ${N.gm} (bản ghi lời, tóm tắt, quyết định, việc cần làm) là bản nháp chỉ người ghi thấy, cho đến khi người ghi bấm xuất bản cho những người đọc cuộc họp. Bản nháp chưa xuất bản hết hạn sau 30 ngày. ${N.gm} không tự tạo việc, gửi thư hay gửi thông báo từ nội dung cuộc họp.`,
           ],
         },
       ],
@@ -133,8 +134,9 @@ export const privacyVi: PrivacyCopy = {
         {
           kind: 'list',
           items: [
-            'Chỉ chạy khi không gian làm việc của bạn đã bật. Khi AI tắt, bản ghi vẫn được lưu và không có gì được gửi tới nhà cung cấp nào.',
+            'Chỉ chạy khi tổ chức của bạn đã bật và triển khai có cấu hình AI. Khi AI tắt, bản ghi vẫn được lưu và không có gì được gửi tới nhà cung cấp AI nào.',
             'Khi bật, nhà cung cấp phiên âm mà không gian làm việc đó cấu hình nhận các đoạn âm thanh (mỗi đoạn tối đa 10 phút) và gợi ý ngôn ngữ, không nhận gì khác. Tên nhà cung cấp và nơi xử lý là cấu hình của từng triển khai.',
+            'Bản tóm tắt dùng mô hình văn bản của triển khai: nó nhận nội dung bản ghi lời, ngày họp và tên người tham dự của cuộc họp đó.',
             'Công ty chạy Ludy trên máy chủ riêng có thể trỏ phiên âm tới một mô hình chạy ngay trên máy của họ; khi đó âm thanh không rời khỏi máy của công ty.',
             'Nhà cung cấp ở ngoài Việt Nam là việc chuyển dữ liệu ra nước ngoài, mà tổ chức phải tự đánh giá.',
             'Kết quả AI là nội dung chưa được kiểm chứng. Người ghi xem và quyết định có xuất bản hay không.',
@@ -161,8 +163,8 @@ export const privacyVi: PrivacyCopy = {
           items: [
             'Chủ sở hữu hoặc quản trị viên đổi các thiết lập này. Thay đổi chỉ áp dụng cho cuộc họp ghi sau đó, để thời hạn mà người tham gia đã được báo vẫn đúng.',
             'Nếu bản ghi lời chưa bao giờ sẵn sàng (AI tắt, hết ngân sách AI), âm thanh và video vẫn có ngày hết hạn tính từ lúc ghi, nên không bản ghi nào nằm chờ vô thời hạn.',
-            'Khi hết hạn hoặc khi cuộc họp bị xóa, khóa mã hóa bị hủy. Âm thanh và video không còn đọc được ngay lúc đó, kể cả trong bản sao lưu. Tệp tải lên chưa mã hóa bị xóa khỏi vùng tạm trong vòng một ngày.',
-            'Văn bản (bản ghi lời, tóm tắt, quyết định, việc cần làm) bị xóa vào đêm sau ngày hết hạn, và biến mất khỏi bản sao lưu cơ sở dữ liệu khi các bản sao lưu đó hết hạn.',
+            'Khi hết hạn hoặc khi cuộc họp bị xóa, khóa mã hóa bị hủy. Âm thanh và video không còn đọc được ngay lúc đó. Nếu hệ thống phải khôi phục từ một bản sao lưu cũ, cuộc họp đã hủy được xóa lại ở lần chạy hằng đêm kế tiếp hoặc khi phát lại tham chiếu xóa. Tệp tải lên chưa mã hóa bị xóa khỏi vùng tạm trong vòng một ngày.',
+            'Văn bản (bản ghi lời, tóm tắt, quyết định, việc cần làm) bị xóa bởi tác vụ chạy hằng đêm khi hết hạn, và biến mất khỏi bản sao lưu cơ sở dữ liệu khi các bản sao lưu đó hết hạn.',
             'Một việc được tạo từ mục cần làm là hồ sơ công việc của tổ chức: nó ở lại với nội dung người dùng đã xác nhận, và liên kết về cuộc họp báo "Cuộc họp đã xóa".',
             'Khi một tổ chức bị xóa khỏi Ludy, mọi cuộc họp và khóa của tổ chức đó bị xóa.',
           ],
@@ -179,7 +181,7 @@ export const privacyVi: PrivacyCopy = {
             'Dừng ghi: tắt "Ghi cuộc họp" trong tiện ích để trả lại quyền ghi tab, hoặc gỡ tiện ích bất cứ lúc nào.',
             'Thu hồi tiện ích: vào Cài đặt, mục thiết bị đã kết nối, trong Ludy, rồi thu hồi thiết bị. Mã đăng nhập của tiện ích mất hiệu lực ngay.',
             'Xóa một cuộc họp: người ghi xóa cuộc họp của mình trong Ludy. Việc xóa hủy khóa âm thanh ngay. Chủ sở hữu tổ chức xóa được bất kỳ cuộc họp nào của tổ chức (có xác thực lại), mà không cần đọc nó.',
-            'Bạn là người tham gia nhưng không dùng Ludy (khách hàng, nhà cung cấp, ứng viên): hãy nói với người ghi hoặc công ty đó. Họ quyết định việc ghi, có thể tạm dừng, và xóa được cuộc họp khi bạn phản đối.',
+            'Bạn là người tham gia nhưng không dùng Ludy (khách hàng, nhà cung cấp, ứng viên): hãy nói với người ghi hoặc công ty đó. Họ quyết định việc ghi, có thể dừng ghi, và xóa được cuộc họp khi bạn phản đối.',
             'Xem, sao chép, chỉnh sửa hoặc xóa dữ liệu của bạn trong sổ sách của một tổ chức: liên hệ chủ sở hữu hoặc quản trị viên của tổ chức đó trong Ludy trước, vì tổ chức quyết định việc xử lý. Ludy hỗ trợ tổ chức thực hiện yêu cầu của bạn.',
             'Theo Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15, bạn có quyền được biết, đồng ý hoặc rút lại sự đồng ý, xem và chỉnh sửa dữ liệu, yêu cầu xóa, hạn chế hoặc phản đối việc xử lý, nhận bản sao, khiếu nại, tố cáo và yêu cầu bồi thường. Một số quyền có giới hạn khi pháp luật buộc phải giữ dữ liệu, ví dụ chứng từ kế toán.',
           ],
@@ -192,14 +194,14 @@ export const privacyVi: PrivacyCopy = {
       blocks: [
         {
           kind: 'p',
-          text: 'Ludy Cloud (app.ludy.vn) là bản Ludy do chúng tôi vận hành. Phần này tóm tắt; nó không thay phần về tiện ích ở trên. Chính sách được viết theo Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 và Nghị định 356/2025/NĐ-CP.',
+          text: `Ludy Cloud (app.ludy.vn) là bản Ludy do ${PRIVACY_OPERATOR} vận hành. Phần này tóm tắt; nó không thay phần về tiện ích ở trên. Chính sách được viết theo Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 và Nghị định 356/2025/NĐ-CP.`,
         },
         {
           kind: 'list',
           items: [
             'Dữ liệu tài khoản: họ tên, email, mật khẩu (chỉ lưu dạng băm), yếu tố xác thực hai lớp; và hoạt động như thời điểm đăng nhập, địa chỉ IP, trình duyệt, nhật ký thao tác. Với dữ liệu này, Ludy là bên kiểm soát dữ liệu.',
             'Dữ liệu trong sổ sách của tổ chức (chứng từ, hóa đơn, sao kê, bút toán, và cuộc họp): tổ chức quyết định mục đích xử lý. Ludy là bên xử lý và chỉ làm theo chỉ dẫn của tổ chức.',
-            'Lịch Google: chỉ khi một thành viên tự kết nối lịch của mình. Ludy đọc các khoảng giờ bận, không đọc tiêu đề hay người tham dự.',
+            'Lịch Google: chỉ khi một thành viên tự kết nối lịch của mình. Ludy đọc các khoảng giờ bận, không đọc tiêu đề hay người tham dự. Mọi thành viên của tổ chức thấy các khoảng giờ bận này (không kèm nội dung).',
             'Mục đích: cung cấp dịch vụ, bảo mật (xác thực đăng nhập, xác thực hai lớp, nhật ký kiểm toán), hỗ trợ và vận hành, và trả lời yêu cầu hợp lệ của cơ quan nhà nước.',
             'Ludy không bán dữ liệu cá nhân, không dùng chứng từ hay sổ sách của bạn để quảng cáo, và không dùng chúng để huấn luyện mô hình AI.',
             'AI với chứng từ: hóa đơn điện tử dạng XML được đọc trực tiếp, không qua AI. PDF và ảnh chụp chứng từ được gửi tới nhà cung cấp AI của triển khai để đọc nội dung. Kết quả luôn được kiểm bằng quy tắc và do người duyệt trước khi ghi sổ.',
@@ -221,5 +223,5 @@ export const privacyVi: PrivacyCopy = {
       ],
     },
   ],
-  contact: { emailLead: 'Gửi yêu cầu về dữ liệu cá nhân tới' },
+  contact: { emailLead: 'Yêu cầu xóa dữ liệu, xuất dữ liệu hoặc câu hỏi về dữ liệu cá nhân: gửi email tới' },
 };
