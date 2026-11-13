@@ -26,6 +26,7 @@ export * from './audit.ts';
 export * from './sort-key.ts';
 export * from './crm-deals.ts';
 export * from './crm-followup.ts';
+export * from './crm-meeting-brief.ts';
 export * from './crm-quotes.ts';
 export * from './crm-sales-orders.ts';
 export * from './finance-orders.ts';

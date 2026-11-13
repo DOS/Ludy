@@ -17,6 +17,7 @@ import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type 
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
+import { checkMeetingBrief, meetingBriefInstructions, meetingBriefPrompt, type MeetingBriefFacts, type MeetingBriefResult } from './meeting-brief.ts';
 import { checkFollowupWords, followupInstructions, followupPrompt, type FollowupWordsRequest, type FollowupWordsResult } from './followup.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 import {
@@ -96,6 +97,11 @@ const zReminderOut = z.object({
 export type IntentGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zIntentOut> | null; usage?: AiUsage }>;
 export type RankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zRankOut> | null; usage?: AiUsage }>;
 export type FollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
+const zMeetingBriefOut = z.object({
+  summary: z.string().describe('One to three plain sentences on where the deal stands, using only the facts given, each figure, date and name written exactly as given'),
+  points: z.array(z.string()).describe('Two or three short points to raise in the meeting, each one plain sentence, using only the facts given'),
+});
+export type MeetingBriefGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMeetingBriefOut> | null; usage?: AiUsage }>;
 export type CrmFollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
@@ -203,6 +209,7 @@ export class InboxReader {
   private readonly generateReminder: ReminderGenerator;
   private readonly generateFollowup: FollowupGenerator;
   private readonly generateCrmFollowup: CrmFollowupGenerator;
+  private readonly generateMeetingBrief: MeetingBriefGenerator;
   private readonly generateOverview: OverviewGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
@@ -212,7 +219,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -260,6 +267,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('crm.followup_draft', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMeetingBrief =
+      generators.meetingBrief ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('crm.meeting_brief', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMeetingBriefOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -387,6 +402,15 @@ export class InboxReader {
     const { output, usage } = await this.generateCrmFollowup({ system: crmFollowupInstructions(), prompt: crmFollowupPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkCrmFollowupWords(names, output);
+  }
+
+  /** The sales coworker's brief before a booking linked to a deal (#3115): a summary and 2 to 3 points written from the facts, or why there is no brief. One model call, metered as crm.meeting_brief; the
+   * brief is refused when it holds a figure, a link or a name that the facts do not hold, or is empty, too long or has the wrong number of points (meeting-brief.ts). Nothing is stored. onUsage gets the
+   * tokens the call used, for the org's AI cost limit. */
+  async meetingBrief(facts: MeetingBriefFacts, onUsage?: (usage: AiUsage) => void): Promise<MeetingBriefResult> {
+    const { output, usage } = await this.generateMeetingBrief({ system: meetingBriefInstructions(), prompt: meetingBriefPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMeetingBrief(facts, output);
   }
 
   /** The finance coworker on payroll (#2534): what probably changes this month, the anomalies code found in a sentence each, and one payslip explained, from the pseudonymized sheet only

@@ -25,6 +25,7 @@ export * from './stock.ts';
 export * from './einvoice-draft.ts';
 export * from './quote-lines.ts';
 export * from './crm-followup.ts';
+export * from './meeting-brief.ts';
 export * from './summary.ts';
 export * from './summary-model.ts';
 export * from './today.ts';

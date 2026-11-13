@@ -913,6 +913,14 @@ export const bookingGet = defineQuery({
   },
 });
 
+// One booking as the screen shows it to the caller (the rule of crm.booking.get: any of the org's for owners and admins, otherwise a type they lead or held on their calendar), without Dy's
+// deal suggestions; a booking the caller may not read is not found (#3115: the meeting brief is read under the same rule).
+export async function readableBooking(ctx: QueryContext, id: string): Promise<BookingItem> {
+  const [booking] = await loadBookings(ctx, bookingUser(ctx), { scope: manages(ctx) ? 'org' : 'mine', id });
+  if (!booking) throw new DomainError('BOOKING_NOT_FOUND', 404, 'Không tìm thấy lịch hẹn');
+  return booking;
+}
+
 // The deal panel's read (#3103): the bookings linked to the deal that the caller may read (the same rule as the screen: the types they lead or hold, or the whole org for
 // owners and admins), upcoming first to last and past last to first. Roles that read no booking get nothing; a deal of another org is not found.
 export const dealBookings = defineQuery({

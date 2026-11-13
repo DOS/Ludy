@@ -43,7 +43,7 @@ import {
 } from '@crove/kernel';
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
-import type { FollowupSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
+import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -53,6 +53,7 @@ import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
+import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
@@ -377,6 +378,10 @@ export function createRpcHandler(
   // The sales coworker's draft of the follow-up message for a "Cần theo dõi" step (#3101): the same reader and model, a budget of its own. It is told only the reason of the step and a hint, never a fact
   // of the deal; the facts and the link are composed by code, and what it answers is a text for the person to read, edit and send. Nothing is stored or sent.
   const followupCoworker = crmFollowupAi(conversationReader?.crmFollowupWords ? { crmFollowupWords: conversationReader.crmFollowupWords.bind(conversationReader) } : null, suggestionBudget());
+
+  // Dy's brief before a booking linked to a deal (#3115): the same reader and model, a budget of its own. It is told the deal's facts and, while the org allows AI on customers' words, the latest messages the
+  // member may read; what it answers is a summary and 2 to 3 points that are refused when they hold a figure, a link or a name the facts do not hold. Computed when read; nothing is stored or sent.
+  const meetingBriefCoworker = meetingBriefAi(conversationReader?.meetingBrief ? { meetingBrief: conversationReader.meetingBrief.bind(conversationReader) } : null, suggestionBudget());
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -1065,6 +1070,13 @@ export function createRpcHandler(
         // A booking and a deal (#3103): a person links one, or takes the link off; neither mails anyone.
         linkDeal: os.crm.bookings.linkDeal.handler(crmCommand('crm.booking.link_deal')),
         unlinkDeal: os.crm.bookings.unlinkDeal.handler(crmCommand('crm.booking.unlink_deal')),
+        // Dy's brief before a booking linked to a deal (#3115): the facts in the member's own transaction (a booking and a conversation they may not read give nothing), then the model outside it.
+        meetingBrief: os.crm.bookings.meetingBrief.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const source = await runtime.query<MeetingBriefSource>('crm.booking.meeting_brief_source', { bookingId: input.bookingId }, { actor, orgId });
+            return prepareMeetingBrief(meetingBriefCoworker, orgId, actor.userId, source);
+          }),
+        ),
         // Times to offer a client (#1440): the type's free slots, inside the days and times the client's message asks
         // for when the deployment's model can read it (a paid call, on the drafts' budget), else the next free ones.
         // Read-only: the member sends the reply. A model that fails or is off leaves the next free slots and says so.

@@ -63,6 +63,8 @@ export const AI_FEATURES = {
   // The sales coworker's lead-in and closing of a follow-up message about a quiet deal or an unanswered quote (#3101): told none of the facts (the name, the quote, the total, the link and the days are
   // composed by code), and its words are refused when they hold a figure, a link or a name; a person reads, edits and sends the message.
   'crm.followup_draft': 'crm',
+  // The sales coworker's brief before a booking linked to a deal (#3115): a short summary and 2 to 3 points to raise, written from the deal, its latest sent quote and the customer's latest words that the member may read. Every figure, date and name in it must be one of the facts' own, or the brief is refused and the person reads the facts list alone; nothing is stored or sent.
+  'crm.meeting_brief': 'crm',
   // Speech to text for the meetings module (#2578, M4a): one call per audio chunk of a meeting, through the deployment's OpenAI-compatible transcription endpoint.
   'meetings.transcribe': 'meetings',
   // The recorder's Vy summarizing one meeting (#2580, M6 part B2): one call over the transcript, the member waiting for it, through their own meter.
