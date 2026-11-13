@@ -255,7 +255,8 @@ export type SavedReplyView = z.infer<typeof zSavedReplyView>;
 // still holds it, so the braces never reach a customer. No other field is a placeholder. Case and the missing diacritic are tolerated ("{Tên}", "{ten}"),
 // and spaces inside the braces; the body is read in NFC so a name typed with combining marks matches too.
 export const SAVED_REPLY_NAME_PLACEHOLDER = '{tên}';
-const NAME_PLACEHOLDER = /\{+[^\S\n]*t[eê]n[^\S\n]*\}+/giu;
+// One or two braces each side ("{tên}", "{{tên}}"): bounded, so a text of many braces cannot make the match slow.
+const NAME_PLACEHOLDER = /\{{1,2}[^\S\n]*t[eê]n[^\S\n]*\}{1,2}/giu;
 // The longest name that is put into a reply: a platform name is untrusted text of any length.
 const FILLED_NAME_MAX = 100;
 

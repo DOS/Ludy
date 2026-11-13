@@ -86,6 +86,15 @@ describe('fillNamePlaceholder', () => {
     expect(fillNamePlaceholder('Chào {{tên}}!', null)).toBe('Chào!');
   });
 
+  it('stays fast on a long run of braces and spaces, and still finds a placeholder at its end', () => {
+    const started = Date.now();
+    const braces = '{'.repeat(8000);
+    expect(hasNamePlaceholder(braces)).toBe(false);
+    expect(fillNamePlaceholder(`${braces}{tên}`, 'Lan').endsWith('Lan')).toBe(true);
+    expect(hasNamePlaceholder(`{${' '.repeat(8000)}`)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('never leaves a placeholder behind, whichever name or none is given', () => {
     const bodies = ['{tên}', '{{tên}}', 'x {tên}} y', 'a {tên}{tên} b', '{ten}, {Tên}; { TÊN }!', 'Xin chào {tên}'];
     for (const body of bodies) {
