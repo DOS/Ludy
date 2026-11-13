@@ -30,6 +30,21 @@ The body is one JSON object with the keys `id`, `type`, `created_at`, `org`, `gr
 - `schedule.due`: `data` is `{"date":"YYYY-MM-DD"}`, the day (Vietnam time) the schedule fired for.
 - `signal.fired`: `data` is `{"items":[...]}`, 1 to 20 items, each with `rule`, `key`, `severity` (`info`, `warn`, `block`) and some of `party_id`, `deal_id`, `invoice_id`, `amount` (a decimal string), `currency` (ISO 4217, with an amount), `due_on` and `days`. A signal fires when its `key` first appears and again only after it went away.
 
+**Signals, in detail.** Every five minutes the worker asks the kernel's cross-app rules for each company grant with signals due, as the grant itself (the same sealed, read-only, tainted context a pull call from that app gets; the worker has its own door into it, `enter_mcp_wake_company_context`, which only the worker's database login may use and only for a company grant whose wake-up is on). The rules are the ones the `ludy_signals` tool runs:
+
+| Rule (`rule`) | `key` | Fires for |
+| --- | --- | --- |
+| `kernel.signals.deal_without_invoice` | `deal_without_invoice:<deal id>` | a deal won 7 days ago or more with no sales invoice after the win (`deal_id`, `days`, `amount`) |
+| `kernel.signals.receivable_with_open_deal` | `receivable_with_open_deal:<party id>` | a customer with an overdue receivable who has an open deal (`party_id`, `amount`, `due_on`) |
+| `kernel.signals.supplier_bank_changed` | `supplier_bank_changed:<party id>` | **never yet**, see below |
+
+An item carries ids, the severity, a day and an amount, nothing a person typed (no name, title, note or invoice number); anything else is read through the MCP tools. A signal fires when its `key` first appears and again only after it went away and came back; up to 20 items go in one event, and the keys are stored in the same transaction as the event, so a failure fires it again and never loses it. A key is forgotten only when its rule answered in full: a rule that failed or answered in part leaves its keys as they were.
+
+- **Quiet on purpose.** When a grant's books are only in part in view (a branch-limited grantor, for instance) the finance reads refuse with `SIGNAL_PARTIAL_VIEW` and the wake-up stays quiet for that rule; it never fires on a part of the books. `ludy_signals` says the same thing out loud (`unchecked`, reason `partial_view`).
+- **Rule 3 stays quiet until its data exists.** "A supplier's bank account changed while a payment waits" needs a supplier bank account record and a supplier-payment flow, and Ludy has neither yet (an owner decision). Until then the rule answers nothing and `ludy_signals` lists it as `unchecked`, reason `not_available`. An empty wake-up is never "all clear".
+- **A member-bound grant never gets a signal.** The sweep asks no signals for it, the database refuses a `signal.fired` event for it, and the worker's entry refuses anything that is not a company grant. A member's wake-up is a schedule and a ping only.
+- **The refusal tally.** If a grant loses its standing between the sweep picking it and the rule call (a revoke or a demotion, a window of seconds), the worker's call is refused and counted in the runtime's bounded refusal tally under the grantor, the same way the same grant asked through the API is counted. No audit row is written and nothing is fired; the next pass drops the grant.
+
 Anything else you read from Ludy (names, invoice lines) you read through the MCP tools; the body is never the source of truth.
 
 ## Verify it
@@ -125,4 +140,4 @@ https only, a public domain name (never an IP address), the default port 443, no
 
 1. Settings shows "last attempt failed" or "paused": check that your receiver answers `2xx` within 10 seconds, without a redirect, over a certificate that validates.
 2. It arrives but verification fails: you are hashing a parsed and re-serialized body, or an old secret. Hash the raw bytes, and use the secret of the latest rotation (or accept both within the 24 hours).
-3. Nothing arrives and Settings shows nothing sent: with schedule "only when something new needs attention", nothing is sent until a signal fires. Signals come with the MCP signals tool (#2967, #2969); until then use a daily or weekly schedule.
+3. Nothing arrives and Settings shows nothing sent: with schedule "only when something new needs attention", nothing is sent until a signal fires. Signals are checked every five minutes for company grants (rules above): a quiet grant has nothing flagged, or its rules could only see part of the books (`ludy_signals` shows which with `unchecked`). To test the receiver without waiting for a signal, send a test ping from Settings.

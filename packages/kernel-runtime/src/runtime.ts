@@ -621,6 +621,10 @@ export function validateRefusalAuditLimits(limits: RefusalAuditLimits): Required
 }
 
 export interface RuntimeOptions {
+  // Which database entry a company MCP grant's sealed context goes through (ADR-0051, steps S5): 'api' (default) is the API login's entry; 'worker' is the worker login's wake entry
+  // (enter_mcp_wake_company_context), which only the worker's own runtime sets. It is a property of the runtime, never of an actor, so a request cannot choose it; the database
+  // grants each entry to its own login alone.
+  mcpEntry?: 'api' | 'worker';
   // null: no session check (tests and tools). The server always passes one (apps/kernel main.ts).
   sessions?: SessionStatusSource | null;
   // R3 commands run by a user need aal2 and a second factor in the last 5 minutes (policy P11). Default required.
@@ -1577,6 +1581,8 @@ export class Runtime {
   #savepointSeq = 0;
 
   // A plain Db is one cell that also holds the control plane (singleCell).
+  readonly #mcpEntry: 'api' | 'worker';
+
   constructor(cells: CellResolver | Db, options: RuntimeOptions) {
     // Read once: the check and the copy below see the same list.
     const manifests: unknown = typeof options === 'object' && options !== null ? options.manifests : undefined;
@@ -1591,6 +1597,7 @@ export class Runtime {
     this.#sessions =
       sessions === null ? null : Object.freeze({ mode: sessions.mode, liveCheckForR3: sessions.liveCheckForR3 === true, check: sessions.check.bind(sessions) });
     this.stepUp = options.stepUp ?? 'required';
+    this.#mcpEntry = options.mcpEntry === 'worker' ? 'worker' : 'api';
     const refusalAudit = options.refusalAudit ?? DEFAULT_REFUSAL_AUDIT_LIMITS;
     this.refusalAudit = refusalAudit === 'unbounded' ? 'unbounded' : Object.freeze(validateRefusalAuditLimits(refusalAudit));
     this.#absentModules = options.absentModules ? new Set(options.absentModules) : null;
@@ -1912,7 +1919,8 @@ export class Runtime {
       // transaction and before the context is entered, so a revoke, a lost role or a stop applies at once. It names one org.
       if (orgId === null) throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP chỉ dùng được trong tổ chức đã cấp', { rule: 'mcp_org' });
       // A member-bound grant is checked by its own entry (enterContext), which reads the same standing plus the org's switch in this transaction.
-      if (actor.mcp.kind === 'member') return;
+      // The worker's wake entry (mcpEntry 'worker') does the same: the worker login has no mcp_grant_check, and the core the entry calls re-reads the same standing in this transaction.
+      if (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker') return;
       await sql`SELECT crove_kernel.mcp_grant_check(${actor.mcp.grantId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
       return;
     }
@@ -1994,8 +2002,12 @@ export class Runtime {
     if (actor.mcp) {
       // A company MCP grant (ADR-0051 decision 2, slice 3e): the same sealed shape, with no user in the seal, so a policy bound to a user (a private note, a Vy-catalog table) answers nothing to
       // it whatever the grantor holds. The role is the consenting owner's or admin's, read live in this transaction; the grantor named in the seal is the user the edge named, else a bug.
-      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_mcp_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      const { rows } =
+        this.#mcpEntry === 'worker'
+          ? await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+              SELECT crove_kernel.enter_mcp_wake_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx)
+          : await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+              SELECT crove_kernel.enter_mcp_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
       if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {

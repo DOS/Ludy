@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The bank bulk-salary file (./bank-file.ts) as an xlsx file (issue #2532): one sheet, a header row and one row per person, in the columns the person picked.
+// The bank bulk-salary file (./bank-file.ts) as an xlsx file (issue #2532): one sheet, a header row and one row per person, in the columns the person picked or the saved template's (#2893), under the
+// headers the file carries (the generic ones, or the template's: text a person typed, so a string cell like every other).
 //
 // Every cell, the amounts and the sequence numbers included, is a string cell with the Text number format, never a number and never a formula. ExcelJS writes a string as a string and only
 // `{ formula }` makes a formula, and the Text format keeps a name or a remark such as `=HYPERLINK(...)`, `+84...`, `-ABC` or `@x` inert in the spreadsheet program. No apostrophe is added in front of
@@ -8,10 +9,9 @@
 // The file is built whole after the caller has its audit row, from a list bounded by HR_BANK_FILE_MAX_PEOPLE, so it is never cut short, and nothing of it is stored.
 import { PassThrough } from 'node:stream';
 import ExcelJS from 'exceljs';
-import type { HrBankFile, HrBankFileColumn } from '@crove/kernel-contract';
+import type { HrBankFile } from '@crove/kernel-contract';
 
 const TEXT = '@';
-const HEADERS: Record<HrBankFileColumn, string> = { seq: 'STT', name: 'Tên người nhận', account: 'Số tài khoản', bank: 'Ngân hàng', amount: 'Số tiền', content: 'Nội dung' };
 
 function setText(cell: ExcelJS.Cell, value: string, right = false): void {
   cell.value = value;
@@ -34,7 +34,7 @@ export async function buildBankFileWorkbook(file: HrBankFile, brand = 'Ludy'): P
   try {
     const ws = workbook.addWorksheet('Chuyen luong');
     const head = ws.addRow([]);
-    file.columns.forEach((c, i) => setText(head.getCell(i + 1), HEADERS[c]));
+    file.headers.forEach((header, i) => setText(head.getCell(i + 1), header));
     head.font = { bold: true };
     head.commit();
     for (const r of file.rows) {

@@ -175,6 +175,8 @@ Needs a Ludy account and a workspace with the meetings feature turned on. The ex
 
 ### Screenshots to capture
 
+A ready set (Vietnamese and English: three screenshots, the small tile and the marquee) is in [apps/extension/store](../../apps/extension/store/README.md), made by `apps/extension/scripts/store-art.mjs` from the real popup; regenerate it there when the popup changes. The table below is what a set made by hand should show.
+
 The store takes up to five. Use a clean test workspace with no customer data and a short harmless meeting. Size: 1280 by 800 (or 640 by 400) pixels, PNG or JPEG without transparency; check the dashboard's current rule. Capture in Chrome at 100 percent zoom, with the popup open over a Google Meet tab and the person's name and face removed or a test account used.
 
 | # | Screen | What it shows | Source |

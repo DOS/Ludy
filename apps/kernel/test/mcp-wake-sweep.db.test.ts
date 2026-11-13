@@ -15,7 +15,10 @@ import { DEAL_WITHOUT_INVOICE_READ, createOrg, kernelCommands, kernelQueries, up
 import { CredentialVault, Runtime, parseVaultKey, type UserActor } from '@crove/kernel-runtime';
 import { makeWakeSecret } from '../src/mcp-wake-setup.ts';
 import { WAKE_RETRY_LIMIT, runWakeDelivery } from '../src/mcp-wake.ts';
-import { runWakeSweep, type SignalEvaluator } from '../src/mcp-wake-sweep.ts';
+import { runWakeSweep, runtimeEvaluator, type SignalEvaluator } from '../src/mcp-wake-sweep.ts';
+import { WAKE_RULES } from '../src/mcp-wake-body.ts';
+import { crmQueries } from '@crove/mod-crm';
+import { financeQueries } from '@crove/mod-finance';
 import type { WakeItem } from '../src/mcp-wake-body.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -29,6 +32,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
   let worker: Runtime;
+  let signalWorker: Runtime;
   let workerDb: Db;
   let orgId = '';
   let ownerId = '';
@@ -118,7 +122,9 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(defs);
     workerDb = createDb(workerPool);
-    worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(defs);
+    worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS, mcpEntry: 'worker' }).register(defs);
+    // The worker's runtime for the real evaluator case: the same entry, with the lines' reads the rules ask.
+    signalWorker = new Runtime(workerDb, { manifests: TEST_MANIFESTS, mcpEntry: 'worker' }).register({ commands: kernelCommands, queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries, ...financeQueries] });
     ownerId = await upsertIdentity(createDb(appPool), { issuer: 'mcp-wake-sweep', subject: 'owner', email: 'owner@mcp-wake-sweep.test', name: null });
     orgId = (await createOrg(runtime, owner(), 'Org A')).orgId;
   }, 120_000);
@@ -390,23 +396,50 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(await sweep()).toMatchObject({ schedules: 0, signals: 0 });
   });
 
-  it('makes no call and writes no refusal against the owner while the worker cannot enter the context of a grant, although the rules declare `mcp` (the real evaluator)', async () => {
+  it('asks the three rules as the grant, through the worker entry, writes no refusal against the owner, and stamps the check (the real evaluator)', async () => {
     const { grantId } = await wakeUp();
     const before = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number));
     const queried: string[] = [];
     const spy = {
-      execute: (...a: unknown[]) => (worker.execute as (...b: unknown[]) => Promise<unknown>)(...a),
+      execute: (...a: unknown[]) => (signalWorker.execute as (...b: unknown[]) => Promise<unknown>)(...a),
       query: (name: string, ...rest: unknown[]) => {
         queried.push(name);
-        return (worker.query as (...b: unknown[]) => Promise<unknown>)(name, ...rest);
+        return (signalWorker.query as (...b: unknown[]) => Promise<unknown>)(name, ...rest);
       },
     } as unknown as Runtime;
     await stampPast(grantId, 'signals_checked_at', '6 minutes');
     const done = await runWakeSweep({ runtime: spy, workerDb, send: async () => undefined });
     expect(done.failures).toBe(0);
-    expect(queried.filter((q) => q.startsWith('kernel.signals.'))).toEqual([]);
+    expect(queried.filter((q) => q.startsWith('kernel.signals.')).sort()).toEqual([...WAKE_RULES].sort());
     expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number))).toBe(before);
     expect((await wakeRow(grantId)).signals_checked_at).not.toBeNull();
+  });
+
+  it('never enters a member-bound grant: the sweep asks no rule for it and the worker entry refuses it', async () => {
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgId]));
+    const grantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3, 'member', $3)`,
+        [orgId, grantId, ownerId, `oauth-${grantId}`, `client-${grantId}`],
+      ),
+    );
+    const made = makeWakeSecret(vault, orgId, grantId);
+    await runtime.execute('kernel.mcp.wake.set', { grantId, url: 'https://hooks.example.com/ludy', credential: made.credential }, { actor: owner(), orgId });
+    const queried: string[] = [];
+    const spy = {
+      execute: (...a: unknown[]) => (signalWorker.execute as (...b: unknown[]) => Promise<unknown>)(...a),
+      query: (name: string, ...rest: unknown[]) => {
+        queried.push(name);
+        return (signalWorker.query as (...b: unknown[]) => Promise<unknown>)(name, ...rest);
+      },
+    } as unknown as Runtime;
+    await stampPast(grantId, 'signals_checked_at', '6 minutes');
+    await runWakeSweep({ runtime: spy, workerDb, send: async () => undefined });
+    expect(queried.filter((q) => q.startsWith('kernel.signals.'))).toEqual([]);
+    // Asked for directly, the worker's entry refuses a member-bound grant (no rule answers in full).
+    expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId, userId: ownerId })).complete).toEqual([]);
   });
 
   it('refuses a body that does not fit, in the command and in the database, and any actor but the system on every delivery step', async () => {
@@ -433,5 +466,66 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     ] as const) {
       await expect(runtime.execute(name, input, { actor: owner(), orgId }), name).rejects.toMatchObject({ status: 403 });
     }
+  });
+
+  // Step S5 (#2967, #2969): the worker's runtime enters a company grant's sealed context through its own entry, and only for a wake registration that is on.
+  it('runs the rules as a company grant through the worker entry, and enters nothing for a grant without a live wake-up', async () => {
+    const { grantId } = await wakeUp();
+    const answer = await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId, userId: ownerId });
+    // A rule that answered in full is `complete`: the entry worked, the sealed read ran (nothing is flagged in an empty org).
+    expect(answer.complete).toEqual(expect.arrayContaining(['deal_without_invoice', 'receivable_with_open_deal']));
+    expect(answer.items).toEqual([]);
+    // The grant's wake-up switched off: the worker entry refuses, so no rule answers in full and nothing is claimed.
+    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant_wake SET enabled = false WHERE grant_id = $1`, [grantId]));
+    expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId, userId: ownerId })).complete).toEqual([]);
+    // A grant that never set a wake-up is no better.
+    const bare = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
+        [orgId, bare, ownerId, `oauth-${bare}`, `client-${bare}`],
+      ),
+    );
+    expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: bare, userId: ownerId })).complete).toEqual([]);
+  });
+
+  it('refuses a revoked grant and a demoted grantor at the worker entry, and writes nothing against the owner', async () => {
+    const before = async () => admin((c) => c.query(`SELECT (SELECT count(*)::int FROM crove_kernel.security_event) AS s, (SELECT count(*)::int FROM crove_kernel.audit_event) AS a`).then((r) => r.rows[0] as { s: number; a: number }));
+    // A revoked grant.
+    const revoked = (await wakeUp()).grantId;
+    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgId, revoked]));
+    expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: revoked, userId: ownerId })).complete).toEqual([]);
+    // A grantor who is no longer an owner or admin of the org: a second user made admin, a grant of theirs, then demoted.
+    const other = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'mcp-wake-sweep', subject: 'demoted', email: 'demoted@mcp-wake-sweep.test', name: null });
+    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, other]));
+    const demotedGrant = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
+        [orgId, demotedGrant, other, `oauth-${demotedGrant}`, `client-${demotedGrant}`],
+      ),
+    );
+    const made = makeWakeSecret(vault, orgId, demotedGrant);
+    await runtime.execute('kernel.mcp.wake.set', { grantId: demotedGrant, url: 'https://hooks.example.com/ludy', credential: made.credential }, { actor: { type: 'user', userId: other, aal: 'aal1' }, orgId });
+    const atDemoted = await before();
+    expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: demotedGrant, userId: other })).complete).toEqual(expect.arrayContaining(['deal_without_invoice']));
+    expect(await before()).toEqual(atDemoted);
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, other]));
+    expect((await runtimeEvaluator(signalWorker, WAKE_RULES)({ orgId, grantId: demotedGrant, userId: other })).complete).toEqual([]);
+    // A refusal writes no audit row. (The runtime counts each refusal in its bounded tally, as it does for the same grant asked through the API; a grant the sweep asks has standing when mcp_wake_due picks it, so this is the race alone.)
+    expect((await before()).a).toBe(atDemoted.a);
+  });
+
+  it('keeps the API runtime out of the worker entry and the worker out of the API entry', async () => {
+    const { grantId } = await wakeUp();
+    const actor = { type: 'user' as const, userId: ownerId, aal: 'aal1' as const, mcp: { grantId, clientId: 'c', clientName: 'C', scopes: ['ludy.read'] } };
+    // A runtime that took the API entry on the worker's login (no mcpEntry) is refused by the database, not by a check in the code.
+    const wrong = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
+    await expect(wrong.query(DEAL_WITHOUT_INVOICE_READ, {}, { actor, orgId })).rejects.toBeDefined();
+    // And the other way round: the API's login holds no way into the worker entry.
+    const asApp = new Runtime(createDb(pools[0] as pg.Pool), { manifests: TEST_MANIFESTS, mcpEntry: 'worker' }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
+    await expect(asApp.query(DEAL_WITHOUT_INVOICE_READ, {}, { actor, orgId })).rejects.toBeDefined();
   });
 });

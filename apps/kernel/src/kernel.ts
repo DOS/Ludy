@@ -558,7 +558,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     billing: adapters.billing ?? selfHostBilling,
   };
 
-  function buildRuntime(connectionString: string, applicationName: string, max: number) {
+  function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
     const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.CROVE_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
@@ -573,6 +573,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
       // Every user request is checked against its session (ADR-0028); the identity port never resolves to "no check".
       sessions: resolved.identity.sessions,
       stepUp: config.AUTH_STEP_UP,
+      // The worker's own runtime enters a company grant's context through the worker's entry (signal wake-ups, S5); every other runtime uses the API's.
+      ...(mcpEntry ? { mcpEntry } : {}),
       refusalAudit: {
         perActor: config.REFUSAL_AUDIT_LIMIT_PER_ACTOR,
         perOrg: config.REFUSAL_AUDIT_LIMIT_PER_ORG,
@@ -706,7 +708,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         // The instance the heartbeat names is in every system audit row this worker writes (#1951), cut to what fits in
         // the connections' application_name, so both name it alike.
         const instance = hostname().slice(0, 50);
-        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX);
+        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX, 'worker');
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'granted');
