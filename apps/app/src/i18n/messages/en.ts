@@ -9817,6 +9817,7 @@ export const en = {
       WHATSAPP_PERMISSION: 'This access token has no permission on the phone number; grant the whatsapp_business_messaging permission to the system user',
       WHATSAPP_PHONE_NOT_FOUND: 'WhatsApp does not know this phone number ID for the access token entered; check both',
       SEND_UNKNOWN_NO_RESEND: 'This message may have reached the customer. Check the channel, then press "Already sent"; it is not sent again by a button',
+      CHANNEL_ACCOUNT_TAKEN: 'This WhatsApp number is connected by another organization. Disconnect it there before connecting it here',
       MASTODON_INSTANCE_INVALID: 'Enter a Mastodon server address, such as mastodon.social',
       MASTODON_TOKEN_INVALID: 'This is not a Mastodon access token; copy the one under Preferences > Development on your server',
       MASTODON_TOKEN_REFUSED: 'The Mastodon server did not accept this access token',

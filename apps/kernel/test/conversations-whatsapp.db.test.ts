@@ -228,6 +228,36 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
     });
   });
 
+  describe('one number, one organization', () => {
+    it('refuses to connect a number another organization holds, lets the same organization reconnect its own, and allows it once the first disconnected', async () => {
+      const a = await org();
+      const b = await org();
+      const connect = (o: Org, phoneId: string) => {
+        const sealed = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId: o.orgId, provider: 'whatsapp', externalAccountId: phoneId });
+        return api.execute<{ connectionId: string }>(
+          'kernel.channel.connect',
+          { provider: 'whatsapp', externalAccountId: phoneId, displayName: 'Tiệm Bánh An Nhiên', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+          { actor: asUser(o.owner), orgId: o.orgId },
+        );
+      };
+      // A pasted token proves its holder may call the number, not that the number is theirs: the second organization is refused, and no connection row is made.
+      await expect(connect(b, a.phoneId)).rejects.toMatchObject({ code: 'CHANNEL_ACCOUNT_TAKEN', status: 409 });
+      expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [b.orgId, a.phoneId])).toHaveLength(0);
+      // The organization that holds it reconnects it (a new token) and keeps its row.
+      await expect(connect(a, a.phoneId)).resolves.toMatchObject({ connectionId: a.connectionId });
+      // A customer's message for the number is stored in the holder only.
+      const m = message(LAN);
+      expect((await post(app, customerNotice(a, m))).status).toBe(200);
+      expect(await intake()).toMatchObject({ dropped: 0 });
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(0);
+      // Once the holder disconnects, the number is free for the other organization.
+      await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { actor: asUser(a.owner), orgId: a.orgId });
+      const taken = await connect(b, a.phoneId);
+      expect(taken.connectionId).not.toBe(a.connectionId);
+    });
+  });
+
   describe('the route', () => {
     it('does not exist without the app secret and the verify token', async () => {
       const unregistered = await bare.request('/api/channels/nobody/webhook', { method: 'POST', body: '{}' });
@@ -362,9 +392,14 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect(await waiting()).toBe(2);
       expect(await intake()).toEqual({ stored: 1, dropped: 0 });
       // A notice dated past Meta's retries is answered and not parked; past ten thousand waiting the answer is 503, and the same notice is parked once there is room.
-      const old = customerNotice(o, message(LAN, { timestamp: secondsAgo(3 * 86_400) }));
+      const old = customerNotice(o, message(LAN, { timestamp: secondsAgo(8 * 86_400) }));
       expect((await post(app, old)).status).toBe(200);
       expect(await waiting()).toBe(0);
+      // ...while one a deployment missed for two days is still taken.
+      const missed = customerNotice(o, message(LAN, { timestamp: secondsAgo(2 * 86_400) }));
+      expect((await post(app, missed)).status).toBe(200);
+      expect(await waiting()).toBe(1);
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
       await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'whatsapp', 'x'::bytea FROM generate_series(1, 10001)");
       const fresh = customerNotice(o, message(MINH));
       expect([(await post(app, fresh)).status, await (await post(app, fresh)).text()]).toEqual([503, '{"code":"BACKLOG"}']);
@@ -467,6 +502,37 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect(await rows('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = $2', [o.orgId, MINH])).toHaveLength(0);
       // A person looked on WhatsApp and the message did arrive: marked sent, a late failed status of an earlier attempt would not undo what a person settled.
       await expect(api.execute('kernel.conversation.reply_settle', { messageId, action: 'mark_sent' }, { actor: asUser(o.admin), orgId: o.orgId })).resolves.toMatchObject({ state: 'sent' });
+      // ...and a late failed status of the attempt it settled (Meta retries for a while, with a code the replay guard has not seen) does not undo it.
+      expect((await post(app, failed(wamid, 131030))).status).toBe(200);
+      expect(await intake()).toEqual({ stored: 0, dropped: 0 });
+      expect(await messageRow(messageId)).toMatchObject({ send_state: 'sent' });
+      expect((await messageRow(messageId))?.send_error_code).not.toBe('WA_131030');
+    });
+
+    it('does not let a late failed status of an earlier attempt turn a retried send back to failed, and marks the new attempt by its own wamid', async () => {
+      const o = await org();
+      const { thread } = await customerWrites(o);
+      const { messageId } = await reply(o, thread);
+      expect(await runConversationJob(jobDeps(graph().adapter), jobOf(o, messageId))).toBe('accepted');
+      const first = (await messageRow(messageId))?.external_message_id as string;
+      const failed = (id: string, code: number) => noticeOf(o, { statuses: [{ id, status: 'failed', timestamp: secondsAgo(5), recipient_id: LAN, errors: [{ code }] }] });
+      expect((await post(app, failed(first, 131047))).status).toBe(200);
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+      expect(await messageRow(messageId)).toMatchObject({ send_state: 'failed', send_error_code: 'WA_131047' });
+      // A person sends it again (inside the window): the new attempt is queued and goes out under a new wamid.
+      expect(await api.execute('kernel.conversation.reply_settle', { messageId, action: 'retry' }, { actor: asUser(o.admin), orgId: o.orgId })).toMatchObject({ state: 'queued' });
+      expect(await runConversationJob(jobDeps(graph().adapter), jobOf(o, messageId))).toBe('accepted');
+      const second = (await messageRow(messageId))?.external_message_id as string;
+      expect(second).not.toBe(first);
+      expect(await messageRow(messageId)).toMatchObject({ send_state: 'sent', send_error_code: null });
+      // The first attempt's status again, with another code (so the replay guard lets it through): the message stays sent.
+      expect((await post(app, failed(first, 131030))).status).toBe(200);
+      expect(await intake()).toEqual({ stored: 0, dropped: 0 });
+      expect(await messageRow(messageId)).toMatchObject({ send_state: 'sent', send_error_code: null });
+      // The new attempt's own failure does mark it.
+      expect((await post(app, failed(second, 131026))).status).toBe(200);
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+      expect(await messageRow(messageId)).toMatchObject({ send_state: 'failed', send_error_code: 'WA_131026' });
     });
 
     it('never sends twice after a worker died, and an unclear send is not sent again by a button: a person marks it sent', async () => {

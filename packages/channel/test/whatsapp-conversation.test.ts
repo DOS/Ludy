@@ -156,6 +156,36 @@ describe('parseWhatsAppNotices', () => {
     ]);
   });
 
+  it('dates nothing more than a few minutes ahead of the clock, so the 24-hour window is never stretched', () => {
+    const at = (seconds: number) =>
+      parse(notice({ contacts: [{ profile: { name: 'Lan' }, wa_id: CUSTOMER }], messages: [{ from: CUSTOMER, id: `wamid.t${seconds}`, timestamp: String(seconds), type: 'text', text: { body: 'x' } }] })).flatMap((n) => n.events);
+    expect(at(T0 + 60 + 5 * 60)).toHaveLength(1);
+    expect(at(T0 + 60 + 11 * 60)).toEqual([]);
+    expect(at(T0 + 3_600)).toEqual([]);
+  });
+
+  it('takes the contact’s wa_id as the customer when it differs from the message’s from, and matches by from when several write', () => {
+    // One sender and one contact whose numbers are written differently: the contact is the customer, who is also who a reply is sent to.
+    const [single] = parse(
+      notice({ contacts: [{ profile: { name: 'Lan' }, wa_id: '84900000001' }], messages: [{ from: '849000000010', id: 'wamid.a', timestamp: String(T0), type: 'text', text: { body: 'x' } }] }),
+    );
+    expect(single?.events[0]).toMatchObject({ threadId: '84900000001', contact: { id: '84900000001', name: 'Lan' } });
+    // Several contacts: a message keeps its own from, and a name goes to the contact whose wa_id it is.
+    const [many] = parse(
+      notice({
+        contacts: [{ profile: { name: 'Lan' }, wa_id: CUSTOMER }, { profile: { name: 'Minh' }, wa_id: OTHER }],
+        messages: [
+          { from: CUSTOMER, id: 'wamid.b', timestamp: String(T0), type: 'text', text: { body: 'x' } },
+          { from: OTHER, id: 'wamid.c', timestamp: String(T0 + 1), type: 'text', text: { body: 'y' } },
+        ],
+      }),
+    );
+    expect(many?.events.map((e) => [e.threadId, e.contact.name])).toEqual([
+      [CUSTOMER, 'Lan'],
+      [OTHER, 'Minh'],
+    ]);
+  });
+
   it('is no notice of ours for another object, and malformed for a body that is not a notice', () => {
     expect(parse(JSON.stringify({ object: 'page', entry: [] }))).toEqual([]);
     expect(parse(JSON.stringify({ object: 'whatsapp_business_account', entry: [] }))).toEqual([]);
@@ -280,6 +310,15 @@ describe('WhatsAppConversations.reply', () => {
     // The adapter reads the real clock, so the customer's message is dated from it.
     const result = await adapter(fetchImpl).reply(replyInput({ lastInboundAt: new Date(Date.now() - 25 * 3_600_000).toISOString() }));
     expect(result).toEqual({ kind: 'rejected', error: 'bad_request', code: 'WA_WINDOW_CLOSED' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('treats a thread with no known last message as closed: the window is never presumed open', async () => {
+    const { fetchImpl, calls } = stub([{ body: {} }]);
+    const wa = adapter(fetchImpl);
+    expect(await wa.reply(replyInput({ lastInboundAt: null }))).toEqual({ kind: 'rejected', error: 'bad_request', code: 'WA_WINDOW_CLOSED' });
+    expect(await wa.reply(replyInput({ lastInboundAt: undefined }))).toEqual({ kind: 'rejected', error: 'bad_request', code: 'WA_WINDOW_CLOSED' });
+    expect(await wa.reply(replyInput({ lastInboundAt: 'not a date' }))).toEqual({ kind: 'rejected', error: 'bad_request', code: 'WA_WINDOW_CLOSED' });
     expect(calls).toHaveLength(0);
   });
 

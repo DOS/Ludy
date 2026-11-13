@@ -104,7 +104,16 @@ export const channelConnect = defineCommand({
         .insertInto('crove_kernel.channel_connection')
         .values({ org_id: ctx.orgId, provider: input.provider, external_account_id: input.externalAccountId, ...values })
         .returning('id')
-        .executeTakeFirstOrThrow();
+        .executeTakeFirstOrThrow()
+        .catch((error: unknown) => {
+          // A WhatsApp number is connected by a pasted token, which proves no more than that its holder may call the number, so one org holds it at a time:
+          // a second org would otherwise receive every message the first org's customers send (the intake finds each connection of the account).
+          const pg = error as { code?: string; constraint?: string } | null;
+          if (pg?.code === '23505' && pg.constraint === 'channel_connection_whatsapp_account_uq') {
+            throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Số WhatsApp này đang được một tổ chức khác kết nối. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
+          }
+          throw error;
+        });
       id = row.id;
     }
     await sql`SELECT crove_kernel.credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`

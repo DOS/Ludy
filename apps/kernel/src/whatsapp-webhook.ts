@@ -32,14 +32,15 @@ export interface WhatsAppWebhookConfig {
 }
 
 // Events seen lately, by their own id, so a signed notice replayed (by Meta's retries or by anyone holding a captured one) is answered without being parked
-// again. Meta retries a failed delivery for a day and a half at most [U for WhatsApp, 36 hours is the figure on file for Messenger]; the same window is kept.
-// A per-process guard against a queue flooded with one body: the guarantee that a replay stores nothing twice is the unique platform message id of the
-// thread's messages, which holds across processes and restarts. An event is remembered only once it is parked.
+// again; the window is Messenger's 36 hours, the one figure on file [U for WhatsApp]. A per-process guard against a queue flooded with one body: the guarantee
+// that a replay stores nothing twice is the unique platform message id of the thread's messages, which holds across processes and restarts. An event is
+// remembered only once it is parked.
 export { FacebookReplayCache as WhatsAppReplayCache };
 
-// A verified notice older than 48 hours is past Meta's retries, so it is acknowledged with 200 and not parked (the unique message id alone must not be what
-// keeps a purged or erased thread from coming back, CV6).
-export const WHATSAPP_NOTICE_MAX_AGE_MS = 48 * 3_600_000;
+// A verified event dated more than 7 days ago is answered 200 and not parked. How long Meta retries a WhatsApp delivery is [U] (a week is the longest figure
+// seen), so a deployment that was down for a day or two still takes the messages it missed; an erased customer's old message does not come back through
+// this, since an event dated before the erasure is ignored at intake (CV6).
+export const WHATSAPP_NOTICE_MAX_AGE_MS = 7 * 24 * 3_600_000;
 
 export type WhatsAppWebhookChallengeOutcome = FacebookWebhookChallengeOutcome;
 export function verifyWhatsAppWebhookChallenge(

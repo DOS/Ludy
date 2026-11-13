@@ -502,6 +502,7 @@ export function SocialChannelsPage() {
   const pausedOn = new Map((waiting.data ?? []).map((w) => [w.connectionId, w.paused]));
   const blueskyForm = useRef<HTMLInputElement>(null);
   const telegramForm = useRef<HTMLInputElement>(null);
+  const whatsappForm = useRef<HTMLInputElement>(null);
   const mastodonForm = useRef<HTMLInputElement>(null);
   const discordForm = useRef<HTMLInputElement>(null);
   const wordpressForm = useRef<HTMLInputElement>(null);
@@ -514,6 +515,12 @@ export function SocialChannelsPage() {
     }
     if (c.provider === 'telegram') {
       telegramForm.current?.focus();
+      return;
+    }
+    if (c.provider === 'whatsapp') {
+      // The account id is the phone number id; the token and the business account id are asked again, since neither is kept in the clear.
+      setWa({ accessToken: '', phoneNumberId: c.externalAccountId, wabaId: '' });
+      whatsappForm.current?.focus();
       return;
     }
     if (c.provider === 'discord') {
@@ -851,7 +858,7 @@ export function SocialChannelsPage() {
             >
               <p className="text-sm font-medium text-foreground">{providerName('whatsapp')}</p>
               <Label htmlFor="wa-token">{t('whatsappAccessToken')}</Label>
-              <Input id="wa-token" type="password" autoComplete="off" value={wa.accessToken} placeholder="EAAG..." onChange={(e) => setWa({ ...wa, accessToken: e.target.value })} />
+              <Input id="wa-token" ref={whatsappForm} type="password" autoComplete="off" value={wa.accessToken} placeholder="EAAG..." onChange={(e) => setWa({ ...wa, accessToken: e.target.value })} />
               <Label htmlFor="wa-phone">{t('whatsappPhoneNumberId')}</Label>
               <Input id="wa-phone" autoComplete="off" inputMode="numeric" value={wa.phoneNumberId} onChange={(e) => setWa({ ...wa, phoneNumberId: e.target.value })} />
               <Label htmlFor="wa-waba">{t('whatsappWabaId')}</Label>

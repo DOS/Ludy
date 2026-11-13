@@ -422,9 +422,11 @@ async function reserveMailImages(ctx: CommandContext, messageId: string, connect
   return rows.map((r) => ({ attachmentId: r.id, storageKey: r.storage_key }));
 }
 
-// A status `failed` for a message the org sent through this connection: `sent`, `unknown` and `sending` become `failed` with the platform's code, so the person
-// sees it did not arrive and may send it again (inside the window). A message already failed, one the platform never named to us (written outside Ludy),
-// or one a person marked sent after looking on the platform is left alone: a late status of an earlier attempt must not undo a settled answer.
+// A status `failed` for a message the org sent through this connection: a `sent` message becomes `failed` with the platform's code, so the person sees it did not
+// arrive and may send it again (inside the window). Nothing else changes: a message already failed, one still being sent or left unclear (it holds no platform id
+// of the attempt in flight: a retry and a person's "marked sent" clear the id of the attempt before, in reply_settle), and one the platform never named to us
+// (written outside Ludy) are left alone, so a late or repeated status of an earlier attempt can neither undo a settled answer nor turn an unclear send back into
+// one a button may send again.
 async function applyDeliveryFailed(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const message = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
@@ -436,7 +438,7 @@ async function applyDeliveryFailed(ctx: CommandContext, connectionId: string, ev
     .executeTakeFirst();
   if (!message || message.direction !== 'out' || message.author_kind !== 'member') return 'ignored';
   if (message.send_state === 'failed') return 'duplicates';
-  if (message.send_state !== 'sent' && message.send_state !== 'unknown' && message.send_state !== 'sending') return 'ignored';
+  if (message.send_state !== 'sent') return 'ignored';
   await ctx.trx
     .updateTable('crove_kernel.conversation_message')
     .set({ send_state: 'failed', send_error_code: event.deliveryFailed?.code ?? 'FAILED' })
@@ -1685,7 +1687,14 @@ export const conversationReplySettle = defineCommand({
       throw new DomainError('MESSAGE_NOT_SETTLEABLE', 409, 'Tin nhắn này không cần xử lý thêm');
     }
     if (input.action === 'mark_sent') {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'sent', send_error_code: null }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      // A person looked on the platform and settled it: the platform's id of an attempt it reported failed is no longer this message's, so a repeated status of
+      // that attempt (Meta delivers at least once) cannot flip the answer back. Not for an email, whose id is its Message-ID.
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_message')
+        .set({ send_state: 'sent', send_error_code: null, ...(message.kind === 'email' ? {} : { external_message_id: null }) })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', message.id)
+        .execute();
       await ctx.trx
         .updateTable('crove_kernel.external_call')
         .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
@@ -1713,7 +1722,8 @@ export const conversationReplySettle = defineCommand({
     if (thread?.reply_window_until && thread.reply_window_until.getTime() < ctx.now.getTime()) throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
-      .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null })
+      // A new attempt has no platform id yet: the earlier attempt's id would let its late status mark this one (and a failed attempt keeps none a status could use).
+      .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null, ...(message.kind === 'email' ? {} : { external_message_id: null }) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', message.id)
       .execute();

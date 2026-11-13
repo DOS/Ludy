@@ -24,7 +24,7 @@ describe('fetchConversationMedia', () => {
       seen.push({ url: req.url ?? '', authorization: req.headers.authorization, accept: req.headers.accept });
       const answer = answers.get(req.url ?? '');
       if (!answer) return void res.writeHead(404).end();
-      res.writeHead(answer.status ?? 200, { ...(answer.location ? { location: answer.location } : {}) });
+      res.writeHead(answer.status ?? 200, answer.location ? { location: answer.location } : {});
       res.end(answer.body);
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

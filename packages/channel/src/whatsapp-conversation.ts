@@ -105,13 +105,14 @@ const idOf = (value: unknown, pattern: RegExp): string | null => {
   return pattern.test(text) ? text : null;
 };
 
-// The platform's time, in seconds (a string) [M]; a value in milliseconds is read as such. Outside a sane range it is no event, so a message is never dated in
-// 1970 (which would close its reply window at once).
+// The platform's time, in seconds (a string) [M]; a value in milliseconds is read as such. Outside a sane range it is no event: not dated in 1970 (which would close
+// its reply window at once), and not ahead of this clock by more than a few minutes (a message dated a day ahead would stretch the 24-hour window to two days).
+const CLOCK_SKEW_MS = 10 * 60_000;
 function atOf(value: unknown, now: number): string | null {
   const n = typeof value === 'string' && /^\d{1,16}$/.test(value) ? Number(value) : typeof value === 'number' && Number.isFinite(value) ? value : NaN;
   if (!Number.isFinite(n) || n <= 0) return null;
   const ms = n < 1e11 ? n * 1000 : n;
-  return ms >= Date.UTC(2020, 0, 1) && ms <= now + 86_400_000 ? new Date(ms).toISOString() : null;
+  return ms >= Date.UTC(2020, 0, 1) && ms <= now + CLOCK_SKEW_MS ? new Date(ms).toISOString() : null;
 }
 
 const captionOf = (media: WaMedia | null | undefined): string => (typeof media?.caption === 'string' ? clean(media.caption).trim().slice(0, TEXT_MAX) : '');
@@ -182,16 +183,23 @@ export function parseWhatsAppNotices(body: Uint8Array, now: number = Date.now())
       const phoneNumberId = idOf(value.metadata?.phone_number_id, PHONE_NUMBER_ID);
       if (!phoneNumberId) continue;
       const list = byAccount.get(phoneNumberId) ?? [];
-      // The name a customer gave on WhatsApp [M: contacts[].profile.name], by their id.
-      const names = new Map<string, string>();
+      // The customer is their `wa_id` [M: contacts[].wa_id], with the name they gave [M: contacts[].profile.name]. `messages[].from` is the same number in most
+      // cases and not in all (Meta writes some countries' numbers differently there): when a notice names one sender and one contact, the contact's wa_id is the
+      // customer's id, which is also the id a reply is sent to; with several, a message is matched to the contact whose wa_id is its `from`.
+      const contacts: Array<{ id: string; name: string }> = [];
       for (const contact of Array.isArray(value.contacts) ? value.contacts : []) {
         const id = idOf(contact?.wa_id, CUSTOMER_ID);
-        const name = typeof contact?.profile?.name === 'string' ? clean(contact.profile.name).trim().slice(0, NAME_MAX) : '';
-        if (id && name !== '') names.set(id, name);
+        if (id) contacts.push({ id, name: typeof contact?.profile?.name === 'string' ? clean(contact.profile.name).trim().slice(0, NAME_MAX) : '' });
       }
-      for (const message of Array.isArray(value.messages) ? value.messages : []) {
+      const messages = Array.isArray(value.messages) ? value.messages : [];
+      const senders = new Set(messages.map((m) => idOf(m?.from, CUSTOMER_ID)).filter((id): id is string => id !== null));
+      const [onlySender] = senders;
+      const onlyContact = contacts.length === 1 && senders.size === 1 ? (contacts[0] as { id: string; name: string }) : null;
+      const names = new Map(contacts.filter((c) => c.name !== '').map((c) => [c.id, c.name]));
+      for (const message of messages) {
         if (!message || typeof message !== 'object') continue;
-        const customer = idOf(message.from, CUSTOMER_ID);
+        const from = idOf(message.from, CUSTOMER_ID);
+        const customer = from !== null && from === onlySender && onlyContact ? onlyContact.id : from;
         const messageId = idOf(message.id, /^[A-Za-z0-9._=+/-]{1,300}$/);
         const at = atOf(message.timestamp, now);
         // The customer is never the business's own number: a message "from" the account is not a customer's.
@@ -234,10 +242,6 @@ export function parseWhatsAppNotices(body: Uint8Array, now: number = Date.now())
   return [...byAccount.entries()]
     .map(([accountId, events]) => ({ accountId, events: events.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i).map((x) => x.event) }));
 }
-
-// The handshake's check [S]: Meta sends `hub.mode=subscribe`, the verify token and a challenge. The route compares the token in constant time; this only
-// says whether the challenge may be echoed back (text, a short run of the characters Meta sends).
-export const WHATSAPP_CHALLENGE = /^[\x20-\x7e]{1,500}$/;
 
 // The sealed credential of a connection: the system user token and the WABA id [M].
 export interface WhatsAppSecret {
@@ -338,10 +342,10 @@ export class WhatsAppConversations implements ConversationAdapter {
     if (input.text.trim().length === 0) return { kind: 'rejected', error: 'bad_request', code: 'EMPTY' };
     if (input.text.length > WHATSAPP_TEXT_MAX) return { kind: 'rejected', error: 'bad_request', code: 'WA_TEXT_LENGTH' };
     if (!SENDABLE_ID.test(input.threadId)) return { kind: 'rejected', error: 'bad_request', code: 'WA_BAD_RECIPIENT' };
-    if (typeof input.lastInboundAt === 'string' && input.lastInboundAt) {
-      const inboundMs = Date.parse(input.lastInboundAt);
-      if (Number.isFinite(inboundMs) && Date.now() - inboundMs > WINDOW_MS) return { kind: 'rejected', error: 'bad_request', code: 'WA_WINDOW_CLOSED' };
-    }
+    // Closed unless the customer's last message is known and within 24 hours: with no date the window cannot be shown open, and a free-form send outside it is
+    // what Meta refuses (131047) and the business must never be billed for.
+    const inboundMs = typeof input.lastInboundAt === 'string' ? Date.parse(input.lastInboundAt) : NaN;
+    if (!Number.isFinite(inboundMs) || Date.now() - inboundMs > WINDOW_MS) return { kind: 'rejected', error: 'bad_request', code: 'WA_WINDOW_CLOSED' };
     try {
       const answer = await this.graph.call<{ messages?: Array<{ id?: unknown }> }>('POST', `${input.externalAccountId}/messages`, {
         token: secret.accessToken,

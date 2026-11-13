@@ -9814,6 +9814,7 @@ export const vi = {
       WHATSAPP_PERMISSION: 'Mã truy cập này chưa có quyền với số điện thoại; hãy cấp quyền whatsapp_business_messaging cho người dùng hệ thống',
       WHATSAPP_PHONE_NOT_FOUND: 'WhatsApp không thấy mã số điện thoại này với mã truy cập đã nhập; hãy kiểm tra lại cả hai',
       SEND_UNKNOWN_NO_RESEND: 'Tin nhắn này có thể đã đến khách. Hãy kiểm tra trên kênh rồi bấm "Đã gửi rồi", không gửi lại bằng nút',
+      CHANNEL_ACCOUNT_TAKEN: 'Số WhatsApp này đang được một tổ chức khác kết nối. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây',
       MASTODON_INSTANCE_INVALID: 'Hãy nhập địa chỉ máy chủ Mastodon, ví dụ mastodon.social',
       MASTODON_TOKEN_INVALID: 'Đây không phải mã truy cập Mastodon; hãy chép mã trong Cài đặt > Phát triển của máy chủ',
       MASTODON_TOKEN_REFUSED: 'Máy chủ Mastodon không chấp nhận mã truy cập này',
