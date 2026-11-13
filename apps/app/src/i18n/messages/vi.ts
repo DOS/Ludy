@@ -103,7 +103,6 @@ export const vi = {
     paymentReminders: 'Nhắc thu nợ',
     salesInvoices: 'Hóa đơn bán ra',
     stock: 'Hàng hóa',
-    marketplace: 'Sàn',
     vendors: 'Nhà cung cấp',
     journal: 'Bút toán',
     vouchers: 'Phiếu thu chi',
@@ -1004,6 +1003,7 @@ export const vi = {
     note: 'Số liệu đọc từ sổ cái theo đối tượng của từng sàn; bút toán bị đảo được trừ lại, chưa ghi thì là 0.',
   },
   stock: {
+    marketplaceLink: 'Xem tiền của từng sàn trong sổ sách',
     title: 'Hàng hóa',
     subtitle: 'Mặt hàng, số lượng còn trong kho và các dòng hóa đơn chưa gán hàng. Kho chỉ phản ánh những gì sổ sách đã ghi: không đổi bút toán nào.',
     items: 'Mặt hàng',

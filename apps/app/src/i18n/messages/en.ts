@@ -105,7 +105,6 @@ export const en = {
     paymentReminders: 'Payment reminders',
     salesInvoices: 'Sales invoices',
     stock: 'Stock',
-    marketplace: 'Marketplaces',
     vendors: 'Vendors',
     journal: 'Journal',
     vouchers: 'Vouchers',
@@ -1006,6 +1005,7 @@ export const en = {
     note: 'Read from the ledger by each platform\'s party; a reversed entry is taken back, and nothing posted yet is 0.',
   },
   stock: {
+    marketplaceLink: 'See each marketplace platform\'s money in the books',
     title: 'Stock',
     subtitle: 'Items, what is on hand and the invoice lines not yet assigned to an item. Stock only mirrors what the books already hold: it changes no entry.',
     items: 'Items',
