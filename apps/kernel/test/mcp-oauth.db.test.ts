@@ -18,6 +18,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
+import { crmQueries } from '@crove/mod-crm';
 import { financeQueries } from '@crove/mod-finance';
 import { BlobNotFoundError, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
@@ -227,7 +228,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const config = loadConfig(bootEnv);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...crmQueries],
     });
     sharedDb = db;
     sharedRuntime = runtime;
@@ -430,7 +431,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       const initialized = await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', method: 'notifications/initialized' });
       expect(initialized.status).toBe(202);
       const list = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as any;
-      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list']);
+      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals']);
       for (const tool of list.result.tools) expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true });
       const called = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', arguments: {} } })).json()) as any;
       expect(called.result.structuredContent.clientName).toBe('Test MCP client');
@@ -491,6 +492,45 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const schema = listed.body?.result?.tools.find((t: any) => t.name === 'ludy_invoices_list')?.inputSchema;
     expect(schema).toMatchObject({ type: 'object', additionalProperties: false, properties: { direction: { enum: ['sale', 'purchase'] }, limit: { maximum: 50, minimum: 1 } } });
     expect(schema.$schema).toBeUndefined();
+  });
+
+  // Step S4 (Vy V4 and V5, #2967 and #2969): `ludy_signals` over the real endpoint. The rules and the reads themselves are pinned in signals-mcp.db.test.ts; this is the tool: its listing, an item that crosses, what
+  // it says it could not check, the row budget it spends and the audit row that names it.
+  it('serves ludy_signals: the items of the rules that could look, what could not be checked named, one budget row per item, and the call audited by tool', async () => {
+    const c = await connect();
+    const listed = await mcpModern(c.access, 'tools/list');
+    const tool = listed.body?.result?.tools.find((t: any) => t.name === 'ludy_signals');
+    expect(tool).toMatchObject({ title: 'Things that need attention', inputSchema: { type: 'object', additionalProperties: false, properties: {} }, annotations: { readOnlyHint: true } });
+    expect(tool.description).toContain('An empty `items` means nothing was found among `checked`');
+    // A deal won 8 days ago, its customer never invoiced (a stage row and a deal row, as the CRM commands write them).
+    const party = (await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Khach Signals E2E') RETURNING id`, [orgId]))).rows[0].id as string;
+    const owner = (await admin((client) => client.query(`SELECT user_id FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].user_id as string;
+    const stage = (await admin((client) => client.query(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thắng', 'won', 1) RETURNING id`, [orgId]))).rows[0].id as string;
+    const deal = (await admin((client) => client.query(
+      `INSERT INTO crove_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at) VALUES ($1, $2, 'Hop dong bi mat', 4200000, $3, 'a', $4, $4, now() - interval '8 days') RETURNING id`,
+      [orgId, party, stage, owner],
+    ))).rows[0].id as string;
+    const used = async () => Number((await admin((client) => client.query(`SELECT rows_used FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].rows_used ?? 0);
+    const before = await used();
+    const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_signals', arguments: {} }, 'ludy_signals');
+    expect(called.status).toBe(200);
+    expect(called.body?.result?.isError).toBe(false);
+    const out = called.body?.result?.structuredContent;
+    expect(out.items.map((i: any) => i.id)).toEqual([`signal:won-deal-no-invoice:${deal}`]);
+    expect(out.items[0]).toMatchObject({ kind: 'flag', app: 'crm', severity: 'warn', title: { key: 'signals.wonDealNoInvoice' }, amount: '4200000.00', currency: 'VND', href: '/deals' });
+    // Ids, days and amounts only: the deal's title and the party's name never cross.
+    expect(JSON.stringify(out)).not.toContain('bi mat');
+    expect(JSON.stringify(out)).not.toContain('Khach Signals');
+    // The two rules that could look are `checked`; rule 3 has no data to read yet and says so, so an empty list is never mistaken for "all clear".
+    expect(out.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
+    expect(out.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }]);
+    // One row of the daily budget per item, and the audit row names the tool.
+    expect((await used()) - before).toBe(1);
+    const audited = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL`));
+    expect(audited.rows.map((r: any) => r.tool)).toContain('ludy_signals');
+    // A tool that takes no arguments refuses one, by the field's name, before any query runs.
+    const refused = await mcpModern(c.access, 'tools/call', { name: 'ludy_signals', arguments: { rule: 'x' } }, 'ludy_signals');
+    expect(refused.body?.error?.code).toBe(-32602);
   });
 
   // ADR-0032 acceptance test 2: the official MCP TypeScript client, not our own fetch calls. The client discovers the resource and the authorization server
@@ -555,7 +595,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(client.getServerVersion()?.name).toBe('ludy');
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     const listed = await client.listTools();
-    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list']);
+    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals']);
     expect(listed.tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
     const called = await client.callTool({ name: 'ludy_about', arguments: {} });
     expect(called.isError).toBeFalsy();

@@ -185,6 +185,28 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     for (const rule of RULES) expect(await run(branch, rule), rule).toEqual([]);
   });
 
+  it('answers kernel.mcp.signals with the items of the rules and says what it could not check: nothing for a whole-org grant, partial_view for a branch-limited one, rule 3 never checked yet', async () => {
+    const whole = mcp(users.owner, await grant(users.owner), 'company');
+    const answer = (await run(whole, 'kernel.mcp.signals')) as unknown as { items: Array<{ id: string }>; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
+    expect(answer.items.map((i) => i.id).sort()).toEqual([
+      ...((await run(whole, 'kernel.signals.deal_without_invoice')) as Array<{ id: string }>),
+      ...((await run(whole, 'kernel.signals.receivable_with_open_deal')) as Array<{ id: string }>),
+    ].map((i) => i.id).sort());
+    expect(answer.items).toHaveLength(2);
+    expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
+    expect(answer.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }]);
+    // A branch-limited member's grant gets no item, and is told in so many words that two rules could not be checked: an empty list is never "all clear".
+    const branch = mcp(users.branchMember, await grant(users.branchMember, { kind: 'member' }), 'member');
+    const limited = (await run(branch, 'kernel.mcp.signals')) as unknown as { items: unknown[]; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
+    expect(limited.items).toEqual([]);
+    expect(limited.checked).toEqual([]);
+    expect(limited.unchecked).toEqual([
+      { rule: 'deal_without_invoice', reason: 'partial_view' },
+      { rule: 'receivable_with_open_deal', reason: 'partial_view' },
+      { rule: 'supplier_bank_changed', reason: 'not_available' },
+    ]);
+  });
+
   it('does not let a grant run Home itself or anything the rules do not name', async () => {
     const actor = mcp(users.owner, await grant(users.owner), 'company');
     await expect(run(actor, 'kernel.today')).rejects.toBeInstanceOf(DomainError);
