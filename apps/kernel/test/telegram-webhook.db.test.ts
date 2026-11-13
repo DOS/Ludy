@@ -567,6 +567,34 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1', [`%${after?.chat_hook}%`])).length).toBe(0);
   });
 
+  it('erases a Telegram customer with their thread and messages, keeps what they write next out for the tombstone window, and leaves no row behind', async () => {
+    // Org B's bot is on (the reconnect test left it so); a customer writes twice, and an owner erases them.
+    const first = update('Số của mình là 0912 345 678', { chat: 1501, messageId: 131 });
+    expect((await post(app, hookB, first, signed(hookB))).status).toBe(200);
+    expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+    const thread = (await rows<{ id: string }>("SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1501'", [b.orgId]))[0] as { id: string };
+    const erased = await api.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: thread.id, confirm: true }, { actor: { type: 'user', userId: b.ownerId, aal: 'aal2', sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId: b.orgId, idempotencyKey: randomUUID() });
+    expect(erased).toEqual({ threads: 1, messages: 1 });
+    // Nothing of the customer is left: the thread, the messages and the identity are gone.
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1501'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body LIKE '%0912%'", [b.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = '1501'", [b.orgId])).toHaveLength(0);
+    // The message the erased customer writes next is not brought back in (the erase tombstone).
+    const again = update('Mình nhắn lại', { chat: 1501, messageId: 132 });
+    expect((await post(app, hookB, again, signed(hookB))).status).toBe(200);
+    await intake();
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body = 'Mình nhắn lại'", [b.orgId])).toHaveLength(0);
+    // The export of the org lists the conversation tables (provider-neutral), and the retention purge works on a Telegram thread like any other.
+    const kept = update('Tin cũ để xóa theo thời hạn', { chat: 1502, messageId: 133 });
+    expect((await post(app, hookB, kept, signed(hookB))).status).toBe(200);
+    await intake();
+    await rows("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '30 months', last_inbound_at = now() - interval '30 months' WHERE org_id = $1 AND external_thread_id = '1502'", [b.orgId]);
+    await rows("UPDATE crove_kernel.conversation_message SET received_at = now() - interval '30 months', sent_at = now() - interval '30 months' WHERE org_id = $1 AND body = 'Tin cũ để xóa theo thời hạn'", [b.orgId]);
+    const purged = await worker.execute<{ threads: number }>('kernel.conversation.purge_expired', { limit: 10 }, { actor: { type: 'system', component: 'conversations' }, orgId: b.orgId });
+    expect(purged.threads).toBe(1);
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = '1502'", [b.orgId])).toHaveLength(0);
+  });
+
   it('lists the chat state of a connection and keeps the hook out of the list and the export', async () => {
     const list = await api.query<Array<{ id: string; chatState: string; chatError: string | null }>>('kernel.channel.list', {}, asOwner(b));
     // The reconnect before left it on (its webhook set again with the new hook).
