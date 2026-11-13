@@ -48,4 +48,4 @@ Tin mẫu và gửi hàng loạt của WhatsApp (doanh nghiệp bị tính phí 
 
 ## Thứ tự làm và các issue
 
-1. WhatsApp (P1) 2. Telegram 3. Threads 4. YouTube 5. TikTok (chờ quyền) 6. Chat sàn thương mại điện tử (sau #2523). Số các issue build được ghi trong phần mô tả của PR và thêm vào kế hoạch gốc khi mở.
+1. WhatsApp (P1) 2. Telegram 3. Threads 4. YouTube 5. TikTok (chờ quyền) 6. Chat sàn thương mại điện tử (sau #2523). Các issue build: [#3131](https://github.com/DOS/Ludy/issues/3131) WhatsApp (P1), [#3132](https://github.com/DOS/Ludy/issues/3132) Telegram, [#3133](https://github.com/DOS/Ludy/issues/3133) Threads, [#3134](https://github.com/DOS/Ludy/issues/3134) YouTube, [#3135](https://github.com/DOS/Ludy/issues/3135) TikTok (chờ quyền); chat sàn thương mại điện tử chưa có issue.

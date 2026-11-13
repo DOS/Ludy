@@ -1,6 +1,6 @@
 # Hộp thư channels: WhatsApp and the popular messaging channels
 
-> Plan for [#3128](https://github.com/DOS/Ludy/issues/3128), 2026-11-13. Owner decision of 2026-11-13 (the Engage PO's chat, JOY): "Làm whatsapp và tất cả các channel phổ biến đi" (do WhatsApp and every popular channel): Hộp thư takes WhatsApp and the popular channels, not only Messenger, Instagram, Zalo OA and email. This extends [conversations.md](conversations.md) section 6.6 "Later providers" and [ADR-0041](../adr/0041-conversation-core.md). **It is a plan: nothing here is built, no account was created, no credential was used and no platform API was called.** Vietnamese summary for the owner: [conversations-channels.vi.md](conversations-channels.vi.md). The build issues are listed in section 9.
+> Plan for [#3128](https://github.com/DOS/Ludy/issues/3128), 2026-11-13. Owner decision of 2026-11-13 (the Engage PO's chat, JOY): "Làm whatsapp và tất cả các channel phổ biến đi" (do WhatsApp and every popular channel): Hộp thư takes WhatsApp and the popular channels, not only Messenger, Instagram, Zalo OA and email. This extends [conversations.md](conversations.md) section 6.6 "Later providers" and [ADR-0041](../adr/0041-conversation-core.md). **It is a plan: nothing here is built, no account was created, no credential was used and no platform API was called.** Vietnamese summary for the owner: [conversations-channels.vi.md](conversations-channels.vi.md). The build issues are #3131 to #3135, listed in section 9.
 
 ## 1. The answer in one table
 
@@ -231,14 +231,14 @@ Each channel is one end-to-end issue (migration if any, server, contract, UI, te
 
 | Order | Issue | Why here |
 |---|---|---|
-| 1 | WhatsApp (P1) | The owner's request; reuses the Meta intake; the phone-number match |
-| 2 | Telegram (P2) | Cheapest and fastest to prove a second push channel; its per-connection secret path decision is reusable by TikTok |
-| 3 | Threads (P2) | Reuses Meta's machinery and the Social post tab; a comment channel on a second platform |
-| 4 | YouTube (P2) | Needs the polling reconcile and the quota budget, which is its own design; quota extension in parallel |
-| 5 | TikTok (P2, access-gated) | Starts when access is granted; its first step is reading the pages and applying (owner action) |
-| later | Marketplaces | After #2523 and #2522 (section 4.6) |
+| 1 | [#3131](https://github.com/DOS/Ludy/issues/3131) WhatsApp (P1) | The owner's request; reuses the Meta intake; the phone-number match |
+| 2 | [#3132](https://github.com/DOS/Ludy/issues/3132) Telegram (P2) | Cheapest and fastest to prove a second push channel; its per-connection secret path decision is reusable by TikTok |
+| 3 | [#3133](https://github.com/DOS/Ludy/issues/3133) Threads (P2) | Reuses Meta's machinery and the Social post tab; a comment channel on a second platform |
+| 4 | [#3134](https://github.com/DOS/Ludy/issues/3134) YouTube (P2) | Needs the polling reconcile and the quota budget, which is its own design; quota extension in parallel |
+| 5 | [#3135](https://github.com/DOS/Ludy/issues/3135) TikTok (P2, access-gated) | Starts when access is granted; its first step is reading the pages and applying (owner action) |
+| later | Marketplaces, no issue yet | After #2523 and #2522 (section 4.6) |
 
-Issue numbers are written into the PR and added here when the issues are opened: see the PR for the list.
+Every issue starts by reading the official pages and upgrading the tags of its section (section 2), and ends with its live-check runbook (section 7).
 
 ## 10. Official pages to read first
 
