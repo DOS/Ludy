@@ -214,7 +214,10 @@ export class TelegramConversations implements ConversationAdapter {
     if (input.takenBotIds.includes(botId)) return { kind: 'failed', retry: false, code: 'BOT_IN_USE' };
     if (!input.baseUrl.startsWith('https://')) return { kind: 'failed', retry: false, code: 'WEBHOOK_NEEDS_HTTPS' };
     if (!input.key) return { kind: 'failed', retry: false, code: 'NO_HOOK_KEY' };
-    const url = `${input.baseUrl.replace(/\/+$/, '')}/api/channels/telegram/webhook/${input.hook}`;
+    // The trailing slashes of the address are cut by hand (a pattern on an address a deployment sets would be a polynomial regular expression).
+    let end = input.baseUrl.length;
+    while (end > 0 && input.baseUrl.charCodeAt(end - 1) === 47) end--;
+    const url = `${input.baseUrl.slice(0, end)}/api/channels/telegram/webhook/${input.hook}`;
     const set = await setTelegramWebhook(s.botToken, { url, secretToken: telegramHookSecret(input.key, input.hook) }, this.fetchImpl);
     return set.kind === 'done' ? { kind: 'done', botId } : set;
   }
