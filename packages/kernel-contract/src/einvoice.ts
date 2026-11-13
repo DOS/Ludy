@@ -250,6 +250,9 @@ export const zEInvoiceIssueView = z.object({
   subtotal: z.string(),
   vatAmount: z.string(),
   lines: z.array(zEInvoiceDraftLine),
+  // The sales orders (crm.sales_order) whose lines this draft invoices, each once, in the order of their first line (#2849, ADR-0050 point 2): ids only, so the card can ask Engage whether one was
+  // cancelled and say so. Advisory: finance reads no CRM table and the approval does not depend on it.
+  sourceOrderIds: z.array(zId),
   // False once the draft was edited after the request, or has left `draft`: an approval then fails with EINVOICE_DRAFT_CHANGED.
   current: z.boolean(),
 });

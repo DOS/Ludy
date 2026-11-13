@@ -145,6 +145,10 @@ export const KERNEL_ERROR_CODES = [
   'IMPORT_NOT_STAGED',
   // Deals and the pipeline of the crm module (#2225); quotes (#2693) follow the deal codes below.
   'DEAL_NOT_FOUND',
+  // The follow-up draft of a next step (#3101).
+  'NEXT_STEP_NOT_FOUND',
+  'NEXT_STEP_NOT_OPEN',
+  'QUOTE_NOT_WAITING',
   'DEAL_OWNER_INVALID',
   'DEAL_STAGE_CLOSED',
   'DEAL_LOST_REASON_INVALID',
@@ -785,6 +789,7 @@ export const KERNEL_ERROR_CODES = [
   'SAVED_REPLY_LIMIT',
   'MESSAGE_NOT_SETTLEABLE',
   'REPLY_NOT_SUPPORTED',
+  'REPLY_PLACEHOLDER',
   'REPLY_TOO_LONG',
   'REPLY_WINDOW_CLOSED',
   'LABEL_NOT_FOUND',
