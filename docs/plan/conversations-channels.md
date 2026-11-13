@@ -153,6 +153,14 @@ All six channels are **providers** of the conversation core. Nothing about tenan
 
 **Design.** `provider = threads`, `kinds: ['comment_thread']`, `canHide` true once the live check confirms it, `windowHours: null`. The thread is the top-level reply; `external_post_id` is the media id, so the post tab of Social shows them under their post. **Who pays**: nobody; no fee was found [U].
 
+**Built in [#3133](https://github.com/DOS/Ludy/issues/3133)** (2026-11-13), from this plan and recorded answers only: the build session's network denied `developers.facebook.com`, so no official page was read and every [M] and [U] above is still open until the live check ([threads-conversations-live-check.md](../runbooks/threads-conversations-live-check.md)). What the build decided:
+- **The webhook shares the Facebook route.** `POST /api/channels/facebook/webhook` also takes a Threads reply notice, with the same verify token, when it is signed with the Threads app's secret (`CHANNEL_THREADS_APP_SECRET`); a Threads object signed with the Pages secret, or a Page object signed with the Threads secret, is acknowledged and never read. No new public route.
+- **Opt-in.** `threads_read_replies` is the one new scope (`threads_manage_replies` was already asked for). Threads does not say what was granted, so the connection records it only when `GET /me/replies` works with the new token [M].
+- **Authors** are the reply's `@username` (lower-cased as the customer's external id) [U]; the profile's own replies are `out`.
+- **Reply** is the publisher's first-comment call (a TEXT container with `reply_to_id`, then `threads_publish`), preceded by a read of the profile's reply cap (`reply_quota_usage`, `reply_config` [M]); a cap that cannot be read does not stop the call, the platform's own refusal is mapped. Never repeated after an unclear answer.
+- **Hide** is in the adapter, but `canHide` is false and the Hide button is not shown until row 8 of the runbook is filled. `replyMax` is 500 [U].
+- **Reconcile** reads recent posts and each post's whole conversation, hourly, only for a profile that holds `threads_read_replies` (`CHANNEL_THREADS_HISTORY`, default true).
+
 ### 4.5 YouTube: comments (build, P2)
 
 **Why, and the quota truth.** The Data API v3 can list, reply to and moderate comments on the business's own channel; Ludy already publishes there (`packages/channel/src/youtube.ts`). The cost model is the problem: the API is **metered in quota units per Google Cloud project**, not per business.
