@@ -514,6 +514,7 @@ export interface CrmBookingTable {
   hold_event_ids: Generated<string[]>;
   meeting_state: Generated<string>;
   meeting_url: string | null;
+  deal_id: string | null;
 }
 
 /** crove_crm.deal_next_step */
