@@ -176,6 +176,8 @@ suite('the bank salary file of a pay run (#2532)', () => {
     const disposition = response.headers.get('content-disposition') ?? '';
     expect(disposition).toMatch(/^attachment; filename="[A-Za-z0-9._-]+\.xlsx"; filename\*=UTF-8''[A-Za-z0-9._%-]+\.xlsx$/);
     expect(disposition).toContain('2026-03');
+    // The server's file name carries the bank's code (#2897).
+    expect(disposition).toContain('-vcb-');
     expect(await isXlsx(response)).toBe(true);
     // What the file holds (the same rows the workbook is built from): the account numbers of the people at this bank, once each, the bank's short name from the list and the remark.
     const file = await fileOf(['seq', 'name', 'account', 'bank', 'amount', 'content']);
@@ -287,6 +289,55 @@ suite('the bank salary file of a pay run (#2532)', () => {
     expect(await downloadCount()).toBe(before + 2);
     const downloads = await rows<{ rows: string }>(`SELECT detail->>'rows' AS rows FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.export'`, [orgId]);
     expect(downloads.every((d) => d.rows === '3')).toBe(true);
+  });
+
+  it('applies a saved template: its columns in its order (sequence is seq), its headers and its remark text, the bank cell from the list, string-only headers; refuses a template of another entity, an unknown one, and a template with a column list (#2893)', async () => {
+    const layout = {
+      columns: [
+        { key: 'account', header: '=HYPERLINK("http://evil.test","So TK")' },
+        { key: 'name', header: '+Ten nguoi nhan' },
+        { key: 'amount', header: 'So tien\u0007' },
+        { key: 'sequence', header: 'STT' },
+        { key: 'bank', header: '@Ngan hang' },
+        { key: 'content', header: '-Noi dung' },
+      ],
+      content: '=Tien luong thang {month}',
+    };
+    const created = await exec<{ templateId: string }>('hr.payroll.bank_template.create', { name: 'Vietcombank (mau)', layout });
+    const asked = (templateId: string, bank = 'VCB', extra: Record<string, unknown> = {}) => rt.query<HrBankFile>('hr.payroll.bank_file.get', { runId, bankName: bank, templateId, ...extra }, { actor: asMfa(ownerId), orgId });
+    const file = await asked(created.templateId);
+    // The columns come in the template's order, sequence is the file's seq, and the headers have no control character (the bell of the third is cleaned out).
+    expect(file.columns).toEqual(['account', 'name', 'amount', 'seq', 'bank', 'content']);
+    expect(file.headers).toEqual(['=HYPERLINK("http://evil.test","So TK")', '+Ten nguoi nhan', 'So tien', 'STT', '@Ngan hang', '-Noi dung']);
+    // The remark is the template's text with the month in it; the bank cell is still the list's short name; the people are still only the VCB ones.
+    expect(new Set(file.rows.map((r) => r.content))).toEqual(new Set(['=Tien luong thang 03/2026']));
+    expect(new Set(file.rows.map((r) => r.bank))).toEqual(new Set(['Vietcombank']));
+    expect(file.rows.map((r) => r.account).sort()).toEqual(VCB_TEAM.map((t) => t.account).sort());
+    // Without a template the generic headers and remark are back.
+    const generic = await fileOf();
+    expect(generic.headers).toEqual(['STT', 'Tên người nhận', 'Số tài khoản', 'Ngân hàng', 'Số tiền', 'Nội dung']);
+    // An unknown template, and one of another legal entity than the run's, are not found; a template with a column list is a bad request.
+    await expect(asked(randomUUID())).rejects.toMatchObject({ code: 'HR_BANK_TEMPLATE_NOT_FOUND', status: 404 });
+    const [branch] = await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, ownerId]);
+    const other = await exec<{ templateId: string }>('hr.payroll.bank_template.create', { legalEntityId: branch?.id, name: 'Mau chi nhanh', layout });
+    await expect(asked(other.templateId)).rejects.toMatchObject({ code: 'HR_BANK_TEMPLATE_NOT_FOUND', status: 404 });
+    await expect(asked(created.templateId, 'VCB', { columns: ['name'] })).rejects.toMatchObject({ code: 'VALIDATION' });
+    // Through the route (#2893): `template=<id>` gives the file of the template, with the bank's code in its name; a column list with it, a bad id, a deleted template and another org's are refused.
+    const routed = await get(url(runId, `bank=VCB&template=${created.templateId}`));
+    expect(routed.status).toBe(200);
+    expect(routed.headers.get('content-disposition') ?? '').toContain('-vcb-');
+    expect(await isXlsx(routed)).toBe(true);
+    expect((await get(url(runId, `bank=VCB&template=${created.templateId}&columns=name`))).status).toBe(400);
+    expect((await get(url(runId, 'bank=VCB&template=not-an-id'))).status).toBe(400);
+    const stranger = await upsertIdentity(createDb(pool), { issuer: 'bankfile', subject: `tpl-${randomUUID()}`, email: `t-${randomUUID()}@bankfile.test`, name: null });
+    const { orgId: otherOrg } = await createOrg(rt, asUser(stranger), `Công ty mẫu ${randomUUID().slice(0, 6)}`);
+    const foreign = await rt.execute<{ templateId: string }>('hr.payroll.bank_template.create', { name: 'Mau org khac', layout }, { actor: asUser(stranger), orgId: otherOrg, idempotencyKey: randomUUID() });
+    expect((await get(url(runId, `bank=VCB&template=${foreign.templateId}`))).status).toBe(404);
+    await exec('hr.payroll.bank_template.delete', { templateId: created.templateId });
+    expect((await get(url(runId, `bank=VCB&template=${created.templateId}`))).status).toBe(404);
+    // The audit row of the read does not carry the template or any layout text.
+    const audit = await rows<{ row: string }>(`SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.bank_file.get'`, [orgId]);
+    for (const a of audit) expect(a.row).not.toContain('Tien luong');
   });
 
   it('refuses the whole export, with a count and no name, when a person has no bank, and a bank nobody of the run is paid at, and never writes a download row for either (#2897)', async () => {
