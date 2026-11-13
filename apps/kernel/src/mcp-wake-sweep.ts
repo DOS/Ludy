@@ -86,9 +86,15 @@ export function wakeItemOf(rule: (typeof WAKE_RULES)[number], item: TodayItem): 
   return out;
 }
 
-// The rules of the kernel whose query declares `mcp`, so a grant may run them. None does today (the lines declare it when they have reviewed what leaves), so the sweep
-// makes no call and the signal wake-ups stay quiet; a rule that does not declare it is never asked, which keeps a refusal from being written against the owner.
-export function declaredRules(queries: readonly { name: string; mcp?: unknown }[]): (typeof WAKE_RULES)[number][] {
+// Whether the worker can enter an MCP grant's own sealed context (ADR-0051, #2975): a company grant enters `enter_mcp_company_context`, which only the API's login may run, and the
+// evaluator below builds its actor without the grant's kind. Until step S5 gives the worker its own entry this stays false, so the sweep makes no call and the signal wake-ups stay
+// quiet, although the kernel's rules now declare `mcp` for the pull tool: a rule asked from the worker would be refused at the door and the refusal written against the owner.
+export const SIGNAL_WAKE_WORKER_ENTRY = false;
+
+// The rules of the kernel the sweep asks: those whose query declares `mcp`, once the worker can enter the grant's context. A rule that does not declare it is never asked, which keeps a
+// refusal from being written against the owner.
+export function declaredRules(queries: readonly { name: string; mcp?: unknown }[], workerEntry: boolean = SIGNAL_WAKE_WORKER_ENTRY): (typeof WAKE_RULES)[number][] {
+  if (!workerEntry) return [];
   return WAKE_RULES.filter((rule) => queries.some((q) => q.name === rule && q.mcp !== undefined));
 }
 

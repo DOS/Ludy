@@ -390,7 +390,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
     expect(await sweep()).toMatchObject({ schedules: 0, signals: 0 });
   });
 
-  it('makes no call and writes no refusal against the owner when no rule declares `mcp` (the real evaluator)', async () => {
+  it('makes no call and writes no refusal against the owner while the worker cannot enter the context of a grant, although the rules declare `mcp` (the real evaluator)', async () => {
     const { grantId } = await wakeUp();
     const before = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.security_event`).then((r) => r.rows[0].n as number));
     const queried: string[] = [];

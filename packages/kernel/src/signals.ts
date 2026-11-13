@@ -81,6 +81,8 @@ export function dealWithoutInvoiceQuery(options: { now?: () => Date } = {}) {
     name: DEAL_WITHOUT_INVOICE_READ,
     input: z.strictObject({}),
     access: ALL,
+    // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
+    mcp: { scope: 'ludy.read' },
     handler: async (ctx): Promise<TodayItem[]> => {
       const deals = await signalsOf(ctx, CRM_WON_DEALS_SIGNALS_READ, zCrmWonDealSignals);
       if (!deals || deals.length === 0) return [];
@@ -126,6 +128,8 @@ export function receivableWithOpenDealQuery(options: { now?: () => Date } = {}) 
     name: RECEIVABLE_WITH_OPEN_DEAL_READ,
     input: z.strictObject({}),
     access: ALL,
+    // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
+    mcp: { scope: 'ludy.read' },
     handler: async (ctx): Promise<TodayItem[]> => {
       const deals = await signalsOf(ctx, CRM_OPEN_DEALS_SIGNALS_READ, zCrmOpenDealSignals);
       if (!deals || deals.length === 0) return [];
@@ -180,6 +184,8 @@ export function supplierBankChangedQuery(options: { now?: () => Date; log?: Pick
     name: SUPPLIER_BANK_CHANGED_READ,
     input: z.strictObject({}),
     access: ALL,
+    // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
+    mcp: { scope: 'ludy.read' },
     handler: async (ctx): Promise<TodayItem[]> => {
       const changes = await readSignals(ctx, FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ, zFinanceSupplierBankChangeSignals);
       if (changes.status === 'broken') throw broken(FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ);
