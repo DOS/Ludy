@@ -800,7 +800,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const vy = memberVyRuntime(worker, orgId, { agentId, runId });
     const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => (error as DomainError).code);
     try {
-      for (const bad of ['-1', '1e3', '1000000000.000001', '1000000001', '12345678901', '1.1234567', ' 5', '5 ', '', 'abc', '0x10']) {
+      for (const bad of ['-1', '1e3', '1000000000.000001', '1000000000.5', '12345678901', '1.1234567', ' 5', '5 ', '', 'abc', '0x10']) {
         expect(await check({ projectedCost: bad }), `projectedCost ${JSON.stringify(bad)}`).toBe('VALIDATION');
       }
       expect(await check({ projectedCost: 5 }), 'a JS number is not a decimal string').toBe('VALIDATION');
