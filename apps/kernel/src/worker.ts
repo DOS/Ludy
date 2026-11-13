@@ -421,6 +421,8 @@ export interface WorkerDeps {
     facebookHistory?: boolean;
     // Read the replies under a Threads profile's recent posts (CHANNEL_THREADS_HISTORY, #3133).
     threadsHistory?: boolean;
+    // Poll the comments of a YouTube channel that opted in (CHANNEL_YOUTUBE_HISTORY, #3134).
+    youtubeHistory?: boolean;
     // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
     conversationMediaHosts?: readonly string[];
     publishers: Readonly<Record<string, Publisher>>;
@@ -2718,6 +2720,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
               }
               if (id === 'threads') return Boolean(deps.channels?.threadsHistory ?? deps.channels?.conversationHistory);
+              if (id === 'youtube') return Boolean(deps.channels?.youtubeHistory ?? deps.channels?.conversationHistory);
               return Boolean(deps.channels?.conversationHistory);
             })
             .map(([id]) => id);

@@ -396,6 +396,9 @@ const schema = z.object({
   // Reconcile the replies under recent posts of connected Threads profiles that opted in to reading replies (#3133). Nothing is read for a
   // profile without the opt-in, so the default is on, as Facebook's.
   CHANNEL_THREADS_HISTORY: z.enum(['true', 'false']).default('true'),
+  // Poll the comments of connected YouTube channels whose owner opted in (#3134). Each connection has its own daily unit budget; the default is on,
+  // since nothing is read for a channel without the opt-in.
+  CHANNEL_YOUTUBE_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the

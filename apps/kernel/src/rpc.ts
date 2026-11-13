@@ -2396,6 +2396,8 @@ export function createRpcHandler(
       draftDiscard: os.conversations.draftDiscard.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.draft_discard', input, { actor, orgId }))),
       autoDraft: os.conversations.autoDraft.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.auto_draft', {}, { actor, orgId }))),
       setAutoDraft: os.conversations.setAutoDraft.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.auto_draft_set', input, { actor, orgId }))),
+      youtubeComments: os.conversations.youtubeComments.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.youtube_comments', {}, { actor, orgId }))),
+      setYoutubeComments: os.conversations.setYoutubeComments.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.youtube_comments_set', input, { actor, orgId }))),
       savedReplies: os.conversations.savedReplies.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.saved_reply_list', input, { actor, orgId }))),
       createSavedReply: os.conversations.createSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_create', input, { actor, orgId }))),
       updateSavedReply: os.conversations.updateSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_update', input, { actor, orgId }))),

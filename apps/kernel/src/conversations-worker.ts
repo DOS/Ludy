@@ -226,14 +226,42 @@ export async function runConversationSync(deps: SendDeps, job: ConversationSyncJ
     answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
   }
   if (answer.kind === 'failed') {
+    // A provider that meters its API (YouTube, #3134) has its spent units and its next poll recorded, and is never read again by the job's own retry:
+    // asking again at once would spend more of a quota that is the failure. Its poll comes back by its own interval (the kernel sets it).
+    if (work.provider === 'youtube') {
+      await deps.runtime.execute(
+        'kernel.conversation.history_record',
+        {
+          connectionId: job.connectionId,
+          complete: false,
+          gapFrom: null,
+          gapTo: null,
+          quota: { units: Math.min(answer.units ?? 0, 1000), outcome: answer.retry ? 'retry' : 'final', newMessages: 0, blockedUntil: answer.quotaUntil ? answer.quotaUntil.toISOString() : null },
+        },
+        options,
+      );
+      return 'failed';
+    }
     // Asked again by the job's retry, then by the next pass after an hour; a refusal that will not change waits for the reconnect.
     if (answer.retry) throw new Error('history read failed');
     return 'failed';
   }
+  let stored = 0;
   for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
-    await deps.runtime.execute('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+    const ingested = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+    stored += ingested.stored;
   }
-  await deps.runtime.execute('kernel.conversation.history_record', { connectionId: job.connectionId, complete: answer.complete, gapFrom: answer.complete ? null : work.since, gapTo: answer.complete ? null : answer.oldest }, options);
+  await deps.runtime.execute(
+    'kernel.conversation.history_record',
+    {
+      connectionId: job.connectionId,
+      complete: answer.complete,
+      gapFrom: answer.complete ? null : work.since,
+      gapTo: answer.complete ? null : answer.oldest,
+      ...(work.provider === 'youtube' ? { quota: { units: Math.min(answer.units ?? 0, 1000), outcome: 'ok' as const, newMessages: stored, blockedUntil: null } } : {}),
+    },
+    options,
+  );
   return answer.complete ? 'complete' : 'gap';
 }
 
