@@ -1991,6 +1991,18 @@ export class Runtime {
       }
       return { role, agent: null, memberVy: null };
     }
+    if (actor.mcp) {
+      // A company MCP grant (ADR-0051 decision 2, slice 3e): the same sealed shape, with no user in the seal, so a policy bound to a user (a private note, a Vy-catalog table) answers nothing to
+      // it whatever the grantor holds. The role is the consenting owner's or admin's, read live in this transaction; the grantor named in the seal is the user the edge named, else a bug.
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+        SELECT crove_kernel.enter_mcp_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role, agent: null, memberVy: null };
+    }
     if (this.#contextTokenKey !== null) {
       // Signed right before it is used, as a bind parameter (never in a statement's text).
       const token = mintContextToken(this.#contextTokenKey, { userId: actor.userId, sessionId: actor.sessionId ?? null, orgId, aal: actor.aal, mfaAt: actor.mfaAt ?? null });

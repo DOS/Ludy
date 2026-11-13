@@ -24,7 +24,7 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
   let orgA = '';
   const users = { ownerA: '', adminA: '', memberA: '', viewerA: '', outsider: '', capA: '' };
   const user = (userId: string, extra: Partial<UserActor> = {}): UserActor => ({ type: 'user', userId, aal: 'aal1', ...extra });
-  const mcp = (userId: string, grantId: string): UserActor => user(userId, { mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes: ['ludy.read'] } });
+  const mcp = (userId: string, grantId: string, kind: 'company' | 'member' = 'member'): UserActor => user(userId, { mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes: ['ludy.read'], kind } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -51,7 +51,7 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
       { actor: user(userId), orgId: orgA },
     );
   const setSwitch = (userId: string, enabled: boolean) => runtime.execute('kernel.mcp.member_grants.set', { enabled }, { actor: user(userId), orgId: orgA });
-  const about = (userId: string, grantId: string) => runtime.query('kernel.mcp.about', {}, { actor: mcp(userId, grantId), orgId: orgA });
+  const about = (userId: string, grantId: string, kind: 'company' | 'member' = 'member') => runtime.query('kernel.mcp.about', {}, { actor: mcp(userId, grantId, kind), orgId: orgA });
   const row = (grantId: string) => admin((c) => c.query(`SELECT kind, member_id, user_id, scopes, revoked_at FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, grantId]).then((r) => r.rows[0]));
 
   beforeAll(async () => {
@@ -97,7 +97,7 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     expect((await refusal(runtime.query('kernel.mcp.member_grants.get', {}, { actor: user(users.memberA), orgId: orgA }))).code).toBe('FORBIDDEN');
     // An MCP grant never changes it.
     const grant = (await consent(users.ownerA, 'company')).grantId;
-    expect((await refusal(runtime.execute('kernel.mcp.member_grants.set', { enabled: true }, { actor: mcp(users.ownerA, grant), orgId: orgA }))).code).toBe('FORBIDDEN');
+    expect((await refusal(runtime.execute('kernel.mcp.member_grants.set', { enabled: true }, { actor: mcp(users.ownerA, grant, 'company'), orgId: orgA }))).code).toBe('FORBIDDEN');
     expect(await runtime.query('kernel.mcp.member_grants.get', {}, { actor: user(users.ownerA), orgId: orgA })).toEqual({ enabled: false });
   });
 
@@ -160,14 +160,14 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
     const demoted = users.capA;
     const company = (await consent(demoted, 'company')).grantId;
     const mine = (await consent(demoted, 'member')).grantId;
-    expect(await about(demoted, company)).toMatchObject({ orgName: 'Org A' });
+    expect(await about(demoted, company, 'company')).toMatchObject({ orgName: 'Org A' });
     expect(await about(demoted, mine)).toMatchObject({ orgName: 'Org A' });
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
     // The trigger that guards the grants ends them all (and destroys their tokens) with the admin role they were made under: a demotion is a change of
     // standing the person did not choose, so nothing they connected under the old role keeps reading. They connect again as the member they now are.
-    for (const id of [company, mine]) expect((await refusal(about(demoted, id))).status).toBe(401);
+    for (const id of [company, mine]) expect((await refusal(about(demoted, id, id === company ? 'company' : 'member'))).status).toBe(401);
     await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, demoted]));
-    for (const id of [company, mine]) expect((await refusal(about(demoted, id))).status).toBe(401);
+    for (const id of [company, mine]) expect((await refusal(about(demoted, id, id === company ? 'company' : 'member'))).status).toBe(401);
     const fresh = (await consent(demoted, 'member')).grantId;
     expect(await about(demoted, fresh)).toMatchObject({ orgName: 'Org A' });
     // Leave the user clean for the cap test, which counts a user's live member grants.
@@ -187,7 +187,7 @@ suite('the member-bound MCP grant (#2975, slice 3, step 3a-2)', () => {
   it('still makes a company grant as before: no member, the same standing', async () => {
     const { grantId } = await consent(users.ownerA, 'company');
     expect(await row(grantId)).toMatchObject({ kind: 'company', member_id: null, scopes: ['ludy.read'] });
-    expect(await about(users.ownerA, grantId)).toMatchObject({ orgName: 'Org A' });
+    expect(await about(users.ownerA, grantId, 'company')).toMatchObject({ orgName: 'Org A' });
     // The private scope is a member grant's alone: the database refuses it on a company grant and the definer refuses the kind.
     expect((await refusal(consent(users.ownerA, 'company', ['ludy.read', 'ludy.member.read']))).code).toBe('INVALID');
   });

@@ -152,7 +152,7 @@ export function toDomainError(error: unknown): DomainError {
     case '42501':
       // crove_kernel.enter_mcp_member_context (ADR-0051 decision 2, slice 3b): a member-bound grant that cannot enter. The client gets the one generic
       // answer above whatever the reason; the specific reason travels only in `audit` (never enumerable) for the security event the runtime notes.
-      if (pg.message === 'MCP_GRANT_REVOKED' || pg.message === 'MCP_GRANT_EXPIRED' || pg.message === 'MCP_GRANT_NOT_MEMBER' || pg.message === 'MCP_MEMBER_GRANTS_OFF') {
+      if (pg.message === 'MCP_GRANT_REVOKED' || pg.message === 'MCP_GRANT_EXPIRED' || pg.message === 'MCP_GRANT_NOT_MEMBER' || pg.message === 'MCP_GRANT_NOT_COMPANY' || pg.message === 'MCP_MEMBER_GRANTS_OFF') {
         return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực', undefined, { audit: { mcpRefusal: pg.message } });
       }
       // A second enter_context in one transaction (plan §4.5 item 1): a bug in the caller, never a user's 403.
