@@ -1700,6 +1700,8 @@ export const vi = {
       subtitle: 'Ghi bằng micro của thiết bị này (và camera nếu bạn chọn). Bản ghi được lưu ngay trên máy khi đang ghi, nên tải lại trang cũng không mất.',
       start: 'Bắt đầu ghi',
       withVideo: 'Ghi cả video',
+      liveNotes: 'Ghi chú trực tiếp',
+      liveNotesHint: 'Vy ghi chú ngay trong lúc họp. Âm thanh được gửi lên máy chủ khi đang ghi; có thể tốn thêm phút phiên âm.',
       hint: 'Chỉ ghi âm nếu bạn không chọn video. Không có gì được ghi hoặc tải lên trước khi bạn xác nhận đã thông báo cho người tham dự. Màn hình này không dùng AI, nên ghi âm vẫn chạy khi AI tắt.',
       recording: 'Đang ghi',
       paused: 'Đang tạm dừng',
@@ -10782,6 +10784,9 @@ export const vi = {
       },
     },
     meetings: {
+      live: {
+        chunk: 'Nhận một đoạn âm thanh của cuộc họp đang ghi (ghi chú trực tiếp)',
+      },
       media: {
         discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',
         orphan_keys: 'Liệt kê bản lưu của tệp cuộc họp đã bị hủy',

@@ -58,12 +58,16 @@ describe('the routes an extension token may reach', () => {
       'POST /api/rpc/meetings/extensionStatus meetings',
       'POST /api/files/uploads meetings',
       'POST /api/meetings/:id/media meetings',
+      'POST /api/meetings/:id/live-chunk meetings',
     ]);
     expect(EXTENSION_ROUTES.every((r) => r.why.length > 20)).toBe(true);
   });
 
   it('matches a listed method and path exactly, with one UUID for an id', () => {
     expect(matchExtensionRoute('POST', `/api/meetings/${ID}/media`)?.scope).toBe('meetings');
+    expect(matchExtensionRoute('POST', `/api/meetings/${ID}/live-chunk`)?.scope).toBe('meetings');
+    expect(matchExtensionRoute('GET', `/api/meetings/${ID}/live-chunk`)).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/meetings/x/live-chunk')).toBeNull();
     expect(matchExtensionRoute('POST', '/api/meetings/x/media')).toBeNull();
     expect(matchExtensionRoute('POST', `/api/meetings/${ID}/media/`)).toBeNull();
     expect(matchExtensionRoute('GET', `/api/meetings/${ID}/audio`)).toBeNull();
