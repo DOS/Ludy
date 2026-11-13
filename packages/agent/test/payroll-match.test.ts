@@ -31,6 +31,21 @@ describe('the sentence the model gives', () => {
     expect(ask('Khoảng 18 triệu đồng, khớp khoản nộp bảo hiểm.')).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(ask('Hai mươi phần trăm là bảo hiểm.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
+  it('is refused when it names another kind of payment than the one given (#2918)', () => {
+    expect(ask('Số tiền 18.450.000 đồng khớp khoản nộp thuế thu nhập cá nhân.')).toEqual({ kind: 'none', code: 'KIND' });
+    expect(ask('The amount matches the tax payment for the month.')).toEqual({ kind: 'none', code: 'KIND' });
+    expect(ask('The amount matches the PIT payment.')).toEqual({ kind: 'none', code: 'KIND' });
+    expect(ask('Số tiền khớp khoản chi lương tháng 03/2026.')).toEqual({ kind: 'none', code: 'KIND' });
+    expect(ask('Số tiền khớp kinh phí công đoàn.')).toEqual({ kind: 'none', code: 'KIND' });
+    expect(ask('The amount matches the union fee.', { ...FACTS, language: 'en', kind: 'tax' })).toEqual({ kind: 'none', code: 'KIND' });
+    // A double space or a no-break space between the words of a term does not hide it.
+    expect(ask('The amount matches the union\u00a0fee.', { ...FACTS, language: 'en', kind: 'tax' })).toEqual({ kind: 'none', code: 'KIND' });
+    expect(ask('Khớp khoản nộp công  đoàn.')).toEqual({ kind: 'none', code: 'KIND' });
+    // Its own kind, and words that only contain another kind's letters, are fine.
+    expect(ask('The amount matches the tax payment for the month.', { ...FACTS, language: 'en', kind: 'tax' })).toMatchObject({ kind: 'sentence' });
+    expect(ask('Số tiền khớp khoản nộp thuế tháng 03/2026.', { ...FACTS, kind: 'tax' })).toMatchObject({ kind: 'sentence' });
+    expect(ask('The amount matches the payment of the pitch month.', { ...FACTS, language: 'en', kind: 'net_pay' })).toMatchObject({ kind: 'sentence' });
+  });
   it('is refused with a link, or when empty, too long or more than one sentence', () => {
     expect(ask('Xem https://example.test để biết thêm.')).toEqual({ kind: 'none', code: 'LINK' });
     expect(checkPayrollMatchSentence(FACTS, null)).toEqual({ kind: 'none', code: 'EMPTY' });
