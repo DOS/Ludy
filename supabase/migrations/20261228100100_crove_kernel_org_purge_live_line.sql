@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #3110): the org purge also deletes the live transcript preview of meetings (crove_meetings.live_line), ahead of the meetings it references. Idempotent; applied files stay untouched.
--- This is the body of 20261228000100 (the newest) with one change: the table joins the list of tables deleted whole. Its signature, owner, grants and every other list and step are as they were.
+-- This is the body of 20261229011600 (the newest, with the marketplace connections) with one change: crove_meetings.live_line joins the list of tables deleted whole, before the preview's meetings. Its signature, owner, grants and every other list and step are as they were.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -43,7 +43,7 @@ DECLARE
     'crove_kernel.proposal_policy', 'crove_kernel.refusal_tally', 'crove_kernel.tax_obligation_done',
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.subject_key', 'crove_kernel.calendar_credential',
-    'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.einvoice_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
+    'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
     'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.sales_order_delivery', 'crove_crm.sales_order_line', 'crove_crm.sales_order', 'crove_crm.quote_link', 'crove_crm.quote_line', 'crove_crm.quote', 'crove_crm.quote_setting', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
