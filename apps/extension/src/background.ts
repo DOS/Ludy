@@ -8,6 +8,7 @@ import { loadState, activeAccount } from './state.ts';
 import { isOwnSender, parseStartRequest, parseTick, RECORDING_KEY, type CaptureStart, type RecordingState, type StartReply, type StartRequest, type StopReply } from './messages.ts';
 import { createClient } from './api.ts';
 import { formatClock } from '@crove/meeting-recorder';
+import { T } from './strings.ts';
 
 const OFFSCREEN_PATH = 'offscreen.html';
 
@@ -20,7 +21,7 @@ async function ensureOffscreen(): Promise<void> {
 async function setBadge(state: RecordingState | null, elapsedMs = 0): Promise<void> {
   await chrome.action.setBadgeText({ text: state ? 'REC' : '' });
   if (state) await chrome.action.setBadgeBackgroundColor({ color: '#d92d20' });
-  await chrome.action.setTitle({ title: state ? `Ludy đang ghi: ${state.title} (${formatClock(elapsedMs)})` : 'Ludy' });
+  await chrome.action.setTitle({ title: state ? `${T.recordingTitle}: ${state.title} (${formatClock(elapsedMs)})` : 'Ludy' });
 }
 
 async function start(request: StartRequest): Promise<StartReply> {

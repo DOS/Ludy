@@ -113,13 +113,27 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const run = await start(users.alice);
     await expect(store(users.bob, run.runId, { status: 'ready', body: 'x' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     await expect(store(users.alice, randomUUID(), { status: 'ready', body: 'x' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET expires_at = now() - interval '1 minute', started_at = now() - interval '1 hour' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    // Triggers off for this one statement: the 4-hour bound (#2856) forbids moving the start of a member_vy run, and an expired run needs both moved (CHECK expires_at > started_at).
+    await sqlAdmin(`SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET expires_at = now() - interval '1 minute', started_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '${run.runId}'`);
     await expect(store(users.alice, run.runId, { status: 'ready', body: 'x' }), 'an expired run').rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     // A failed run stores a fixed code and no text.
     await resetRuns();
     const failing = await start(users.alice);
     expect(await store(users.alice, failing.runId, { status: 'failed', errorCode: 'MODEL_ERROR' })).toEqual({ stored: false, status: 'failed' });
     expect(await query(users.alice, 'kernel.member_vy.result.get', { runId: failing.runId })).toMatchObject({ status: 'failed', errorCode: 'MODEL_ERROR', body: null });
+  });
+
+  // #2822: the store of an accepted result of a finished run is refused: the run closed when it stored, so a second store (a replay, a late retry) finds no live run.
+  it('refuses to store again into the accepted result of a finished run', async () => {
+    await resetRuns();
+    const run = await start(users.alice);
+    expect(await store(users.alice, run.runId, { status: 'ready', body: 'Bản đầu' })).toEqual({ stored: true, status: 'ready' });
+    expect(await runStatus(run.runId), 'the member\'s own store closes the run').toBe('succeeded');
+    // The member accepts it (the taint goes): as the superuser here, outside any context.
+    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE org_id = $1 AND run_id = $2`, [orgId, run.runId]);
+    await expect(store(users.alice, run.runId, { status: 'ready', body: 'Bản thay' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
+    const after = await query<{ body: string | null; tainted: boolean }>(users.alice, 'kernel.member_vy.result.get', { runId: run.runId });
+    expect(after).toMatchObject({ body: 'Bản đầu', tainted: false });
   });
 
   it('asks vy.use at the start and the store, and a viewer holds it only through a grant', async () => {
@@ -229,5 +243,51 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await exec(users.alice, 'kernel.member_vy.memory.save', { id: saved.id, body: 'Gọi khách là chị' })).toEqual({ id: saved.id });
     expect(await exec(users.owner, 'kernel.member_vy.memory.delete', { id: saved.id }), 'another member deleting it').toEqual({ deleted: false });
     expect(await exec(users.alice, 'kernel.member_vy.memory.delete', { id: saved.id })).toEqual({ deleted: true });
+  });
+
+  // #2941: a feature that must not cut off a paid run, or that shows a run's state, asks the kernel instead of reading the private result rows. Both read the caller's own rows.
+  it('answers whether the caller has a live run, from their own rows only', async () => {
+    const subjectId = randomUUID();
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'nothing yet').toEqual({ live: false });
+    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' })).toEqual({ live: true });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId })).toEqual({ live: true });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId: randomUUID() }), 'another subject').toEqual({ live: false });
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.summary' }), 'another feature').toEqual({ live: false });
+    expect(await query(users.owner, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId }), 'another member\'s run is invisible').toEqual({ live: false });
+    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'a run that ended').toEqual({ live: false });
+  });
+
+  it('answers the state of the caller\'s latest run for a subject, and nothing else of it', async () => {
+    const subjectId = randomUUID();
+    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'no run').toBeNull();
+    const run = await exec<{ runId: string }>(users.admin, 'kernel.member_vy.run.start', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    const latest = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(Object.keys(latest ?? {}).sort(), 'only the run id, the state, the error word and the expiry').toEqual(['errorCode', 'expiresAt', 'runId', 'state']);
+    expect(latest).toMatchObject({ runId: run.runId, state: 'running', errorCode: null });
+    expect(await query(users.owner, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'another member sees nothing of it').toBeNull();
+    expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }), 'another subject').toBeNull();
+    // A run that ended while its result stayed running shows as failed with the fixed word RUN_ENDED, never as running for ever.
+    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    const ended = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
+    expect(ended).toMatchObject({ runId: run.runId, state: 'failed', errorCode: 'RUN_ENDED' });
+  });
+
+  // #2951: the two run queries are a person's own view of their own runs. A non-user caller (the system actor) is refused, whatever the input.
+  it('refuses a non-user caller on the two run queries', async () => {
+    const system = { type: 'system' as const, component: 'kernel.member_vy' };
+    const refusals: unknown[] = [];
+    for (const [name, input] of [
+      ['kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }],
+      ['kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }],
+    ] as const) {
+      refusals.push(await runtime.query(name, input, { actor: system, orgId }).then(() => 'ANSWERED', (error: { code?: string }) => error.code));
+    }
+    expect(refusals).toEqual(['FORBIDDEN', 'FORBIDDEN']);
+    // They declare no memberVy access, so the runtime refuses them to the member's own background Vy too (a declared one is the only door into a member-mode context).
+    const declared = kernelQueries({ inboundDomain: 'in.test' }).filter((q) => q.name === 'kernel.member_vy.run.live' || q.name === 'kernel.member_vy.run.latest');
+    expect(declared.map((q) => q.name).sort()).toEqual(['kernel.member_vy.run.latest', 'kernel.member_vy.run.live']);
+    for (const q of declared) expect((q as { memberVy?: unknown }).memberVy ?? null, q.name).toBeNull();
   });
 });

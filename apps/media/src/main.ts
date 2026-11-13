@@ -18,6 +18,8 @@ const schema = z.object({
   MEDIA_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(MEDIA_TIMING.concurrency),
   MEDIA_MAX_QUEUE: z.coerce.number().int().min(0).max(100).default(MEDIA_TIMING.maxQueue),
   MEDIA_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600_000).default(MEDIA_TIMING.processTimeoutMs),
+  // The whole body of one request, which a 2 GB video needs more of than the default (#2985).
+  MEDIA_BODY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(1_800_000).default(MEDIA_TIMING.bodyTimeoutMs),
   MEDIA_MAX_INPUT_BYTES: z.coerce.number().int().min(1024).max(MEDIA_LIMITS.maxVideoBytes).default(MEDIA_LIMITS.maxVideoBytes),
 });
 
@@ -111,6 +113,7 @@ export function startMediaServer(config: MediaConfig = loadMediaConfig()) {
     maxQueue: config.MEDIA_MAX_QUEUE,
     processTimeoutMs: config.MEDIA_TIMEOUT_MS,
     maxInputBytes: config.MEDIA_MAX_INPUT_BYTES,
+    bodyTimeoutMs: config.MEDIA_BODY_TIMEOUT_MS,
   });
 
   const server = serve(

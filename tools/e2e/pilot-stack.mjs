@@ -10,7 +10,7 @@
 // compose version of the machine it runs on, and that the layout a pilot deploys actually starts and works.
 // No AI endpoint: e-invoice XML is read without AI. Plain Node (26+), no dependencies; needs docker with compose.
 //
-//   docker tag crove:split crove:local && docker tag crove-extract:split crove-extract:local   (or build them as :local)
+//   docker tag crove:split crove:local && docker tag crove-extract:split crove-extract:local && docker tag crove-media:split crove-media:local   (or build them as :local)
 //   node tools/e2e/pilot-stack.mjs
 // Environment: PILOT_PROJECT (compose project, default crove-pilot-<random>; must contain "pilot" and have no containers or
 // volumes yet), PILOT_PORT (default 18090). Inherited COMPOSE_* and CROVE_* variables are not passed on.
@@ -86,7 +86,7 @@ const envOf = (container) => Object.fromEntries(container.Config.Env.map((line) 
 
 function checkTopology() {
   const running = compose(['ps', '--services', '--status', 'running']).split(/\r?\n/).filter(Boolean);
-  for (const service of ['api', 'worker', 'crove-extract']) assert(running.includes(service), `${service} is running`);
+  for (const service of ['api', 'worker', 'crove-extract', 'crove-media']) assert(running.includes(service), `${service} is running`);
   assert(!running.includes('crove'), 'the all-in-one crove service is not running');
   const api = containerOf('api');
   const worker = containerOf('worker');
@@ -101,6 +101,12 @@ function checkTopology() {
   const extractNet = `${PROJECT}_extract`;
   assert(!Object.keys(api.NetworkSettings.Networks).includes(extractNet), 'the API is not on the extract network');
   assert(Object.keys(worker.NetworkSettings.Networks).includes(extractNet), 'the worker is on the extract network');
+  // Meeting recordings are measured in crove-media (#2985): the API at upload and the worker at transcription reach it, and it is on no other network.
+  const mediaNet = `${PROJECT}_media`;
+  assert(Object.keys(api.NetworkSettings.Networks).includes(mediaNet), 'the API is on the media network');
+  assert(Object.keys(worker.NetworkSettings.Networks).includes(mediaNet), 'the worker is on the media network');
+  assert(apiEnv['MEDIA_URL'] === 'http://crove-media:8095' && workerEnv['MEDIA_URL'] === 'http://crove-media:8095', 'api and worker reach crove-media at MEDIA_URL');
+  assert(Object.keys(containerOf('crove-media').NetworkSettings.Networks).join() === mediaNet, 'crove-media is on the media network only');
   assert(api.Image === worker.Image, 'api and worker run the same image');
   assert(JSON.stringify(api.Config.Cmd) === '["api"]' && JSON.stringify(worker.Config.Cmd) === '["worker"]', `commands api and worker (${api.Config.Cmd}, ${worker.Config.Cmd})`);
   const volume = (container) => container.Mounts.find((m) => m.Destination === '/data/files')?.Name;

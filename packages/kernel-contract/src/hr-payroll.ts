@@ -68,7 +68,11 @@ export type HrLineInputsSet = z.input<typeof zHrLineInputsSet>;
 // `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions).
 export const zHrRunApprove = z.strictObject({ runId: zId, fingerprint: z.string().regex(/^[0-9a-f]{64}$/), acceptFlags: z.boolean().default(false) });
 export type HrRunApprove = z.input<typeof zHrRunApprove>;
-// A signed correction of an approved month, put in a draft run (a later month): the amounts are the differences, net and the employer's cost follow from them.
+// The funds an insurance amount is split across (the same five a pay line's breakdown holds): the posting credits each group's payable account.
+export const HR_INSURANCE_FUNDS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
+export type HrInsuranceFund = (typeof HR_INSURANCE_FUNDS)[number];
+// A signed correction of an approved month, put in a draft run (a later month): the amounts are the differences, net and the employer's cost follow from them. The insurance is split across the
+// funds, signed, and the split must add up to the typed insurance totals (the entry is built from it and never guesses); the line takes the cost department of the line it corrects.
 export const zHrLineAdjust = z.strictObject({
   runId: zId,
   adjustsRunId: zId,
@@ -80,6 +84,7 @@ export const zHrLineAdjust = z.strictObject({
   unionFee: zHrSignedAmount.default('0'),
   taxableIncome: zHrSignedAmount.default('0'),
   pit: zHrSignedAmount.default('0'),
+  funds: z.array(z.strictObject({ fund: z.enum(HR_INSURANCE_FUNDS), employee: zHrSignedAmount, employer: zHrSignedAmount })).max(HR_INSURANCE_FUNDS.length).default([]),
 });
 export type HrLineAdjust = z.input<typeof zHrLineAdjust>;
 export const zHrRunList = z.strictObject({ limit: z.number().int().min(1).max(120).default(24) });
@@ -268,20 +273,26 @@ export type HrCoworkerExplained = z.infer<typeof zHrCoworkerExplained>;
 // of the download holds counts only.
 export const HR_BANK_FILE_COLUMNS = ['seq', 'name', 'account', 'bank', 'amount', 'content'] as const;
 export type HrBankFileColumn = (typeof HR_BANK_FILE_COLUMNS)[number];
+/** The headers of the generic layout (no saved template), in Vietnamese as a bank's import expects them. */
+export const HR_BANK_FILE_HEADERS: Record<HrBankFileColumn, string> = { seq: 'STT', name: 'Tên người nhận', account: 'Số tài khoản', bank: 'Ngân hàng', amount: 'Số tiền', content: 'Nội dung' };
 // More people than this is refused with a message, never cut short: a file with some people missing must not exist.
 export const HR_BANK_FILE_MAX_PEOPLE = 500;
-export const zHrBankFileQuery = z.strictObject({
-  runId: zId,
-  // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
-  // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
-  bankName: z.string().trim().min(1).max(60),
-  columns: z
-    .array(z.enum(HR_BANK_FILE_COLUMNS))
-    .min(1)
-    .max(HR_BANK_FILE_COLUMNS.length)
-    .refine((list) => new Set(list).size === list.length, 'a column once')
-    .optional(),
-});
+export const zHrBankFileQuery = z
+  .strictObject({
+    runId: zId,
+    // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
+    // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
+    bankName: z.string().trim().min(1).max(60),
+    columns: z
+      .array(z.enum(HR_BANK_FILE_COLUMNS))
+      .min(1)
+      .max(HR_BANK_FILE_COLUMNS.length)
+      .refine((list) => new Set(list).size === list.length, 'a column once')
+      .optional(),
+    // A saved template of the run's legal entity (#2893): the file follows its columns, their order, its headers and its remark text. It decides the columns, so it excludes `columns`.
+    templateId: zId.optional(),
+  })
+  .refine((query) => query.templateId === undefined || query.columns === undefined, { message: 'a saved template decides the columns', path: ['columns'] });
 export type HrBankFileQuery = z.infer<typeof zHrBankFileQuery>;
 export interface HrBankFile {
   runId: string;
@@ -289,6 +300,8 @@ export interface HrBankFile {
   // The code of the bank this file is for (a bank of VN_BANKS); the rows are the people of the run at that bank, and the `bank` column of a row is that bank's short name from the list.
   bankCode: string;
   columns: HrBankFileColumn[];
+  // The header text of each column, in the order of `columns`: the generic headers, or the saved template's (user text: a string cell, never a formula).
+  headers: string[];
   rows: { seq: string; name: string; account: string; bank: string; amount: string; content: string }[];
   // The total of this file's amounts, a decimal string. The whole run's total (every bank) equals the net pay frozen at approval, which the query checks before it answers.
   total: string;
@@ -298,3 +311,22 @@ export interface HrBankFile {
 // The audit command of a downloaded file: a count only, never a name, an account number or an amount. No row, no download.
 export const zHrBankFileExport = z.strictObject({ runId: zId, rows: z.number().int().min(1).max(HR_BANK_FILE_MAX_PEOPLE), columns: z.number().int().min(1).max(HR_BANK_FILE_COLUMNS.length) });
 export type HrBankFileExport = z.infer<typeof zHrBankFileExport>;
+
+// Where the posting and the payments of an approved pay run stand (#2532), for the card of the month: read from the books and the open proposals by finance, never from a line, so it holds no
+// name and no amount. A posting is `none` (not asked for), `pending` (a proposal waits in the Inbox), `posted`, or `reversed` (its entry was reversed: there is nothing left to pay against).
+// A payment is `none`, `pending` or `recorded`, by kind. `proposalId` is the open proposal of a pending step, so the card can link to it.
+export const PAYROLL_SETTLEMENT_POSTING = ['none', 'pending', 'posted', 'reversed'] as const;
+export const PAYROLL_SETTLEMENT_PAYMENT = ['none', 'pending', 'recorded'] as const;
+export const zPayrollSettlementRef = z.strictObject({ runId: zId });
+const zSettlementStep = <T extends readonly [string, ...string[]]>(states: T) => z.strictObject({ status: z.enum(states), proposalId: zId.nullable() });
+export const zPayrollSettlement = z.strictObject({
+  runId: zId,
+  posting: zSettlementStep(PAYROLL_SETTLEMENT_POSTING),
+  payments: z.strictObject({
+    net_pay: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+    insurance: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+    union: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+    tax: zSettlementStep(PAYROLL_SETTLEMENT_PAYMENT),
+  }),
+});
+export type PayrollSettlement = z.infer<typeof zPayrollSettlement>;

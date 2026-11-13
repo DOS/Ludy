@@ -24,6 +24,8 @@ import { OverviewPage } from './routes/overview.tsx';
 import { ReportsPage } from './routes/reports.tsx';
 import { InvitePage } from './routes/invite.tsx';
 import { ExtensionConnectPage } from './routes/extension-connect.tsx';
+import { OauthConsentPage } from './routes/oauth-consent.tsx';
+import { pendingInteraction, rememberInteraction, wellFormedUid } from './lib/oauth-consent.ts';
 import { JournalPage } from './routes/journal.tsx';
 import { NotificationsPage } from './routes/notifications.tsx';
 import { LedgerPage } from './routes/ledger.tsx';
@@ -193,6 +195,9 @@ const indexRoute = createRoute({
     if (pendingInvite()) throw redirect({ to: '/-/invite' });
     // So is the Ludy extension's sign-in (#2582), opened in a window before the member signed in.
     if (pendingConnect(getConfig().extensionIds ?? [])) throw redirect({ to: CONNECT_PATH });
+    // So is an MCP client's consent page (#2975), opened before the person signed in.
+    const waitingConsent = pendingInteraction();
+    if (waitingConsent) throw redirect({ to: '/oauth/interaction/$uid', params: { uid: waitingConsent } });
     // So is a page shared before signing in (#1235), where social runs; elsewhere it is dropped.
     if (pendingShare()) {
       if (outsideInstalled(getConfig().modules, SHARE_PATH)) throw redirect({ to: SHARE_PATH });
@@ -277,6 +282,22 @@ const extensionConnectRoute = createRoute({
     await requireAuth();
   },
   component: ExtensionConnectPage,
+});
+
+// The consent page of an MCP client (#2975, ADR-0051 decision 2): the authorization server redirects the browser to /oauth/interaction/<uid> on this origin. The
+// interaction id is kept in this tab while the person signs in (it is the path, so it survives /login and /mfa through the index route), then the page asks the
+// server for the client's details and sends the answer.
+const oauthConsentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/oauth/interaction/$uid',
+  beforeLoad: async ({ params }) => {
+    if (wellFormedUid(params.uid)) rememberInteraction(params.uid);
+    await requireAuth();
+  },
+  component: function OauthConsentRoutePage() {
+    const { uid } = oauthConsentRoute.useParams();
+    return <OauthConsentPage uid={uid} />;
+  },
 });
 
 // A page shared into a new Social draft (#1235): the share target's query, already moved to the fragment by
@@ -540,8 +561,22 @@ const myWorkRoute = createRoute({ getParentRoute: () => orgRoute, path: 'my-work
 // AI Meeting Notes (#2576), with the meetings module.
 const meetingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings', component: MeetingsPage });
 // Record a meeting in the app (#2581).
-const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/record', component: MeetingRecordPage });
-const meetingDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/$id', component: MeetingDetailPage });
+const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/record',
+  component: MeetingRecordPage,
+  // A booking opens this screen prefilled and linked (L1, #2587): its title, its contact and its calendar event. All optional; the ids are checked by the server on save.
+  validateSearch: (search: Record<string, unknown>): { title?: string; partyId?: string; calendarEventId?: string } => ({
+    ...(typeof search.title === 'string' ? { title: search.title.slice(0, 200) } : {}),
+    ...(typeof search.partyId === 'string' ? { partyId: search.partyId } : {}),
+    ...(typeof search.calendarEventId === 'string' ? { calendarEventId: search.calendarEventId } : {}),
+  }),
+});
+const meetingDetailRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: 'meetings/$id',
+  component: MeetingDetailPage,
+  // A search hit opens the transcript at its line (L2, #2589): ?seg= the transcript line to scroll to and mark. Only the shape is checked here; the transcript shows the line only to a reader.
+  validateSearch: (search: Record<string, unknown>): { seg?: string } => (typeof search.seg === 'string' && /^[0-9a-f-]{36}$/i.test(search.seg) ? { seg: search.seg.toLowerCase() } : {}),
+});
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
@@ -579,6 +614,7 @@ const routeTree = rootRoute.addChildren([
   socialPlanPrintRoute,
   inviteRoute,
   extensionConnectRoute,
+  oauthConsentRoute,
   mfaRoute,
   resetPasswordRoute,
   onboardingRoute,

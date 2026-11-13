@@ -21,6 +21,7 @@ import {
 import {
   createTempDir,
   MediaExecutionError,
+  measureFile,
   normalizeAudioFile,
   probeFile,
   processMediaFile,
@@ -38,6 +39,7 @@ export interface MediaAppOptions {
 
   // Custom runners for testing HTTP/concurrency layers independently of ffmpeg
   runProbe?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<MediaProbeResult>;
+  runMeasure?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<MediaProbeResult>;
   runNormalize?: (bytes: Uint8Array, signal?: AbortSignal, options?: { bitrateKbps?: number }) => Promise<MediaNormalizeResult>;
   runSplit?: (bytes: Uint8Array, signal?: AbortSignal, options?: { maxSegmentSeconds?: number; bitrateKbps?: number }) => Promise<MediaSplitResult>;
   runRepackageVideo?: (bytes: Uint8Array, signal?: AbortSignal, options?: { dropAudio?: boolean }) => Promise<{ durationSeconds: number; format: string; hasAudio: boolean }>;
@@ -223,7 +225,9 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
       return answer(c, errorResponse('too_large', `Payload exceeds maximum of ${maxBytes} bytes`));
     }
 
-    const requestSignal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(processTimeoutMs)]);
+    // The wait in the queue ends only when the caller goes away; the time allowed for the work starts when the slot is won (#2989). Counted from
+    // the arrival, a recording that waited behind a long measure of another org would be aborted after its whole body was sent and sealed.
+    const queueSignal = c.req.raw.signal;
     const opLimits: BodyLimits = {
       maxBytes,
       idleTimeoutMs: bodyIdleTimeoutMs,
@@ -232,6 +236,7 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
 
     try {
       const result = await acquire(async () => {
+        const requestSignal = AbortSignal.any([queueSignal, AbortSignal.timeout(processTimeoutMs)]);
         const dir = createTempDir();
         const inputPath = join(dir, 'input.bin');
 
@@ -256,7 +261,7 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
         } finally {
           rmSync(dir, { recursive: true, force: true });
         }
-      }, requestSignal);
+      }, queueSignal);
 
       return answer(c, result);
     } catch (err: unknown) {
@@ -274,6 +279,17 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
         return options.runProbe(bytes, signal);
       }
       return probeFile(inputPath, { signal, timeoutMs: processTimeoutMs });
+    }),
+  );
+
+  // The probe, with the length read from the stream itself rather than from what the container says (#2985).
+  app.post('/measure', (c) =>
+    handleOperation(c, maxInputBytes, async (inputPath, _dir, signal) => {
+      if (options.runMeasure) {
+        const bytes = readFileSync(inputPath);
+        return options.runMeasure(bytes, signal);
+      }
+      return measureFile(inputPath, { signal, timeoutMs: processTimeoutMs });
     }),
   );
 

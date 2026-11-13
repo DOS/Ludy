@@ -266,6 +266,36 @@ export async function probeFile(
   };
 }
 
+// What the file really holds (#2985). The length a container declares is the sender's word: a header can say a second over two hours of
+// audio, and a browser's streamed WebM declares none. So the stream is read to its end into a null sink and the time it reaches is
+// the length: audio is decoded (the first audio track), a video without audio is read packet by packet. Decoding is capped just
+// past the limit, so a hostile file costs a bounded time and is then refused as too long. Everything else the probe checks
+// (container allowlist, stream count) is checked first.
+export async function measureFile(filePath: string, options?: FfmpegRunOptions): Promise<MediaProbeResult> {
+  const probe = await probeFile(filePath, options);
+  if (!probe.hasAudio && !probe.hasVideo) throw new MediaExecutionError('malformed_media', 'The media holds no audio or video');
+  const tolerance = 60;
+  const cap = MEDIA_LIMITS.maxDurationSeconds + tolerance + 1;
+  // Audio is re-timed by sample count (asetpts=N/SR/TB) before the null sink: timestamps are the sender's word too, and a stream whose
+  // timestamps wrap or restart (a WebM joined to itself, a muxer that resets them) reaches a short output time while every sample is still
+  // decoded, and still heard by a provider. Counting samples cannot be moved by a timestamp.
+  const map = probe.hasAudio ? ['-map', '0:a:0', '-vn', '-af', 'asetpts=N/SR/TB'] : ['-map', '0:v:0', '-c', 'copy'];
+  const { stdout } = await runCommand(
+    'ffmpeg',
+    ['-v', 'error', '-nostats', '-i', filePath, ...map, '-t', String(cap), '-progress', 'pipe:1', '-f', 'null', '-'],
+    options,
+  );
+  // The progress report ends with out_time_us (microseconds of output); the last one is the stream's end.
+  let reached = -1;
+  for (const match of stdout.matchAll(/^out_time_us=(-?\d+)$/gm)) reached = Number(match[1]);
+  if (!Number.isFinite(reached) || reached <= 0) throw new MediaExecutionError('malformed_media', 'The media holds no readable stream');
+  const durationSeconds = reached / 1_000_000;
+  if (durationSeconds > MEDIA_LIMITS.maxDurationSeconds + tolerance) {
+    throw new MediaExecutionError('too_large', `Media duration exceeds maximum allowed duration (${MEDIA_LIMITS.maxDurationSeconds}s)`);
+  }
+  return { ...probe, durationSeconds };
+}
+
 export async function normalizeAudioFile(
   inputPath: string,
   outputPath: string,

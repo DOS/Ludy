@@ -56,6 +56,19 @@ describe('describeError', () => {
     expect(describeError({ ...limited, data: { rule: 'toString' } }, en, 'en')).toBe('Too many invites were sent. Try again later.');
   });
 
+  // #2703: the meeting player's retention and key refusals answer in English from the kernel; a Vietnamese screen shows the SPA's Vietnamese, not that English.
+  it('words the English media answers of the meeting player in every locale', () => {
+    for (const [code, message] of [
+      ['MEDIA_KEY_SHREDDED', 'Meeting media retention has ended'],
+      ['MEDIA_KEY_UNAVAILABLE', 'Media decryption key unavailable'],
+      ['AUDIO_NOT_FOUND', 'Meeting audio segment not found'],
+    ] as const) {
+      expect(describeError(new ApiError(code, 404, message), vi, 'vi'), `vi ${code}`).toBe(vi(`kernelErrors.codes.${code}`));
+      expect(describeError(new ApiError(code, 404, message), en, 'en'), `en ${code}`).toBe(en(`kernelErrors.codes.${code}`));
+    }
+    expect(vi('kernelErrors.codes.MEDIA_KEY_SHREDDED')).toBe('Bản ghi của cuộc họp này đã hết thời hạn lưu và đã bị xóa.');
+  });
+
   it('words the English answers of oRPC itself in every locale', () => {
     const invalid = { code: 'BAD_REQUEST', status: 400, message: 'Input validation failed' };
     expect(describeError(invalid, vi, 'vi')).toBe('Dữ liệu gửi lên không hợp lệ');

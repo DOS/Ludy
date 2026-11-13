@@ -76,13 +76,14 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
+import { mediaMeasurerFor } from './meetings-measure.ts';
 import { rebindExports as rebindOrgExports } from './export-rebind.ts';
 import { numberReseedCommand, runRestoreReport } from './restore-report.ts';
 import { exportSealer } from './export-seal.ts';
@@ -92,6 +93,7 @@ import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
 import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
+import { createOauthServer } from './oauth-server.ts';
 import { createHttpApp, type StreamDeps } from './http.ts';
 import { createLogProvider, createMailer, messageIdDomain, type MailProvider } from './mail.ts';
 import { MAIL_TEMPLATES } from './mail-templates.ts';
@@ -157,7 +159,7 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'payrollMatchSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -231,6 +233,8 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   // Whether the recorder may start a transcription here (#2578, M4b): MEETINGS_TRANSCRIBE=on with a provider.
   setTranscribeEnabled(transcribeEnabled(config));
+  // The worker takes a transcription job only with the credential key (a broker); without it the start is refused with its own code instead of queueing a job nobody works (#2863).
+  setTranscribeBroker(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
   setSummaryEnabled(summaryEnabled(config));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
@@ -566,7 +570,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     billing: adapters.billing ?? selfHostBilling,
   };
 
-  function buildRuntime(connectionString: string, applicationName: string, max: number) {
+  function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
     const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.CROVE_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
@@ -581,6 +585,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
       // Every user request is checked against its session (ADR-0028); the identity port never resolves to "no check".
       sessions: resolved.identity.sessions,
       stepUp: config.AUTH_STEP_UP,
+      // The worker's own runtime enters a company grant's context through the worker's entry (signal wake-ups, S5); every other runtime uses the API's.
+      ...(mcpEntry ? { mcpEntry } : {}),
       refusalAudit: {
         perActor: config.REFUSAL_AUDIT_LIMIT_PER_ACTOR,
         perOrg: config.REFUSAL_AUDIT_LIMIT_PER_ORG,
@@ -657,12 +663,18 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         }
         if (config.TAX_PORTAL_SYNC === 'true' && config.TAX_PORTAL_URL) console.warn(`[api] TAX_PORTAL_URL points the tax portal sync at ${new URL(config.TAX_PORTAL_URL).origin}, not the real portal`);
         const conversationSecrets = metaConversationSecrets(config);
+        // The MCP endpoint's authorization server (ADR-0051 decision 2, #2975), only when the deployment turned it on (OAUTH_SERVER=on, keys and cookie secrets checked at load).
+        const oauth = config.OAUTH_SERVER === 'on' ? await createOauthServer(config, (fn) => runtime.orgless(fn)) : null;
         const app = createHttpApp({
           config,
+          ...(oauth ? { oauth } : {}),
           runtime,
           store,
           authenticate,
           pool,
+          // The meetings media route seals and opens with the same broker as the worker's reseal pass. The 'none' broker
+          // is left out so the route keeps its own fallback (createCredentialBroker(config)).
+          ...(resolved.broker.id !== 'none' ? { broker: resolved.broker } : {}),
           aiEnabled: resolved.ai !== null,
           aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
           ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
@@ -708,7 +720,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         // The instance the heartbeat names is in every system audit row this worker writes (#1951), cut to what fits in
         // the connections' application_name, so both name it alike.
         const instance = hostname().slice(0, 50);
-        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX);
+        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX, 'worker');
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'granted');
@@ -745,7 +757,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             usageLimits: usageLimits(config),
             securityAlerts: alerts,
             aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, audioPerMinute: config.AI_PRICE_AUDIO_PER_MIN, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
-            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string } } } : {}),
+            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string, mode: config.TRANSCRIBE_API_MODE }, measurer: mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS) } } : {}),
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
           }),

@@ -45,6 +45,9 @@ export const zAuditEntry = z.object({
   targetType: z.string().nullable(),
   targetId: zId.nullable(),
   proposalId: zId.nullable(),
+  // Set when the row is a call an AI app made over MCP under a grant (ADR-0051 decision 2, #2975): the app's name as it declared it
+  // (self-declared, never verified), so the log reads "via <name> (MCP)" and never as the consenting person's own click.
+  via: z.strictObject({ kind: z.literal('mcp'), clientName: z.string() }).nullable(),
   // The row's detail as one line of key=value pairs, with anything that looks like a secret left out.
   detail: z.string().nullable(),
 });

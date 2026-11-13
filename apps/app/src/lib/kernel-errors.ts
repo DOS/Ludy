@@ -26,6 +26,11 @@ export const KERNEL_ERROR_CODES = [
   'EXTENSION_CODE_INVALID',
   'EXTENSION_TOKEN_INVALID',
   'EXTENSION_TOKEN_NOT_FOUND',
+  'MCP_GRANT_NOT_FOUND',
+  'MCP_GRANT_TOO_MANY',
+  'MCP_WAKE_GRANT_NOT_FOUND',
+  'MCP_WAKE_NOT_FOUND',
+  'MCP_WAKE_TOO_SOON',
   'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',
@@ -242,7 +247,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_BANK_FILE_EMPTY',
   'HR_BANK_CODE_MISSING',
   'HR_BANK_FILE_NO_PEOPLE',
-  'HR_BANK_FILE_ADJUSTMENTS',
+  'HR_BANK_FILE_NEGATIVE',
   'HR_BANK_FILE_MISMATCH',
   'HR_POSTING_MISMATCH',
   'HR_POSTING_MAP_UNCONFIRMED',
@@ -252,6 +257,8 @@ export const KERNEL_ERROR_CODES = [
   'MARKETPLACE_SETTLEMENT_NOT_POSTABLE',
   // The payment of an approved run's net pay and remittances (#2532).
   'HR_PAYMENT_NOT_POSTED',
+  'HR_PAYMENT_POSTING_REVERSED',
+  'HR_PAYMENT_NEGATIVE',
   'HR_PAYMENT_DONE',
   'HR_PAYMENT_OPEN',
   'HR_PAYMENT_NOTHING_DUE',
@@ -268,6 +275,8 @@ export const KERNEL_ERROR_CODES = [
   'HR_NO_PAYSLIP',
   'HR_RUN_STALE',
   'HR_ADJUST_NOT_PAID',
+  'HR_ADJUST_NO_TERMS',
+  'HR_ADJUST_FUNDS',
   // Members' notes (#1671).
   'NOTE_NOT_FOUND',
   'NOTE_AUTHOR_ONLY',
@@ -279,10 +288,28 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_TARGET_NOT_FOUND',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
+  // Links of a meeting (L1, #2587).
+  'MEETING_HAS_DEAL',
+  'LINK_NOT_FOUND',
+  'LINK_TARGET_NOT_FOUND',
+  'DEAL_LINK_UNAVAILABLE',
   'TRANSCRIPT_SEGMENT_NOT_FOUND',
+  // The follow-up email of a meeting (L3, #2590).
+  'NO_PUBLISHED_SUMMARY',
+  'STALE_FOLLOWUP',
+  'FOLLOWUP_TEXT_INVALID',
+  'FOLLOWUP_NOT_REVIEWED',
+  'RECIPIENT_INVALID',
+  'TOO_MANY_RECIPIENTS',
+  'RECIPIENT_NOT_CONFIRMED',
+  'FOLLOWUP_LIMIT',
+  'ALREADY_SENT',
+  'FOLLOWUP_TOO_LARGE',
   // Transcription as the recorder's own Vy (#2578, M4b).
   'TRANSCRIBE_OFF',
+  'TRANSCRIBE_NO_BROKER',
   'TRANSCRIBE_RUNNING',
+  'TRANSCRIBE_OTHER_RUNNING',
   'MEETING_NO_AUDIO',
   'TRANSCRIPT_EMPTY',
   'TRANSCRIPT_TOO_LONG',
@@ -308,6 +335,13 @@ export const KERNEL_ERROR_CODES = [
   'INVALID_READER',
   'INVALID_MEDIA_CONTAINER',
   'VIDEO_NOT_ENABLED',
+  'MEDIA_KEY_SHREDDED',
+  'MEDIA_KEY_UNAVAILABLE',
+  // The video player's ticket (#2703): one neutral wording for a ticket the stream refuses, and one for a ticket the app could not get.
+  'VIDEO_TICKET_INVALID',
+  'VIDEO_TICKET_UNAVAILABLE',
+  'AUDIO_NOT_FOUND',
+  'INVALID_PURPOSE',
   // Retention (#2579).
   'MEDIA_RETENTION_PASSED',
   'MEETING_SETTINGS_INVALID',
@@ -340,6 +374,7 @@ export const KERNEL_ERROR_CODES = [
   'RESULT_NOT_FOUND',
   'VY_NOT_ALLOWED',
   'VY_RUN_NOT_LIVE',
+  'VY_RUN_BUSY',
   // The approval rule preset (#1402).
   'UNKNOWN_PRESET',
   'NO_CHIEF_ACCOUNTANT',
@@ -655,6 +690,8 @@ export const KERNEL_ERROR_CODES = [
   'JOURNAL_VOUCHER_INVALID',
   // The personal-data finder (#923).
   'PERSONAL_DATA_QUERY',
+  // A meeting being edited while the erasure ran (#2917).
+  'PERSONAL_DATA_BUSY',
   // The notice to the authors of private items before an erasure (#1678).
   'PERSONAL_DATA_NOTICE_TOO_MANY',
   // Year-end closing (#889).
@@ -1008,8 +1045,9 @@ export const KERNEL_ERROR_RULES = {
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;
 
-// Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale.
-const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR']);
+// Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale. The English media answers of the meeting player (its retention and key
+// refusals, #2703) are among them, so a Vietnamese screen shows the Vietnamese message, not the kernel's English one.
+const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'AUDIO_NOT_FOUND']);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
   return (KERNEL_ERROR_CODES as readonly string[]).includes(code);

@@ -246,3 +246,41 @@
     animation: none !important;
   }
 }
+
+/* The invoice story (owner request, 2026-11-12): a dot travels along the line under the five steps while each step lights up in turn, so
+   the order reads at a glance. The loop is 10 s (2 s per step); only a ring and a dot move, the text never does. Still for reduced motion. */
+@keyframes crove-story-dot {
+  from {
+    left: 0;
+  }
+  to {
+    left: calc(100% - 7px);
+  }
+}
+@keyframes crove-story-step {
+  0%,
+  18% {
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 35%, transparent);
+  }
+  22%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@layer components {
+  .story-dot {
+    animation: crove-story-dot 10s linear infinite;
+  }
+  .story-step {
+    animation: crove-story-step 10s ease-out infinite;
+    animation-delay: calc(var(--i, 0) * 2s);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .story-dot {
+    display: none;
+  }
+  .story-step {
+    animation: none !important;
+  }
+}

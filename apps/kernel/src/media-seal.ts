@@ -46,7 +46,12 @@ export interface SealInput {
 
 const lengthMismatch = (declared: number, got: number) =>
   new DomainError('BAD_REQUEST', 400, `Tệp có ${got} byte, không khớp kích thước đã khai báo (${declared} byte)`);
-const tooLarge = (kind: 'audio' | 'video') => new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${kind === 'video' ? '2 GB' : '300 MB'})`);
+// The size in the refusal is the cap in force (the plan's, or the deployment's lower one for crove-media, #2989), not a fixed text.
+export function sizeText(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${Math.round(mb)} MB`;
+}
+const tooLarge = (maxBytes: number) => new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${sizeText(maxBytes)})`);
 
 // The pieces of a web stream (a request body, a Blob), whatever the runtime's typing of it. With stallMs, a stream that delivers
 // nothing for that long is cancelled and refused: a client that stops sending (a dead connection, a slow-loris) cannot hold the
@@ -81,7 +86,7 @@ export async function* onepiece(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
 export async function sealMedia(input: SealInput): Promise<SealedMedia> {
   const { kind, binding, orgId, expectedLength } = input;
   if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) throw new Error('sealMedia needs the declared length of the source');
-  if (expectedLength > input.maxBytes) throw tooLarge(kind);
+  if (expectedLength > input.maxBytes) throw tooLarge(input.maxBytes);
   const iterator = input.source[Symbol.asyncIterator]();
   let total = 0;
   // Read until the container can be told, holding only those first pieces.
@@ -92,7 +97,7 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
     try {
       return await iterator.next();
     } catch (error) {
-      if (error instanceof BlobTooLargeError) throw tooLarge(kind);
+      if (error instanceof BlobTooLargeError) throw tooLarge(input.maxBytes);
       throw error;
     }
   };
@@ -106,7 +111,7 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
       held.push(step.value);
       heldBytes += step.value.byteLength;
       total += step.value.byteLength;
-      if (total > input.maxBytes) throw tooLarge(kind);
+      if (total > input.maxBytes) throw tooLarge(input.maxBytes);
       if (total > expectedLength) throw lengthMismatch(expectedLength, total);
     }
     if (total === 0) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
@@ -129,7 +134,7 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
         const step = await next();
         if (step.done) break;
         total += step.value.byteLength;
-        if (total > input.maxBytes) throw tooLarge(kind);
+        if (total > input.maxBytes) throw tooLarge(input.maxBytes);
         if (total > expectedLength) throw lengthMismatch(expectedLength, total);
         await put(step.value);
       }

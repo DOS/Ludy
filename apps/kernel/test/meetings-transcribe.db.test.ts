@@ -12,15 +12,19 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import {
   BlobNotFoundError,
+  DomainError,
   Runtime,
   encryptBlobBuffer,
+  memberVyRuntime,
   sha256Hex,
   wrapMediaKeyWithSubkey,
   type BlobStore,
   type CredentialBroker,
 } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps } from '../src/meetings-transcribe.ts';
+import { mediaMeasurerFor, type MediaMeasurer } from '../src/meetings-measure.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -73,7 +77,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
       return new Response(JSON.stringify({ text: 'xin chao', segments: [{ start: 0, end: 5, text: `xin chào ${providerCalls}` }, { start: 5, end: 9, text: 'tạm biệt' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch,
   };
-  const deps = (): MeetingsTranscribeDeps => ({ runtime: worker, store, broker, provider, price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0.5' } });
+  const deps = (measurer: MediaMeasurer = fakeMediaMeasurer(600)): MeetingsTranscribeDeps => ({ runtime: worker, store, broker, measurer, provider, price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0.5' } });
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -119,8 +123,8 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
   const start = (who: string, meetingId: string) => app.execute<{ runId: string }>('meetings.transcript.start', { meetingId }, { actor: asUser(who), orgId });
   const agentOf = async (who: string) => (await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND member_user_id = $2 AND kind = 'member_vy'`, [orgId, users[who]]))).rows[0]?.id as string;
   const status = (who: string, meetingId: string) => app.query<{ enabled: boolean; state: string; runId: string | null; errorCode: string | null }>('meetings.transcript.status', { meetingId }, { actor: asUser(who), orgId });
-  async function runJob(who: string, meetingId: string, runId: string) {
-    return runMeetingsTranscribe(deps(), { orgId, meetingId, runId, agentId: await agentOf(who) });
+  async function runJob(who: string, meetingId: string, runId: string, measurer?: MediaMeasurer) {
+    return runMeetingsTranscribe(deps(measurer), { orgId, meetingId, runId, agentId: await agentOf(who) });
   }
   const refuses = async (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
 
@@ -194,17 +198,59 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect((await drafts()).rows[0]?.n).toBe('0');
 
     // Only the recorder copies, and the copy is the draft shape of M4a.
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('other'), orgId }))).not.toBeNull();
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('owner'), orgId }))).not.toBeNull();
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('other'), orgId }))).toBe('MEETING_NOT_FOUND');
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('owner'), orgId }))).toBe('MEETING_NOT_FOUND');
     expect((await drafts()).rows[0]?.n).toBe('0');
     const copied = await app.execute<{ stored: number }>('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('recorder'), orgId });
     expect(copied.stored).toBe(4);
+    // The copied rows are the model's text: born tainted, and each names the run it came from (#2941); nothing but the recorder's review clears either.
+    const born = await admin((c) => c.query<{ tainted: boolean; source_run_id: string | null }>(`SELECT tainted, source_run_id FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    expect(born.rows).toHaveLength(4);
+    expect(born.rows.every((r) => r.tainted && r.source_run_id === runId)).toBe(true);
     const transcript = await app.query<{ stage: string; segments: Array<{ text: string; startSeconds: number }> }>('meetings.transcript.get', { meetingId }, { actor: asUser('recorder'), orgId });
     expect(transcript.stage).toBe('draft');
     expect(transcript.segments.map((s) => s.startSeconds)).toEqual([0, 5, 600, 605]);
     // No other member reads the draft.
     const seenByOther = await app.query<{ segments: unknown[] }>('meetings.transcript.get', { meetingId }, { actor: asUser('other'), orgId }).then((r) => r.segments.length, () => 0);
     expect(seenByOther).toBe(0);
+  });
+
+  it('charges the length crove-media measures in the audio, not the length the row stores (#2985)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    // A row written before uploads were measured: it says 5 seconds for audio that really is 600 (what the fake sandbox measures).
+    await admin((c) => c.query(`UPDATE crove_meetings.audio_segment SET length_seconds = 5 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    const { runId } = await start('recorder', meetingId);
+    const heard: number[] = [];
+    const measuring: MediaMeasurer = { ...fakeMediaMeasurer(600), measureBytes: async () => (heard.push(600), 600) };
+    expect(await runJob('recorder', meetingId, runId, measuring)).toBe('succeeded');
+    expect(heard).toHaveLength(2);
+    const recorderAgent = await agentOf('recorder');
+    const usage = await admin((c) => c.query<{ amount: string }>(`SELECT amount::text FROM crove_kernel.org_usage WHERE org_id = $1 AND feature = 'meetings.transcribe' AND agent_id = $2 AND created_at > now() - interval '1 minute'`, [orgId, recorderAgent]));
+    expect(usage.rows.map((r) => r.amount).sort().slice(-2)).toEqual(['5.000000', '5.000000']);
+  });
+
+  it('fails the run before any call or charge when the sandbox is down or refuses the audio (#2985)', async () => {
+    const callsBefore = providerCalls;
+    for (const [measurer, code] of [
+      [mediaMeasurerFor(undefined), 'TRANSCRIBE_UNAVAILABLE'],
+      [{ ...fakeMediaMeasurer(), measureBytes: async () => Promise.reject(new DomainError('MEDIA_PROBE_FAILED', 422, 'x')) }, 'TRANSCRIBE_FAILED'],
+      [{ ...fakeMediaMeasurer(), measureBytes: async () => Promise.reject(new DomainError('MEDIA_TOO_LONG', 413, 'x')) }, 'TRANSCRIPT_TOO_LONG'],
+    ] as Array<[MediaMeasurer, string]>) {
+      const meetingId = await seedMeeting('recorder');
+      const { runId } = await start('recorder', meetingId);
+      expect(await runJob('recorder', meetingId, runId, measurer)).toBe('failed');
+      expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: code });
+    }
+    expect(providerCalls).toBe(callsBefore);
+  });
+
+  it('refuses a chunk whose measured length is over the limit, before it is sent (#2985)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const callsBefore = providerCalls;
+    expect(await runJob('recorder', meetingId, runId, fakeMediaMeasurer(90 * 60 + 1))).toBe('failed');
+    expect(await status('recorder', meetingId)).toMatchObject({ errorCode: 'TRANSCRIPT_TOO_LONG' });
+    expect(providerCalls).toBe(callsBefore);
   });
 
   it('refuses a run for the wrong meeting, and copy of another meeting\'s result', async () => {
@@ -216,7 +262,7 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await refuses(start('recorder', theirs))).toBe('FORBIDDEN');
     const { runId } = await start('recorder', mine);
     await runJob('recorder', mine, runId);
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId: theirs, runId }, { actor: asUser('recorder'), orgId }))).not.toBeNull();
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId: theirs, runId }, { actor: asUser('recorder'), orgId }))).toBe('FORBIDDEN');
   });
 
   it('refuses a non-recorder, and a former member\'s run ends without a result', async () => {
@@ -231,8 +277,8 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const row = await admin((c) => c.query<{ status: string; body: string | null }>(`SELECT status, body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
     expect(row.rows[0]?.status).not.toBe('ready');
     expect(row.rows[0]?.body).toBeNull();
-    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('former'), orgId }))).not.toBeNull();
-    expect(await refuses(start('former', meetingId))).not.toBeNull();
+    expect(await refuses(app.execute('meetings.transcript.copy_result', { meetingId, runId }, { actor: asUser('former'), orgId }))).toBe('NOT_A_MEMBER');
+    expect(await refuses(start('former', meetingId))).toBe('NOT_A_MEMBER');
   });
 
   it('with transcription off the meeting works and nothing starts; a kill switch and a spent budget refuse before any call', async () => {
@@ -241,6 +287,15 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await refuses(start('recorder', meetingId))).toBe('TRANSCRIBE_OFF');
     expect(await status('recorder', meetingId)).toMatchObject({ enabled: false, state: 'none' });
     setTranscribeEnabled(true);
+    // No credential key: no job could be worked, so the start is refused with its own code and nothing is queued (#2863).
+    setTranscribeBroker(false);
+    try {
+      expect(await refuses(start('recorder', meetingId))).toBe('TRANSCRIBE_NO_BROKER');
+      expect(await status('recorder', meetingId)).toMatchObject({ enabled: false, state: 'none' });
+    } finally {
+      setTranscribeBroker(true);
+    }
+    expect(await status('recorder', meetingId)).toMatchObject({ enabled: true, state: 'none' });
     // The meeting itself is untouched by any of this.
     expect(await app.query('meetings.meeting.get', { meetingId }, { actor: asUser('recorder'), orgId })).toMatchObject({ id: meetingId });
 
@@ -281,6 +336,23 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1`, [orgId, users.owner]));
   });
 
+  it('does not start the transcription of another meeting while one of the recorder\'s is still going, and the first one is not cut off (#3029)', async () => {
+    const first = await seedMeeting('recorder');
+    const second = await seedMeeting('recorder');
+    const { runId } = await start('recorder', first);
+    expect(await refuses(start('recorder', second))).toBe('TRANSCRIBE_OTHER_RUNNING');
+    const first1 = await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    expect(first1.rows[0]).toEqual({ status: 'running', error: null });
+    // The refused start made no run and no result for the second meeting.
+    const made = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, second]));
+    expect(made.rows[0]?.n).toBe('0');
+    // Once the first has ended (finished, failed or cancelled), the second starts.
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    expect(await start('recorder', second)).toMatchObject({ runId: expect.any(String) });
+    // Cleaned up for the tests after this one.
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running'`, [orgId]));
+  });
+
   const resultRows = (runId: string) => admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
 
   it('a meeting deleted while it is transcribed stops the run before the next chunk and leaves no result row', async () => {
@@ -294,6 +366,32 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
     const run = await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]));
     expect(run.rows[0]).toEqual({ status: 'cancelled', error: 'MEETING_REMOVED' });
+    // The run the deletion stopped has an audit row of its own, by the system, with ids and no text (#2863, item 5).
+    const audit = await admin((c) =>
+      c.query<{ actor_type: string; command: string; outcome: string; target_type: string; target_id: string; detail: Record<string, unknown> }>(
+        `SELECT actor_type, command, outcome, target_type, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`,
+        [orgId, runId],
+      ),
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]).toMatchObject({ actor_type: 'system', outcome: 'ok', target_type: 'kernel.ai_run', target_id: runId });
+    expect(audit.rows[0]?.detail).toMatchObject({ runId, meetingId, feature: 'meetings.transcribe', reason: 'MEETING_REMOVED' });
+  });
+
+  it('deleting a meeting with no live run writes no cancellation audit row (#2863)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail ->> 'meetingId' = $2`, [orgId, meetingId]));
+    expect(audit.rows[0]?.n).toBe('0');
+  });
+
+  it('a run that already finished is not cancelled again and writes no audit row (#2863)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const audit = await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
+    expect(audit.rows[0]?.n).toBe('0');
   });
 
   it('a recorder demoted to viewer mid-run stops the run before the next chunk', async () => {
@@ -325,6 +423,9 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(await runJob('recorder', meetingId, runId)).toBe('failed');
     expect(providerCalls - before).toBe(1);
     expect((await resultRows(runId)).rows[0]?.n).toBe('0');
+    // In a user context the audit stamp names the member who deleted it (#2863).
+    const named = await admin((c) => c.query<{ actor_type: string; actor_id: string | null }>(`SELECT actor_type, actor_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND target_id = $2`, [orgId, runId]));
+    expect(named.rows).toEqual([{ actor_type: 'user', actor_id: users.recorder }]);
   });
 
   it('the text purge of the retention job (system context) mid-run stops the run and leaves no result row', async () => {
@@ -348,5 +449,367 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     expect(providerCalls - before).toBe(1);
     const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
     expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
+  });
+
+  // #2863 item 1: the audio's retention date ends its period from that day, before the nightly shred has run: no run starts, and a run under way ends as the shred does.
+  it('refuses to start once the audio retention date is reached, and a run under way ends with MEDIA_KEY_SHREDDED', async () => {
+    const late = await seedMeeting('recorder');
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, late]));
+    expect(await refuses(start('recorder', late))).toBe('MEDIA_KEY_SHREDDED');
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meetingId]));
+    const before = providerCalls;
+    expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+    expect(providerCalls).toBe(before);
+    const row = await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(row.rows[0]).toEqual({ status: 'failed', error_code: 'MEDIA_KEY_SHREDDED' });
+  });
+  // #3033: the recorder stops their own run, and two starts for two meetings no longer race.
+  const cancel = (who: string, meetingId: string) => app.execute<{ meetingId: string; cancelled: boolean }>('meetings.transcript.cancel', { meetingId }, { actor: asUser(who), orgId, idempotencyKey: randomUUID() });
+  const runRow = async (runId: string) => (await admin((c) => c.query<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]))).rows[0];
+  const resultOf = async (runId: string) => (await admin((c) => c.query<{ status: string; error_code: string | null }>(`SELECT status, error_code FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]))).rows[0];
+  const clearRuns = () => admin((c) => c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running'`, [orgId]));
+
+  it('lets the recorder stop their own run, which frees them to start another meeting, and a late job of the stopped run stores nothing (#3033)', async () => {
+    await clearRuns();
+    const first = await seedMeeting('recorder');
+    const second = await seedMeeting('recorder');
+    const { runId } = await start('recorder', first);
+    expect(await refuses(start('recorder', second))).toBe('TRANSCRIBE_OTHER_RUNNING');
+    expect(await cancel('recorder', first)).toEqual({ meetingId: first, cancelled: true });
+    expect(await runRow(runId)).toEqual({ status: 'cancelled', error: 'RUN_CANCELLED' });
+    expect(await resultOf(runId)).toEqual({ status: 'failed', error_code: 'RUN_CANCELLED' });
+    expect(await status('recorder', first)).toMatchObject({ state: 'failed', errorCode: 'RUN_CANCELLED', runId });
+    // A job that was already on its way finds no live run: no provider call, and the result stays as the cancel left it.
+    const before = providerCalls;
+    expect(await runJob('recorder', first, runId)).toBe('failed');
+    expect(providerCalls).toBe(before);
+    expect(await resultOf(runId)).toEqual({ status: 'failed', error_code: 'RUN_CANCELLED' });
+    // The recorder is free: the other meeting starts, and the first meeting can start again too.
+    expect(await start('recorder', second)).toMatchObject({ runId: expect.any(String) });
+    await clearRuns();
+    expect(await start('recorder', first)).toMatchObject({ runId: expect.any(String) });
+    await clearRuns();
+  });
+
+  it('a cancel while the job is at the provider stops the AI cost: chunk 1 was admitted and paid, chunk 2 is refused at its admit, and the result stays as the cancel left it (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    const before = providerCalls;
+    afterFirstCall = async () => void (await cancel('recorder', meetingId));
+    const outcome = await runJob('recorder', meetingId, runId);
+    afterFirstCall = null;
+    expect(outcome).toBe('failed');
+    // One provider call (the chunk already in flight), no second: the admit before chunk 2 found the run no longer live.
+    expect(providerCalls - before).toBe(1);
+    expect(await runRow(runId)).toEqual({ status: 'cancelled', error: 'RUN_CANCELLED' });
+    expect(await resultOf(runId)).toEqual({ status: 'failed', error_code: 'RUN_CANCELLED' });
+    expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: 'RUN_CANCELLED' });
+    // The text of the chunk in flight was not stored anywhere the recorder reads.
+    const body = await admin((c) => c.query<{ body: string | null }>(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect(body.rows[0]?.body ?? null).toBeNull();
+    await clearRuns();
+  });
+
+  it('answers the same when there is nothing to stop: no run, a stopped run, a finished run (#3033)', async () => {
+    await clearRuns();
+    const idle = await seedMeeting('recorder');
+    expect(await cancel('recorder', idle)).toEqual({ meetingId: idle, cancelled: false });
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    expect(await cancel('recorder', meetingId)).toMatchObject({ cancelled: true });
+    expect(await cancel('recorder', meetingId)).toMatchObject({ cancelled: false });
+    // A finished run is not touched: its text stays ready.
+    const done = await seedMeeting('recorder');
+    const finished = await start('recorder', done);
+    expect(await runJob('recorder', done, finished.runId)).toBe('succeeded');
+    expect(await cancel('recorder', done)).toMatchObject({ cancelled: false });
+    expect(await resultOf(finished.runId)).toEqual({ status: 'ready', error_code: null });
+    expect((await runRow(finished.runId))?.status).toBe('succeeded');
+    expect((await runRow(runId))?.error).toBe('RUN_CANCELLED');
+  });
+
+  it('lets only the recorder stop it: another member, a viewer and another member\'s run id get nothing (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    // Another member of the org cannot read this attendees-only meeting: it is not found, as for a start.
+    expect(await refuses(cancel('other', meetingId))).toBe('MEETING_NOT_FOUND');
+    // The kernel command, asked directly for the recorder's run id, answers false for anyone else, and the run runs on.
+    expect(await app.execute('kernel.member_vy.run.cancel', { runId }, { actor: asUser('other'), orgId, idempotencyKey: randomUUID() })).toEqual({ cancelled: false });
+    expect(await app.execute('kernel.member_vy.run.cancel', { runId }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() })).toEqual({ cancelled: false });
+    expect(await runRow(runId)).toEqual({ status: 'running', error: null });
+    // A viewer reads and stops no transcription.
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]));
+    expect(await refuses(cancel('recorder', meetingId))).toBe('FORBIDDEN');
+    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder]));
+    expect(await runRow(runId)).toEqual({ status: 'running', error: null });
+    await clearRuns();
+  });
+
+  it('does not cancel a run whose result is already stored: the worker has not closed the run yet, and it is then recorded as succeeded, never as cancelled beside a ready result (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    // The gap of a background run: the text is stored as ready in one transaction and the run is closed by the worker's finish in another.
+    await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET status = 'ready', body = 'x' WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+    expect((await runRow(runId))?.status).toBe('running');
+    expect(await cancel('recorder', meetingId)).toEqual({ meetingId, cancelled: false });
+    expect(await runRow(runId)).toEqual({ status: 'running', error: null });
+    expect(await resultOf(runId)).toEqual({ status: 'ready', error_code: null });
+    const closed = await worker.execute<{ closed: boolean }>('kernel.member_vy.run.finish', { runId, errorCode: null }, { actor: { type: 'system', component: 'meetings.transcribe' }, orgId });
+    expect(closed.closed).toBe(true);
+    expect((await runRow(runId))?.status).toBe('succeeded');
+    expect(await resultOf(runId)).toEqual({ status: 'ready', error_code: null });
+  });
+
+  it('stops a run whose time has passed but is still marked running, which the screen already shows as ended (#3033)', async () => {
+    await clearRuns();
+    const meetingId = await seedMeeting('recorder');
+    const { runId } = await start('recorder', meetingId);
+    await admin((c) => c.query(`UPDATE crove_kernel.ai_run SET expires_at = started_at + interval '1 millisecond' WHERE org_id = $1 AND id = $2`, [orgId, runId]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: 'RUN_ENDED' });
+    expect(await cancel('recorder', meetingId)).toMatchObject({ cancelled: true });
+    expect(await runRow(runId)).toEqual({ status: 'cancelled', error: 'RUN_CANCELLED' });
+    await clearRuns();
+  });
+
+  it('serializes two starts of one recorder: two meetings at once start one and refuse the other, and the first is never superseded (#3033)', async () => {
+    for (let round = 0; round < 6; round += 1) {
+      await clearRuns();
+      const first = await seedMeeting('recorder');
+      const second = await seedMeeting('recorder');
+      const results = await Promise.allSettled([start('recorder', first), start('recorder', second)]);
+      const ok = results.filter((r) => r.status === 'fulfilled');
+      const refused = results.filter((r) => r.status === 'rejected');
+      expect(ok, `round ${round}`).toHaveLength(1);
+      expect(refused, `round ${round}`).toHaveLength(1);
+      expect(((refused[0] as PromiseRejectedResult).reason as { code?: string }).code, `round ${round}`).toBe('TRANSCRIBE_OTHER_RUNNING');
+      const runId = ((ok[0] as PromiseFulfilledResult<{ runId: string }>).value).runId;
+      expect(await runRow(runId), `round ${round}`).toEqual({ status: 'running', error: null });
+      // No run of the recorder was superseded, and exactly one is running.
+      const rows = await admin((c) => c.query<{ n: string; superseded: string }>(`SELECT count(*) FILTER (WHERE status = 'running')::text AS n, count(*) FILTER (WHERE error = 'RUN_SUPERSEDED')::text AS superseded FROM crove_kernel.ai_run WHERE org_id = $1`, [orgId]));
+      expect(rows.rows[0], `round ${round}`).toEqual({ n: '1', superseded: '0' });
+    }
+    // One meeting started twice at once: the second is told it is already being transcribed.
+    await clearRuns();
+    const same = await seedMeeting('recorder');
+    const both = await Promise.allSettled([start('recorder', same), start('recorder', same)]);
+    expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect((((both.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason) as { code?: string }).code).toBe('TRANSCRIBE_RUNNING');
+    await clearRuns();
+  });
+
+  it('keys the lock on the member: while one recorder\'s lock is held, that recorder\'s start waits and another recorder\'s start does not (#3033)', async () => {
+    await clearRuns();
+    const mine = await seedMeeting('recorder');
+    const theirs = await seedMeeting('other');
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      // The same key the module takes: 'meetings.transcribe:<org>:<member>'.
+      await holder.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, [`meetings.transcribe:${orgId}:${users.recorder}`]);
+      const waiting = start('recorder', mine);
+      const settled = { done: false };
+      void waiting.then(() => (settled.done = true), () => (settled.done = true));
+      // Another member is not held up by it.
+      expect(await start('other', theirs)).toMatchObject({ runId: expect.any(String) });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(settled.done).toBe(false);
+      await holder.query('COMMIT');
+      expect(await waiting).toMatchObject({ runId: expect.any(String) });
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      await holder.end();
+    }
+    await clearRuns();
+  });
+
+  // #2863 item 8: a chunk is admitted on its projected cost (its measured seconds times the price per second, 5 for a 600 s chunk at 0.5 a minute), so a chunk that would
+  // cross a hard-stop budget is refused BEFORE the provider call. The budgets below are set relative to what the org has already spent this month (the tests share one org).
+  async function setBudget(scope: 'org' | 'module' | 'agent', target: string, headroom: string, hardStop = true) {
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, $2, $3, crove_kernel.ai_budget_spent($1::uuid, $2, $3) + $4::numeric, $5, $6)`,
+        [orgId, scope, target, headroom, hardStop, users.owner],
+      ),
+    );
+  }
+  const clearBudgets = () => admin((c) => c.query(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]));
+  const usageRows = async () => Number((await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 AND feature = 'meetings.transcribe'`, [orgId]))).rows[0]?.n);
+  const liveRun = async (who: string) => {
+    await clearRuns();
+    const meetingId = await seedMeeting(who);
+    const { runId } = await start(who, meetingId);
+    return { meetingId, runId, agentId: await agentOf(who) };
+  };
+
+  for (const scope of ['org', 'module', 'agent'] as const) {
+    it(`refuses a chunk that would cross a hard-stop ${scope} budget before the provider call, and the run ends with AI_BUDGET_EXHAUSTED (#2863 item 8)`, async () => {
+      const { meetingId, runId, agentId } = await liveRun('recorder');
+      await setBudget(scope, scope === 'org' ? '*' : scope === 'module' ? 'meetings' : agentId, '7');
+      try {
+        const calls = providerCalls;
+        const rows = await usageRows();
+        expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+        // Chunk 1 (5) fits under the 7 left; chunk 2 would take the spend to 10: refused at its admit, so one provider call and one usage row, not two.
+        expect(providerCalls - calls).toBe(1);
+        expect((await usageRows()) - rows).toBe(1);
+        expect(await runRow(runId)).toEqual({ status: 'failed', error: 'AI_BUDGET_EXHAUSTED' });
+        expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED' });
+        const body = await admin((c) => c.query<{ body: string | null }>(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+        expect(body.rows[0]?.body ?? null).toBeNull();
+      } finally {
+        await clearBudgets();
+        await clearRuns();
+      }
+    });
+  }
+
+  it('refuses the first chunk when even one chunk would cross the cap: no provider call and no charge (#2863 item 8)', async () => {
+    const { meetingId, runId } = await liveRun('recorder');
+    await setBudget('module', 'meetings', '4');
+    try {
+      const calls = providerCalls;
+      const rows = await usageRows();
+      expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+      expect(providerCalls).toBe(calls);
+      expect(await usageRows()).toBe(rows);
+      expect(await runRow(runId)).toEqual({ status: 'failed', error: 'AI_BUDGET_EXHAUSTED' });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('lets chunks that stay under a hard-stop cap through, and refuses a chunk that would land exactly on it, since the run\'s own result could not be stored then (#2863 item 8)', async () => {
+    const under = await liveRun('recorder');
+    await setBudget('module', 'meetings', '10.000001');
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', under.meetingId, under.runId), 'both chunks leave the budget unspent').toBe('succeeded');
+      expect(providerCalls - calls).toBe(2);
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+    const exact = await liveRun('recorder');
+    await setBudget('module', 'meetings', '10');
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', exact.meetingId, exact.runId)).toBe('failed');
+      // Chunk 2 would spend the budget to the cent: refused before its call, not sent and paid and then lost at the store.
+      expect(providerCalls - calls).toBe(1);
+      expect(await runRow(exact.runId)).toEqual({ status: 'failed', error: 'AI_BUDGET_EXHAUSTED' });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('never refuses on a soft budget, however small it is (#2863 item 8)', async () => {
+    const { meetingId, runId } = await liveRun('recorder');
+    await setBudget('module', 'meetings', '1', false);
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', meetingId, runId)).toBe('succeeded');
+      expect(providerCalls - calls).toBe(2);
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('is the entry\'s check alone when the audio price is 0: nothing is projected, and a cap with room runs as before (#2863 item 8)', async () => {
+    const { meetingId, runId, agentId } = await liveRun('recorder');
+    await setBudget('module', 'meetings', '1');
+    try {
+      const calls = providerCalls;
+      const free = { ...deps(), price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0' } };
+      expect(await runMeetingsTranscribe(free, { orgId, meetingId, runId, agentId })).toBe('succeeded');
+      expect(providerCalls - calls).toBe(2);
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('keeps the kill switches first: with AI off a chunk is refused with AI_STOPPED whatever it costs (#2863 item 8)', async () => {
+    const { meetingId, runId } = await liveRun('recorder');
+    await admin((c) => c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]));
+    await setBudget('module', 'meetings', '1');
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+      expect(providerCalls).toBe(calls);
+      expect(await runRow(runId)).toMatchObject({ status: 'failed', error: 'AI_STOPPED' });
+    } finally {
+      await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND released_at IS NULL`, [orgId, users.owner]));
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('run.check: a projected cost that would reach a hard stop is refused with the entry\'s code and the scope, below it passes, and none or zero is as before (#2863 item 8)', async () => {
+    const { runId, agentId } = await liveRun('recorder');
+    const vy = memberVyRuntime(worker, orgId, { agentId, runId });
+    const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => error as DomainError);
+    await setBudget('module', 'meetings', '7');
+    try {
+      expect(await check({}), 'no projection').toBeNull();
+      expect(await check({ projectedCost: '0' }), 'zero').toBeNull();
+      expect(await check({ projectedCost: '0.000000' }), 'zero with decimals').toBeNull();
+      expect(await check({ projectedCost: '5.000000' }), 'under').toBeNull();
+      expect(await check({ projectedCost: '6.999999' }), 'a hair under the cap').toBeNull();
+      expect(await check({ projectedCost: '7' }), 'exactly the cap: the budget would be spent').toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'module' } });
+      expect(await check({ projectedCost: '7.000001' })).toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'module' } });
+      // The agent's budget is named before the module's and the org's.
+      await setBudget('agent', agentId, '1');
+      await setBudget('org', '*', '1');
+      expect(await check({ projectedCost: '7.000001' })).toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'agent' } });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('run.check: the module and the agent are the run\'s own, so a budget of another module or another agent never refuses it (#2863 item 8)', async () => {
+    const { runId, agentId } = await liveRun('recorder');
+    const vy = memberVyRuntime(worker, orgId, { agentId, runId });
+    const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => error as DomainError);
+    // Budgets that would refuse a projection of 5 if they were counted: another module's and another agent's, both with no room at all.
+    await setBudget('module', 'finance', '0');
+    await setBudget('agent', randomUUID(), '0');
+    try {
+      expect(await check({ projectedCost: '5' })).toBeNull();
+      // And the run's own module budget does refuse, on the same projection.
+      await setBudget('module', 'meetings', '4');
+      expect(await check({ projectedCost: '5' })).toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'module' } });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('run.check: the projection must be a non-negative decimal of at most 1e9, and only a background run may send one (#2863 item 8)', async () => {
+    const { runId, agentId } = await liveRun('recorder');
+    const vy = memberVyRuntime(worker, orgId, { agentId, runId });
+    const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => (error as DomainError).code);
+    try {
+      for (const bad of ['-1', '1e3', '1000000000.000001', '1000000000.5', '12345678901', '1.1234567', ' 5', '5 ', '', 'abc', '0x10']) {
+        expect(await check({ projectedCost: bad }), `projectedCost ${JSON.stringify(bad)}`).toBe('VALIDATION');
+      }
+      expect(await check({ projectedCost: 5 }), 'a JS number is not a decimal string').toBe('VALIDATION');
+      expect(await check({ projectedCost: '1000000000' }), 'the cap itself, with no budget').toBeNull();
+      // The member's own session has no run to measure against: a projection is refused there, and no projection is as before.
+      expect(await refuses(app.query('kernel.member_vy.run.check', { projectedCost: '5' }, { actor: asUser('recorder'), orgId }))).toBe('FORBIDDEN');
+      expect(await refuses(app.query('kernel.member_vy.run.check', {}, { actor: asUser('recorder'), orgId }))).toBeNull();
+    } finally {
+      await clearRuns();
+    }
   });
 });

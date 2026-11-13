@@ -14,7 +14,7 @@ describe('the SPA Content-Security-Policy', () => {
     // One named policy (#1238): no 'none', no 'allow-duplicates', no default policy, no wildcard.
     expect(csp.get('trusted-types')).toBe('crove-sw');
     expect(header).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self' http://localhost; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types crove-sw",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' http://localhost; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types crove-sw",
     );
   });
 
@@ -27,5 +27,10 @@ describe('the SPA Content-Security-Policy', () => {
     expect(csp.get('frame-ancestors')).toBe("'none'");
     expect(csp.get('connect-src')).toBe("'self' https://auth.example.test https://files.example.test");
     expect(directives(contentSecurityPolicy('/auth/v1', null)).get('connect-src')).toBe("'self' http://localhost");
+  });
+
+  it('lets the app play its own blob audio and, apart from the API, the API origin for the video by ticket (#2703)', () => {
+    expect(directives(contentSecurityPolicy('/auth/v1', null)).get('media-src')).toBe("'self' blob:");
+    expect(directives(contentSecurityPolicy('/auth/v1', null, false, 'https://api.example.test')).get('media-src')).toBe("'self' blob: https://api.example.test");
   });
 });

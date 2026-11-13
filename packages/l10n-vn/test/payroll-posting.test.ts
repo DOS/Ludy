@@ -72,6 +72,8 @@ describe('payroll posting (#2532)', () => {
     expect(Object.values(PAYROLL_POSTING_MAPS).map((m) => m.status)).toEqual(['commentary', 'commentary']);
     expect(PAYROLL_POSTING_MAPS.tt99.unemployment).toBe('3386');
     expect(PAYROLL_POSTING_MAPS.tt133.unemployment).toBe('3385');
+    // How a correction of an earlier month is booked (the period and the sign) is a rule of its own, and waits for the accountant too.
+    expect(Object.values(PAYROLL_POSTING_MAPS).map((m) => m.adjustments.status)).toEqual(['commentary', 'commentary']);
   });
 
   it('adds a correction line with signed amounts', () => {

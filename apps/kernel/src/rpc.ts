@@ -5,7 +5,9 @@ import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { McpWakeView } from '@crove/kernel-contract';
+import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -47,6 +49,7 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
@@ -238,6 +241,8 @@ export interface RpcChannels {
   broker: CredentialBroker;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
+  // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
+  wakeResolve?: WakeResolve;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
@@ -349,6 +354,8 @@ export function createRpcHandler(
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
+  // The meetings coworker's wording of a follow-up email (L3, #2590): the same reader and model, a budget of its own. The model is told the language and the sender's name only.
+  const followupAi: FollowupAi = { reader: conversationReader?.followupWords ? { followupWords: conversationReader.followupWords.bind(conversationReader) } : null, budget: suggestionBudget() };
   // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
   // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
   const stockCoworker = stockAi(
@@ -832,6 +839,8 @@ export function createRpcHandler(
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
+        // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
+        settlement: os.hr.payroll.settlement.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.payroll.settlement', input, { actor, orgId }))),
         lines: {
           setInputs: os.hr.payroll.lines.setInputs.handler(hrCommand('hr.payroll.line.inputs.set')),
           adjust: os.hr.payroll.lines.adjust.handler(hrCommand('hr.payroll.line.adjust')),
@@ -885,15 +894,40 @@ export function createRpcHandler(
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
+      ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
+      followup: {
+        draft: os.meetings.followup.draft.handler(meetingsQuery('meetings.followup.draft')),
+        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only, a published summary).
+        wording: os.meetings.followup.wording.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const draft = await runtime.query<FollowupDraft>('meetings.followup.draft', { meetingId: input.meetingId }, { actor, orgId });
+            return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
+          }),
+        ),
+        // A send runs once per idempotency key: a double click or a retry gets the first answer, never a second mail.
+        send: os.meetings.followup.send.handler(({ context, input }) => inMeetings(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
+        })),
+      },
+      links: {
+        add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),
+        remove: os.meetings.links.remove.handler(meetingsCommand('meetings.link.remove')),
+        list: os.meetings.links.list.handler(meetingsQuery('meetings.link.list')),
+        byTarget: os.meetings.links.byTarget.handler(meetingsQuery('meetings.link.by_target')),
+        suggest: os.meetings.links.suggest.handler(meetingsQuery('meetings.link.suggest')),
+      },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
         draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
         correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
         start: os.meetings.transcript.start.handler(meetingsCommand('meetings.transcript.start')),
+        cancel: os.meetings.transcript.cancel.handler(meetingsCommand('meetings.transcript.cancel')),
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
       },
@@ -2093,6 +2127,47 @@ export function createRpcHandler(
           ? guard(() => revokeOwnSessionsWithoutOrg(runtime, actorOf(context.user), input))
           : inOrg(context, (orgId, actor) => runtime.execute('kernel.session.revoke', input, { actor, orgId })),
       ),
+    },
+    mcp: {
+      memberGrants: {
+        get: os.mcp.memberGrants.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.member_grants.get', {}, { actor, orgId }))),
+        set: os.mcp.memberGrants.set.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.member_grants.set', input, { actor, orgId }))),
+      },
+      grant: {
+        list: os.mcp.grant.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.grant.list', {}, { actor, orgId }))),
+        revoke: os.mcp.grant.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.grant.revoke', input, { actor, orgId }))),
+      },
+      // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the secret is made and sealed here, and only the person who asked sees it, once.
+      wake: {
+        get: os.mcp.wake.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.wake.get', input, { actor, orgId }))),
+        set: os.mcp.wake.set.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            // The command checks the role again; checking first keeps a member from learning how the deployment resolves names.
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const made = makeWakeSecret(broker, orgId, input.grantId);
+            const done = await runtime.execute<{ created: boolean }>('kernel.mcp.wake.set', { ...input, credential: made.credential }, { actor, orgId });
+            const [view] = await runtime.query<McpWakeView[]>('kernel.mcp.wake.get', { grantId: input.grantId }, { actor, orgId });
+            if (!view) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+            // The secret goes back only when this call made the wake-up; a change to an existing one leaves its secret alone and the one made here is dropped.
+            return { ...view, secret: done.created ? made.secret : null };
+          }),
+        ),
+        rotateSecret: os.mcp.wake.rotateSecret.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            const made = makeWakeSecret(broker, orgId, input.grantId);
+            await runtime.execute('kernel.mcp.wake.rotate_secret', { grantId: input.grantId, credential: made.credential }, { actor, orgId });
+            const [view] = await runtime.query<McpWakeView[]>('kernel.mcp.wake.get', { grantId: input.grantId }, { actor, orgId });
+            if (!view) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+            return { ...view, secret: made.secret };
+          }),
+        ),
+        clear: os.mcp.wake.clear.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.clear', input, { actor, orgId }))),
+        test: os.mcp.wake.test.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.test', input, { actor, orgId }))),
+      },
     },
     extension: {
       tokens: {

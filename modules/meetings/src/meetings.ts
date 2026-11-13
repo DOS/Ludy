@@ -3,10 +3,16 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
+import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
-import { transcribeCommandList, transcribeQueryList } from './transcribe.ts';
+import { transcribeCommandList } from './transcribe.ts';
+import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { resultCommands, resultQueries } from './results.ts';
-import { summaryCommands, summaryQueries } from './summary.ts';
+import { summaryCommands } from './summary.ts';
+import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
+import { linkCommands, linkQueries } from './links.ts';
+import { dropFollowupPayloads } from './followup-erase.ts';
+import { followupCommands, followupQueries } from './followup.ts';
 import {
   dayText,
   meetingMediaDiscard,
@@ -21,12 +27,14 @@ import {
 } from './retention.ts';
 import {
   auditValue,
+  MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
   zMeetingExtensionStatus,
   zMeetingListInput,
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
   zMeetingMediaRecord,
+  zMeetingOwnerListInput,
   zMeetingReaderAdd,
   zMeetingReaderRemove,
   zMeetingRef,
@@ -34,6 +42,8 @@ import {
   type MeetingDetail,
   type MeetingExtensionStatus,
   type MeetingLanguage,
+  type MeetingOwnerList,
+  type MeetingOwnerListItem,
   type MeetingStatus,
   type MeetingSummary,
   type MeetingVisibility,
@@ -55,6 +65,21 @@ function userOf(actor: CommandContext['actor'] | QueryContext['actor']): string 
     throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
   }
   return actor.userId;
+}
+
+const MEDIA_EXTENSIONS: Record<string, string> = {
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'video/mp4': 'mp4',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/mpeg': 'mp3',
+};
+
+/** File extension for a sniffed container (detectMediaContainer), so the stored name matches the bytes (#2703). */
+export function mediaExtension(contentType: string, kind: 'audio' | 'video'): string {
+  return MEDIA_EXTENSIONS[contentType] ?? (kind === 'audio' ? 'bin' : 'mp4');
 }
 
 export function detectMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): string | null {
@@ -267,7 +292,7 @@ export const meetingMediaRecord = defineCommand({
     )`.execute(ctx.trx);
 
     const fileId = randomUUID();
-    const filename = `meeting-${input.meetingId}.${input.kind === 'audio' ? 'opus' : 'mp4'}`;
+    const filename = `meeting-${input.meetingId}.${mediaExtension(input.contentType, input.kind)}`;
     await ctx.trx
       .insertInto('crove_kernel.file')
       .values({
@@ -294,7 +319,7 @@ export const meetingMediaRecord = defineCommand({
           file_id: fileId,
           segment_order: 0,
           start_offset_seconds: 0,
-          length_seconds: input.lengthSeconds ?? 1800,
+          length_seconds: input.lengthSeconds,
         })
         .execute();
     } else {
@@ -308,7 +333,7 @@ export const meetingMediaRecord = defineCommand({
           id: randomUUID(),
           meeting_id: input.meetingId,
           file_id: fileId,
-          length_seconds: input.lengthSeconds ?? 1800,
+          length_seconds: input.lengthSeconds,
           video_retention_date: videoRetentionDate,
         })
         .execute();
@@ -344,13 +369,15 @@ export const meetingDelete = defineCommand({
     }
 
     await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016).
+    const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     await ctx.trx
       .deleteFrom('crove_meetings.meeting')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .execute();
 
-    ctx.audit({ meetingId: input.meetingId, shredded: true });
+    ctx.audit({ meetingId: input.meetingId, shredded: true, mailPayloads });
     return { meetingId: input.meetingId, shredded: true };
   },
 });
@@ -365,6 +392,8 @@ export const meetingOwnerDelete = defineCommand({
   handler: async (ctx, input) => {
     userOf(ctx.actor);
     await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016). A meeting that does not exist has none, and the delete below then says so.
+    const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
 
     const { rows } = await sql<{ deleted: boolean }>`
       SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
@@ -374,8 +403,61 @@ export const meetingOwnerDelete = defineCommand({
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
 
-    ctx.audit({ meetingId: input.meetingId, shredded: true, complianceOwnerDelete: true });
+    ctx.audit({ meetingId: input.meetingId, shredded: true, complianceOwnerDelete: true, mailPayloads });
     return { meetingId: input.meetingId, shredded: true };
+  },
+});
+
+// The owner's compliance list (#2703, ADR-0047): every meeting of the org as metadata only, the attendees-only ones the owner is no reader
+// of included, so the owner can pick one for meetings.meeting.owner_delete. A command, not a query, so every call leaves an audit row; the
+// row holds counts and ids, never text. The definer checks the owner again and answers no text column.
+const OWNER_LIST_STATUS: Record<number, MeetingStatus> = { 1: 'ready', 2: 'processing', 3: 'completed', 4: 'error' };
+
+export const meetingOwnerList = defineCommand({
+  name: 'meetings.meeting.owner_list',
+  input: zMeetingOwnerListInput,
+  risk: 'R0',
+  sideEffect: 'none',
+  access: ['owner'],
+  handler: async (ctx, input): Promise<MeetingOwnerList> => {
+    userOf(ctx.actor);
+    const limit = input.limit ?? MEETING_OWNER_LIST_PAGE;
+    // One row more than the page tells whether another page follows. The definer caps a call at the page size, so a full page asks
+    // again for one row past it instead.
+    const { rows } = await sql<{
+      id: string;
+      started_text: string;
+      recorder_user_id: string;
+      org_wide: boolean;
+      status_code: number;
+      audio_retention_date: Date | string;
+      video_retention_date: Date | string | null;
+      text_retention_date: Date | string | null;
+    }>`
+      SELECT l.id, pg_catalog.to_json(l.started_at) #>> '{}' AS started_text, l.recorder_user_id, l.org_wide, l.status_code,
+             l.audio_retention_date, l.video_retention_date, l.text_retention_date
+      FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, ${limit}::integer, ${input.afterStartedAt ?? null}::timestamptz, ${input.afterId ?? null}::uuid) l
+    `.execute(ctx.trx);
+    const items: MeetingOwnerListItem[] = rows.map((r) => ({
+      id: r.id,
+      recorderUserId: r.recorder_user_id,
+      startedAt: r.started_text,
+      visibility: r.org_wide ? 'org' : 'attendees',
+      status: OWNER_LIST_STATUS[r.status_code] ?? 'error',
+      audioRetentionDate: dayText(r.audio_retention_date),
+      videoRetentionDate: r.video_retention_date === null ? null : dayText(r.video_retention_date),
+      textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
+    }));
+    let next: MeetingOwnerList['next'] = null;
+    const last = items[items.length - 1];
+    if (items.length === limit && last) {
+      const { rows: more } = await sql<{ id: string }>`
+        SELECT l.id FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, 1, ${last.startedAt}::timestamptz, ${last.id}::uuid) l
+      `.execute(ctx.trx);
+      if (more.length > 0) next = { afterStartedAt: last.startedAt, afterId: last.id };
+    }
+    ctx.audit({ count: items.length, limit, paged: input.afterId !== undefined, more: next !== null });
+    return { items, next };
   },
 });
 
@@ -870,6 +952,7 @@ export const meetingsCommands = [
   meetingMediaRecord,
   meetingDelete,
   meetingOwnerDelete,
+  meetingOwnerList,
   meetingReaderAdd,
   meetingReaderRemove,
   meetingMediaKeyReseal,
@@ -879,9 +962,13 @@ export const meetingsCommands = [
   meetingMediaDiscard,
   transcriptDraftStore,
   transcriptCorrect,
+  ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
   ...summaryCommands,
+  ...summaryRunCommands,
+  ...linkCommands,
+  ...followupCommands,
 ];
 
 export const meetingsQueries = [
@@ -894,7 +981,10 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingMediaOrphanKeys,
   transcriptGet,
-  ...transcribeQueryList,
+  meetingSearch,
+  ...transcribeRunQueries,
   ...resultQueries,
-  ...summaryQueries,
+  ...summaryRunQueries,
+  ...linkQueries,
+  ...followupQueries,
 ];

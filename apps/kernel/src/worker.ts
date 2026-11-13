@@ -42,6 +42,9 @@ import { runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
+import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
+import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, runWakeDelivery, type WakeJob } from './mcp-wake.ts';
+import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -469,7 +472,7 @@ export interface WorkerDeps {
   // unset: none.
   aiPrice?: { inputPerMTok: string; outputPerMTok: string; audioPerMinute?: string; defaultMonthlyBudget?: string | null };
   // Transcription of a meeting as the recorder's own Vy (#2578, M4b): the provider's endpoint. Unset: no job is queued or worked (the module works with it off).
-  meetingsTranscribe?: { provider: MeetingsTranscribeDeps['provider'] };
+  meetingsTranscribe?: { provider: MeetingsTranscribeDeps['provider']; measurer: MeetingsTranscribeDeps['measurer'] };
   // Back-pressure (#894): above this outbox lag the agent, bulk mail, archive and retention queues stop fetching
   // (default DEFAULT_OUTBOX_LAG_PAUSE_SECONDS).
   outboxLagPauseSeconds?: number;
@@ -1123,6 +1126,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       store: deps.store,
       broker: deps.channels.broker,
       provider: deps.meetingsTranscribe.provider,
+      measurer: deps.meetingsTranscribe.measurer,
       price: { inputPerMTok: deps.aiPrice?.inputPerMTok ?? '0', outputPerMTok: deps.aiPrice?.outputPerMTok ?? '0', audioPerMinute: deps.aiPrice?.audioPerMinute ?? '0' },
     };
     await boss.work<MeetingsTranscribeJob>(QUEUES.meetingsTranscribe, { batchSize: 1 }, async ([job]) => {
@@ -1153,6 +1157,52 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // The member purges stay queued (they carry whose notes to purge) for when notes is installed again.
     await dropCron(QUEUES.notesTrash);
     await dropCron(QUEUES.notesRemind);
+  }
+
+  // Vy working for one member (ADR-0049, #2822), kernel-level and independent of the Notes module: once a day the expired results, then the data of
+  // the people who left more than 30 days ago (member-vy-worker.ts).
+  await boss.work(QUEUES.memberVySweep, { batchSize: 1 }, async () => {
+    // Each sweep runs even if the other fails; the first failure is rethrown so the job is retried and seen.
+    let failure: unknown;
+    let results = 0;
+    let former = 0;
+    try {
+      results = await sweepMemberVyResults({ runtime: deps.runtime, workerDb: deps.workerDb });
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      former = await sweepMemberVyFormerMembers({ runtime: deps.runtime, workerDb: deps.workerDb });
+    } catch (error) {
+      failure ??= error;
+    }
+    if (results > 0 || former > 0) console.log(`[member-vy-sweep] removed ${results} expired results and ${former} rows of former members`);
+    if (failure) throw failure;
+  });
+  await boss.schedule(QUEUES.memberVySweep, MEMBER_VY_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEMBER_VY_SWEEP_EXPIRE_SECONDS });
+
+  // The wake-up webhook of an MCP grant (ADR-0051 decision 4, #3024): a sweep every minute stores and hands over what is due (mcp-wake-sweep.ts), and one job per delivery posts
+  // it to the receiver the org set (mcp-wake.ts). Without a credential key no secret can be opened, so neither runs and nothing is sent; the queue's retries are bounded.
+  const wakeBroker = deps.channels?.broker;
+  if (wakeBroker && wakeBroker.id !== 'none') {
+    await boss.work<WakeJob>(QUEUES.mcpWake, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+      if (!job) return;
+      await runWakeDelivery({ runtime: deps.runtime, broker: wakeBroker }, job.data, { retryCount: job.retryCount, retryLimit: WAKE_RETRY_LIMIT });
+    });
+    await boss.work(QUEUES.mcpWakeSweep, { batchSize: 1 }, async () => {
+      const done = await runWakeSweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        send: (job: WakeJob) =>
+          boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS }),
+      });
+      if (done.handedOver + done.expired + done.schedules + done.signals + done.failures > 0) {
+        console.log(`[mcp-wake-sweep] handed over ${done.handedOver}, expired ${done.expired}, schedules ${done.schedules}, signals ${done.signals}, failures ${done.failures}`);
+      }
+    });
+    await boss.schedule(QUEUES.mcpWakeSweep, MCP_WAKE_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MCP_WAKE_SWEEP_EXPIRE_SECONDS });
+  } else {
+    await dropCron(QUEUES.mcpWakeSweep);
   }
 
   // Bank feeds (ADR-0039, #2044): a connection's sync, queued by the relay above and, once a day, for every active

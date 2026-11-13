@@ -162,6 +162,9 @@ suite('the recorder\'s transcription run (#2578)', () => {
     }
   }
   const sqlAdmin = (text: string, params: unknown[] = []) => admin((c) => c.query(text, params));
+  // An expired run needs both timestamps moved (CHECK expires_at > started_at); the member_vy 4-hour bound (#2856) forbids moving the start, so triggers are off for this one statement.
+  const expireRun = (runId: string) =>
+    admin((c) => c.query(`SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = '${orgId}' AND id = '${runId}'`));
 
   it('is executable by the worker login alone: every crove_ role, the trigger function included, gets a real 42501 except the worker on the audio door', async () => {
     const info = await admin((c) => c.query<{ definer: boolean; config: string[]; rettype: string }>(`SELECT prosecdef AS definer, proconfig AS config, prorettype::regtype::text AS rettype FROM pg_proc WHERE oid = '${FN}'::regprocedure`));
@@ -228,7 +231,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
     const cases: Array<{ name: string; mutate: () => Promise<unknown>; expected: string }> = [
       { name: 'succeeded', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'succeeded', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
       { name: 'cancelled', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'TEST' WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
-      { name: 'expired', mutate: () => sqlAdmin(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
+      { name: 'expired', mutate: () => expireRun(runOf('extra')), expected: 'MEETINGS_RUN_REQUIRED' },
       { name: 'result failed', mutate: () => sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'failed', body = NULL, error_code = 'TEST' WHERE org_id = $1 AND run_id = $2`, [orgId, runOf('extra')]), expected: 'MEETINGS_RUN_REQUIRED' },
     ];
     for (const item of cases) {
@@ -251,10 +254,36 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect(await afterEntry('gone', meeting, () => sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, member)), 'member removed').toBe('MEETINGS_NOT_RECORDER');
   });
 
+  it('refuses after a successful entry once the meeting\'s audio retention date is reached (#2863)', async () => {
+    const meeting = meetings.extras as string;
+    runs.extra = await startRun('extra', meeting);
+    const until = (await sqlAdmin(`SELECT audio_retention_date::text AS d FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meeting])).rows[0]?.d as string;
+    expect(await afterEntry('extra', meeting, async () => undefined), 'a control, a date still ahead').toBeNull();
+    try {
+      expect(await afterEntry('extra', meeting, () => sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1 AND id = $2`, [orgId, meeting])), 'on the date').toBe('MEETINGS_AUDIO_EXPIRED');
+    } finally {
+      await sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meeting, until]);
+    }
+    expect(await afterEntry('extra', meeting, async () => undefined), 'a control after the restore').toBeNull();
+  });
+
+  it('refuses the admit (run.check) of a run whose member was demoted to viewer, by the runtime before any handler (#2863 item 6)', async () => {
+    const meeting = meetings.extras as string;
+    runs.extra = await startRun('extra', meeting);
+    const member = [orgId, users.extra];
+    expect(await code(vy('extra').query('kernel.member_vy.run.check', {})), 'a control').toBeNull();
+    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, member);
+    try {
+      expect(await code(vy('extra').query('kernel.member_vy.run.check', {})), 'demoted to viewer').toBe('FORBIDDEN');
+    } finally {
+      await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, member);
+    }
+  });
+
   it('refuses at the entry, with the runtime\'s own codes, a member who left, a revoked vy.use and an expired run', async () => {
     // The runtime's refusals before the definer is reached, each by its exact code: the former member's membership ends, and another member's run expires.
     await sqlAdmin(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.former]);
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET started_at = now() - interval '2 hours', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [orgId, runs.other?.runId]);
+    await expireRun(runs.other?.runId as string);
     const enterError = async (who: string): Promise<string> => {
       const run = runs[who] as { agentId: string; runId: string };
       const c = new pg.Client({ connectionString: workerUrl });
@@ -312,5 +341,9 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect((await drafts()).rows[0]?.n).toBe('0');
     await app.execute('meetings.transcript.copy_result', { meetingId, runId: fresh.runId }, { actor: asUser('recorder'), orgId });
     expect((await drafts()).rows[0]?.n).toBe('1');
+    // The copy is a sink (#2941): what it wrote is the model's text, born tainted, and names the run it came from.
+    const born = await sqlAdmin(`SELECT tainted, source_run_id FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+    expect(born.rows.length).toBeGreaterThan(0);
+    expect(born.rows.every((r: { tainted: boolean; source_run_id: string | null }) => r.tainted && r.source_run_id === fresh.runId)).toBe(true);
   });
 });

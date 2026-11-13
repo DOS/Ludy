@@ -39,6 +39,8 @@ const PUBLIC: Record<string, string> = {
     "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
   '/api/extension/token':
     "the Ludy extension's one-time code exchange (#2582, ADR-0047 point 10): the code (256 random bits, 5 minutes, single use, stored only as its SHA-256) is the credential and PKCE S256 binds it to the verifier only the extension holds; a body cap of 1 KB, a per-client rate limit, the code and verifier checked for shape before the database, one 400 answer for every refusal, only hashes reach SQL, and nothing of any org in the answer but for a valid exchange",
+  '/api/meetings/:id/video/stream':
+    "playback of one meeting's video by a short-lived signed ticket (#2703): a `<video>` cannot send the bearer header, so POST /api/meetings/:id/video/ticket (behind authenticate(), reader-checked) issues a ticket bound to the org, user, session, meeting and purpose; the route verifies it in constant time, answers one 401 for any bad ticket, and re-checks the session and the reader's access on every range request",
   '/api/stream': 'the event stream, opened with a one-time ticket that POST /api/stream/tickets issues after the session check',
   '/api/review/view': "Social's client review page (#589): a signed, expiring review link is the credential",
   '/api/review/media': 'the same review link, for the media of the post under review',
@@ -57,6 +59,16 @@ const PUBLIC: Record<string, string> = {
   '/assets/*': "the SPA's static files",
   '/favicon.svg': "the SPA's icon",
   '/*': 'the SPA shell (index.html) and the security headers on every response; no data',
+  '/.well-known/oauth-protected-resource/mcp':
+    "the MCP endpoint's RFC 9728 protected resource metadata (ADR-0051 decision 2, ADR-0032 item 9, #2975): static JSON naming the resource, the issuer and the one scope; no tenant data, no state",
+  '/.well-known/oauth-authorization-server':
+    "RFC 8414 authorization server metadata of the embedded OAuth 2.1 server (ADR-0032, #2975): static JSON about the deployment's endpoints and capabilities; no tenant data",
+  '/.well-known/openid-configuration':
+    "the OpenID Connect Discovery form of the same authorization server metadata (ADR-0032, #2975): static JSON; no tenant data",
+  '/oauth/*':
+    "the embedded OAuth 2.1 authorization server (ADR-0032, #2975): authorize, token, registration, revocation and JWKS. Public by protocol: a request proves itself with PKCE (S256 only), a single-use code or a rotating refresh token stored only as a hash, is rate limited per address, and grants nothing until a signed-in owner or admin consents on the SPA through /api/rpc",
+  '/mcp':
+    "the MCP endpoint (ADR-0051 decision 2, #2975): it does not take a browser session, only an access token the embedded authorization server issued for this resource, checked at the edge (signature, issuer, audience) and again against the live grant in the request's own transaction; with no token it answers 401 with the resource metadata challenge and runs no query",
 };
 
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
@@ -99,6 +111,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     // The Meta app and its verify token, so the Page webhook is registered and listed (conversation core CV2, #2307).
     facebookWebhook: { appSecret: 's'.repeat(32), verifyToken: 'v'.repeat(24) },
     stream: { hub: { ready: false }, tickets: unused, slots: unused, recheckSeconds: 30 } as unknown as NonNullable<HttpDeps['stream']>,
+    // The MCP endpoint's authorization server, so /mcp, /oauth/* and the well-known routes are registered and listed (#2975).
+    oauth: { provider: { callback: () => async () => undefined }, issuer: 'http://localhost', resource: 'http://localhost/mcp', verifyAccessToken: async () => null } as unknown as NonNullable<HttpDeps['oauth']>,
   });
 }
 

@@ -24,6 +24,8 @@ export interface PublicConfig {
   supportUrl?: string | null;
   // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); absent from an older kernel: none.
   extensionIds?: string[];
+  // The deployment runs the MCP endpoint (#2975): Settings lists the AI apps connected to the org.
+  mcpEnabled?: boolean;
   // Cloudflare Turnstile's site key for the booking form (TURNSTILE_SITE_KEY, #1353); null when the deployment sets none.
   turnstileSiteKey?: string | null;
   // The product name users see (BRAND_NAME, issue #1040); older servers send none, and "Crove" stands.

@@ -139,6 +139,10 @@ export function toDomainError(error: unknown): DomainError {
       if (pg.message === 'EXTENSION_TOKEN_INVALID') {
         return new DomainError('EXTENSION_TOKEN_INVALID', 401, 'Mã của tiện ích Ludy không còn hiệu lực, hãy đăng nhập lại tiện ích');
       }
+      // crove_kernel.mcp_grant_check (issue #2975): the MCP grant is revoked, expired, stopped, or its consenting user is no longer an owner or admin.
+      if (pg.message === 'MCP_GRANT_INVALID') {
+        return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực');
+      }
       return new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập đã hết hiệu lực, hãy đăng nhập lại');
     case '55000':
       if (pg.message?.includes('AUTH_GRANTS_MISSING')) {
@@ -146,6 +150,11 @@ export function toDomainError(error: unknown): DomainError {
       }
       return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     case '42501':
+      // crove_kernel.enter_mcp_member_context (ADR-0051 decision 2, slice 3b): a member-bound grant that cannot enter. The client gets the one generic
+      // answer above whatever the reason; the specific reason travels only in `audit` (never enumerable) for the security event the runtime notes.
+      if (pg.message === 'MCP_GRANT_REVOKED' || pg.message === 'MCP_GRANT_EXPIRED' || pg.message === 'MCP_GRANT_NOT_MEMBER' || pg.message === 'MCP_GRANT_NOT_COMPANY' || pg.message === 'MCP_MEMBER_GRANTS_OFF') {
+        return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực', undefined, { audit: { mcpRefusal: pg.message } });
+      }
       // A second enter_context in one transaction (plan §4.5 item 1): a bug in the caller, never a user's 403.
       if (pg.message?.includes('CONTEXT_REENTRY')) return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       // A context or seal that does not verify (plan §4.5 item 5, T11): tampering or a bug, never a user's 403.
