@@ -10,6 +10,7 @@ import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
+  TelegramConversations,
   TelegramPublisher,
   DiscordPublisher,
   MastodonPublisher,
@@ -493,7 +494,7 @@ export function channelPublishers(config: ChannelConfig): Record<string, Publish
   if (config.CHANNEL_SANDBOX === 'true') publishers.sandbox = new SandboxPublisher();
   // An account on its own PDS (#792) is called through the egress guard; images go up to 1 MB each.
   if (config.CHANNEL_BLUESKY === 'true') publishers.bluesky = new BlueskyPublisher(undefined, egressFetch({ timeoutMs: 30_000, maxBytes: 2_000_000, overLimit: 'fail' }));
-  if (config.CHANNEL_TELEGRAM === 'true') publishers.telegram = new TelegramPublisher();
+  if (config.CHANNEL_TELEGRAM === 'true') publishers.telegram = new TelegramPublisher(undefined, new TelegramConversations());
   if (config.CHANNEL_DISCORD === 'true') publishers.discord = new DiscordPublisher();
   // An instance is the tenant's to name: its calls go through the egress guard, never a plain fetch.
   if (config.CHANNEL_MASTODON === 'true') publishers.mastodon = new MastodonPublisher(egressFetch({ timeoutMs: 300_000, maxBytes: 2_000_000, overLimit: 'fail' }));
