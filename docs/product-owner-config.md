@@ -30,6 +30,12 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   chat, one approval per run (AGENTS.md), for example granting a bucket key a
   new permission such as `s3:PutObjectTagging` or applying a lifecycle rule
   to a real bucket. A sub-session still does not merge.
+- Owner decision 2026-11-13 (Platform PO chat, popup): ask JOY only through
+  the `AskUserQuestion` popup, one popup with all the open questions
+  together (the tool takes four at most; a fifth waits for the answers),
+  never as inline text in a message. Each question still names what is
+  decided, why it matters, the options, the recommendation (first) and what
+  happens without an answer, in Vietnamese with full diacritics (AGENTS.md).
 
 ## Board
 
@@ -90,6 +96,15 @@ turn on `sprint_review` with `line_scopes`.
   and signal for member grants) is deferred, because of the risk of exposing private
   data. No private tool is built; the member catalog stays empty and the scope
   `ludy.member.read` stays dark until the owner reopens it.
+- Owner decision 2026-11-13 (Platform PO chat, popup): cut release v0.3.2
+  (the `CHANGELOG.md` section "v0.3.2 (2026-11-13)", then a tag, pushed by a
+  session that can push tags, see "Branches, environments and gates").
+- Owner decision 2026-11-13 (Platform PO chat, popup): build supplier bank
+  accounts and approved supplier payments now. They give rule 3 of V5 (a
+  supplier's bank account changed while a payment waits) the data it needs;
+  the rule stays quiet, and `ludy_signals` lists it as not available, until
+  they exist. Accounting owns the build; the design starts as an issue with
+  the owner decisions it needs, before any code.
 - Owner decision 2026-11-11 (Platform PO chat, popup "Đồng ý"): an AI app
   connected over MCP sees full customer and invoice data like a HubSpot or
   Twenty MCP does (person names, email, phone, address, tax code, invoice
