@@ -39,7 +39,7 @@ const view = (sourceOrderIds: string[]): EInvoiceIssueView => ({
   lineCount: 1,
   buyerKind: 'business',
   buyerName: 'Công ty Mua Thử',
-  buyerTaxCode: '0100109106',
+  buyerTaxCode: null,
   series: '1/C26TAA',
   subtotal: '100000',
   vatAmount: '10000',
