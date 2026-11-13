@@ -88,6 +88,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_meetings.live_chunk',
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
@@ -157,6 +158,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.today_mail', () => 'false'], // Per member.
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
+  ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -227,6 +229,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.audio_segment', 'false'],
+  // Live pieces of a recording (ADR-0052 L4a, #3109): worker system context reads and writes nothing.
+  ['crove_meetings.live_chunk', 'false'],
   // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -2300,6 +2304,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           segment_order: 0,
           start_offset_seconds: 0,
           length_seconds: 600,
+        },
+      };
+    },
+  },
+  // #3109 (ADR-0052 L4a): one live piece of a recording, named by its ciphertext file row; read, written and deleted by the recorder alone.
+  'crove_meetings.live_chunk': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      const media = meetingMediaFileRow(o, 'meeting_audio');
+      return {
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_kernel.file', values: media },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          seq: 0,
+          file_id: media.id,
+          size_bytes: 100,
+          length_seconds: 15,
         },
       };
     },
