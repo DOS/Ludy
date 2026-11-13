@@ -23,6 +23,10 @@ import { Runtime } from "@crove/kernel-runtime";
 import { financeCommands, financeQueries } from "@crove/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
+import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+
+// The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
+let FEAT: AiRunFeature = { cols: "", vals: "" };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(
@@ -196,6 +200,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    FEAT = await admin((c) => aiRunFeature(c));
     await setRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",
@@ -301,6 +306,13 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
   });
 
   // Unconditional: before stage B no member-mode context exists, and from then on only the worker login enters it.
+
+  // The presence pin (#2822): what member Vy rests on is there, so none of the cases below can pass by finding nothing to check. These cases once skipped when an
+  // object was missing (the file was written before stage A merged); they now run unconditionally, and this one names what is absent.
+  it("finds every object the cases below rest on: results, memory, the override table, the agent kind, the permission function, the member entry, the result binding and the catalog", () => {
+    expect(has, "the objects looked up in beforeAll").toEqual({ results: true, memory: true, override: true, kind: true, permission: true, memberEntry: true, resultBind: true, catalog: true });
+  });
+
   it("has no member-mode context before stage B, and only the worker enters it after", async () => {
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
@@ -310,12 +322,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     expect(
       rows.map((r) => r.n),
       "enter_member_vy_context arrives with stage B, with its own invariant step first",
-    ).toEqual(
-      has.memberEntry
-        ? ["crove_kernel.enter_member_vy_context(uuid,uuid,uuid)"]
-        : [],
-    );
-    if (!has.memberEntry) return;
+    ).toEqual(["crove_kernel.enter_member_vy_context(uuid,uuid,uuid)"]);
     // The same ids that a worker would pass: the API login, the system and an org-chart agent context all refuse them.
     for (const actor of [author, ...others.filter((o) => o !== system)]) {
       const entered = await outcome(
@@ -373,11 +380,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     expect(
       permFns,
       "member_has_permission has exactly the signature the cases call",
-    ).toEqual(
-      has.permission
-        ? ["crove_kernel.member_has_permission(uuid,uuid,text)"]
-        : [],
-    );
+    ).toEqual(["crove_kernel.member_has_permission(uuid,uuid,text)"]);
     expect(
       has.permission,
       "member_has_permission and member_permission_override arrive together",
@@ -414,7 +417,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
       subject: randomUUID(),
     };
     beforeAll(async () => {
-      if (!has.results || !has.memory) return;
       await admin(async (c) => {
         // The run behind the result is the member's own Vy run when the agent kind exists (seeded with the binding triggers set aside), an org-chart agent's before.
         let agentId = agent.agentId;
@@ -427,8 +429,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           );
         }
         await c.query(
-          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
-           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${FEAT.cols})
+           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${FEAT.vals})`,
           [orgId, ids.subject, agentId],
         );
         await c.query("SET session_replication_role = DEFAULT");
@@ -445,7 +447,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("shows the member their own result and memory", async () => {
-      if (!has.results || !has.memory) return;
       const seen = await run(author, async (c) => ({
         results: (
           await c.query<{ id: string }>(
@@ -462,7 +463,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("lets no other member, owner, admin, viewer, entity-limited member, org-chart agent or the system read a result or a memory", async () => {
-      if (!has.results || !has.memory) return;
       for (const actor of others) {
         const seen = await run(actor, async (c) => ({
           results: (
@@ -494,7 +494,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("lets no one else change, delete or write a row for the member", async () => {
-      if (!has.results || !has.memory) return;
       for (const actor of others) {
         const changes = await run(actor, async (c) => {
           const update = await outcome(
@@ -567,7 +566,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
   // private_read goes from false to true and never back, on the result and on the run (ADR-0049 decision 4 and ruling 3).
   describe("the private-read flag", () => {
     it("is never cleared by the member, and false to true is allowed", async () => {
-      if (!has.results) return;
       const rid = randomUUID();
       const runId = randomUUID();
       await admin(async (c) => {
@@ -580,9 +578,9 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           );
         }
         await c.query(
-          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
-           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
-          [orgId, runId, has.kind ? agentId : agent.agentId],
+          `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${FEAT.cols})
+           VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${FEAT.vals})`,
+          [orgId, runId, agentId],
         );
         await c.query(
           `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
@@ -667,7 +665,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     expect(
       found.rows.map((r) => r.fn),
       "one counts function, with no arguments",
-    ).toEqual(has.results ? ["crove_kernel.member_vy_private_counts()"] : []);
+    ).toEqual(["crove_kernel.member_vy_private_counts()"]);
     if (!found.rows[0]) return;
     const columns = [
       ...found.rows[0].result.matchAll(
@@ -719,11 +717,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     expect(
       found.rows.map((r) => r.fn),
       "one cancel function with this signature",
-    ).toEqual(
-      has.kind && found.rows.length
-        ? ["crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)"]
-        : [],
-    );
+    ).toEqual(["crove_kernel.member_vy_runs_cancel(uuid[],uuid,text,text)"]);
     if (!found.rows[0]) return;
     expect(found.rows[0].result, "it answers a count and nothing else").toBe(
       "bigint",
@@ -807,7 +801,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
         [orgId, agentId, randomUUID()],
       );
       await c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
         [orgId, runId, agentId],
       );
       return { agentId, runId };
@@ -861,7 +855,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
       );
 
     it("inserts a member_vy agent only for the member in their own context, with the fixed template", async () => {
-      if (!has.kind) return;
       expect(
         (await insertAgent(vyUser, users.vyUser)).ok,
         "the member for themselves",
@@ -894,7 +887,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("never turns an org-chart agent into a member_vy one, or the reverse, and keeps one per member", async () => {
-      if (!has.kind) return;
       const retag = await outcome(
         admin((c) =>
           c.query(
@@ -967,7 +959,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("lets a member_vy agent hold no seat, enter no org-chart context, and keeps its runs to its member", async () => {
-      if (!has.kind) return;
       // Committed, so the worker login can be asked to enter the agent and the readers can look for its run.
       const made = await outcome(
         inContext(
@@ -981,7 +972,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
               [orgId, agentId, users.vyUser],
             );
             await c.query(
-              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
               [orgId, runId, agentId],
             );
             return { agentId, runId };
@@ -1050,7 +1041,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           const forged = await outcome(
             inContext(actor.url(), actor.enter, (c) =>
               c.query(
-                `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+                `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
                 [orgId, randomUUID(), agentId],
               ),
             ),
@@ -1093,7 +1084,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
   // The permission vy.use (ADR-0049 decision 10): one resolution for every caller.
   describe("the permission vy.use", () => {
     it("gives owners, admins and members vy.use and a viewer none by default, and a deny beats the default", async () => {
-      if (!has.permission) return;
       for (const [user, expected] of [
         [users.owner, true],
         [users.admin, true],
@@ -1105,7 +1095,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
           `default for ${user === users.viewer ? "a viewer" : "a member"}`,
         ).toBe(expected);
       }
-      if (!has.override) return;
       await admin((c) =>
         c.query(
           `INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', false, $3)`,
@@ -1149,7 +1138,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("lets a viewer hold vy.use through a grant or a department role and no other permission, and finance.viewer grants none", async () => {
-      if (!has.permission) return;
       const viewerRoles = async (roles: string[]) => {
         const out: Record<string, boolean | undefined> = {};
         for (const role of roles) {
@@ -1278,8 +1266,8 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
             );
           }
           await c.query(
-            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at)
-             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes')`,
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at${opts.agentKind === "member_vy" ? FEAT.cols : ""})
+             VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '6 minutes'${opts.agentKind === "member_vy" ? FEAT.vals : ""})`,
             [orgId, runId, agentId],
           );
         } finally {
@@ -1324,7 +1312,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     }
 
     it("takes a result only for the member whose own Vy made the run", async () => {
-      if (!has.resultBind || !has.kind) return;
       // Positive control: the same shape for the run's own member is accepted, so the refusals below are about the binding.
       expect(
         (
@@ -1362,7 +1349,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
     });
 
     it("caps a result at 31 days from the earlier of its written creation and now", async () => {
-      if (!has.resultBind || !has.kind) return;
       const base = {
         agentKind: "member_vy" as const,
         agentMember: users.vyUser,
@@ -1423,7 +1409,6 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
   // The two tables that say who may hold vy.use hold exactly the rows of ADR-0049 decision 10 (absent before slice 2).
   describe("the permission catalog and its defaults", () => {
     it("hold exactly vy.use and its three base-role defaults, and no tenant login may write them", async () => {
-      if (!has.catalog) return;
       const rows = await admin(async (c) => ({
         catalog: (
           await c.query<{
@@ -1484,7 +1469,7 @@ suite("Vy working for one member, stage A invariants (ADR-0049, #2754)", () => {
       .filter((c) => "memberVy" in c && (c as { memberVy?: unknown }).memberVy)
       .map((c) => c.name)
       .sort();
-    const allowed = has.memberEntry ? ["kernel.member_vy.meeting_audio.open", "kernel.member_vy.result.store"] : [];
+    const allowed = ["kernel.member_vy.meeting_audio.open", "kernel.member_vy.result.store"];
     expect(
       memberMode.filter((n) => !allowed.includes(n)),
       "commands that declare memberVy outside the allowed list",

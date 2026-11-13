@@ -105,6 +105,8 @@ describe('crove-media config and allowlist', () => {
     expect(config.HOST).toBe('127.0.0.1');
     expect(config.MEDIA_CONCURRENCY).toBe(1);
     expect(config.MEDIA_MAX_QUEUE).toBe(4);
+    expect(config.MEDIA_BODY_TIMEOUT_MS).toBe(60_000);
+    expect(loadMediaConfig({ NODE_ENV: 'test', MEDIA_BODY_TIMEOUT_MS: '900000' }).MEDIA_BODY_TIMEOUT_MS).toBe(900_000);
   });
 
   it('detects credential variable names', () => {
@@ -200,6 +202,74 @@ describe('crove-media HTTP server & client SDK', () => {
     const client = createMediaClient(baseUrl);
     const result = await client.probe(new Uint8Array([1, 2, 3]));
     expect(result).toEqual(mockProbe);
+  });
+
+  it('probes a stream sent in pieces without holding it whole (#2985)', async () => {
+    let received = 0;
+    const baseUrl = await startServer({
+      runProbe: async (bytes) => {
+        received = bytes.byteLength;
+        return mockProbe;
+      },
+    });
+    const client = createMediaClient(baseUrl);
+    async function* pieces() {
+      yield new Uint8Array([1, 2, 3]);
+      yield new Uint8Array([4, 5]);
+    }
+    expect(await client.probeStream(pieces())).toEqual(mockProbe);
+    expect(received).toBe(5);
+  });
+
+  it('does not count the wait in the queue against the time allowed for the work (#2989)', async () => {
+    // 300 ms allowed per measure, one at a time: the second waits about 200 ms and then needs 200 ms. Counted from its arrival it would be aborted.
+    const baseUrl = await startServer({
+      concurrency: 1,
+      processTimeoutMs: 300,
+      runMeasure: async (_bytes, signal) => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        // A real measure stops when its signal fires (ffmpeg is killed): so does this one.
+        if (signal?.aborted) throw new MediaExecutionError('timeout', 'Media processing timed out');
+        return { ...mockProbe, durationSeconds: 5 };
+      },
+    });
+    const client = createMediaClient(baseUrl);
+    const results = await Promise.all([client.measure(new Uint8Array([1])), client.measure(new Uint8Array([2]))]);
+    expect(results.map((r) => r.durationSeconds)).toEqual([5, 5]);
+  });
+
+  it('measures bytes and a stream through /measure, not /probe (#2985)', async () => {
+    const sizes: number[] = [];
+    const baseUrl = await startServer({
+      runProbe: async () => ({ ...mockProbe, durationSeconds: 1 }),
+      runMeasure: async (bytes) => {
+        sizes.push(bytes.byteLength);
+        return { ...mockProbe, durationSeconds: 90 };
+      },
+    });
+    const client = createMediaClient(baseUrl);
+    expect((await client.measure(new Uint8Array([1, 2, 3]))).durationSeconds).toBe(90);
+    async function* pieces() {
+      yield new Uint8Array([1, 2]);
+      yield new Uint8Array([3, 4]);
+    }
+    expect((await client.measureStream(pieces())).durationSeconds).toBe(90);
+    expect(sizes).toEqual([3, 4]);
+  });
+
+  it('stops reading a stream the server refuses (#2985)', async () => {
+    const baseUrl = await startServer({ maxInputBytes: 4 });
+    const client = createMediaClient(baseUrl);
+    let closed = false;
+    async function* pieces() {
+      try {
+        for (let i = 0; i < 1000; i += 1) yield new Uint8Array(1024);
+      } finally {
+        closed = true;
+      }
+    }
+    await expect(client.probeStream(pieces())).rejects.toBeInstanceOf(Error);
+    expect(closed).toBe(true);
   });
 
   it('runs normalize with client SDK', async () => {

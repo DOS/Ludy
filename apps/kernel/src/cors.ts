@@ -55,8 +55,9 @@ export function parseAllowedOrigins(value: string | undefined): readonly string[
 const UPSTREAM_CORS = /^access-control-/i;
 
 // Routes a browser page never calls: the providers' and the mail relay's webhooks authenticate by signature or secret and
-// get no CORS headers, so a page of an allowed origin cannot read what they answer.
-const NO_CORS = /^\/(?:webhooks\/|api\/inbound\/|api\/bank-feed\/)/;
+// get no CORS headers, so a page of an allowed origin cannot read what they answer. The same for a meeting video's ticket
+// stream (#2703): a media element plays it without reading it, and no script has a reason to.
+const NO_CORS = /^\/(?:webhooks\/|api\/inbound\/|api\/bank-feed\/|api\/meetings\/[^/]+\/video\/stream$)/;
 
 export function corsMiddleware(allowed: readonly string[]): MiddlewareHandler {
   if (allowed.length === 0) return async (_c, next) => next();

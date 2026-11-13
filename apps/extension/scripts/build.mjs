@@ -13,6 +13,8 @@ const src = join(root, 'src');
 const dist = join(root, 'dist');
 const ENTRIES = ['background', 'offscreen', 'popup', 'mic'].map((name) => join(src, `${name}.ts`));
 const STATIC = ['popup.html', 'popup.css', 'offscreen.html', 'mic.html'];
+// The icons the manifest names (`icons`, `action.default_icon`), copied as they are from icons/ (the Ludy mark: the web brand's 16 and 32 pixel favicons and the mark rendered at 48 and 128).
+const ICONS = ['icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png'];
 
 // The only package import the sources may make, mapped to its file; any other bare import fails the build (no bundler, no node_modules in the package).
 const PACKAGES = { '@crove/meeting-recorder': join(root, '..', '..', 'packages', 'meeting-recorder', 'src', 'index.ts') };
@@ -47,6 +49,10 @@ function emit(file) {
 
 for (const entry of ENTRIES) emit(entry);
 for (const name of STATIC) cpSync(join(src, name), join(dist, name));
+// The store's per-language listing and the browser's own name and description come from _locales/<lang>/messages.json, which the manifest names with __MSG_key__ references.
+cpSync(join(root, '_locales'), join(dist, '_locales'), { recursive: true });
+mkdirSync(join(dist, 'icons'), { recursive: true });
+for (const name of ICONS) cpSync(join(root, 'icons', name), join(dist, 'icons', name));
 const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 manifest.version = version;
 writeFileSync(join(dist, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);

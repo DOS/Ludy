@@ -257,4 +257,61 @@ suite('meeting taint and summary discard on PostgreSQL (#2580, ADR-0047)', () =>
     await admin((c) => c.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, second]));
     expect((await stateOf(done.runId)).rows[0]?.results).toBe('0');
   });
+
+  // #2951: a row that names a Vy run is the model's text, so it is born tainted. An insert with a source_run_id and no taint is refused, whoever writes it; the copy commands write
+  // exactly tainted rows with their run, and the later review keeps the run on the row.
+  it('refuses an insert that names a Vy run without the taint, and accepts the tainted copy', async () => {
+    const run = randomUUID();
+    // One draft result a meeting: the earlier tests' draft is set aside so each insert below is judged by the taint rule alone (each insert is rolled back).
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    const cases = [
+      { table: 'meeting_result', cols: `(org_id, id, meeting_id, summary, feature, stage, tainted, source_run_id) VALUES ($1, $2, $3, 'Từ Vy', 'meetings.summary', 'draft', %T, %R)` },
+      { table: 'action_item', cols: `(org_id, id, meeting_id, title, stage, tainted, source_run_id) VALUES ($1, $2, $3, 'Việc từ Vy', 'draft', %T, %R)` },
+    ];
+    for (const who of ['recorder', 'superuser'] as const) {
+      for (const c of cases) {
+        const insert = (tainted: boolean, runId: string | null) =>
+          attempt(who, `INSERT INTO crove_meetings.${c.table} ${c.cols.replace('%T', String(tainted)).replace('%R', runId ? `'${runId}'` : 'NULL')}`, [orgId, randomUUID(), meetingId]);
+        const bare = await insert(false, run);
+        expect(bare.code, `${who}: ${c.table} with a run and no taint`).toBe('42501');
+        expect(bare.message).toMatch(/MEETINGS_TAINT_FORBIDDEN/);
+        expect((await insert(true, run)).code, `${who}: the tainted copy of a run into ${c.table}`).toBeNull();
+        expect((await insert(false, null)).code, `${who}: what the recorder typed into ${c.table} (no run)`).toBeNull();
+      }
+    }
+  });
+
+  // #2951: the run a row came from never changes after the insert (an update could neither give an untainted row a run nor hide the run of a copy), and a published row is never
+  // inserted tainted, whoever writes it.
+  it('never changes the run of a row, and never inserts a published row tainted', async () => {
+    const run = randomUUID();
+    const rows = {
+      meeting_result: { cols: `(org_id, id, meeting_id, summary, feature, stage, tainted, source_run_id)`, vals: (id: string, stage: string, tainted: boolean, runId: string | null) => `($1, '${id}', $2, 'Tóm tắt', 'meetings.summary', '${stage}', ${tainted}, ${runId ? `'${runId}'` : 'NULL'})` },
+      action_item: { cols: `(org_id, id, meeting_id, title, stage, tainted, source_run_id)`, vals: (id: string, stage: string, tainted: boolean, runId: string | null) => `($1, '${id}', $2, 'Việc', '${stage}', ${tainted}, ${runId ? `'${runId}'` : 'NULL'})` },
+    } as const;
+    await admin((c) => c.query(`DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]));
+    for (const table of ['meeting_result', 'action_item'] as const) {
+      const r = rows[table];
+      const copied = randomUUID();
+      const typed = randomUUID();
+      await admin(async (c) => {
+        await c.query(`INSERT INTO crove_meetings.${table} ${r.cols} VALUES ${r.vals(copied, 'draft', true, run)}`, [orgId, meetingId]);
+        await c.query(`INSERT INTO crove_meetings.${table} ${r.cols} VALUES ${r.vals(typed, 'published', false, null)}`, [orgId, meetingId]);
+      });
+      for (const who of ['recorder', 'superuser'] as const) {
+        for (const [what, id, set] of [
+          ['hiding the run of a copy', copied, 'source_run_id = NULL'],
+          ['moving the run of a copy', copied, `source_run_id = '${randomUUID()}'`],
+          ['giving a typed row a run', typed, `source_run_id = '${run}'`],
+        ] as const) {
+          const res = await attempt(who, `UPDATE crove_meetings.${table} SET ${set} WHERE org_id = $1 AND id = '${id}'`, [orgId]);
+          expect(res.code, `${who}: ${what} on ${table}`).toBe('42501');
+          expect(res.message).toMatch(who === 'recorder' ? /permission denied for table|MEETINGS_TAINT_FORBIDDEN/ : /MEETINGS_TAINT_FORBIDDEN/);
+        }
+        const published = await attempt(who, `INSERT INTO crove_meetings.${table} ${r.cols} VALUES ${r.vals(randomUUID(), 'published', true, run)}`, [orgId, meetingId]);
+        expect(published.code, `${who}: a published ${table} row inserted tainted`).toBe('42501');
+        expect(published.message).toMatch(/MEETINGS_DRAFT_NOT_REVIEWED|MEETINGS_TAINT_FORBIDDEN|duplicate|permission denied/);
+      }
+    }
+  });
 });

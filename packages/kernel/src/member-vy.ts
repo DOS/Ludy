@@ -110,20 +110,68 @@ export const memberVyRunStart = defineCommand({
         .returning(['id', 'status'])
         .executeTakeFirstOrThrow();
     }
-    // A run abandoned by a crashed request does not block the next one: the member has one run at a time.
-    await ctx.trx
-      .updateTable('crove_kernel.ai_run')
-      .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_SUPERSEDED' })
+    // A run abandoned by a crashed request does not block the next one: a member has one live run PER FEATURE (ADR-0049 decision 1, amended 2026-11-12, #3029), so a start
+    // supersedes only a running run of the same feature. A run of another feature (a transcription that is still going) is left alone. A run whose result is already stored
+    // `ready` (the worker has not closed it yet, or died before it did) is not superseded but closed as succeeded, as the worker's finish would, with the result's private_read
+    // carried over (#3058): never a superseded run beside a ready result. The run row is locked first, then its result (the order of the store and the finish), and the result is
+    // read in a statement of its own, so a store in progress is waited for and its committed result seen.
+    const live = await ctx.trx
+      .selectFrom('crove_kernel.ai_run')
+      .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
+      .where('feature', '=', input.feature)
       .where('status', '=', 'running')
+      .orderBy('id')
+      .forUpdate()
       .execute();
+    for (const old of live) {
+      const stored = await ctx.trx
+        .selectFrom('crove_kernel.member_vy_result')
+        .select(['status', 'private_read'])
+        .where('org_id', '=', ctx.orgId)
+        .where('run_id', '=', old.id)
+        .where('member_user_id', '=', userId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (stored?.status === 'ready') {
+        await ctx.trx
+          .updateTable('crove_kernel.ai_run')
+          .set({ status: 'succeeded', finished_at: ctx.now, error: null, ...(stored.private_read ? { private_read: true } : {}) })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', old.id)
+          .where('status', '=', 'running')
+          .execute();
+      } else {
+        await ctx.trx
+          .updateTable('crove_kernel.ai_run')
+          .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_SUPERSEDED' })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', old.id)
+          .where('status', '=', 'running')
+          .execute();
+      }
+    }
     const expiresAt = new Date(ctx.now.getTime() + feature.expiryMinutes * 60_000);
-    const run = await ctx.trx
-      .insertInto('crove_kernel.ai_run')
-      .values({ org_id: ctx.orgId, agent_id: agent.id, module: feature.module, status: 'running', tainted: true, started_at: ctx.now, expires_at: expiresAt })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    // Two starts of one feature at the same moment: both see no live run, and the unique index (ai_run_one_running_feature_uq) lets one insert through. The other is told to
+    // try again (a savepoint keeps the transaction usable for the refusal), never left with two running runs.
+    await sql`SAVEPOINT member_vy_run_start`.execute(ctx.trx);
+    let run: { id: string };
+    try {
+      run = await ctx.trx
+        .insertInto('crove_kernel.ai_run')
+        .values({ org_id: ctx.orgId, agent_id: agent.id, module: feature.module, feature: input.feature, status: 'running', tainted: true, started_at: ctx.now, expires_at: expiresAt })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+    } catch (error: unknown) {
+      const e = error as { code?: string; constraint?: string };
+      if (e.code === '23505' && (e.constraint === 'ai_run_one_running_feature_uq' || e.constraint === 'ai_run_one_running_agent_uq')) {
+        await sql`ROLLBACK TO SAVEPOINT member_vy_run_start`.execute(ctx.trx);
+        throw new DomainError('VY_RUN_BUSY', 409, 'Vy đang làm việc này cho bạn; hãy thử lại sau ít giây');
+      }
+      throw error;
+    }
+    await sql`RELEASE SAVEPOINT member_vy_run_start`.execute(ctx.trx);
     const result = await ctx.trx
       .insertInto('crove_kernel.member_vy_result')
       .values({
@@ -141,6 +189,70 @@ export const memberVyRunStart = defineCommand({
       .executeTakeFirstOrThrow();
     ctx.audit({ run_id: run.id, result_id: result.id, feature: input.feature, module: feature.module });
     return { runId: run.id, resultId: result.id, expiresAt: expiresAt.toISOString() };
+  },
+});
+
+// The member ends their own running run (#3033): a lost job otherwise holds the member's slot for the feature until the run expires (up to 4 hours for a meeting) and the member
+// has no way to free it. Only a running run of the caller's own Vy: another member's run, a finished run and an unknown id all answer `cancelled: false` the same way, so the answer
+// tells nothing about a run that is not theirs. It does what the start's supersede and the result store already do in the member's own context (the run is cancelled with the fixed word
+// RUN_CANCELLED, its result row fails with the same word); a model call already in flight finishes but cannot store its text, since a store needs a live run.
+export const memberVyRunCancel = defineCommand({
+  name: 'kernel.member_vy.run.cancel',
+  input: z.object({ runId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBER_ROLES,
+  target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
+  handler: async (ctx, input): Promise<{ cancelled: boolean }> => {
+    const userId = requireUser(ctx);
+    const agent = await ctx.trx
+      .selectFrom('crove_kernel.agent')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('kind', '=', 'member_vy')
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
+    if (!agent) return { cancelled: false };
+    // The run row is locked first, the same order the result store and the worker's finish take (run, then result), so a store in progress is waited for. A background run's
+    // text is stored as `ready` in one transaction and the run is closed in another (the worker's run.finish): in the gap the run still reads `running`, and cancelling it then would
+    // leave a cancelled run beside a ready result, which the finish definer says never to record. So the result is read after the lock, in a statement of its own (READ COMMITTED
+    // sees what the store committed), and a result that is no longer running leaves the run to the worker's finish: `cancelled: false`.
+    const run = await ctx.trx
+      .selectFrom('crove_kernel.ai_run')
+      .select(['id', 'feature'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.runId)
+      .where('agent_id', '=', agent.id)
+      .where('status', '=', 'running')
+      .forUpdate()
+      .executeTakeFirst();
+    if (!run) return { cancelled: false };
+    const result = await ctx.trx
+      .selectFrom('crove_kernel.member_vy_result')
+      .select('status')
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', input.runId)
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
+    if (result && result.status !== 'running') return { cancelled: false };
+    await ctx.trx
+      .updateTable('crove_kernel.ai_run')
+      .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_CANCELLED' })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.runId)
+      .where('agent_id', '=', agent.id)
+      .where('status', '=', 'running')
+      .execute();
+    await ctx.trx
+      .updateTable('crove_kernel.member_vy_result')
+      .set({ status: 'failed', error_code: 'RUN_CANCELLED' })
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', input.runId)
+      .where('member_user_id', '=', userId)
+      .where('status', '=', 'running')
+      .execute();
+    ctx.audit({ run_id: input.runId, feature: run.feature });
+    return { cancelled: true };
   },
 });
 
@@ -315,6 +427,61 @@ export const memberVyResultGet = defineQuery({
   },
 });
 
+// Whether the caller has a run of this feature going (and, with a subject, for that subject): a feature that must not cut off a paid run asks this instead of
+// reading the private result rows itself (#2941). The caller's own rows only (the user's own member id is the filter and the rows are sealed to it); no text, no
+// id, no subject comes back.
+export const memberVyRunLive = defineQuery({
+  name: 'kernel.member_vy.run.live',
+  input: z.object({ feature: z.enum(FEATURE_KEYS), subjectId: zId.optional() }),
+  access: MEMBER_ROLES,
+  handler: async (ctx: QueryContext, input): Promise<{ live: boolean }> => {
+    const userId = requireUser(ctx);
+    let query = ctx.trx
+      .selectFrom('crove_kernel.member_vy_result as v')
+      .innerJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .select('v.id')
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.member_user_id', '=', userId)
+      .where('v.feature', '=', input.feature)
+      .where('v.status', '=', 'running')
+      .where('r.status', '=', 'running')
+      .where('r.expires_at', '>', new Date());
+    if (input.subjectId !== undefined) query = query.where('v.subject_id', '=', input.subjectId);
+    return { live: (await query.executeTakeFirst()) !== undefined };
+  },
+});
+
+// The state of the caller's latest run of a feature for one subject, for a screen (#2941): the run id, its state, the fixed error word and when it expires, and
+// nothing else (never a body, never a subject). A run that was left running when its run ended or expired shows as failed with RUN_ENDED, never as running for ever.
+export const memberVyRunLatest = defineQuery({
+  name: 'kernel.member_vy.run.latest',
+  input: z.object({ feature: z.enum(FEATURE_KEYS), subjectType: z.string().min(1).max(40), subjectId: zId }),
+  access: MEMBER_ROLES,
+  handler: async (ctx: QueryContext, input): Promise<{ runId: string; state: 'running' | 'ready' | 'failed'; errorCode: string | null; expiresAt: string } | null> => {
+    const userId = requireUser(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.member_vy_result as v')
+      .leftJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .select(['v.run_id', 'v.status', 'v.error_code', 'v.expires_at', 'r.status as run_status', 'r.expires_at as run_expires_at'])
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.member_user_id', '=', userId)
+      .where('v.feature', '=', input.feature)
+      .where('v.subject_type', '=', input.subjectType)
+      .where('v.subject_id', '=', input.subjectId)
+      .orderBy('v.created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    if (!row || !['running', 'ready', 'failed'].includes(row.status)) return null;
+    const dead = row.status === 'running' && (row.run_status !== 'running' || (row.run_expires_at !== null && row.run_expires_at <= new Date()));
+    return {
+      runId: row.run_id,
+      state: dead ? 'failed' : (row.status as 'running' | 'ready' | 'failed'),
+      errorCode: dead ? 'RUN_ENDED' : row.error_code,
+      expiresAt: row.expires_at.toISOString(),
+    };
+  },
+});
+
 export const memberVyMemoryList = defineQuery({
   name: 'kernel.member_vy.memory.list',
   input: z.object({}),
@@ -403,34 +570,96 @@ export const memberVyMeterRecord = defineCommand({
   },
 });
 
+// The fixed words a background run of a member's Vy may close under (ai_run.error): the codes its callers emit and nothing else (#2822 part 3b). The database
+// holds the same list (crove_kernel.member_vy_run_error_code_ok, migration 20261215020000) and refuses any other; a unit test ties the two together. A caller maps a
+// failure it has no word for to TRANSCRIBE_FAILED (failureCode in apps/kernel/src/meetings-transcribe.ts), never invents one.
+export const MEMBER_VY_RUN_ERROR_CODES = [
+  'AGENT_FORBIDDEN',
+  'AGENT_NOT_ACTIVE',
+  'AGENT_NOT_MEMBER_VY',
+  'AGENT_RUN_NOT_LIVE',
+  'AI_BUDGET_EXHAUSTED',
+  'AI_STOPPED',
+  'AUDIO_NOT_FOUND',
+  'FORBIDDEN',
+  'MEDIA_KEY_SHREDDED',
+  'MEDIA_KEY_UNAVAILABLE',
+  'MEETING_NO_AUDIO',
+  'MEETING_NOT_FOUND',
+  'MEMBER_NOT_ACTIVE',
+  'NOT_A_MEMBER',
+  'RUN_CANCELLED',
+  'TENANT_NOT_ACTIVE',
+  'TRANSCRIBE_AUTH',
+  'TRANSCRIBE_FAILED',
+  'TRANSCRIBE_INVALID_REQUEST',
+  'TRANSCRIBE_INVALID_RESPONSE',
+  'TRANSCRIBE_NETWORK',
+  'TRANSCRIBE_RATE_LIMIT',
+  'TRANSCRIBE_TIMEOUT',
+  'TRANSCRIBE_UNAVAILABLE',
+  'TRANSCRIPT_EMPTY',
+  'TRANSCRIPT_RESULT_INVALID',
+  'TRANSCRIPT_TOO_LONG',
+  'VY_NOT_ALLOWED',
+] as const;
+export type MemberVyRunErrorCode = (typeof MEMBER_VY_RUN_ERROR_CODES)[number];
+
 // The worker closes the run of a member's background Vy after the member-mode store wrote the result (the context of a member never writes ai_run):
 // the system command of the worker login, through crove_kernel.member_vy_run_finish, which refuses every other caller and answers whether it closed a
 // run that was still running. The status and the code are fixed words, never text (the definer checks the code's shape).
 export const memberVyRunFinish = defineCommand({
   name: 'kernel.member_vy.run.finish',
-  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() }),
+  // The status is left out to have it derived from the result (a ready result succeeded, anything else failed); only a cancel says so. The code is one of
+  // the definer's fixed words (crove_kernel.member_vy_run_error_code_ok), which refuses any other.
+  input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']).optional(), errorCode: z.enum(MEMBER_VY_RUN_ERROR_CODES).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
   handler: async (ctx, input): Promise<{ closed: boolean }> => {
     const { rows } = await sql<{ closed: boolean }>`
-      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
+      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status ?? null}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
     const closed = rows[0]?.closed === true;
-    ctx.audit({ run_id: input.runId, status: input.status, closed });
+    ctx.audit({ run_id: input.runId, status: input.status ?? 'derived', closed });
     return { closed };
   },
 });
 
 // The admit of a background run (ADR-0049 decision 6): entering the member-scoped context re-checks the member, vy.use, the org, module and agent kill
 // switches, the global ai switch, the hard-stop budget and that the run is live, so a feature calls this before each model call and the entry is the check.
-// It reads nothing and answers nothing.
+// It answers nothing but ok.
+//
+// A call that costs a known amount (a transcription chunk: its measured seconds times the price per second) also sends that `projectedCost`, and the check refuses the call
+// before it is made when it would REACH a hard-stop budget (#2863 item 8): spent + projected >= the limit, the entry's own rule (spent >= limit) applied to the spend the call
+// would leave, so a run no longer overruns by up to one chunk. A call that would land exactly on the limit is refused too: the budget would then be spent, and the store of the
+// run's result (its own entry) would be refused, so the paid text would be thrown away. Only hard stops count, as in ai_budget_exhausted; a soft budget never refuses. The module
+// and the agent are the run's own, from the sealed context and never from the input, so a call cannot name another target to dodge a budget. A missing or zero projection is the
+// entry's check alone. The sum is decimal arithmetic in the database (numeric), never a JS number. A refusal is the entry's own code, BUDGET_EXHAUSTED, naming the scope as meter.check does.
+// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
+const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
+const ZERO_COST = /^0+(?:\.0+)?$/;
+
 export const memberVyRunCheck = defineQuery({
   name: 'kernel.member_vy.run.check',
-  input: z.object({}),
+  input: z.object({ projectedCost: PROJECTED_COST.optional() }),
   access: MEMBER_ROLES,
   memberVy: { reads: [] },
-  handler: async (): Promise<{ ok: true }> => ({ ok: true }),
+  handler: async (ctx: QueryContext, input): Promise<{ ok: true }> => {
+    const projected = input.projectedCost;
+    if (projected === undefined || ZERO_COST.test(projected)) return { ok: true };
+    if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới kiểm tra được chi phí dự kiến', { rule: 'member_vy_context' });
+    const { module, agentId } = ctx.memberVy;
+    const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
+      SELECT (SELECT b.scope FROM crove_kernel.budget_policy b
+              WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
+                AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
+                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
+              ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
+    const scope = rows[0]?.scope;
+    if (scope) throw new DomainError('BUDGET_EXHAUSTED', 422, 'Vy đã hết ngân sách tháng này', { scope });
+    return { ok: true };
+  },
 });
 
 // The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the
@@ -453,8 +682,8 @@ export const memberVyMeetingAudioOpen = defineCommand({
     try {
       rows = (await sql<Row>`SELECT * FROM crove_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
     } catch (error: unknown) {
-      const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
-      if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
+      const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY|AUDIO_EXPIRED)/.exec(error instanceof Error ? error.message : '')?.[0];
+      if (code === 'MEETINGS_KEY_SHREDDED' || code === 'MEETINGS_AUDIO_EXPIRED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
       if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
       throw error;
     }
@@ -494,6 +723,11 @@ export const memberVyMeetingAudioOpen = defineCommand({
 // The sweeps of a member's private Vy data (ADR-0049 decision 3, #2822), the system commands of the worker's daily member-vy-sweep job: results past
 // their expires_at, and a former member's results and memory. Both reach the rows only through definers that answer a count, never text; the audit
 // carries counts and ids. The worker finds the orgs and the users to ask about through crove_kernel.member_vy_results_due and member_vy_former_members_due.
+// The sweep commands run as the worker's system actor only: the access list already says so, and the handler says it again, so a loosened access never opens them to a person.
+function requireSystem(ctx: Pick<CommandContext, 'actor'>): void {
+  if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới dọn được dữ liệu riêng của Vy');
+}
+
 const EXPIRE_BATCH = 1000;
 // Batches one run removes at most (1,000 results each): the rest wait for the next night, so one org cannot hold the worker.
 const EXPIRE_MAX_BATCHES = 50;
@@ -505,6 +739,7 @@ export const memberVyResultsExpire = defineCommand({
   sideEffect: 'irreversible',
   access: 'system',
   handler: async (ctx): Promise<{ removed: number }> => {
+    requireSystem(ctx);
     let removed = 0;
     for (let batch = 0; batch < EXPIRE_MAX_BATCHES; batch += 1) {
       const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_results_expire(${EXPIRE_BATCH}::int) AS n`.execute(ctx.trx);
@@ -524,6 +759,7 @@ export const memberVyMemberDataPurge = defineCommand({
   sideEffect: 'irreversible',
   access: 'system',
   handler: async (ctx, input): Promise<{ removed: number }> => {
+    requireSystem(ctx);
     const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_member_data_purge(${ctx.orgId}::uuid, ${input.userId}::uuid) AS n`.execute(ctx.trx);
     const removed = Number(rows[0]?.n ?? 0);
     ctx.audit({ userId: input.userId, removed });
@@ -531,5 +767,5 @@ export const memberVyMemberDataPurge = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
-export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck];
+export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
+export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

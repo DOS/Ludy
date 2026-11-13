@@ -96,6 +96,45 @@ export const zMeetingDeleted = z.strictObject({
 });
 export type MeetingDeleted = z.infer<typeof zMeetingDeleted>;
 
+// The owner's compliance list (#2703, ADR-0047): every meeting of the org, the attendees-only ones the owner cannot read included, as
+// metadata only, so the owner can find one to delete. Never a title, a transcript, a summary, a reader or any other text.
+export const MEETING_OWNER_LIST_PAGE = 200;
+
+export const zMeetingOwnerListInput = z
+  .strictObject({
+    limit: z.number().int().min(1).max(MEETING_OWNER_LIST_PAGE).optional(),
+    // The keyset cursor: the start and id of the last row of the previous page, both or neither.
+    afterStartedAt: z.iso.datetime({ offset: true }).optional(),
+    afterId: zId.optional(),
+  })
+  .refine((v) => (v.afterStartedAt === undefined) === (v.afterId === undefined), {
+    message: 'afterStartedAt and afterId come together',
+    path: ['afterId'],
+  });
+export type MeetingOwnerListInput = z.infer<typeof zMeetingOwnerListInput>;
+
+export const zMeetingOwnerListItem = z.strictObject({
+  id: zId,
+  recorderUserId: zId,
+  // When the meeting started (its creation time when it has no start).
+  startedAt: z.string(),
+  visibility: zMeetingVisibility,
+  status: zMeetingStatus,
+  audioRetentionDate: z.string(),
+  // null: the meeting kept no video.
+  videoRetentionDate: z.string().nullable(),
+  // null: the org keeps text until a person deletes the meeting.
+  textRetentionDate: z.string().nullable(),
+});
+export type MeetingOwnerListItem = z.infer<typeof zMeetingOwnerListItem>;
+
+export const zMeetingOwnerList = z.strictObject({
+  items: z.array(zMeetingOwnerListItem),
+  // The cursor of the next page, null on the last one.
+  next: z.strictObject({ afterStartedAt: z.string(), afterId: zId }).nullable(),
+});
+export type MeetingOwnerList = z.infer<typeof zMeetingOwnerList>;
+
 export const zMeetingReaderAdd = z.strictObject({
   meetingId: zId,
   userId: zId,
@@ -128,7 +167,8 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   sizeBytes: z.number().int().positive(),
   sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
   contentType: z.string().min(1).max(64),
-  lengthSeconds: z.number().int().positive().optional(),
+  // Measured by crove-media at upload (#2985), never the client's value: the upload route is the only caller.
+  lengthSeconds: z.number().int().positive(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
 
@@ -239,12 +279,47 @@ export const zTranscript = z.strictObject({
 });
 export type Transcript = z.infer<typeof zTranscript>;
 
+// Search across the transcript lines the caller reads (L2, #2589). A plain search, no model call. `q` is folded in SQL like the lines are (lower case, Vietnamese
+// marks and đ removed), every word a word prefix, all required. A page is `limit` hits from `offset`; at most MEETING_SEARCH_HITS_MAX hits can be paged, and `capped`
+// says that more matched than that.
+export const MEETING_SEARCH_QUERY_MAX = 200;
+export const MEETING_SEARCH_HITS_MAX = 200;
+export const MEETING_SEARCH_PAGE_MAX = 50;
+export const zMeetingSearchInput = z.strictObject({
+  q: z.string().trim().min(2).max(MEETING_SEARCH_QUERY_MAX),
+  limit: z.number().int().min(1).max(MEETING_SEARCH_PAGE_MAX).default(20),
+  offset: z.number().int().min(0).max(MEETING_SEARCH_HITS_MAX).default(0),
+});
+export type MeetingSearchInput = z.infer<typeof zMeetingSearchInput>;
+export const zMeetingSearchHit = z.strictObject({
+  meetingId: zId,
+  meetingTitle: z.string(),
+  // When the meeting was held (its start, else when it was created), an ISO 8601 instant.
+  heldAt: z.string(),
+  segmentId: zId,
+  startSeconds: z.number(),
+  speakerLabel: z.string(),
+  text: z.string(),
+  // The stage the caller sees: a draft line is the recorder's own.
+  stage: z.enum(TRANSCRIPT_STAGES),
+});
+export type MeetingSearchHit = z.infer<typeof zMeetingSearchHit>;
+export const zMeetingSearchResult = z.strictObject({
+  hits: z.array(zMeetingSearchHit),
+  hasMore: z.boolean(),
+  capped: z.boolean(),
+});
+export type MeetingSearchResult = z.infer<typeof zMeetingSearchResult>;
+
 // The recorder's transcription run (#2578, M4b, ADR-0049 decision 8). The recorder's own Vy transcribes in the background and writes only its own
 // result (member_vy_result); the recorder's own action then copies that result into the draft transcript.
 export const TRANSCRIBE_STATES = ['none', 'running', 'ready', 'failed'] as const;
 export type TranscribeState = (typeof TRANSCRIBE_STATES)[number];
 export const zTranscribeStart = z.strictObject({ meetingId: zId });
 export const zTranscribeStarted = z.strictObject({ meetingId: zId, runId: zId });
+// The recorder stops their own transcription run of a meeting (#3033): `cancelled` is false when there was nothing running to stop.
+export const zTranscribeCancel = z.strictObject({ meetingId: zId });
+export const zTranscribeCancelled = z.strictObject({ meetingId: zId, cancelled: z.boolean() });
 // What the recorder's screen shows: whether transcription is switched on in this deployment at all, the state of the latest run, and the fixed
 // code of a failed one (AI_OFF, AI_BUDGET_EXHAUSTED, TRANSCRIBE_FAILED, ...). Never text.
 export const zTranscribeStatus = z.strictObject({
@@ -407,3 +482,72 @@ export const zSummaryRef = z.strictObject({ meetingId: zId });
 export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolean(), reason: z.enum(['off', 'not_recorder']).nullable() });
 export const zSummarized = z.strictObject({ meetingId: zId, runId: zId, state: z.enum(SUMMARY_STATES), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() });
 export type Summarized = z.infer<typeof zSummarized>;
+
+// Links of a meeting (L1, #2587, ADR-0024): to a party, to at most one deal, and to the calendar event it came from. Set and removed by the meeting's
+// recorder; read only by the readers of the meeting.
+export const MEETING_LINK_KINDS = ['party', 'deal', 'calendar_event'] as const;
+export type MeetingLinkKind = (typeof MEETING_LINK_KINDS)[number];
+export const zMeetingLinkKind = z.enum(MEETING_LINK_KINDS);
+
+export const zMeetingLinkAdd = z.strictObject({
+  meetingId: zId,
+  kind: zMeetingLinkKind,
+  targetId: zId,
+});
+export type MeetingLinkAdd = z.infer<typeof zMeetingLinkAdd>;
+
+export const zMeetingLinkRemove = z.strictObject({
+  meetingId: zId,
+  linkId: zId,
+});
+export type MeetingLinkRemove = z.infer<typeof zMeetingLinkRemove>;
+
+export const zMeetingLink = z.strictObject({
+  id: zId,
+  meetingId: zId,
+  kind: zMeetingLinkKind,
+  targetId: zId,
+  // The name to show: a party's name or the calendar event's title; null for a deal (the CRM module names it) and from add.
+  label: z.string().nullable(),
+  createdBy: zId,
+  createdAt: z.string(),
+});
+export type MeetingLink = z.infer<typeof zMeetingLink>;
+
+export const zMeetingLinkRemoved = z.strictObject({ meetingId: zId, linkId: zId, removed: z.boolean() });
+export type MeetingLinkRemoved = z.infer<typeof zMeetingLinkRemoved>;
+
+// The meetings linked to one target, as the viewer may read them: a meeting the viewer does not read is not in the list at all (no row, no title).
+export const MEETING_LINK_PAGE = 50;
+export const zMeetingsOfTargetInput = z.strictObject({
+  kind: zMeetingLinkKind,
+  targetId: zId,
+  limit: z.number().int().min(1).max(MEETING_LINK_PAGE).optional(),
+});
+export type MeetingsOfTargetInput = z.infer<typeof zMeetingsOfTargetInput>;
+
+export const zMeetingOfTarget = z.strictObject({
+  linkId: zId,
+  meetingId: zId,
+  title: z.string(),
+  startedAt: z.string().nullable(),
+  status: zMeetingStatus,
+  visibility: zMeetingVisibility,
+  recorderUserId: zId,
+});
+export type MeetingOfTarget = z.infer<typeof zMeetingOfTarget>;
+
+// Vy's suggestion of what a meeting may be linked to (L1, #2587): read only, for the recorder. A suggestion is TAINTED (computed from the transcript text, which can
+// say anything): it names a contact whose name the transcript says, and a deal whose title it says, and links nothing. The recorder links with a click on links.add,
+// which checks the target again. The core works with AI off: today the suggestion is deterministic and calls no model.
+export const MEETING_LINK_SUGGEST_MAX = 5;
+// `ai` names what the model did: always 'off' today (the suggestion is deterministic, no model is called and no transcript text leaves the kernel); the other states are
+// kept for a later model ordering through the AI budget meter, as the contact-company suggestion has (#2438).
+export const MEETING_LINK_SUGGEST_AI = ['off', 'used', 'budget', 'busy', 'failed'] as const;
+export const zMeetingLinkSuggested = z.strictObject({
+  tainted: z.literal(true),
+  ai: z.enum(MEETING_LINK_SUGGEST_AI),
+  parties: z.array(z.strictObject({ partyId: zId, name: z.string(), mentions: z.number().int() })).max(MEETING_LINK_SUGGEST_MAX),
+  deals: z.array(z.strictObject({ dealId: zId, title: z.string(), partyId: zId, partyName: z.string() })).max(MEETING_LINK_SUGGEST_MAX),
+});
+export type MeetingLinkSuggested = z.infer<typeof zMeetingLinkSuggested>;

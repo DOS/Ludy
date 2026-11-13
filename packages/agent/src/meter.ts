@@ -37,6 +37,8 @@ export const AI_FEATURES = {
   'conversation.contact_rank': 'conversation',
   // The finance coworker's wording of a payment reminder (#2488): the lead-in and the closing only, never a fact of the books.
   'finance.payment_reminder': 'finance',
+  // The meetings coworker's wording of a follow-up email after a meeting (L3, #2590): the lead-in and the closing only, told none of the meeting's content.
+  'meetings.followup_words': 'meetings',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder
@@ -93,6 +95,9 @@ export interface AiCall {
   agentId: string | null;
   // Set for a call made by Vy in member mode: the run it belongs to, ids only.
   memberRunId?: string | null | undefined;
+  // What the call is expected to use, when the caller knows it before the call (a transcription chunk's measured audio seconds): a meter may admit the call on its projected cost
+  // (#2863 item 8). Absent for a call priced only by what the provider reports.
+  expected?: AiUsage | undefined;
 }
 
 export interface AiMeter {
@@ -145,16 +150,18 @@ function tokens(usage: { inputTokens: number | undefined; outputTokens: number |
 
 // The one door to the model: `call` is the generateText call, made only once the meter admitted it. The caller's own
 // sink (onUsage) sees the same tokens. Counts what the call used even when the answer was unusable (the model was paid
-// for it); a call that failed before an answer counts nothing.
+// for it); a call that failed before an answer counts nothing. `expected` is what the caller knows the call will use before it is made; the meter sees it in admit().
 export async function metered<R extends { usage: { inputTokens: number | undefined; outputTokens: number | undefined; audioSeconds?: number | undefined } }>(
   feature: AiFeature,
   call: () => Promise<R>,
   onUsage?: AiUsageSink,
+  expected?: AiUsage,
 ): Promise<R> {
   const scope = scopes.getStore();
   if (!scope) throw new AiMeterMissingError(feature);
   const { meter } = scope;
   const info: AiCall = { feature, module: AI_FEATURES[feature], orgId: scope.orgId, agentId: scope.agentId ?? null, memberRunId: scope.memberRunId ?? null };
+  if (expected) info.expected = expected;
   await meter.admit(info);
   const settle = async (used: AiUsage) => {
     onUsage?.(used);

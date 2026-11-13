@@ -25,6 +25,8 @@ import {
   type Runtime,
   type SystemActor,
 } from '@crove/kernel-runtime';
+import type { MediaMeasurer } from './meetings-measure.ts';
+import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@crove/kernel';
 import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
 
 export interface MeetingsTranscribeJob {
@@ -38,6 +40,8 @@ export interface MeetingsTranscribeDeps {
   runtime: Runtime;
   store: BlobStore;
   broker: CredentialBroker;
+  // Measures every chunk it decrypts in crove-media before the meter sees it (#2985): the stored length is never what is charged.
+  measurer: MediaMeasurer;
   provider: TranscribeConfig;
   // The deployment's prices (AI_PRICE_*): a transcription call is priced by its audio minutes.
   price: { inputPerMTok: string; outputPerMTok: string; audioPerMinute: string };
@@ -48,7 +52,6 @@ const SYSTEM: SystemActor = { type: 'system', component: 'meetings.transcribe' }
 const SEGMENT_CIPHERTEXT_MAX = 64 * 1024 * 1024;
 // About what a 100000 character result row holds (an hour and a half of speech); longer meetings are refused before any call.
 export const TRANSCRIPT_MAX_SECONDS = 90 * 60;
-const CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 interface RunAudio {
   language: string;
@@ -70,9 +73,12 @@ class RunMeter implements AiMeter {
     this.job = job;
   }
 
-  async admit(): Promise<void> {
+  // Admission also sends the call's projected cost when it knows one (a chunk: its measured seconds, priced by the same aiCost the record uses), so a chunk that would cross a
+  // hard-stop budget is refused before the provider call (#2863 item 8). No projection (or a price of 0) is the entry's check alone, as before.
+  async admit(call: AiCall): Promise<void> {
+    const projected = call.expected ? aiCost([call.expected], this.deps.price) : '0';
     try {
-      await this.vy.query('kernel.member_vy.run.check', {});
+      await this.vy.query('kernel.member_vy.run.check', /^0+(?:\.0+)?$/.test(projected) ? {} : { projectedCost: projected });
     } catch (error: unknown) {
       if (error instanceof DomainError && error.code === 'BUDGET_EXHAUSTED') throw new AiBudgetExhaustedError('module', null);
       throw error;
@@ -88,16 +94,20 @@ class RunMeter implements AiMeter {
   }
 }
 
-// The fixed code a failure is stored under: a word, never the error's text.
-export function failureCode(error: unknown): string {
-  if (error instanceof AiBudgetExhaustedError) return 'AI_BUDGET_EXHAUSTED';
-  if (error instanceof TranscriptionError) return `TRANSCRIBE_${error.kind.toUpperCase()}`;
-  if (error instanceof DomainError) {
-    if (error.code === 'KILL_SWITCH_ON') return 'AI_STOPPED';
-    if (error.code === 'BUDGET_EXHAUSTED') return 'AI_BUDGET_EXHAUSTED';
-    if (CODE.test(error.code)) return error.code;
+// The fixed code a failure is stored under: a word from the kernel's list (MEMBER_VY_RUN_ERROR_CODES, the same one the database checks), never the error's text. A failure
+// with no word of its own on the list is TRANSCRIBE_FAILED, so a run is always closed and never left running by a code the database would refuse.
+export function failureCode(error: unknown): MemberVyRunErrorCode {
+  let code: string = 'TRANSCRIBE_FAILED';
+  if (error instanceof AiBudgetExhaustedError) code = 'AI_BUDGET_EXHAUSTED';
+  else if (error instanceof TranscriptionError) code = `TRANSCRIBE_${error.kind.toUpperCase()}`;
+  else if (error instanceof DomainError) {
+    if (error.code === 'KILL_SWITCH_ON') code = 'AI_STOPPED';
+    else if (error.code === 'BUDGET_EXHAUSTED') code = 'AI_BUDGET_EXHAUSTED';
+    else if (error.code === 'MEDIA_PROBE_UNAVAILABLE') code = 'TRANSCRIBE_UNAVAILABLE';
+    else if (error.code === 'MEDIA_TOO_LONG') code = 'TRANSCRIPT_TOO_LONG';
+    else code = error.code;
   }
-  return 'TRANSCRIBE_FAILED';
+  return (MEMBER_VY_RUN_ERROR_CODES as readonly string[]).includes(code) ? (code as MemberVyRunErrorCode) : 'TRANSCRIBE_FAILED';
 }
 
 // One chunk of the recording, fetched and decrypted. The audio door is opened again for every chunk: it re-checks the whole gate (the meeting still exists, its key is
@@ -119,7 +129,16 @@ async function openChunk(deps: MeetingsTranscribeDeps, job: MeetingsTranscribeJo
     const plain = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, binding);
     const copy = new Uint8Array(plain);
     plain.fill(0);
-    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: segment.lengthSeconds, offsetSeconds: segment.startOffsetSeconds }, chunks: audio.segments.length };
+    // The length the meter charges is what crove-media measures in these bytes, never the stored one: a row written before the sandbox
+    // measured uploads (or any wrong row) carries a length nobody checked. A sandbox that is down fails the run before a call is made.
+    let measured: number;
+    try {
+      measured = await deps.measurer.measureBytes('audio', copy);
+    } catch (error) {
+      copy.fill(0);
+      throw error;
+    }
+    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: segment.startOffsetSeconds }, chunks: audio.segments.length };
   } finally {
     dataKey?.fill(0);
     subkey.fill(0);
@@ -137,9 +156,13 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     const scope = { orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new RunMeter(deps, vy, job) };
     // One chunk at a time, the gate of the audio door passed again before each one (openChunk), then the chunk behind the meter (its admit enters the context once more).
     const done: TranscriptSegment[][] = [];
+    let measuredTotal = 0;
     for (const { order } of [...audio.segments].sort((a, b) => a.order - b.order)) {
       const { input } = await openChunk(deps, job, vy, order);
       try {
+        // The same limit as above, on the measured seconds, before the chunk is sent and charged.
+        measuredTotal += input.lengthSeconds;
+        if (measuredTotal > TRANSCRIPT_MAX_SECONDS) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The meeting is too long to transcribe in one go');
         done.push(await withAiScope(scope, () => transcribeChunks(deps.provider, [input])));
       } finally {
         // The plaintext chunk is zeroed whether the provider answered or not.
@@ -160,7 +183,7 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     // Best effort: when the context itself is refused (the member left, a switch is on) there is nothing to write and the finish below fails the result.
     await vy.execute('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'failed', errorCode: code } }).catch(() => undefined);
   }
-  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, status: code === null ? 'succeeded' : 'failed', errorCode: code }, { actor: SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
+  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, errorCode: code }, { actor: SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
     console.error(`[meetings-transcribe] org ${job.orgId.slice(0, 8)} could not close run ${job.runId.slice(0, 8)}`, error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
   });
   console.log(`[meetings-transcribe] org ${job.orgId.slice(0, 8)} run ${job.runId.slice(0, 8)} ${code === null ? 'succeeded' : `failed ${code}`}`);

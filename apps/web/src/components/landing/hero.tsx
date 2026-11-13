@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { Dictionary } from '../../content/vi';
 import { GITHUB_URL } from '../../content/site';
 import { OrgChart } from './org-chart';
@@ -22,12 +23,8 @@ export function Hero({ dict }: { dict: Dictionary }) {
             </ButtonLink>
           </div>
         </div>
-        <div className="mt-5 sm:mt-6">
+        <div className="mt-6 sm:mt-7">
           <OrgChart dict={dict} />
-        </div>
-        <div className="mx-auto mt-8 max-w-[880px] text-center">
-          <p className="mx-auto max-w-[62ch] text-base text-muted sm:text-lg">{hero.lead}</p>
-          <p className="mx-auto mt-3 max-w-[60ch] text-sm text-subtle">{hero.note}</p>
         </div>
       </div>
     </section>

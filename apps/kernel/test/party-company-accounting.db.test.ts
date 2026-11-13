@@ -265,6 +265,8 @@ suite('the company of a person and the accounting (#2438)', () => {
       'crove_crm.import_row.company_party_id',
       'crove_finance.customer_collection.party_id',
       'crove_finance.einvoice_draft.buyer_party_id',
+      // A meeting's link to a contact (L1, #2587) only names the party: a person or a company both link.
+      'crove_meetings.meeting_link.party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(

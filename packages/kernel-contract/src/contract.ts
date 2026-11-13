@@ -311,6 +311,15 @@ import {
   zMeetingCreate,
   zMeetingCreated,
   zMeetingDeleted,
+  zMeetingOwnerList,
+  zMeetingLink,
+  zMeetingLinkAdd,
+  zMeetingLinkRemove,
+  zMeetingLinkRemoved,
+  zMeetingOfTarget,
+  zMeetingOwnerListInput,
+  zMeetingsOfTargetInput,
+  zMeetingLinkSuggested,
   zMeetingDetail,
   zMeetingListInput,
   zMeetingReaderAdd,
@@ -320,6 +329,8 @@ import {
   zMeetingSettings,
   zMeetingExtensionStatus,
   zMeetingSettingsGet,
+  zMeetingSearchInput,
+  zMeetingSearchResult,
   zMeetingSettingsSet,
   zMeetingSummary,
   zTranscript,
@@ -328,6 +339,8 @@ import {
   zTranscriptDraftStore,
   zTranscriptDraftStored,
   zTranscribeRunRef,
+  zTranscribeCancel,
+  zTranscribeCancelled,
   zTranscribeStart,
   zTranscribeStarted,
   zTranscribeStatus,
@@ -355,7 +368,9 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
+import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -534,6 +549,28 @@ export const contract = {
   },
   // The member's connected extension devices in the org of the request (issue #2582, ADR-0047 point 10): their tokens'
   // standing, never a hash, and a revoke of one. Only the member's own; the extension itself cannot reach either.
+  // The grants an owner or admin gave MCP clients (ADR-0051, #2975): the org's list (never a token) and the revoke of one. The consent itself is an
+  // HTTP route of the authorization server, not a procedure.
+  mcp: {
+    grant: {
+      list: oc.input(z.strictObject({})).output(z.array(zMcpGrantView)),
+      revoke: oc.input(zMcpGrantRevoke).output(zMcpGrantRevoked),
+    },
+    // Whether members may connect their own AI app (an owner turns it on; off by default).
+    memberGrants: {
+      get: oc.input(z.strictObject({})).output(zMcpMemberGrantsView),
+      set: oc.input(zMcpMemberGrantsSet).output(zMcpMemberGrantsView),
+    },
+    // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the receiver and schedule an owner or admin sets, and a secret shown once.
+    wake: {
+      get: oc.input(zMcpWakeGetInput).output(z.array(zMcpWakeView)),
+      set: oc.input(zMcpWakeSet).output(zMcpWakeWithSecret),
+      rotateSecret: oc.input(zMcpWakeGrantRef).output(zMcpWakeWithSecret),
+      clear: oc.input(zMcpWakeGrantRef).output(zMcpWakeCleared),
+      // A `ping` to the receiver, to see it arrive: at most one a minute per grant.
+      test: oc.input(zMcpWakeGrantRef).output(zMcpWakeTested),
+    },
+  },
   extension: {
     tokens: {
       list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
@@ -809,11 +846,31 @@ export const contract = {
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
+    ownerList: oc.input(zMeetingOwnerListInput).output(zMeetingOwnerList),
+    // Links to parties, a deal and the calendar event (L1, #2587): the recorder sets and removes them; a page reads only the meetings its viewer reads.
+    links: {
+      add: oc.input(zMeetingLinkAdd).output(zMeetingLink),
+      remove: oc.input(zMeetingLinkRemove).output(zMeetingLinkRemoved),
+      list: oc.input(zMeetingRef).output(z.array(zMeetingLink)),
+      byTarget: oc.input(zMeetingsOfTargetInput).output(z.array(zMeetingOfTarget)),
+      // Vy's tainted suggestion for the recorder (L1, #2587): contacts and deals the transcript names. Nothing is linked by it.
+      suggest: oc.input(zMeetingRef).output(zMeetingLinkSuggested),
+    },
+    // The follow-up email after a meeting (L3, #2590): the recorder drafts it from the published summary, words it (Vy words the lead-in and the closing only, told no fact; fixed words with
+    // AI off) and sends it, one mail per address, checked recipients. Nothing is sent without `send`, a person's own command.
+    followup: {
+      draft: oc.input(zMeetingRef).output(zFollowupDraft),
+      wording: oc.input(zFollowupWordingAsk).output(zFollowupWording),
+      send: oc.input(zFollowupSendCall).output(zFollowupSent),
+    },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
     },
+    // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
+    search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
@@ -821,6 +878,8 @@ export const contract = {
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
       // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
       start: oc.input(zTranscribeStart).output(zTranscribeStarted),
+      // The recorder stops their own run (#3033), so a lost job does not hold their slot until it expires.
+      cancel: oc.input(zTranscribeCancel).output(zTranscribeCancelled),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
     },
