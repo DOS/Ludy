@@ -60,4 +60,22 @@ describe('marketplaceOrdersCsv', () => {
     expect(cellsOf(a)[0]).toEqual(['Ludy marketplace connection 0192a000-0000-7000-8000-00000000000a']);
     expect(cellsOf(a)[1]?.[0]).toBe('Mã đơn hàng');
   });
+
+  // The reader takes one point and exactly three digits for a thousands group (see apps/extract/test/marketplace-orders.test.ts), so a number with three decimals is written with a zero added.
+  it('writes a number with three decimals with a fourth digit, so the reader does not take it for a thousands group', () => {
+    const shopee = cellsOf(marketplaceOrdersCsv('shopee', [order({ unitPrice: '100.125', quantity: '1.500' }, '1.500', '150.188')])).slice(1)[0];
+    expect(shopee?.slice(6, 9)).toEqual(['100.1250', '1.5000', '150.1880']);
+    const tiktok = cellsOf(marketplaceOrdersCsv('tiktok_shop', [order({ unitPrice: '100.125' }, '2', '200.250')])).slice(1)[0];
+    expect(tiktok?.slice(5, 8)).toEqual(['2', '100.1250', '200.2500']);
+    // Lazada: each unit's share of a line that does not divide by its units (1001 over 8 is 125.125), the last carrying the rest.
+    const lazada = cellsOf(marketplaceOrdersCsv('lazada', [order({ unitPrice: '125.125' }, '8', '1001')])).slice(1);
+    expect(lazada).toHaveLength(8);
+    expect(lazada.slice(0, 7).every((row) => row[8] === '125.1250')).toBe(true);
+    expect(lazada[7]?.[8]).toBe('125.1250');
+  });
+
+  it('leaves a whole number and a number of one, two or four decimals as it is', () => {
+    const row = cellsOf(marketplaceOrdersCsv('shopee', [order({ unitPrice: '1500000' }, '2', '3000000.5')])).slice(1)[0];
+    expect(row?.slice(6, 9)).toEqual(['1500000', '2', '3000000.5']);
+  });
 });
