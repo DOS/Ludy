@@ -393,6 +393,9 @@ const schema = z.object({
   CHANNEL_META_WEBHOOK_VERIFY_TOKEN: optional,
   // Reconcile recent comments on connected Facebook Pages that granted pages_read_user_content (conversation core CV2, #2307).
   CHANNEL_FACEBOOK_HISTORY: z.enum(['true', 'false']).default('true'),
+  // Reconcile the replies under recent posts of connected Threads profiles that opted in to reading replies (#3133). Nothing is read for a
+  // profile without the opt-in, so the default is on, as Facebook's.
+  CHANNEL_THREADS_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
@@ -781,7 +784,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.CHANNEL_META_APP_SECRET_PREVIOUS === primary) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
   }
   if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
-    if (!config.CHANNEL_META_APP_ID && !config.CHANNEL_INSTAGRAM_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET');
+    if (!config.CHANNEL_META_APP_ID && !config.CHANNEL_INSTAGRAM_APP_ID && !config.CHANNEL_THREADS_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET, or CHANNEL_THREADS_APP_ID and CHANNEL_THREADS_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN)) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN is the verify token for the Meta Page webhook: 8 to 200 characters, no spaces');
   }
   if (Boolean(config.CHANNEL_META_ADS_APP_ID) !== Boolean(config.CHANNEL_META_ADS_APP_SECRET)) {

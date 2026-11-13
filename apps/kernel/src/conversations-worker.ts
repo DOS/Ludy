@@ -18,6 +18,7 @@ import {
   TELEGRAM_HOOK_KEY_INFO,
   parseSandboxNotice,
   parseTelegramChatNotice,
+  parseThreadsNotices,
   parseZaloNotice,
   type ConversationAdapter,
   type ConversationNotice,
@@ -51,6 +52,8 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   zalo_oa: parseZaloNotice,
   // Telegram bot chats (#3132): the hook and its secret were checked by the route before the update was parked; the notice's account id is the hook.
   telegram_chat: parseTelegramChatNotice,
+  // Threads replies (#3133): X-Hub-Signature-256 was checked with the Threads app's secret by the route before the body was parked.
+  threads: parseThreadsNotices,
 };
 
 // The intake providers whose notice names a connection's hook rather than a platform account (the hook is an opaque capability, never an org):
