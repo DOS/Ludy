@@ -9882,6 +9882,9 @@ export const vi = {
     },
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
+      signals: {
+        sales: 'Xem khách nào đã có hóa đơn bán hàng, để đối chiếu với deal đã thắng',
+      },
       account: {
         create: 'Thêm tài khoản kế toán',
         update: 'Sửa tài khoản kế toán',
