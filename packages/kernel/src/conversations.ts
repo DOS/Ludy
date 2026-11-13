@@ -2576,7 +2576,9 @@ export const conversationHistoryBegin = defineCommand({
     // hour, and make no platform call.
     if (
       (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) ||
-      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments'))
+      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments')) ||
+      // A Threads profile connected without the "also read and answer replies" opt-in (#3133) has no reply-reading permission.
+      (row.provider === 'threads' && !row.scopes.includes('threads_read_replies'))
     ) {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')

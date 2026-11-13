@@ -419,6 +419,8 @@ export interface WorkerDeps {
     // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY, CHANNEL_FACEBOOK_HISTORY).
     conversationHistory?: boolean;
     facebookHistory?: boolean;
+    // Read the replies under a Threads profile's recent posts (CHANNEL_THREADS_HISTORY, #3133).
+    threadsHistory?: boolean;
     // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
     conversationMediaHosts?: readonly string[];
     publishers: Readonly<Record<string, Publisher>>;
@@ -2715,6 +2717,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (id === 'facebook_page' || id === 'instagram') {
                 return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
               }
+              if (id === 'threads') return Boolean(deps.channels?.threadsHistory ?? deps.channels?.conversationHistory);
               return Boolean(deps.channels?.conversationHistory);
             })
             .map(([id]) => id);
