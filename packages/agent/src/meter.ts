@@ -60,6 +60,9 @@ export const AI_FEATURES = {
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
   'crm.quote_suggest': 'crm',
+  // The sales coworker's lead-in and closing of a follow-up message about a quiet deal or an unanswered quote (#3101): told none of the facts (the name, the quote, the total, the link and the days are
+  // composed by code), and its words are refused when they hold a figure, a link or a name; a person reads, edits and sends the message.
+  'crm.followup_draft': 'crm',
   // Speech to text for the meetings module (#2578, M4a): one call per audio chunk of a meeting, through the deployment's OpenAI-compatible transcription endpoint.
   'meetings.transcribe': 'meetings',
   // The recorder's Vy summarizing one meeting (#2580, M6 part B2): one call over the transcript, the member waiting for it, through their own meter.
