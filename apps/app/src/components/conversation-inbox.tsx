@@ -692,7 +692,7 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
           ? CONVERSATION_FACEBOOK_DIRECT_MAX
           : detail.conversation.channel.provider === 'telegram'
             ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
-          : CONVERSATION_REPLY_MAX;
+            : CONVERSATION_REPLY_MAX;
   const [insertTooLong, setInsertTooLong] = useState(false);
   // The listener below reads what is in the box now without being set up again at every keystroke.
   const textNow = useRef(text);
