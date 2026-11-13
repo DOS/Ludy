@@ -258,6 +258,7 @@ import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCale
 import { zEInvoiceDraftFromOrder, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
 import { zFollowupDraftInput, zFollowupDrafted } from './crm-followup.ts';
+import { zMeetingBrief, zMeetingBriefInput } from './crm-meeting-brief.ts';
 import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingDealChanged, zBookingDealLink, zBookingDealUnlink, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, zDealBookings, zDealBookingsQuery } from './crm.ts';
@@ -655,6 +656,8 @@ export const contract = {
       unlinkDeal: oc.input(zBookingDealUnlink).output(zBookingDealChanged),
       // Times to offer a client (#1440): read-only; the model, when the deployment has one, reads the pasted message.
       suggest: oc.input(zBookingSuggestInput).output(zBookingSuggestion),
+      // Dy's brief before a confirmed, upcoming booking linked to a deal (#3115): the facts by code and, when the model is on, a summary and 2 to 3 points; computed when read, nothing stored or sent.
+      meetingBrief: oc.input(zMeetingBriefInput).output(zMeetingBrief),
     },
     // The contacts of the CRM (K4, #2228): the org's parties, searched without Vietnamese marks, filtered and sorted by a
     // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
