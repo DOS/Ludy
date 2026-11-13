@@ -343,6 +343,13 @@ const schema = z.object({
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
   EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
+  // The marketplace adapters this deployment offers (#2519), a comma-separated list of adapter ids; `sandbox` is the offline provider, which serves a few recorded orders for each platform
+  // without any seller account. Off unless asked for here (`docker compose up` asks for it), so a deployment shows no marketplace connection until it has an adapter. What an adapter
+  // reads is only staged, in the Inbox, for a member to confirm; nothing is written until they do.
+  MARKETPLACE_PROVIDERS: z
+    .string()
+    .default('')
+    .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
@@ -936,6 +943,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
     if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
+    }
+    // ADR-0045 point 7 (#2519): the offline marketplace provider serves made-up orders, which a member could confirm into the stock book; it stays on development deployments. docker
+    // compose falls back to MARKETPLACE_PROVIDERS=sandbox, so a public deployment that runs the finance module must set it to an empty list.
+    if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'sandbox') && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+      throw new Error('MARKETPLACE_PROVIDERS=sandbox offers made-up marketplace orders to the stock book; it is for local development only: set MARKETPLACE_PROVIDERS to an empty list');
     }
     // ADR-0044 point 8 (#2502): the offline provider "issues" invoices that the intake reads into sales of the books, so it stays on development deployments. docker compose
     // falls back to EINVOICE_SANDBOX=true, so a public deployment that runs the finance module must set it to false.
