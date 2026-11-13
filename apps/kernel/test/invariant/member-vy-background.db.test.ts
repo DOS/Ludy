@@ -389,14 +389,20 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   // names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context`); a fourth writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean; company: boolean }>(
+      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
-                to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company`,
+                to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company,
+                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core`,
       ),
     );
     const row = found.rows[0];
+    // The company context has one sealing function: its entry until step S5 (#2967, #2969) splits it, then the private core `seal_mcp_company_context`, which the API's entry and the
+    // worker's wake entry only call. Either way exactly one function of the company kind calls ctx_write; the two entries that call the core never do (pinned in mcp-company-context.db.test.ts).
     return {
-      entry: [...(row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : []), ...(row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : [])],
+      entry: [
+        ...(row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : []),
+        ...(row?.core ? ['crove_kernel.seal_mcp_company_context(uuid,uuid)'] : row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : []),
+      ],
       helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
     };
   };
