@@ -1,10 +1,10 @@
 # Bot họp và ghi chú trực tiếp (L4): tóm tắt cho JOY
 
-> Bản tóm tắt tiếng Việt của [ADR-0052](https://github.com/DOS/Ludy/blob/main/docs/adr/0052-meeting-bot-and-live-notes.md), ngày 2026-11-13. Bản tiếng Anh là bản chính. Trạng thái: **đề xuất, chưa quyết, chưa làm gì**. Cần anh trả lời tám câu ở cuối. Việc này là issue [#2592](https://github.com/DOS/Ludy/issues/2592) (L4), đang nằm ở Icebox (kho tạm, chưa làm).
+> Bản tóm tắt tiếng Việt của [ADR-0052](https://github.com/DOS/Ludy/blob/main/docs/adr/0052-meeting-bot-and-live-notes.md), ngày 2026-11-13. Bản tiếng bạn là bản chính. Trạng thái: **đề xuất, chưa quyết, chưa làm gì**. Cần bạn trả lời tám câu ở cuối. Việc này là issue [#2592](https://github.com/DOS/Ludy/issues/2592) (L4), đang nằm ở Icebox (kho tạm, chưa làm).
 
 ## Vấn đề
 
-Hiện nay Ludy ghi cuộc họp trực tuyến bằng tiện ích Chrome hoặc Edge (ghi âm thanh của tab), bằng micro trong app, hoặc bằng tải file lên. Anh đã chọn cách này thay vì bot vì bot làm phiền người khác. L4 hỏi: có nên làm một **bot tự vào cuộc họp Meet, Zoom hoặc Teams**, và **ghi chú ngay trong lúc họp** không?
+Hiện nay Ludy ghi cuộc họp trực tuyến bằng tiện ích Chrome hoặc Edge (ghi âm thanh của tab), bằng micro trong app, hoặc bằng tải file lên. Bạn đã chọn cách này thay vì bot vì bot làm phiền người khác. L4 hỏi: có nên làm một **bot tự vào cuộc họp Meet, Zoom hoặc Teams**, và **ghi chú ngay trong lúc họp** không?
 
 Bot chỉ thêm được ba thứ mà tiện ích chưa có: (1) ghi được cuộc họp trong **app Zoom và app Teams trên máy tính** (hiện phải tải file lên); (2) ghi cuộc họp khi người ghi không ngồi trước máy; (3) **ghi chú trực tiếp** (hiện bản chép lời đến sau cuộc họp vài phút).
 
@@ -26,7 +26,7 @@ Lưu ý: phiên làm việc này bị chặn không mở được trang của Go
 5. **Báo cho người trong cuộc họp (đồng ý trong cuộc gọi):** bước xác nhận hiện có của Ludy giữ nguyên. Với bot Zoom thêm: chưa lưu âm thanh nào trước khi thông báo đã hiện trong cuộc gọi bằng cách Zoom cho phép (nếu không xác nhận được cách nào thì không làm); người ghi bấm một nút là dừng và xóa; chủ cuộc họp có thể đuổi app bằng công cụ của Zoom. Thông báo như vậy đã đủ theo luật bảo vệ dữ liệu cá nhân chưa là câu hỏi cho luật sư.
 6. **Âm thanh đi đâu:** vẫn mã hóa ngay bằng khóa riêng của từng cuộc họp, giữ 30 ngày rồi xóa khóa (như ADR-0047). Bot Zoom đọc luồng trong một container riêng, chỉ gửi đoạn âm thanh vào Ludy qua một lệnh duy nhất, và chỉ khi người ghi đã bấm cho phép cuộc họp đó.
 
-## Tám câu cần anh trả lời
+## Tám câu cần bạn trả lời
 
 Trả lời từng câu một. Mỗi câu có đề xuất của tôi trước.
 
@@ -36,7 +36,7 @@ Trả lời từng câu một. Mỗi câu có đề xuất của tôi trước.
 4. **Có dùng dịch vụ bot của bên thứ ba (tùy chọn cho Ludy Cloud) không?** Đề xuất: **chưa.** Âm thanh đi qua công ty khác (có thể ra nước ngoài) và Ludy phải phụ thuộc một khoản phí.
 5. **Chấp nhận ghi chú trực tiếp tốn tới gấp đôi phút âm thanh, mặc định tắt, bật riêng từng cuộc họp?** Đề xuất: **có.** Nếu không trả lời: không làm L4a.
 6. **Ai được cho bot vào họp: chỉ người ghi, từng cuộc một, không tự vào theo lịch?** Đề xuất: **đúng như vậy.**
-7. **Chi tiêu và tài khoản Zoom cho Ludy Cloud (chỉ khi câu 2 là làm):** ai mở tài khoản nhà phát triển Zoom, đăng ký app, qua vòng duyệt, và trả credit. Việc này là của anh (tiền mới). Đề xuất: chờ câu 2.
+7. **Chi tiêu và tài khoản Zoom cho Ludy Cloud (chỉ khi câu 2 là làm):** ai mở tài khoản nhà phát triển Zoom, đăng ký app, qua vòng duyệt, và trả credit. Việc này là của bạn (tiền mới). Đề xuất: chờ câu 2.
 8. **Hỏi luật sư (#62)** xem thông báo hiện trong cuộc gọi có đủ cho bot không, hay từng người phải đồng ý. Đề xuất: **có**, thêm vào danh sách câu hỏi cho luật sư (mục 7 của kế hoạch) trước khi làm bot.
 
-**Ai làm gì tiếp:** anh trả lời; Meetings PO mở issue L4a nếu anh đồng ý câu 1, 5 và 6; luật sư nhận câu 8; Platform PO duyệt bảo mật nếu sau này làm bot.
+**Ai làm gì tiếp:** Bạn trả lời; Meetings PO mở issue L4a nếu bạn đồng ý câu 1, 5 và 6; luật sư nhận câu 8; Platform PO duyệt bảo mật nếu sau này làm bot.
