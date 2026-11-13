@@ -185,7 +185,6 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     for (const rule of RULES) expect(await run(branch, rule), rule).toEqual([]);
   });
 
-<<<<<<< HEAD
   it('answers kernel.mcp.signals with the items of the rules and says what it could not check: nothing for a whole-org grant, partial_view for a branch-limited one, rule 3 never checked yet', async () => {
     const whole = mcp(users.owner, await grant(users.owner), 'company');
     const answer = (await run(whole, 'kernel.mcp.signals')) as unknown as { items: Array<{ id: string }>; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
@@ -208,8 +207,6 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     ]);
   });
 
-=======
->>>>>>> origin/main
   it('does not let a grant run Home itself or anything the rules do not name', async () => {
     const actor = mcp(users.owner, await grant(users.owner), 'company');
     await expect(run(actor, 'kernel.today')).rejects.toBeInstanceOf(DomainError);
