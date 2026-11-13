@@ -20,7 +20,11 @@ export const SIGNALS_MAX_CRM = 500;
 const zSignalDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'a date, YYYY-MM-DD')
-  .refine((v) => new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v, 'a real calendar date');
+  .refine((v) => {
+    // A day such as 2026-13-45 makes toISOString throw, so the check answers false instead of throwing.
+    const at = Date.parse(`${v}T00:00:00Z`);
+    return Number.isFinite(at) && new Date(at).toISOString().slice(0, 10) === v;
+  }, 'a real calendar date');
 
 // Accounting's side: `finance.signals.sales`. Its input is the parties to look at, the ones of the won deals the CRM side listed (ids only, so no cut can hide
 // an invoiced customer behind a row cap). Its answer is one row per asked party that has at least one sales invoice the caller can open: the date of the
