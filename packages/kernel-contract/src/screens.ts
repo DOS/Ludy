@@ -52,6 +52,8 @@ const FINANCE_SCREENS = {
     { path: 'sales-invoices' },
     // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
     { path: 'stock' },
+    // Where each platform's money stands in the books: the Sàn screen (#2516).
+    { path: 'marketplace' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
@@ -71,6 +73,7 @@ const FINANCE_SCREENS = {
     { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },
     { app: 'accounting', group: 'books', path: 'sales-invoices', label: 'salesInvoices' },
     { app: 'accounting', group: 'books', path: 'stock', label: 'stock' },
+    { app: 'accounting', group: 'books', path: 'marketplace', label: 'marketplace' },
     { app: 'accounting', group: 'books', path: 'bank', label: 'bank' },
     { app: 'accounting', group: 'books', path: 'fixed-assets', label: 'fixedAssets' },
     { app: 'accounting', group: 'books', path: 'ledger', label: 'ledger' },

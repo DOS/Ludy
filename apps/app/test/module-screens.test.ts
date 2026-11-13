@@ -186,6 +186,7 @@ describe('module screens against the router (#1652)', () => {
               '/o/$slug/vouchers',
               '/o/$slug/sales-invoices',
               '/o/$slug/stock',
+              '/o/$slug/marketplace',
               '/o/$slug/bank',
               '/o/$slug/fixed-assets',
               '/o/$slug/ledger',
@@ -218,7 +219,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'employees', 'payroll', 'declarations', 'bankTemplates', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'marketplace', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'employees', 'payroll', 'declarations', 'bankTemplates', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
     ]);
   });
 });
