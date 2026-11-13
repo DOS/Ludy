@@ -44,7 +44,7 @@ const IMPORTERS: Record<string, string[]> = {
   'apps/kernel/src/member-vy-ports.ts': ['apps/kernel/src/http.ts', 'apps/kernel/src/kernel.ts', 'apps/kernel/src/rpc.ts'],
   'apps/kernel/src/member-vy-worker.ts': ['apps/kernel/src/worker.ts'],
   'modules/meetings/src/live-notes.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
-  'modules/meetings/src/summary.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
+  'modules/meetings/src/summary.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/live-notes.ts', 'modules/meetings/src/meetings.ts'],
   'modules/meetings/src/transcribe.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'packages/db/src/schema.ts': ['packages/db/src/cells.ts', 'packages/db/src/index.ts'],
   'packages/db/src/generated/database.ts': ['packages/db/src/schema.ts'],

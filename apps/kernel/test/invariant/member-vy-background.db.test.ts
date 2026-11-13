@@ -1622,6 +1622,9 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "crove_meetings.meeting_discard_transcribe",
       "crove_meetings.member_vy_media_files",
     ];
+    // Functions whose change has not landed yet (the two-step rule of AGENTS.md: this file runs from the base branch): accepted while absent, and held to the list the moment
+    // they exist. live_for_member_vy (#3110) reads the run's waiting result row as audio_for_member_vy does. Remove an entry once its function is on main.
+    const PENDING = ["crove_meetings.live_for_member_vy"];
     const found = await admin((c) =>
       c.query<{ fn: string }>(
         `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -1629,7 +1632,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       ),
     );
     const names = [...new Set(found.rows.map((r) => r.fn))];
-    expect(names.filter((n) => !FROZEN.includes(n)), "SQL functions that read the private Vy rows and are not on the frozen list").toEqual([]);
+    expect(names.filter((n) => !FROZEN.includes(n) && !PENDING.includes(n)), "SQL functions that read the private Vy rows and are not on the frozen list").toEqual([]);
     // Each entry still reads them: a function that no longer does is removed from the list in the change that makes it so.
     expect(FROZEN.filter((n) => !names.includes(n)), "frozen entries that no longer read them").toEqual([]);
   });
