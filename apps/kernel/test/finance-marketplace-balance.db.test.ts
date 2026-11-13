@@ -160,6 +160,36 @@ suite('marketplace balance on PostgreSQL (#2516 slice D)', () => {
     expect(other.platforms).toEqual([]);
   });
 
+  it('leaves out a settlement that was reversed, and its reversal', async () => {
+    const o = await org();
+    const shopee = await platformParty(o, 'shopee');
+    await entry(o, '2026-11-02', [['131', '500000', '0', shopee], ['511', '0', '500000', null]]);
+    const wrong = await admin(async (c) => {
+      await c.query('BEGIN');
+      const id = (
+        await c.query<{ id: string }>(
+          "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-03', 'sàn nhầm', 'finance.journal_voucher', $2, $3) RETURNING id",
+          [o.orgId, randomUUID(), o.entity],
+        )
+      ).rows[0]?.id as string;
+      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 70000, 0, $3), ($1, $2, 2, '511', 0, 70000, NULL)", [o.orgId, id, shopee]);
+      await c.query('COMMIT');
+      return id;
+    });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      const id = (
+        await c.query<{ id: string }>(
+          "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id, reverses_entry_id) VALUES ($1, '2026-11-04', 'đảo', 'finance.journal_voucher', $2, $3, $4) RETURNING id",
+          [o.orgId, randomUUID(), o.entity, wrong],
+        )
+      ).rows[0]?.id as string;
+      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 0, 70000, $3), ($1, $2, 2, '511', 70000, 0, NULL)", [o.orgId, id, shopee]);
+      await c.query('COMMIT');
+    });
+    expect((await balance(o)).platforms).toEqual([{ platform: 'shopee', partyId: shopee, partyName: 'Sàn shopee', sales: '500000', payouts: '0', owed: '500000', feesAwaitingInvoice: '0' }]);
+  });
+
   it('lets every role that reads the ledger read it, and shows another org nothing', async () => {
     const a = await org();
     const b = await org();

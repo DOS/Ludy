@@ -14,7 +14,7 @@ const zFigures = { sales: zMoney, payouts: zMoney, owed: zMoney, feesAwaitingInv
 export const zMarketplacePlatformBalance = z.strictObject({
   // The platform's id as the reports name it (shopee, tiktok_shop, lazada, or a later one).
   platform: z.string(),
-  // The organization party that stands for the platform, once a settlement was posted; null before.
+  // The organization party that stands for the platform (marketplace_party), once the platform has one; null before.
   partyId: zId.nullable(),
   partyName: z.string().nullable(),
   ...zFigures,

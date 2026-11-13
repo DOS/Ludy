@@ -36,10 +36,10 @@ export const marketplaceBalance = defineQuery({
       .where('m.org_id', '=', ctx.orgId)
       .where('m.legal_entity_id', '=', entity)
       .execute();
-    const byParty = new Map(parties.map((p) => [p.party_id, p.platform]));
-    // The debits and credits of 131 and 1388 under those parties, as of the day.
+    const partyIds = parties.map((p) => p.party_id);
+    // The debits and credits of 131 and 1388 under those parties, as of the day, of the entries that stand: an entry that was reversed, and its reversal, are both left out, so a reversed settlement is no sale.
     const lines =
-      byParty.size === 0
+      partyIds.length === 0
         ? []
         : (
             await sql<{ party_id: string; root: string; debit: string; credit: string }>`
@@ -50,7 +50,9 @@ export const marketplaceBalance = defineQuery({
               FROM crove_finance.journal_line l
               JOIN crove_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id
               WHERE l.org_id = ${ctx.orgId} AND l.legal_entity_id = ${entity} AND j.entry_date <= ${asOf}::date
-                AND l.party_id = ANY (${[...byParty.keys()]}::uuid[])
+                AND j.reverses_entry_id IS NULL
+                AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
+                AND l.party_id = ANY (${partyIds}::uuid[])
                 AND (l.account_code LIKE ${`${RECEIVABLE}%`} OR l.account_code LIKE ${`${FEES_AWAITING_INVOICE}%`})
               GROUP BY l.party_id, root`.execute(ctx.trx)
           ).rows;

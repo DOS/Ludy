@@ -1808,17 +1808,17 @@ export const contract = {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zBankPartyRule)),
     remove: oc.input(z.object({ id: zId })).output(z.object({ id: zId })),
   },
+  // What each marketplace owes the business and the fees awaiting their invoice (#2516 slice D, plan stock-and-marketplaces.md 8.4), read from the ledger by account and by the platform's party; every role
+  // that reads the ledger. Facts only: shows zeros until a settlement is posted.
+  marketplaceBalance: {
+    get: oc.input(zMarketplaceBalanceGet.optional()).output(zMarketplaceBalance),
+  },
   // Customer payment reminders (#2488, "nhắc thu nợ"). list (every role): the customers with a sales invoice past its due date and an amount
   // left, in the entity the caller names or sees, longest overdue first. draft (every role): one customer's overdue invoices as the books
   // stand, the fixed words for its notice level and the bank accounts it may ask to be paid into; NOTHING_OVERDUE (409). send (owners,
   // admins, members; R2, a mail): queues the reminder the person approved, its facts rebuilt from the books; STALE_REMINDER (409) when the
   // level or total moved since the draft, CUSTOMER_EMAIL_REQUIRED (409), ALREADY_REMINDED (409) for a second one of the level within three days
   // unless confirm is true, PAY_TO_NOT_FOUND (422).
-  // What each marketplace owes the business and the fees awaiting their invoice (#2516 slice D, plan stock-and-marketplaces.md 8.4), read from the ledger by account and by the platform's party; every role
-  // that reads the ledger. Facts only: shows zeros until a settlement is posted.
-  marketplaceBalance: {
-    get: oc.input(zMarketplaceBalanceGet.optional()).output(zMarketplaceBalance),
-  },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
     draft: oc.input(z.object({ partyId: zId, legalEntityId: zId.optional() })).output(zPaymentReminderDraft),

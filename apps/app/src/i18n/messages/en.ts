@@ -2806,7 +2806,7 @@ export const en = {
     title: 'Marketplaces',
     subtitle: 'What each marketplace you sell on still owes you, read from the books. This screen posts nothing.',
     empty: 'No marketplace yet',
-    emptyHint: 'Import an order report or an income report of Shopee, TikTok Shop or Lazada in the Inbox; each platform shows here once it has orders or a posted settlement.',
+    emptyHint: 'Import an order report or an income report of Shopee, TikTok Shop or Lazada in the Inbox; each platform shows here once it has orders or a settlement.',
     asOf: 'As of {date}',
     platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' },
     columns: { platform: 'Marketplace', sales: 'Sales booked', payouts: 'Settled by payouts', owed: 'Still owed to you', fees: 'Fees awaiting an invoice' },

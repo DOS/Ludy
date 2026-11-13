@@ -2804,7 +2804,7 @@ export const vi = {
     title: 'Sàn thương mại điện tử',
     subtitle: 'Mỗi sàn bạn bán hàng còn nợ bạn bao nhiêu, đọc từ sổ sách. Màn này không ghi sổ gì.',
     empty: 'Chưa có sàn nào',
-    emptyHint: 'Hãy nhập báo cáo đơn hàng hoặc báo cáo thu nhập của Shopee, TikTok Shop hoặc Lazada trong Hộp thư; mỗi sàn hiện ở đây khi có đơn hàng hoặc có đối soát đã ghi sổ.',
+    emptyHint: 'Hãy nhập báo cáo đơn hàng hoặc báo cáo thu nhập của Shopee, TikTok Shop hoặc Lazada trong Hộp thư; mỗi sàn hiện ở đây khi có đơn hàng hoặc có đối soát.',
     asOf: 'Tính đến {date}',
     platforms: { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' },
     columns: { platform: 'Sàn', sales: 'Doanh thu đã ghi sổ', payouts: 'Đã tất toán bằng các lần sàn trả', owed: 'Sàn còn nợ bạn', fees: 'Phí chờ hóa đơn' },
