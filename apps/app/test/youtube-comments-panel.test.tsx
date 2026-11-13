@@ -3,7 +3,6 @@
 // without the comment scope, on with the day's units, and the two ways reading stops (Google's quota spent, the channel's own budget used up), each said
 // in words with the time it resumes; and who may change the switch. The mutation itself is covered by the kernel's database test.
 import { QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
