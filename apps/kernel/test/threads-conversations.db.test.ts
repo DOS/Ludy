@@ -8,13 +8,15 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ThreadsPublisher, type Fetch } from '@crove/channel';
+import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@crove/agent';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { ConversationDetail, ConversationListed } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, Runtime, type BlobStore } from '@crove/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
-import { runConversationIntake, runConversationJob, runConversationSync } from '../src/conversations-worker.ts';
+import { runConversationDraft, runConversationIntake, runConversationJob, runConversationSync } from '../src/conversations-worker.ts';
+import { systemMeter } from '../src/ai-meter.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH } from '../src/facebook-webhook.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -169,6 +171,29 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
     let detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
     expect(detail.messages).toHaveLength(1);
     expect(detail.messages[0]).toMatchObject({ direction: 'in', body: SECRET_TEXT });
+
+    // Dy's draft for the new reply thread: asked, written by the system job through the AI budget meter within Threads' 500 characters from the
+    // customer's words, tainted, and live for the person to read; it sends nothing (the reply below is the person's own press of Send).
+    const asked = await rt.execute<{ draftId: string; queued: boolean }>('kernel.conversation.draft_request', { conversationId: convId }, asOwner);
+    expect(asked.queued).toBe(true);
+    const seen: ReplyDraftRequest[] = [];
+    const usage: AiUsage = { inputTokens: 1000, outputTokens: 200 };
+    const writer = {
+      draft: async (req: ReplyDraftRequest, onUsage?: (u: AiUsage) => void): Promise<ReplyDraftResult> => {
+        await metered('conversation.draft', async () => {
+          seen.push(req);
+          return { usage };
+        });
+        onUsage?.(usage);
+        return { kind: 'draft', body: 'Dạ tiệm còn size M ạ, bạn ghé tiệm nhé!' };
+      },
+    };
+    const draftJob = { orgId, draftId: asked.draftId, conversationId: convId };
+    expect(await runConversationDraft({ runtime: worker, writer, meter: systemMeter(worker, { price: { inputPerMTok: '1000', outputPerMTok: '3000' } }) }, draftJob)).toBe('written');
+    expect(seen[0]).toMatchObject({ maxChars: 500, messages: [{ from: 'customer', text: SECRET_TEXT }] });
+    detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
+    expect(detail.draft).toMatchObject({ state: 'live', source: 'asked', tainted: true });
+    expect(detail.messages).toHaveLength(1);
 
     // A reply: over Threads' 500 characters is refused, and hiding is not offered until the live check confirms it.
     await expect(rt.execute('kernel.conversation.reply', { conversationId: convId, body: 'x'.repeat(501), lastSeenSeq: 1 }, asOwner)).rejects.toMatchObject({ code: 'REPLY_TOO_LONG' });
