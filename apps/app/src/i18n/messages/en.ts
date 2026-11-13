@@ -5289,6 +5289,7 @@ export const en = {
     issueSeries: 'series {series}',
     issueIrreversible: 'Approving sends this invoice to your e-invoice provider. An issued invoice cannot be edited; a mistake is corrected with an adjustment or a replacement invoice.',
     issueStale: 'The draft changed since this request was made, so an approval would be refused. Reject this request and let its maker send a new one.',
+    issueOrderCancelled: 'Order {number}, the source of this invoice, was cancelled. Check with the seller before approving the issue.',
     issueOpenScreen: 'Open Sales invoices',
     approveIssue: 'Approve and issue',
     approvedIssueToast: 'Approved. The invoice is being sent to the provider.',

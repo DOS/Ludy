@@ -5283,6 +5283,7 @@ export const vi = {
     issueSeries: 'ký hiệu {series}',
     issueIrreversible: 'Duyệt là gửi hóa đơn này tới nhà cung cấp hóa đơn điện tử. Hóa đơn đã phát hành không sửa được; sai sót phải sửa bằng hóa đơn điều chỉnh hoặc thay thế.',
     issueStale: 'Bản nháp đã thay đổi từ lúc gửi đề xuất này nên duyệt sẽ bị từ chối. Hãy từ chối đề xuất này và để người lập gửi lại.',
+    issueOrderCancelled: 'Đơn hàng {number}, nguồn của hóa đơn này, đã bị hủy. Hãy kiểm tra với người bán trước khi duyệt phát hành.',
     issueOpenScreen: 'Mở màn hình Hóa đơn bán ra',
     approveIssue: 'Duyệt và phát hành',
     approvedIssueToast: 'Đã duyệt. Hóa đơn đang được gửi tới nhà cung cấp.',
