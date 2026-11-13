@@ -25,7 +25,7 @@ BEGIN
   IF (CASE crove_kernel.ctx_actor_type()
         WHEN 'user' THEN pg_catalog.lower(p_actor_key) = 'user:' || crove_kernel.ctx_user_id()::text
         -- A sealed MCP context (ADR-0049 step 3e) hashes for the consenting user whose key the runtime builds, read from the seal, never from the argument.
-        WHEN 'agent' THEN CASE WHEN crove_kernel.ctx_verified() ->> 'kind' IN ('mcp_company', 'mcp_member')
+        WHEN 'agent' THEN CASE WHEN (crove_kernel.ctx_verified() ->> 'grantor' IS NOT NULL OR crove_kernel.ctx_mcp_member_id() IS NOT NULL)
           THEN pg_catalog.lower(p_actor_key) = 'user:' || COALESCE(crove_kernel.ctx_verified() ->> 'grantor', crove_kernel.ctx_mcp_member_id()::text)
           ELSE pg_catalog.lower(p_actor_key) = 'agent:' || crove_kernel.ctx_agent_id()::text || ':' || crove_kernel.ctx_run_id()::text END
         WHEN 'system' THEN pg_catalog.starts_with(p_actor_key, 'system:')
@@ -68,7 +68,7 @@ BEGIN
   -- A member-bound or company MCP context (ADR-0049 step 3e) is sealed as an agent without a user, so no user-bound policy lets it read. It writes one
   -- thing, the audit row of a call it refused: an INSERT into audit_event by the consenting user (the sealed grantor or member, never the claim of the
   -- row) that names this very grant. Nothing else, no other table, no update, no delete.
-  IF v_ctx ->> 'kind' IN ('mcp_company', 'mcp_member') THEN
+  IF (v_ctx ->> 'grantor' IS NOT NULL OR crove_kernel.ctx_mcp_member_id() IS NOT NULL) THEN
     IF TG_TABLE_SCHEMA = 'crove_kernel' AND TG_TABLE_NAME = 'audit_event' AND TG_OP = 'INSERT' THEN
       IF NEW.actor_type = 'user'
          AND NEW.actor_id = COALESCE(v_ctx ->> 'grantor', crove_kernel.ctx_mcp_member_id()::text)::uuid
