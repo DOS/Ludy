@@ -993,10 +993,10 @@ export const vi = {
   },
   marketplaceBalance: {
     title: 'Sàn',
-    subtitle: 'Tiền của từng sàn thương mại điện tử trong sổ sách: doanh thu đã ghi, số sàn đã trả, số còn chờ và phí chờ hóa đơn. Chỉ đọc từ sổ cái, không có gì để bấm.',
+    subtitle: 'Tiền của từng sàn thương mại điện tử trong sổ sách: doanh thu đã ghi, số đã đối trừ qua các kỳ thanh toán, số còn chờ và phí chờ hóa đơn. Chỉ đọc từ sổ cái, không có gì để bấm.',
     platform: 'Sàn',
     salesPosted: 'Doanh thu đã ghi (131)',
-    paidOut: 'Sàn đã trả',
+    paidOut: 'Đã đối trừ qua kỳ thanh toán',
     awaitingPayout: 'Còn chờ sàn trả',
     feesAwaitingInvoice: 'Phí chờ hóa đơn (1388)',
     empty: 'Chưa có sàn nào được ghi sổ',

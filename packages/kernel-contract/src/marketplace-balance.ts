@@ -8,7 +8,7 @@ export const zMarketplaceBalanceInput = z.strictObject({ legalEntityId: zId.opti
 export type MarketplaceBalanceInput = z.infer<typeof zMarketplaceBalanceInput>;
 
 // One platform of one legal entity. `salesPosted` is what settlement entries debited to 131 for the platform (a reversed entry takes its amount back), `paidOut` what the platform's payouts
-// credited to 131 (a reversed payout takes its amount back), `awaitingPayout` the difference, which is the platform's balance on 131: what the platform still owes the seller. `feesAwaitingInvoice`
+// cleared on 131, the whole credit (which also covers the fees and the tax the platform kept, so it is not the cash received; a reversed payout takes its amount back), `awaitingPayout` the difference, which is the platform's balance on 131: what the platform still owes the seller. `feesAwaitingInvoice`
 // is the platform's balance on 1388: fees the platform kept at a payout whose invoice has not come yet. All four are zero until the entries that post them exist (the settlement and the payout
 // slices of #2516), so a platform with a link and no entries shows zeros, never an error.
 export const zMarketplaceBalanceRow = z.object({

@@ -995,10 +995,10 @@ export const en = {
   },
   marketplaceBalance: {
     title: 'Marketplaces',
-    subtitle: 'Where each marketplace platform stands in the books: sales posted, what the platform has paid out, what it still owes and the fees awaiting an invoice. Read from the ledger only, nothing to press.',
+    subtitle: 'Where each marketplace platform stands in the books: sales posted, what payouts have cleared, what the platform still owes and the fees awaiting an invoice. Read from the ledger only, nothing to press.',
     platform: 'Platform',
     salesPosted: 'Sales posted (131)',
-    paidOut: 'Paid out by the platform',
+    paidOut: 'Cleared by payouts',
     awaitingPayout: 'Still owed by the platform',
     feesAwaitingInvoice: 'Fees awaiting an invoice (1388)',
     empty: 'No platform has been posted yet',

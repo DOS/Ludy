@@ -51,17 +51,17 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
       return id;
     });
   // One entry by the superuser: lines are [account, debit, credit, party]; a reversal names the entry it reverses.
-  const post = (lines: Array<[string, number, number, string | null]>, reverses: string | null = null) =>
+  const post = (lines: Array<[string, number, number, string | null]>, reverses: string | null = null, org: string = orgA) =>
     admin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query<{ id: string }>(
         `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, '2026-11-05', 'Sàn', 'test', $2, $3) RETURNING id`,
-        [orgA, randomUUID(), reverses],
+        [org, randomUUID(), reverses],
       );
       const entry = rows[0]?.id as string;
       let lineNo = 1;
       for (const [account, debit, credit, partyId] of lines) {
-        await c.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, $4, $5, $6, $7)', [orgA, entry, lineNo++, account, debit, credit, partyId]);
+        await c.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, $4, $5, $6, $7)', [org, entry, lineNo++, account, debit, credit, partyId]);
       }
       await c.query('COMMIT');
       return entry;
@@ -160,6 +160,17 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
   it('filters by legal entity, gives nothing for an unknown entity, and shows another org nothing of this one', async () => {
     expect((await balance(owner, orgA, { legalEntityId: entity })).rows).toHaveLength(2);
     expect(await balance(owner, orgA, { legalEntityId: randomUUID() })).toEqual({ rows: [] });
-    expect(await balance(stranger, orgB)).toEqual({ rows: [] });
+    // Another org with a platform and lines of its own: it sees its own figures only, and this org sees none of them.
+    const other = randomUUID();
+    await admin(async (c) => {
+      await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'Shopee B')", [orgB, other]);
+      await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgB, other]);
+    });
+    await post([['131', 42_000, 0, other], ['511', 0, 42_000, null]], null, orgB);
+    const theirs = await balance(stranger, orgB);
+    expect(theirs.rows).toHaveLength(1);
+    expect(theirs.rows[0]).toMatchObject({ platformName: 'Shopee B', salesPosted: '42000', awaitingPayout: '42000' });
+    expect((await balance()).rows.map((r) => r.platformName)).toEqual(['Shopee', 'TikTok Shop']);
+    expect(rowOf(await balance(), 'shopee')?.salesPosted).toBe('1500000');
   });
 });

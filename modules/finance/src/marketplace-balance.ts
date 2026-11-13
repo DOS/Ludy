@@ -2,6 +2,9 @@
 // Where each platform's money stands in the books, for the Sàn screen (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"). Read only, from the ledger: the
 // lines on the platform's balance account (131) and on the fees-awaiting-invoice account (1388) that name the platform's party (crove_finance.marketplace_party), per legal entity. Facts only:
 // no model call, nothing written, no order or buyer data. A reversal entry takes back what the entry it reverses posted, so it counts against the same figure, never as a payout.
+// Notes for the posting and payout slices of #2516: `paidOut` is what payouts CLEARED on 131 (the whole credit, which also covers the fees and the tax the platform kept), not the money received on
+// 112; every credit to 131 that is not a reversal counts as a payout, so an entry that credits 131 for another reason (a refund above the sales) would be counted as one and must be handled here
+// first; the lines must name the platform's party (the read matches the party exactly, so a party later merged into another is not folded in).
 import { sql } from 'kysely';
 import { zMarketplaceBalanceInput, type MarketplaceBalance } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';

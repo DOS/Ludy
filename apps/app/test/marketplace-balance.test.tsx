@@ -59,6 +59,7 @@ describe('the Sàn screen (#2516)', () => {
     expect(html).toContain('Shopee');
     expect(html).toContain('TikTok Shop');
     expect(html).toContain('Sales posted (131)');
+    expect(html).toContain('Cleared by payouts');
     expect(html).toContain('Still owed by the platform');
     expect(html).toContain('Fees awaiting an invoice (1388)');
     expect(html).toContain('data-testid="marketplace-balance-note"');
