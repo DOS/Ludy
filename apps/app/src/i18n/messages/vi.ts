@@ -10565,6 +10565,9 @@ export const vi = {
         },
       },
       member_vy: {
+        live_chunks: {
+          open: 'Mở các đoạn âm thanh đang ghi của cuộc họp cho lượt Vy ghi chú trực tiếp',
+        },
         memory: {
           delete: 'Xóa một mục Vy ghi nhớ về bạn',
           list: 'Xem những gì Vy ghi nhớ về bạn',
@@ -10784,6 +10787,13 @@ export const vi = {
     meetings: {
       live: {
         chunk: 'Nhận một đoạn âm thanh của cuộc họp đang ghi (ghi chú trực tiếp)',
+        notes_copy: 'Chép ghi chú trực tiếp Vy vừa làm vào bản nháp của bạn',
+        notes_input: 'Đọc các dòng nháp mới và ghi chú trước đó để làm ghi chú trực tiếp',
+        notes_start: 'Bắt đầu một lần làm ghi chú trực tiếp cho cuộc họp',
+        start: 'Bắt đầu ghi chú trực tiếp cho cuộc họp',
+        status: 'Xem ghi chú trực tiếp của cuộc họp',
+        stop: 'Dừng ghi chú trực tiếp của cuộc họp',
+        tick: 'Chép các dòng nháp trực tiếp mới và bắt đầu đoạn tiếp theo',
       },
       media: {
         discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',

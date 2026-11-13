@@ -10,7 +10,7 @@
 --    live:<seq> key. Worker login inside the member's sealed context only.
 -- 3. crove_meetings.member_vy_media_files() restated from 20261203030000 with one addition: a live notes run reads the file rows of the live pieces
 --    of its own meeting, as a transcribe run reads the audio segments of its one meeting. The file policy of 20261203030100 is unchanged.
--- 4. crove_meetings.meeting_discard_transcribe() restated from 20261203100000 with the feature meetings.live_notes added, so a meeting's removal
+-- 4. crove_meetings.meeting_discard_transcribe() restated from 20261203100000 with the features meetings.live_notes and meetings.live_summary added, so a meeting's removal
 --    cancels a live notes run and deletes its result as it does for transcribe and summary.
 -- 5. crove_meetings.meeting_result.feature takes 'meetings.live_notes': the running notes are ordinary draft rows of the recorder, so the accept and
 --    publish paths, the 5.3 checks and the taint rules already built apply to them unchanged.
@@ -200,16 +200,16 @@ GRANT EXECUTE ON FUNCTION crove_meetings.member_vy_media_files() TO crove_tenant
 -- ---------------------------------------------------------------------------
 -- 4. A meeting's removal reaches its live notes run too
 -- ---------------------------------------------------------------------------
--- Restated from 20261203100000 (the newest definition) with one change: the feature list gains meetings.live_notes. The trigger itself is unchanged.
+-- Restated from 20261203100000 (the newest definition) with one change: the feature list gains meetings.live_notes and meetings.live_summary. The trigger itself is unchanged.
 CREATE OR REPLACE FUNCTION crove_meetings.meeting_discard_transcribe() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   UPDATE crove_kernel.ai_run r SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'MEETING_REMOVED'
   WHERE r.org_id = OLD.org_id AND r.status = 'running'
     AND r.id IN (SELECT v.run_id FROM crove_kernel.member_vy_result v
-                 WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id);
+                 WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes', 'meetings.live_summary') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id);
   DELETE FROM crove_kernel.member_vy_result v
-  WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id;
+  WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes', 'meetings.live_summary') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id;
   RETURN OLD;
 END;
 $$;

@@ -168,7 +168,7 @@ export async function runMeetingsLiveNotes(deps: MeetingsLiveNotesDeps, job: Mee
         opened.input.audio.fill(0);
       }
     }
-    const body = JSON.stringify(zLiveResult.parse({ v: 1, lines, notes: null }));
+    const body = JSON.stringify(zLiveResult.parse({ v: 1, lines }));
     if (body.length > TRANSCRIPT_RESULT_MAX) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The window is longer than a result holds');
     const stored = await vy.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'ready', body } });
     // A kill switch or a spent budget that appeared since the last admit makes the store keep a failed result, not the text.

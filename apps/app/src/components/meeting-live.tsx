@@ -13,8 +13,9 @@ import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
-// The cadence of the status poll and of the tick, in milliseconds.
+// The cadence of the status poll and of the tick, in milliseconds, and of the running notes (ADR-0052: every five minutes, or on the recorder's click).
 export const LIVE_POLL_MS = 10_000;
+export const LIVE_NOTES_MS = 5 * 60_000;
 
 // What the pane says about the state: a message key under `meetings.live` and the code, when the server stopped it.
 export type LiveNotice = { key: 'notEnabled' | 'budget' | 'aiStopped' | 'otherStopped'; code: string | null } | null;
@@ -65,8 +66,17 @@ function LivePane({ meetingId }: { meetingId: string }) {
   };
   const gate = useRef(createTickGate()).current;
   const tick = useMutation({
-    mutationFn: (notesNow: boolean) => gate.run(() => orpc.meetings.liveTick.call({ meetingId, notesNow })),
+    mutationFn: () => gate.run(() => orpc.meetings.liveTick.call({ meetingId })),
     onSuccess: refresh,
+  });
+  // The running notes are a call of their own, one at a time like the tick: the draft they write shows in the meeting's results, so those are refetched too.
+  const notesGate = useRef(createTickGate()).current;
+  const notes = useMutation({
+    mutationFn: () => notesGate.run(() => orpc.meetings.liveNotes.call({ meetingId })),
+    onSuccess: () => {
+      refresh();
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.get.key() });
+    },
   });
   const start = useMutation({ mutationFn: () => orpc.meetings.liveStart.call({ meetingId }), onSuccess: refresh });
   const stop = useMutation({ mutationFn: () => orpc.meetings.liveStop.call({ meetingId }), onSuccess: refresh });
@@ -75,15 +85,21 @@ function LivePane({ meetingId }: { meetingId: string }) {
   const active = data ? liveActive(data) : false;
   const tickRef = useRef(tick.mutate);
   tickRef.current = tick.mutate;
+  const notesRef = useRef(notes.mutate);
+  notesRef.current = notes.mutate;
   useEffect(() => {
     if (!active) return;
-    const id = setInterval(() => tickRef.current(false), LIVE_POLL_MS);
-    return () => clearInterval(id);
+    const id = setInterval(() => tickRef.current(), LIVE_POLL_MS);
+    const notesId = setInterval(() => notesRef.current(), LIVE_NOTES_MS);
+    return () => {
+      clearInterval(id);
+      clearInterval(notesId);
+    };
   }, [active]);
 
   if (!data) return null;
   const notice = liveNotice(data);
-  const error = status.error ?? tick.error ?? start.error ?? stop.error;
+  const error = status.error ?? tick.error ?? start.error ?? stop.error ?? notes.error;
   return (
     <Card data-testid="live-pane">
       <CardHeader>
@@ -111,7 +127,7 @@ function LivePane({ meetingId }: { meetingId: string }) {
             )}
             {active && (
               <>
-                <Button size="sm" variant="outline" loading={tick.isPending} onClick={() => tick.mutate(true)}>
+                <Button size="sm" variant="outline" loading={notes.isPending} onClick={() => notes.mutate()}>
                   {t('notesNow')}
                 </Button>
                 <Button size="sm" variant="outline" loading={stop.isPending} onClick={() => stop.mutate()}>

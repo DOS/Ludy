@@ -10568,6 +10568,9 @@ export const en = {
         },
       },
       member_vy: {
+        live_chunks: {
+          open: 'Open the pieces of a meeting being recorded for the Vy live notes run',
+        },
         memory: {
           delete: 'Delete something Vy remembers about you',
           list: 'See what Vy remembers about you',
@@ -10787,6 +10790,13 @@ export const en = {
     meetings: {
       live: {
         chunk: 'Take a piece of the audio of a meeting being recorded (live notes)',
+        notes_copy: 'Copy the live notes Vy just made into your draft',
+        notes_input: 'Read the new draft lines and the earlier notes to make the live notes',
+        notes_start: 'Start one making of the live notes of a meeting',
+        start: 'Start the live notes of a meeting',
+        status: 'See the live notes of a meeting',
+        stop: 'Stop the live notes of a meeting',
+        tick: 'Copy the new live draft lines and start the next window',
       },
       media: {
         discard: 'Remove the stored copy of deleted meeting media',

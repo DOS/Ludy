@@ -54,7 +54,7 @@ import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollRe
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
+import { runLiveNotes, runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -902,6 +902,10 @@ export function createRpcHandler(
       liveStart: os.meetings.liveStart.handler(meetingsCommand('meetings.live.start')),
       liveTick: os.meetings.liveTick.handler(meetingsCommand('meetings.live.tick')),
       liveStop: os.meetings.liveStop.handler(meetingsCommand('meetings.live.stop')),
+      // The running notes, from the new lines and the previous notes only (the same stage A shape as the summary, see member-vy-ports.ts).
+      liveNotes: os.meetings.liveNotes.handler(({ context, input }) =>
+        inOrg(context, (orgId, actor) => runLiveNotes({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+      ),
       followup: {
         draft: os.meetings.followup.draft.handler(meetingsQuery('meetings.followup.draft')),
         // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only, a published summary).

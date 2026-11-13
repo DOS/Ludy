@@ -183,6 +183,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.mcpWakeSweep]: 'none',
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
+  [QUEUES.meetingsLiveNotes]: ['provider:ai'],
   // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
   // provider here, and to DEPS_REACH first.
   [QUEUES.bankFeedSync]: 'none',

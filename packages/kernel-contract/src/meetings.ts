@@ -534,22 +534,40 @@ export const zLiveResult = z.strictObject({
   v: z.literal(1),
   // [piece order, start seconds, end seconds, text] of each line this window produced.
   lines: z.array(z.tuple([z.number().int().min(0).max(LIVE_LINES_MAX), z.number().int().min(0).max(86_400), z.number().int().min(0).max(86_400), z.string().min(1).max(LIVE_LINE_TEXT_MAX)])).max(200),
-  // The running notes, when this window refreshed them; the same shape a summary run stores.
-  notes: zSummaryResult.nullable(),
 });
 export type LiveResult = z.infer<typeof zLiveResult>;
+
+// The running notes (the second part of the live notes): asked on its own, every five minutes or on the recorder's click, because a member's Vy has one live run per
+// feature and a window may be running. `previous` is the live draft as it stands (null the first time) and `lines` the preview lines written since it was.
+export const zLiveNotesInput = z.strictObject({
+  meetingId: zId,
+  language: zMeetingLanguage,
+  previous: z.strictObject({ summary: z.string(), decisions: z.array(z.string()), items: z.array(z.string()) }).nullable(),
+  lines: z.array(z.strictObject({ startSeconds: z.number().int().min(0), endSeconds: z.number().int().min(0), text: z.string() })),
+});
+export type LiveNotesInput = z.infer<typeof zLiveNotesInput>;
+export const zLiveNotesAsk = z.strictObject({ meetingId: zId });
+export const zLiveNotesDone = z.strictObject({
+  meetingId: zId,
+  // 'nothing': no new line since the notes were last made, so no run was started and nothing was spent.
+  state: z.enum(['ready', 'failed', 'nothing']),
+  runId: zId.nullable(),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  decisions: z.number().int().min(0),
+  items: z.number().int().min(0),
+});
+export type LiveNotesDone = z.infer<typeof zLiveNotesDone>;
+export const zLiveNotesCopy = z.strictObject({ meetingId: zId, runId: zId });
 
 export const zLiveRef = z.strictObject({ meetingId: zId });
 export const zLiveStart = z.strictObject({ meetingId: zId });
 export const zLiveStarted = z.strictObject({ meetingId: zId, runId: zId });
-// `notesNow`: the recorder asked for the notes sooner than the five minutes.
-export const zLiveTick = z.strictObject({ meetingId: zId, notesNow: z.boolean().default(false) });
+export const zLiveTick = z.strictObject({ meetingId: zId });
 export const zLiveTicked = z.strictObject({
   meetingId: zId,
   // The window that was copied, when one was ready.
   copiedRunId: zId.nullable(),
   lines: z.number().int().min(0),
-  notesRefreshed: z.boolean(),
   // The window started by this tick, when one was.
   runId: zId.nullable(),
   state: z.enum(['off', 'waiting', 'running', 'stopped']),

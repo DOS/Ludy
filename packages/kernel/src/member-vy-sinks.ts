@@ -7,7 +7,7 @@
 // invariant checks the command's source for both.
 
 // The sinks: Meetings' two copies of a finished Vy result into the recorder's draft (#2941), each with taint on what it writes and a source_ref to the run.
-export const MEMBER_VY_SINKS: readonly string[] = ['meetings.live.tick', 'meetings.summary.copy_result', 'meetings.transcript.copy_result'];
+export const MEMBER_VY_SINKS: readonly string[] = ['meetings.live.notes_copy', 'meetings.live.tick', 'meetings.summary.copy_result', 'meetings.transcript.copy_result'];
 
 // The consumers that existed before the list did, and are not yet sinks (#2941): each is on this list only until Meetings moves it to MEMBER_VY_SINKS.
 // The list can only shrink: the invariant fails for an entry the baseline in the test does not name, for one that is no longer a command, and

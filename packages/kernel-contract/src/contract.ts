@@ -329,6 +329,8 @@ import {
   zMeetingReaderResult,
   zMeetingRef,
   zMeetingSettings,
+  zLiveNotesAsk,
+  zLiveNotesDone,
   zLiveRef,
   zLiveStart,
   zLiveStarted,
@@ -865,6 +867,8 @@ export const contract = {
     liveStart: oc.input(zLiveStart).output(zLiveStarted),
     liveTick: oc.input(zLiveTick).output(zLiveTicked),
     liveStop: oc.input(zLiveRef).output(zLiveStopped),
+    // The running notes, made by the recorder's Vy from the new preview lines and the previous notes only; the answer says how it went in fixed words.
+    liveNotes: oc.input(zLiveNotesAsk).output(zLiveNotesDone),
     // Links to parties, a deal and the calendar event (L1, #2587): the recorder sets and removes them; a page reads only the meetings its viewer reads.
     links: {
       add: oc.input(zMeetingLinkAdd).output(zMeetingLink),
