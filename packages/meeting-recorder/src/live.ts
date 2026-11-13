@@ -137,8 +137,11 @@ export function createLiveSender(options: LiveSenderOptions): LiveSender {
         }
         queue.push({ seq: nextSeq, lengthSeconds: liveLengthSeconds(durationMs), blob });
         nextSeq += 1;
+        // The oldest waiting pieces go first, but never piece 0: it carries the container header, and without it no later piece can be read.
         while (queue.length > maxQueue) {
-          queue.shift();
+          const at = queue.findIndex((p) => p.seq !== 0);
+          if (at < 0) break;
+          queue.splice(at, 1);
           dropped += 1;
         }
         void run();

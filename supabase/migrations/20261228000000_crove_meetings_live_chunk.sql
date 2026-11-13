@@ -8,6 +8,7 @@
 -- 2. crove_meetings.media_key.kind also takes live:<seq> (seq 0 to 999).
 -- 3. crove_meetings.live_chunk: one row per piece (order, file, size, the recorder's own length). Metadata only, no key and no text. Only the recorder reads it.
 -- 4. live_chunk_discard(org, meeting): the recorder's definer that deletes a meeting's pieces and their keys (the final audio was recorded).
+-- 4b. media_key_read restated from 20261124130000 with one addition: the key of a live piece is read by the recorder alone.
 -- 5. The retention definers restated from 20261125110000 with the pieces added: meetings_due and meeting_shred (a meeting that never got its final audio still
 --    has its pieces shredded at its audio date), meetings_orphan_media and meeting_media_discard (a piece's file row is no orphan while a live_chunk row names it).
 SET LOCAL lock_timeout = '2s';
@@ -91,6 +92,46 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.live_chunk_discard(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.live_chunk_discard(uuid, uuid) TO crove_app;
+
+-- ---------------------------------------------------------------------------
+-- 4b. The key of a live piece is the recorder's alone
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION crove_meetings.media_key_read(
+  p_org_id uuid,
+  p_meeting_id uuid,
+  p_kind text
+) RETURNS TABLE (key_id text, wrapped_key bytea)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_app', 'MEMBER') THEN
+    RAISE EXCEPTION 'MEETINGS_APP_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
+  END IF;
+  IF NOT crove_meetings.is_meeting_reader(v_org, p_meeting_id, v_user) THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
+  END IF;
+  -- A live piece (ADR-0052 L4a) is the recorder's alone: a reader of the meeting, an attendee or an org-wide reader included, never gets its key.
+  IF p_kind OPERATOR(pg_catalog.~) '^live:[0-9]{1,3}$' AND NOT crove_meetings.is_meeting_recorder(v_org, p_meeting_id) THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT k.key_id, k.wrapped_key
+  FROM crove_meetings.media_key k
+  WHERE k.org_id = v_org AND k.meeting_id = p_meeting_id AND k.kind = p_kind;
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_read(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.media_key_read(uuid, uuid, text) TO crove_app;
 
 -- ---------------------------------------------------------------------------
 -- 5. The retention definers, with the pieces

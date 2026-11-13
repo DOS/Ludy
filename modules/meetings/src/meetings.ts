@@ -287,7 +287,12 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
-    let liveChunksDiscarded = 0;
+    // The recording is complete, whatever its kind (a video holds the same audio): the live pieces (ADR-0052 L4a) are not kept beside it. The meeting's live lock
+    // is taken first, so a piece being recorded at this moment either commits before this and is deleted here, or waits and finds the recording ended. Their keys go
+    // first, so they are unreadable from this commit, and their file rows are left for the worker's orphan sweep. A meeting with no live pieces has nothing to delete.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
+    const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
+    const liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
     const wrappedKey = Buffer.from(input.wrappedKeyHex, 'hex');
     await sql`SELECT crove_meetings.media_key_seal(
       ${ctx.orgId}::uuid,
@@ -316,10 +321,6 @@ export const meetingMediaRecord = defineCommand({
       .execute();
 
     if (input.kind === 'audio') {
-      // The recording is complete: the live pieces (ADR-0052 L4a) are not kept beside it. Their keys go first, so they are unreadable from this commit, and their
-      // file rows are left for the worker's orphan sweep. A meeting with no live pieces has nothing to delete.
-      const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
-      liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
       await ctx.trx
         .insertInto('crove_meetings.audio_segment')
         .values({

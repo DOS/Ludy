@@ -399,6 +399,8 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect(store.storage.size).toBe(stored);
 
     // The total is bounded: a meeting at its size limit takes no more, and its refusal leaves no object behind.
+    // Piece 0 arrives first, as on every real recording; the filler then brings the meeting to its limit and the next piece is refused.
+    expect((await sendChunk('recorder', meetingId, 0, piece('a', 0))).status).toBe(200);
     const file = randomUUID();
     await rows(
       `INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by)
@@ -406,9 +408,46 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
       [orgId, file, 'f'.repeat(64), fileKey(orgId, 'f'.repeat(64)), userIds.get('recorder')],
     );
     await rows(`INSERT INTO crove_meetings.live_chunk (org_id, id, meeting_id, seq, file_id, size_bytes, length_seconds) VALUES ($1, $2, $3, 500, $4, ${300 * 1024 * 1024 - 10}, 15)`, [orgId, randomUUID(), meetingId, file]);
+    const withFirst = store.storage.size;
     const full = await sendChunk('recorder', meetingId, 1, piece('a', 1));
     expect(full.status).toBe(413);
+    expect(store.storage.size).toBe(withFirst);
+  });
+
+  it('keeps no piece before the first one: without the container header the later pieces cannot be read', async () => {
+    const meetingId = await liveMeeting();
+    const stored = store.storage.size;
+    const early = await sendChunk('recorder', meetingId, 3, piece('late', 3));
+    expect(early.status).toBe(409);
+    expect(early.body.code).toBe('LIVE_FIRST_PIECE_MISSING');
     expect(store.storage.size).toBe(stored);
+    expect(await liveKeyCount(meetingId)).toBe(0);
+    expect((await sendChunk('recorder', meetingId, 0, piece('a', 0))).status).toBe(200);
+    expect((await sendChunk('recorder', meetingId, 3, piece('d', 3))).status).toBe(200);
+  });
+
+  it('replaces the pieces with a final VIDEO recording too, and closes the meeting to pieces after it', async () => {
+    const meetingId = await liveMeeting('recorder', { keepVideo: true });
+    for (const seq of [0, 1]) expect((await sendChunk('recorder', meetingId, seq, piece('v', seq))).status).toBe(200);
+    await upload('recorder', meetingId, 'video', 'film');
+    expect(await chunkCount(meetingId)).toBe(0);
+    expect(await liveKeyCount(meetingId)).toBe(0);
+    expect((await sendChunk('recorder', meetingId, 2, piece('v', 2))).body.code).toBe('LIVE_CLOSED');
+    await sweep();
+    expect(await chunkObjects(meetingId)).toEqual([]);
+  });
+
+  it('never leaves a piece beside the final recording when the two run at the same moment', async () => {
+    for (let round = 0; round < 3; round += 1) {
+      const meetingId = await liveMeeting();
+      expect((await sendChunk('recorder', meetingId, 0, piece('r', 0))).status).toBe(200);
+      const [late] = await Promise.all([sendChunk('recorder', meetingId, 1, piece('r', 1)), upload('recorder', meetingId, 'audio', 'race')]);
+      expect([200, 409]).toContain(late.status);
+      // Whichever came first, the recording is recorded and no piece or live key outlives it.
+      expect(await count('SELECT 1 FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
+      expect(await chunkCount(meetingId)).toBe(0);
+      expect(await liveKeyCount(meetingId)).toBe(0);
+    }
   });
 
   it('replaces the pieces with the final recording: the audio is kept once, the pieces lose their keys at once and their objects in the next sweep', async () => {

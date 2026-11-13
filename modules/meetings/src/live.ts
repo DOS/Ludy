@@ -63,14 +63,14 @@ export const meetingLiveChunk = defineCommand({
     }
     if (meeting.audio_day <= vnDay(ctx.now)) throw new DomainError('MEDIA_RETENTION_PASSED', 409, 'The retention period of this meeting has ended');
     const startedAt = meeting.started_at === null ? null : new Date(meeting.started_at).getTime();
-    const ended = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
-      .executeTakeFirst();
-    // The recording has ended once its final audio is recorded, and a meeting takes pieces only for the longest run the kernel allows.
-    if (ended !== undefined || (startedAt !== null && ctx.now.getTime() > startedAt + LIVE_CHUNK_WINDOW_SECONDS * 1000)) {
+    // One lock per meeting, shared with meetings.media.record: a piece and the final recording of the same meeting never run side by side, so a piece cannot
+    // commit after the recording discarded the pieces and stay beside it.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
+    const ended = await sql<{ done: boolean }>`
+      SELECT (EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
+           OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)) AS done`.execute(ctx.trx);
+    // The recording has ended once its final audio or video is recorded, and a meeting takes pieces only for the longest run the kernel allows.
+    if (ended.rows[0]?.done === true || (startedAt !== null && ctx.now.getTime() > startedAt + LIVE_CHUNK_WINDOW_SECONDS * 1000)) {
       throw new DomainError('LIVE_CLOSED', 409, 'The recording of this meeting has ended');
     }
     if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
@@ -84,6 +84,18 @@ export const meetingLiveChunk = defineCommand({
       .where('seq', '=', input.seq)
       .executeTakeFirst();
     if (existing) return zMeetingLiveChunkRecorded.parse({ meetingId: input.meetingId, seq: input.seq, duplicate: true });
+
+    // The first piece carries the container header: without it the later ones cannot be read, so they are not kept.
+    if (input.seq > 0) {
+      const first = await ctx.trx
+        .selectFrom('crove_meetings.live_chunk')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('seq', '=', 0)
+        .executeTakeFirst();
+      if (!first) throw new DomainError('LIVE_FIRST_PIECE_MISSING', 409, 'The first piece of the live notes audio has not arrived');
+    }
 
     const { rows: total } = await sql<{ bytes: string }>`
       SELECT COALESCE(SUM(size_bytes), 0)::text AS bytes FROM crove_meetings.live_chunk WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid`.execute(ctx.trx);
