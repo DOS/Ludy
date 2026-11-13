@@ -3,7 +3,7 @@
 // ask for nothing beyond it, and a permission added without changing the list fails.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { localeViolations, manifestViolations } from '../src/manifest-policy.ts';
+import { DEFAULT_LOCALE, localeViolations, manifestViolations } from '../src/manifest-policy.ts';
 import { FEATURES } from '../src/features.ts';
 
 const manifest = (): Record<string, unknown> => JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -49,9 +49,9 @@ const messagesOf = (lang: string): Record<string, { message: string }> => JSON.p
 const locales = (): Record<string, Record<string, { message: string }>> => ({ vi: messagesOf('vi'), en: messagesOf('en') });
 
 describe('localized manifest (the store listing in Vietnamese and English)', () => {
-  it('the shipped manifest and message files keep the rules, and the version stays that of the package', () => {
+  it('the shipped manifest and message files keep the rules, with Vietnamese as the default', () => {
     expect(localeViolations(manifest(), locales())).toEqual([]);
-    expect(manifest().default_locale).toBe('vi');
+    expect(manifest().default_locale).toBe(DEFAULT_LOCALE);
   });
 
   it('the description is the store text in both languages, within the 132 character limit', () => {
@@ -68,11 +68,17 @@ describe('localized manifest (the store listing in Vietnamese and English)', () 
     ['a hard-coded description', () => ({ manifest: { ...manifest(), description: 'Ghi lại cuộc họp' }, locales: locales() })],
     ['a hard-coded toolbar title', () => ({ manifest: { ...manifest(), action: { default_title: 'Ludy' } }, locales: locales() })],
     ['no default_locale', () => ({ manifest: Object.fromEntries(Object.entries(manifest()).filter(([k]) => k !== 'default_locale')), locales: locales() })],
+    ['English as the default language', () => ({ manifest: { ...manifest(), default_locale: 'en' }, locales: locales() })],
+    ['a default language with no folder', () => ({ manifest: { ...manifest(), default_locale: 'fr' }, locales: locales() })],
+    ['a default language named like an object property', () => ({ manifest: { ...manifest(), default_locale: 'constructor' }, locales: locales() })],
+    ['a message file that is null', () => ({ manifest: manifest(), locales: { vi: messagesOf('vi'), en: null } })],
+    ['a name over 75 characters', () => ({ manifest: manifest(), locales: { vi: { ...messagesOf('vi'), extName: { message: 'x'.repeat(76) } }, en: messagesOf('en') } })],
+    ['a Vietnamese description over 132 characters', () => ({ manifest: manifest(), locales: { vi: { ...messagesOf('vi'), extDescription: { message: 'x'.repeat(133) } }, en: messagesOf('en') } })],
     ['a missing English file', () => ({ manifest: manifest(), locales: { vi: messagesOf('vi') } })],
     ['a missing message', () => ({ manifest: manifest(), locales: { vi: messagesOf('vi'), en: { extName: { message: 'Ludy' } } } })],
     ['a description over 132 characters', () => ({ manifest: manifest(), locales: { vi: messagesOf('vi'), en: { ...messagesOf('en'), extDescription: { message: 'x'.repeat(133) } } } })],
   ])('refuses %s', (_name, build) => {
     const { manifest: m, locales: l } = build();
-    expect(localeViolations(m as Record<string, unknown>, l).length).toBeGreaterThan(0);
+    expect(localeViolations(m as Record<string, unknown>, l as Parameters<typeof localeViolations>[1]).length).toBeGreaterThan(0);
   });
 });

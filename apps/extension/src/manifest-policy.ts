@@ -39,11 +39,12 @@ export function manifestViolations(manifest: Record<string, unknown>): string[] 
 // The store's limits (Chrome Web Store, confirmed in the dashboard): the item name is at most 75 characters, the short description at most 132.
 export const NAME_MAX = 75;
 export const DESCRIPTION_MAX = 132;
-// The languages the store listing offers: the default (Vietnamese) and English.
+// The default language of the listing (Vietnamese, the product's market) and the languages the listing offers.
+export const DEFAULT_LOCALE = 'vi';
 export const LISTING_LOCALES = ['en', 'vi'] as const;
 
 const MESSAGE_REF = /^__MSG_([A-Za-z0-9_@]+)__$/;
-type Messages = Record<string, { message?: unknown } | undefined>;
+type Messages = Record<string, { message?: unknown } | undefined> | null;
 
 // A localized manifest: `default_locale` is set, the name, the description and the toolbar title are `__MSG_key__` references (a hard-coded text would
 // show in every language and leave the store with one listing), and each language in the list has a message for every reference, within the store's limits.
@@ -53,8 +54,9 @@ export function localeViolations(manifest: Record<string, unknown>, locales: Rec
   const action = manifest.action as { default_title?: unknown } | undefined;
   const refs = { name: manifest.name, description: manifest.description, 'action.default_title': action?.default_title };
   if (typeof manifest.default_locale !== 'string') problems.push('default_locale must be set');
-  else if (!(manifest.default_locale in locales)) problems.push(`default_locale ${manifest.default_locale} has no _locales/${manifest.default_locale}/messages.json`);
-  for (const lang of LISTING_LOCALES) if (!(lang in locales)) problems.push(`_locales/${lang}/messages.json is missing`);
+  else if (!Object.hasOwn(locales, manifest.default_locale)) problems.push(`default_locale ${manifest.default_locale} has no _locales/${manifest.default_locale}/messages.json`);
+  else if (manifest.default_locale !== DEFAULT_LOCALE) problems.push(`default_locale must be ${DEFAULT_LOCALE} (the store's default listing is Vietnamese), found ${manifest.default_locale}`);
+  for (const lang of LISTING_LOCALES) if (!Object.hasOwn(locales, lang)) problems.push(`_locales/${lang}/messages.json is missing`);
   for (const [field, value] of Object.entries(refs)) {
     const key = typeof value === 'string' ? MESSAGE_REF.exec(value)?.[1] : undefined;
     if (key === undefined) {
@@ -62,7 +64,7 @@ export function localeViolations(manifest: Record<string, unknown>, locales: Rec
       continue;
     }
     for (const [lang, messages] of Object.entries(locales)) {
-      const text = messages[key]?.message;
+      const text = messages?.[key]?.message;
       if (typeof text !== 'string' || text.trim() === '') problems.push(`_locales/${lang} has no message ${key} for ${field}`);
       else if (field === 'description' && text.length > DESCRIPTION_MAX) problems.push(`_locales/${lang} ${key} is ${text.length} characters, over the store's ${DESCRIPTION_MAX}`);
       else if (field === 'name' && text.length > NAME_MAX) problems.push(`_locales/${lang} ${key} is ${text.length} characters, over the store's ${NAME_MAX}`);
