@@ -1,6 +1,6 @@
 # Bot họp và ghi chú trực tiếp (L4): tóm tắt cho JOY
 
-> Bản tóm tắt tiếng Việt của [ADR-0052](https://github.com/DOS/Ludy/blob/main/docs/adr/0052-meeting-bot-and-live-notes.md), ngày 2026-11-13. Bản tiếng bạn là bản chính. Trạng thái: **đề xuất, chưa quyết, chưa làm gì**. Cần bạn trả lời tám câu ở cuối. Việc này là issue [#2592](https://github.com/DOS/Ludy/issues/2592) (L4), đang nằm ở Icebox (kho tạm, chưa làm).
+> Bản tóm tắt tiếng Việt của [ADR-0052](https://github.com/DOS/Ludy/blob/main/docs/adr/0052-meeting-bot-and-live-notes.md), ngày 2026-11-13. Bản tiếng Anh là bản chính. Trạng thái: **đề xuất, chưa quyết, chưa làm gì**. Cần bạn trả lời tám câu ở cuối. Việc này là issue [#2592](https://github.com/DOS/Ludy/issues/2592) (L4), đang nằm ở Icebox (kho tạm, chưa làm).
 
 ## Vấn đề
 
