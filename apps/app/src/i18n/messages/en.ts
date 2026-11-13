@@ -9882,6 +9882,9 @@ export const en = {
     },
     finance: {
       today: 'Read what needs you in accounting today',
+      signals: {
+        sales: 'Read which customers have a sales invoice, to check them against won deals',
+      },
       account: {
         create: 'Add a ledger account',
         update: 'Edit a ledger account',
