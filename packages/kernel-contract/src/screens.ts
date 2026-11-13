@@ -52,6 +52,8 @@ const FINANCE_SCREENS = {
     { path: 'sales-invoices' },
     // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
     { path: 'stock' },
+    // Where each platform's money stands in the books: the Sàn screen (#2516). Reached from the stock screen, not the menu: each app's menu fits a 1366x768 window without scrolling (e2e layout).
+    { path: 'marketplace' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },

@@ -992,7 +992,20 @@ export const en = {
     eraseHint: 'After the retention period an owner can erase the record of someone who left: the name, the address and the encryption key are deleted, and the wage rows stay tied to nobody. This cannot be undone.',
     eraseConfirm: 'Erase this record',
   },
+  marketplaceBalance: {
+    title: 'Marketplaces',
+    subtitle: 'Where each marketplace platform stands in the books: sales posted, what payouts have cleared, what the platform still owes and the fees awaiting an invoice. Read from the ledger only, nothing to press.',
+    platform: 'Platform',
+    salesPosted: 'Sales posted (131)',
+    paidOut: 'Cleared by payouts',
+    awaitingPayout: 'Still owed by the platform',
+    feesAwaitingInvoice: 'Fees awaiting an invoice (1388)',
+    empty: 'No platform has been posted yet',
+    emptyHint: 'When the first settlement of a platform is posted, its money shows here.',
+    note: 'Read from the ledger by each platform\'s party; a reversed entry is taken back, and nothing posted yet is 0.',
+  },
   stock: {
+    marketplaceLink: 'See each marketplace platform\'s money in the books',
     title: 'Stock',
     subtitle: 'Items, what is on hand and the invoice lines not yet assigned to an item. Stock only mirrors what the books already hold: it changes no entry.',
     items: 'Items',
@@ -10002,6 +10015,7 @@ export const en = {
         suggest_source: 'Look up customers, recent VAT rates and the lines of the previous invoice for a sales invoice draft',
       },
       marketplace: {
+        balance: 'View where each marketplace platform stands in the books',
         assign: 'Assign a marketplace order line to an item',
         unassign: 'Take a marketplace order line back from its item',
         confirm: 'Import a marketplace order report',

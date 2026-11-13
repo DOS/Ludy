@@ -25,7 +25,7 @@ describe('legal entity choice', () => {
   });
 
   it('shows on the finance books, the Kế toán overview (#2631), the customers (#1534), the Overview and Settings only', () => {
-    for (const path of ['/o/acme/accounting', '/o/acme/journal', '/o/acme/journal/opening-balances', '/o/acme/ledger', '/o/acme/vat', '/o/acme/documents', '/o/acme/bank', '/o/acme/vouchers', '/o/acme/fixed-assets', '/o/acme/portal-invoices', '/o/acme/customers', '/o/acme/overview', '/o/acme/settings']) {
+    for (const path of ['/o/acme/accounting', '/o/acme/journal', '/o/acme/journal/opening-balances', '/o/acme/ledger', '/o/acme/vat', '/o/acme/documents', '/o/acme/bank', '/o/acme/vouchers', '/o/acme/fixed-assets', '/o/acme/portal-invoices', '/o/acme/customers', '/o/acme/overview', '/o/acme/settings', '/o/acme/marketplace']) {
       expect(isEntityPath(path), path).toBe(true);
     }
     for (const path of ['/o/acme/inbox', '/o/acme/tasks', '/o/acme/social', '/clients', '/o/acme', '/journal']) {
