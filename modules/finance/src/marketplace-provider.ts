@@ -262,18 +262,18 @@ const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
   shopee: {
     head: ['Mã đơn hàng', 'Ngày đặt hàng', 'Ngày gửi hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'],
     rowPerUnit: false,
-    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), l.unitPrice, l.quantity, l.amount],
+    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.unitPrice), decimal(l.quantity), decimal(l.amount)],
   },
   tiktok_shop: {
     head: ['Order ID', 'Order Status', 'Order Substatus', 'Seller SKU', 'Product Name', 'Quantity', 'SKU Unit Original Price', 'SKU Subtotal After Discount', 'Created Time', 'Shipped Time'],
     rowPerUnit: false,
-    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), l.quantity, l.unitPrice, l.amount, o.orderedAt, o.shippedAt ?? ''],
+    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.quantity), decimal(l.unitPrice), decimal(l.amount), o.orderedAt, o.shippedAt ?? ''],
   },
   lazada: {
     head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice'],
     rowPerUnit: true,
     // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units).
-    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', l.unitPrice, unit.amount],
+    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount)],
   },
 };
 
@@ -281,6 +281,9 @@ const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
 // names go through this; an SKU, an order number, a day or an amount is written as it is, because the parsing sandbox reads those back exactly and no spreadsheet ever opens the file.
 const FORMULA_START = /^[=+\-@\t\r]/;
 const plainText = (value: string): string => (FORMULA_START.test(value) ? `'${value}` : value);
+// The reader takes one point followed by exactly three digits for a thousands group ("125.125" is read as 125125). Four digits are never grouped, and the reader gives the value back
+// without the extra zero, so a number with three decimals is written with a zero added.
+const decimal = (value: string): string => value.replace(/\.(\d{3})$/, (_, digits: string) => `.${digits}0`);
 
 // A cell as CSV: always quoted, a quote doubled.
 const cell = (value: string): string => `"${value.replaceAll('"', '""')}"`;
