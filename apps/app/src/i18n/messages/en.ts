@@ -1702,6 +1702,8 @@ export const en = {
       subtitle: 'Record with this device\'s microphone (and camera if you choose). The recording is saved on this device as it goes, so reloading the page does not lose it.',
       start: 'Start recording',
       withVideo: 'Record video too',
+      liveNotes: 'Live notes',
+      liveNotesHint: 'Vy takes notes during the meeting. Audio is sent to the server while recording; this may use extra transcription minutes.',
       hint: 'Audio only unless you tick video. Nothing is recorded or uploaded before you confirm the participants were told. Nothing on this screen uses AI, so recording works with AI off.',
       recording: 'Recording',
       paused: 'Paused',

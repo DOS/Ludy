@@ -220,6 +220,20 @@ export async function uploadMeetingMedia(
   return (await response.json()) as { fileId: string };
 }
 
+// One piece of the audio of a live-notes meeting (ADR-0052 L4a, #3109): the raw bytes as the body, the seq and the length in
+// the query. Not retried here (the live sender retries by the error's status, which an ApiError carries) and no busy wait: a
+// failed piece may be dropped, the recording uploaded at the end is the one that counts.
+export async function sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void> {
+  const query = new URLSearchParams({ seq: String(input.seq), lengthSeconds: String(input.lengthSeconds) });
+  // The recorder's type carries codecs ("audio/webm;codecs=opus"): the route wants the plain audio type.
+  const base = (input.blob.type.split(';')[0] ?? '').trim();
+  await apiFetch(`/api/meetings/${encodeURIComponent(input.meetingId)}/live-chunk?${query.toString()}`, {
+    method: 'POST',
+    headers: { 'content-type': /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream' },
+    body: input.blob,
+  });
+}
+
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.
 async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: string): Promise<Uploaded> {

@@ -24,6 +24,9 @@ import {
   ORG_HEADER,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
+  LIVE_CHUNK_MAX_BYTES,
+  LIVE_CHUNK_MAX_COUNT,
+  LIVE_CHUNK_MAX_SECONDS,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -2403,12 +2406,12 @@ export function createHttpApp(deps: HttpDeps) {
   // What the media routes need of a meeting: whether the caller recorded it and whether it keeps video. An extension
   // token (#2582) reads it through the status query, which answers 404 for any meeting the token did not create and
   // returns no title, reader or content; the token's member is then the recorder, as the query checks.
-  const meetingFacts = async (user: AuthUser, orgId: string, meetingId: string): Promise<{ isRecorder: boolean; keepVideo: boolean }> => {
+  const meetingFacts = async (user: AuthUser, orgId: string, meetingId: string): Promise<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }> => {
     if (user.extension) {
-      const status = await runtime.query<{ keepVideo: boolean }>('meetings.meeting.extension_status', { meetingId }, { actor: actorOf(user), orgId });
-      return { isRecorder: true, keepVideo: status.keepVideo };
+      const status = await runtime.query<{ keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.extension_status', { meetingId }, { actor: actorOf(user), orgId });
+      return { isRecorder: true, keepVideo: status.keepVideo, liveNotes: status.liveNotes };
     }
-    return runtime.query<{ isRecorder: boolean; keepVideo: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
+    return runtime.query<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
   };
   const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
     let release: (() => void) | null = null;
@@ -2691,6 +2694,102 @@ export function createHttpApp(deps: HttpDeps) {
       }
     } catch (error) {
       return problem(c, error);
+    }
+  });
+
+  // A piece of about 15 seconds of the recording, sent while a live-notes meeting runs (ADR-0052 L4a, #3109). The route does what meetings.media.record's upload
+  // does for a whole file: it seals the bytes under a data key of their own (bound to the meeting and to the piece's place, live:<seq>) and stores the ciphertext;
+  // meetings.live.chunk then records it, as the recorder and only for a meeting that opted in. Nothing of the audio is kept in clear, and the final upload of the
+  // recording is the authoritative audio: a piece that fails (here or in the command) is dropped and never touches it. The whole body (at most one MiB) is read
+  // after the gate has said the meeting takes live pieces, so a meeting that did not opt in costs no bytes.
+  const liveChunks = new ConcurrencyLimiter({ total: 8, perKey: 2 });
+  app.post('/api/meetings/:id/live-chunk', async (c) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id') ?? '';
+      const meeting = await meetingFacts(user, orgId, meetingId);
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may send live notes audio');
+      if (!meeting.liveNotes) throw new DomainError('LIVE_NOTES_NOT_ENABLED', 409, 'Live notes were not turned on for this meeting');
+      const seqText = c.req.query('seq') ?? '';
+      const lengthText = c.req.query('lengthSeconds') ?? '';
+      if (!/^\d{1,3}$/.test(seqText) || !/^\d{1,3}$/.test(lengthText)) throw new DomainError('BAD_REQUEST', 400, 'seq and lengthSeconds must be whole numbers');
+      const seq = Number(seqText);
+      const lengthSeconds = Number(lengthText);
+      if (seq >= LIVE_CHUNK_MAX_COUNT || lengthSeconds < 1 || lengthSeconds > LIVE_CHUNK_MAX_SECONDS) throw new DomainError('BAD_REQUEST', 400, 'seq or lengthSeconds is out of range');
+      if (!/^(?:audio\/|application\/octet-stream)/i.test(c.req.header('content-type') ?? '')) {
+        throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be audio/* or application/octet-stream');
+      }
+      // The declared size is checked before one byte is read, and the body limit stops a body that lies about it.
+      const declared = c.req.header('content-length') ?? '';
+      if (c.req.header('transfer-encoding') !== undefined || !/^\d+$/.test(declared)) throw new DomainError('BAD_REQUEST', 400, 'Tệp phải được gửi kèm Content-Length hợp lệ');
+      if (Number(declared) < 1) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
+      if (Number(declared) > LIVE_CHUNK_MAX_BYTES) throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
+      release = liveChunks.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      // Read with a count and a stall timeout, so a body that is longer than it said, or stops arriving, is refused and never held.
+      const rawBody = c.req.raw.body;
+      if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
+      const pieces: Uint8Array[] = [];
+      let received = 0;
+      for await (const piece of streamPieces(rawBody as ReadableStream<Uint8Array>, mediaStallMs)) {
+        received += piece.byteLength;
+        if (received > LIVE_CHUNK_MAX_BYTES) throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
+        pieces.push(piece);
+      }
+      if (received !== Number(declared)) throw new DomainError('BAD_REQUEST', 400, 'Tệp có kích thước không khớp với Content-Length');
+      const bytes = Buffer.concat(pieces);
+
+      const broker = deps.broker ?? createCredentialBroker(config);
+      const keyId = broker.keyId;
+      if (!keyId || (!broker.derive && !broker.deriveKey)) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
+      const wrapSubkey = broker.deriveKey
+        ? broker.deriveKey(keyId, 'crove.meetings.v1|wrap')
+        : broker.derive && broker.keyId === keyId
+          ? broker.derive('crove.meetings.v1|wrap')
+          : null;
+      if (!wrapSubkey) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key derivation failed');
+      const dataKey = generateMediaDataKey();
+      try {
+        const binding: BlobMediaBinding = { orgId, meetingId, kind: `live:${seq}` };
+        const wrappedKey = wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, wrapSubkey);
+        const sealed = await sealMedia({ source: onepiece(bytes), expectedLength: bytes.byteLength, kind: 'audio', dataKey, binding, maxBytes: LIVE_CHUNK_MAX_BYTES, store, orgId, opaque: seq > 0 });
+        let recorded: { duplicate: boolean };
+        try {
+          recorded = await runtime.execute<{ duplicate: boolean }>(
+            'meetings.live.chunk',
+            {
+              meetingId,
+              seq,
+              keyId,
+              wrappedKeyHex: wrappedKey.toString('hex'),
+              storageKey: sealed.key,
+              generation: sealed.generation,
+              sizeBytes: sealed.size,
+              sha256: sealed.sha256,
+              contentType: sealed.contentType,
+              lengthSeconds,
+            },
+            { actor: actorOf(user), orgId },
+          );
+        } catch (error) {
+          // Refused (a closed recording, no opt-in, a limit): the sealed bytes have no row, so drop them.
+          if (sealed.created) await store.delete(sealed.key).catch((err) => console.error('[http] live chunk cleanup failed', err));
+          throw error;
+        }
+        // A retry of a piece already kept: the first one stands, and the object this retry just stored has no row.
+        if (recorded.duplicate && sealed.created) await store.delete(sealed.key).catch((err) => console.error('[http] live chunk cleanup failed', err));
+        return c.json({ meetingId, seq, duplicate: recorded.duplicate });
+      } finally {
+        dataKey.fill(0);
+        wrapSubkey.fill(0);
+      }
+    } catch (error) {
+      return problem(c, error);
+    } finally {
+      release?.();
     }
   });
 
