@@ -4,6 +4,7 @@ What changed in each release that reaches the pilot. A release is a `v*` tag of 
 
 ## Unreleased (on `main` after v0.3.2)
 
+- **Telegram bot chats in Hộp thư** (#3132): an owner or admin turns on "receive customers' messages" on a Telegram connection; what customers write to the bot in a private chat appears in Hộp thư, Dy drafts a reply and a person presses Send (no auto-send), saved replies and `{tên}` work. The webhook is set with the bot token only the worker opens and is checked by a per-connection secret before anything is stored. Photos are a placeholder line for now, and Telegram Business mode follows; live check: [docs/runbooks/telegram-conversations-live-check.md](docs/runbooks/telegram-conversations-live-check.md).
 - **Bookings linked to deals** (#3103): a deal lists its upcoming and past bookings, "Đặt lịch" on a deal gives the client a booking link that carries the deal, and on the Lịch hẹn screen Dy suggests the guest's open deal by email or phone (no AI model) for a person to confirm; link and unlink are audited commands.
 
 ## v0.3.2 (2026-11-13)
