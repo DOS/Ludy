@@ -19,6 +19,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
+const RULES = ['kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed'] as const;
 const READS = ['crm.signals.won_deals', 'crm.signals.open_deals', 'finance.signals.sales', 'finance.signals.overdue_receivables'] as const;
 
 suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
@@ -162,6 +163,32 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     }
     expect(await run(actor, 'crm.signals.won_deals')).toHaveLength(2);
     expect(await run(actor, 'crm.signals.open_deals')).toHaveLength(1);
+  });
+
+  it('runs the three rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while its reads do not exist', async () => {
+    const g = await grant(users.owner);
+    const actor = mcp(users.owner, g, 'company');
+    for (const rule of RULES) expect(await run(actor, rule), rule).toEqual(await run(browser(users.owner), rule));
+    expect(await run(actor, 'kernel.signals.deal_without_invoice')).toHaveLength(1);
+    expect(await run(actor, 'kernel.signals.receivable_with_open_deal')).toHaveLength(1);
+    expect(await run(actor, 'kernel.signals.supplier_bank_changed')).toEqual([]);
+    const items = (await run(actor, 'kernel.signals.deal_without_invoice')) as Array<{ title: { key: string }; kind: string }>;
+    expect(items[0]).toMatchObject({ kind: 'flag', title: { key: 'signals.wonDealNoInvoice' } });
+  });
+
+  it('gives a member-bound grant of a whole-org member the member\'s own items, and a branch-limited member\'s grant no flag at all', async () => {
+    const whole = mcp(users.member, await grant(users.member, { kind: 'member' }), 'member');
+    for (const rule of RULES) expect(await run(whole, rule), rule).toEqual(await run(browser(users.member), rule));
+    expect(await run(whole, 'kernel.signals.deal_without_invoice')).toHaveLength(1);
+    const branch = mcp(users.branchMember, await grant(users.branchMember, { kind: 'member' }), 'member');
+    // The finance reads refuse a partial view, so a rule that needs them says nothing: never a flag claiming "no invoice" or "no debt".
+    for (const rule of RULES) expect(await run(branch, rule), rule).toEqual([]);
+  });
+
+  it('does not let a grant run Home itself or anything the rules do not name', async () => {
+    const actor = mcp(users.owner, await grant(users.owner), 'company');
+    await expect(run(actor, 'kernel.today')).rejects.toBeInstanceOf(DomainError);
+    await expect(run(actor, 'finance.today')).rejects.toBeInstanceOf(DomainError);
   });
 
   it('reaches nothing with a grant without the scope, a revoked grant or a grantor demoted since, and answers all three the same generic way', async () => {
