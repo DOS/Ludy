@@ -1,0 +1,160 @@
+# 0052. Meeting bot and live notes (L4): what Meet, Zoom and Teams allow, what a bot needs, and what to build first
+
+- Status: Proposed (2026-11-13). Design only: nothing here is built, and nothing is built until the owner answers the questions at the end. The consent points need the lawyer (#62). A build touches the HTTP edge, a new image and migrations (protected paths, shared core), so the Platform PO reviews it.
+- Date: 2026-11-13
+- Deciders: owner (JOY) for the questions in "Owner decisions"; the engineering choices by the Meetings worker session that wrote it, for the Meetings PO
+- Builds on: [ADR-0047](0047-meeting-notes-audio-and-transcripts.md) (audio storage, consent, retention, readers, the extension), [ADR-0049](0049-member-scoped-vy.md) (the recorder's own Vy; decisions 1, 6 and 8 and the amendment of 2026-11-12), [ADR-0025](0025-channel-layer.md) (connectors: the kernel seals tokens, only OAuth routes and jobs do network I/O), [ADR-0018](0018-untrusted-content.md) (untrusted content), [ADR-0024](0024-calendar-service.md) (calendar)
+- Issue: [#2592](https://github.com/DOS/Ludy/issues/2592) (step L4 of [meetings.md](../plan/meetings.md), Icebox, P3). The Vietnamese summary for the owner is [0052-meeting-bot-and-live-notes.vi.md](0052-meeting-bot-and-live-notes.vi.md).
+
+## Context and problem statement
+
+Meetings today captures an online meeting three ways ([plan section 5.5](../plan/meetings.md)): the Ludy extension records the tab in Chrome or Edge, the app records the microphone, or the person uploads a file. The owner chose this on 2026-11-03 over a bot ("they are annoying", no app to install), and the plan lists the bot and live notes as later work that "needs an OAuth app or a vendor agreement (owner action) and a consent flow inside the call" (section 11). L4 asks for that: a connector that joins Meet, Zoom or Teams, consent inside the call, and live notes.
+
+What the extension and the app do not cover, which is all a bot could add:
+
+1. The **Zoom and Teams desktop apps** (the person uploads the recording those apps make) and Safari or Firefox users.
+2. A meeting the recorder **is not at the keyboard for**, or one hosted by someone else.
+3. **Live notes**: today the transcript arrives minutes after the meeting ends.
+
+The scope gate ([scope.md](../product/scope.md)) applies: the plan names "a bot in every call" as an enterprise feature (section 3), and L4 is in the Icebox. This ADR does not reopen that by itself. It records what the three platforms allow (checked on 2026-11-13, with the limits of that check stated below), what a bot would cost the owner, and a smallest slice, so the owner can decide with facts.
+
+## Decision drivers
+
+- A small business must be able to use it with the defaults, and the open-source core must run with `docker compose up` and no DOS service. Anything that needs a vendor account is the operator's own (as `CALENDAR_GOOGLE_CLIENT_ID` is today) or a Ludy Cloud owner action.
+- Everyone whose voice is recorded must be told (plan section 7, commentary until the lawyer answers). A bot is an outside presence in other people's call, so the notice matters more than for the extension.
+- Audio keeps ADR-0047's treatment: ciphertext under a per-meeting key, one pipeline, the retention and shredding already built. No second audio path may skip the consent record.
+- The core works with AI off; AI output is tainted and a person approves every task; model calls go through the budget meter.
+- Do not build what depends on a vendor route that is being withdrawn or whose terms are unclear.
+
+## How the platforms were checked, and what could not be
+
+The session's network allowlist blocked `developers.google.com` and `learn.microsoft.com` for page fetches, so no vendor page was opened in full. The findings below come from web searches that quote those pages (the page URLs are in "Sources"), plus the vendors' own help and pricing pages as search results. Each claim is tagged: **[doc]** a vendor documentation or help page as quoted by the search, **[forum]** a vendor forum or Microsoft Q&A post by a user or staff (unofficial, may be out of date), **[vendor page]** a third-party company's own page. **Everything marked [forum] or "not verified" must be opened and confirmed on the vendor's page before any build.** The Meetings PO can ask for the three domains to be allowed in the session's network settings so the first build step can read the pages.
+
+## What each platform offers
+
+### Google Meet
+
+- **Real-time audio: none for a third party after January 2027.** The Meet Media API (WebRTC streams, scopes `meetings.conference.media.*.readonly`) needed the Cloud project, the OAuth principal and every participant enrolled in the Developer Preview Program **[doc]**. Google's release notes of 2026-10-28 say the program will not reach general availability and its endpoints are turned off on 2027-01-15; new sign-ups are closed **[doc]**. The Meet add-ons SDK (side panel and main stage inside a meeting) is generally available but the pages read mention no audio access, and its publishing rules say an add-on must not rely on a bot **[doc]**.
+- **After the meeting: the Meet REST API (generally available).** Conference records, recordings, transcripts, transcript entries (kept 30 days after the meeting) and smart notes; files land in the **organizer's** Drive; the entry methods need `meetings.space.created` or `meetings.space.readonly`; file-generated events can be subscribed to **[doc]**. A transcript exists only if someone started it, and transcription needs a paid Workspace edition (Business Standard, Business Plus, Enterprise tiers, Education Plus; Google's lists differ between pages) **[doc]**. Whether those scopes are "sensitive" or "restricted" was not verified. Google's data policy treats scopes that read live audio or video as restricted, which require verification and, if data is stored on servers, a security assessment **[doc]**.
+- **What the owner creates:** a Google Cloud project and OAuth consent screen with verification (Ludy Cloud, one app for every customer) or the operator's own project (self-hosted, as for Calendar); a Workspace Marketplace listing only if an add-on is built (public listing is reviewed by Google, private to one domain is not **[doc]**).
+- **Cost:** no fee for the REST API was found in the pages read (not verified).
+- **Without an approval:** the extension (built); or a bot that joins by link as a guest from a headless browser. That has no API, the host must admit it, and Google's terms for automated clients were not read (a legal risk, not verified).
+
+### Zoom
+
+- **Real-time audio: Realtime Media Streams (RTMS), official.** An app receives audio, video and transcript streams over a WebSocket. The app must be a **General App**; Server-to-Server OAuth and Webhook apps do not support the WebSocket **[vendor page: Recall.ai, to confirm in Zoom docs]**. **App Review is required for any app distributed to users outside the developer's own Zoom account**, public or not **[doc]**, so an organization using an app made in its own account is not covered by that sentence (to confirm with Zoom). RTMS needs **Zoom Developer Pack credits** on the developer's account, with pay-as-you-go and prepaid plans **[doc, plans from forum]**.
+- **Cost:** per minute and only on paid plans, but the figures are unofficial and conflict: EUR 0.0092 a minute for a stream and EUR 0.0184 for RTMS transcription **[forum]**; USD 0.01 a streaming minute **[forum]**; "via sales" **[forum]**. Who is charged when a published app streams a customer's meeting (the app owner or the host) was asked and not answered **[forum]**. Treat all of it as unknown until Zoom's pricing page is read.
+- **Consent signals:** RTMS apps do not appear as participant tiles; Zoom says in-meeting notices show when an app is active, what data it reads and who brought it in; the host may be asked to approve it, and if nobody can approve, the session does not start (a forum post from the preview, may be out of date) **[doc, forum]**. Zoom's own recording-consent and AI notice settings exist; whether they apply to a third-party app was not verified.
+- **The Meeting SDK for Linux is not a safe base.** Since 2026-03-02 an SDK app that joins a meeting hosted by an external account needs an OBF token (a user already in the meeting and their ZAK token) **[doc]**. Zoom's Meeting SDK page says the SDK is for human use and does not support bots or AI notetakers, and sends them to RTMS, while the OBF FAQ reads as if automated participants were allowed: unresolved **[doc, forum]**. Raw recording by a guest bot needs host, co-host or recording permission **[forum]**.
+- **What the owner creates:** a Zoom developer account, a General App with RTMS, a billing account for Developer Pack credits, and App Review for Ludy Cloud's shared app. A self-hosting organization would make its own app in its own account.
+
+### Microsoft Teams
+
+- **Real-time audio: a Graph cloud-communications bot, official and heavy.** The bot joins scheduled meetings with application permissions (`Calls.JoinGroupCall.All`) and gets raw media with `Calls.AccessMedia.All`; both need a tenant administrator's consent, repeated whenever the permissions change **[doc]**. An application-hosted media bot must be C# with the Graph Communications media library on Windows Server on Azure **[doc]**. Metered Graph APIs are billed to an Azure subscription tied to the app registration; the rate for this case was not found **[doc]**.
+- **Other tenants:** a bot cannot join another tenant's meeting without that tenant's administrator consenting to the app, and cannot join by invitation as a person does; a tenant mismatch gives 403 (code 7505) **[forum, Microsoft Q&A]**. A tenant can require a CAPTCHA check from anonymous joiners, which Microsoft says targets web bots, and can control the lobby **[doc]**.
+- **After the meeting:** transcripts through Graph (`getAllTranscripts`) with the application permission `OnlineMeetingTranscript.Read.All` (delegated is not supported) and an application access policy a tenant administrator sets with PowerShell; propagation takes from 30 minutes to 48 hours, cross-tenant access is not supported and only scheduled meetings answer **[doc, forum]**.
+- **What the owner creates:** an Azure subscription, a multi-tenant Entra app, an Azure Bot, a Windows host, and one administrator's consent in every customer tenant. That is an enterprise onboarding; a small business with Teams rarely has an administrator who will do it.
+
+### Without the platform's approval
+
+- **A meeting-bot API from a third party** (one API for Zoom, Meet and Teams). One such vendor lists USD 0.50 an hour of recording on pay-as-you-go (cut from 0.70 in 2026), USD 0.15 an hour for its own transcription, and 7 days of free storage **[vendor page]**. The audio and transcripts pass through that company: a sub-processor, probably a cross-border transfer (not verified), and a paid dependency the open-source core cannot require.
+- **A headless-browser guest bot of our own** (a Chromium in a container that joins by link). No vendor agreement, but it breaks when a platform changes its page, meets lobbies and CAPTCHA, costs a browser per meeting, and the terms of use were not read.
+
+### Comparison
+
+| | Meet | Zoom | Teams |
+|---|---|---|---|
+| Official real-time audio for a third party | none after 2027-01-15 | RTMS (General App, review for outside users, Developer Pack credits, paid plans) | Graph media bot (admin consent per tenant, Windows on Azure) |
+| Official text after the meeting | REST API, organizer's Drive, paid editions | not researched | Graph transcripts, admin policy, same tenant, scheduled meetings |
+| Covered today by the extension | yes (Chrome, Edge) | in the browser only | in the browser only |
+| Gap a bot would fill | meetings not attended at a keyboard, live | **the desktop app**, live | the desktop app, live |
+| Fit for a small business | good as is | workable | poor |
+
+## Options considered
+
+- **A. Keep the extension, build live notes on its audio (no bot).** The extension and the in-app recorder already hold the audio while the meeting runs; chunks can go up as they are recorded.
+- **B. A Zoom bot through RTMS.** The only official, supported real-time route of the three, and the one that fills a gap the extension cannot (the desktop app).
+- **C. A Meet bot.** No official route after 2027-01-15; only an unofficial guest bot.
+- **D. A Teams bot.** Official but needs a Windows host and a tenant administrator in every customer.
+- **E. A third-party meeting-bot API behind our adapter.** One integration for all three; audio leaves our control and a vendor is required.
+- **F. Our own headless-browser bot.** No agreement, fragile, terms unread.
+
+## Decision (proposed)
+
+### 1. Split L4 in two, and build live notes first
+
+- **L4a, live notes with no bot (option A).** Needs no vendor, no store review and no owner account, and works for Meet, and for Teams and Zoom in the browser, because it rides on the capture that exists. It is the part a person feels.
+- **L4b, a bot, Zoom first through RTMS (option B), only when a pilot customer asks for it.** Meet (C) and Teams (D) are not planned; E and F are rejected for now (E breaks the self-host promise and sends audio to a third party, F is fragile with unread terms). The Meet REST import of a vendor transcript after the meeting is a possible later step, not part of L4.
+
+### 2. L4a: live notes
+
+- **Opt-in per meeting**, default off, at the consent step ("Ghi chú trực tiếp"). The recorder sees them; nobody else does.
+- **Audio in:** the extension or the in-app recorder sends a chunk of about 15 seconds as it records (`meetings.live.chunk`, one command per chunk, as the recorder, only for a meeting with its consent record; the extension token's meetings scope of plan section 5.7 gains this one command and nothing else). Each chunk is encrypted at once under the meeting's audio key and kept as the meeting's audio, so the final path (crove-media, the batch transcript of M4, the summary of M6, retention and shredding of ADR-0047) is unchanged. The live text is a **preview**, shown as "Bản nháp trực tiếp" and replaced by the batch transcript when that is ready; it goes with the meeting.
+- **Vy's part:** one background run of the recorder's own Vy, feature `meetings.live_notes` (a third feature key beside `meetings.transcribe` and `meetings.summary`, so by the amendment of 2026-11-12 it does not cut off a transcription or a summary), with the 4 hour cap of the kernel. It transcribes each chunk, and every 5 minutes (or on the recorder's click) updates running notes from the new text and the previous notes only: a summary so far, decisions and action items, each styled "Đề xuất". They are draft rows only the recorder reads, tainted, with the checks of plan section 5.3 (numbers must appear in the text, no link or contact in a title); nothing becomes a task without the recorder's click; the model has no tools, and an instruction spoken in the meeting is at most a flagged suggestion.
+- **Latency (targets to measure on the reference provider, not promises):** a transcript line within about 30 seconds of speech (chunk plus provider time); notes refreshed within about a minute of each 5 minute window.
+- **Budget:** each chunk is admitted on its projected cost (the audio seconds times the audio price, the mechanism of [#3067](https://github.com/DOS/Ludy/pull/3067), not yet merged); refused by a spent hard-stop budget or a kill switch, the live notes stop with "Chờ ngân sách AI" or "AI đang tạm dừng" and the recording goes on (plan section 5.4). The live preview and the batch transcript each transcribe the audio, so a live meeting costs up to **twice** the audio minutes at the deployment's price, plus the summary calls; the 2 hour cap of plan section 10 bounds it.
+- **Where it shows:** the meeting page in the Ludy app, which needs no new browser permission. A side panel in the extension would add the `sidePanel` permission to the list of plan section 5.7 and its CI manifest check; that is a later choice.
+- **With AI off:** recording, storing and typed notes work; the live pane says why it is empty.
+
+### 3. L4b: a Zoom bot (only when pulled)
+
+- **The adapter** is a small interface in `packages/channel` (join, stream, leave) used by a worker job, as ADR-0025 says: the kernel seals the app's credentials, command handlers never touch the network. Zoom delivers an RTMS session through a signed webhook to a new kernel route (a protected path in the HTTP edge, reviewed by the Platform PO).
+- **Audio:** the stream is read by a new container, `crove-bot`, with no database access, no secrets but a short-lived grant for one meeting, and an egress allowlist of the vendor's media hosts (`crove-media` has no network on purpose, so it cannot be this). It hands each segment to one ingest command that runs only with a **capture grant the recorder's click created** (meeting, expiry), refuses a meeting with no consent record, and encrypts at once under the meeting's key. The system context still reads no meeting content; it only writes ciphertext. From there the pipeline is the same as an upload.
+- **Who sends it:** the recorder, for one meeting of their own Zoom account, by a confirmed click (an R2-style confirmation: it puts Ludy into other people's call). No calendar auto-join and no org-wide setting.
+- **Consent inside the call.** The consent record of ADR-0047 comes first and is unchanged. Added for a bot: (1) no audio is stored before the notice has been shown in the call by a mechanism Zoom supports, which must be confirmed in Zoom's documents at build time, or the slice is not built; where Zoom shows its own in-meeting notice for an app, that is used, and the recorder also gets the notice text to say or paste as today; (2) the recorder can stop and delete in one click, and a dropped stream ends the capture; (3) the host can remove the app with Zoom's own controls. Whether a notice in the call is enough, or each participant must agree, is a lawyer question (the plan's section 7 list gains it).
+- **Cost to the owner:** Developer Pack credits per streamed minute (Zoom's figures unverified), on top of the transcription price. For a self-hosting operator the app is made in their own account; for Ludy Cloud one reviewed Marketplace app is an owner action and new spending.
+
+### 4. What stays as it is
+
+Readers, retention, shredding, the extension's permissions and token, ADR-0049's rules and the invariant suite are unchanged by this ADR. L4a adds one command and one feature key; L4b adds a connector, a route, an image and an ingest command, each its own issue by the two-step rule for any new tenant table.
+
+## Smallest slice (proposed, for L4a)
+
+**Acceptance sketch.** On a meeting the person ticked "Ghi chú trực tiếp" for, the page shows transcript lines about 30 seconds behind the speech and refreshed notes every 5 minutes, only to the recorder; Vy (the recorder's own, in the Notes app) transcribes and drafts the notes, with the checks of section 5.3; a spent budget or the kill switch stops the notes and not the recording; with AI off the recording works and the pane says why it is empty; no task is created without a click; the live text is gone when the batch transcript replaces it or the meeting is deleted. One person, defaults, no setup beyond the extension or recorder they already use.
+
+## Risks
+
+- **Google has no real-time route for third parties after 2027-01-15.** A person who expects "Vy joins my Meet" cannot be served officially; the answer is the extension and L4a.
+- **Zoom facts are partly from the preview and from forums**: the price, who pays, the participant notice and whether a same-account app needs review are unconfirmed. The build's first step reads Zoom's pages and stops if they disagree.
+- **A bot is an outside presence** in other people's call, against the owner's stated taste. The one-click, one-meeting rule and the notice-first rule are the controls.
+- **Consent evidence.** The product records who confirmed, not that participants agreed; a lawyer must say whether a notice in the call suffices.
+- **Cost.** Live notes can double the audio minutes; opt-in, the caps and the budget bound it.
+- **Vendor change.** A platform can withdraw or reprice a route, as Google did; the adapter and the opt-in keep the loss to one connector.
+- **New protected surface** for L4b: an inbound webhook, an image with egress, an ingest command. Each gets the Platform PO's security review.
+
+## Owner decisions
+
+Each question has a recommendation; the Vietnamese summary asks them one at a time.
+
+1. **Build live notes without a bot (L4a) next?** Recommended yes: it needs no vendor and covers Meet, and Teams and Zoom in the browser. Without an answer L4 stays in the Icebox.
+2. **A Zoom bot (L4b): now, or when a pilot customer asks?** Recommended when a pilot asks (Icebox until then); Zoom first if it is built, because it is the only official real-time route and fills the desktop-app gap.
+3. **A Meet bot and a Teams bot: confirm "not planned"?** Recommended yes. Meet has no official real-time route after 2027-01-15 and Teams needs a Windows host and an administrator in every customer.
+4. **A third-party meeting-bot API as an optional adapter for Ludy Cloud?** Recommended no for now: audio would pass through a third party (likely cross-border) and Ludy would depend on a paid vendor.
+5. **Accept that live notes cost up to twice the audio minutes, with the feature off by default and opt-in per meeting?** Recommended yes. Without an answer L4a is not built.
+6. **Who may send a bot: only the recorder, one meeting at a time, no calendar auto-join?** Recommended yes.
+7. **Zoom spending and accounts for Ludy Cloud (only if Q2 says go):** who creates the Zoom developer account and the Marketplace app, passes App Review, and pays the Developer Pack credits. Owner action and new spending; recommended to wait for Q2.
+8. **Ask the lawyer (#62)** whether a notice shown in the call is enough for a bot, or each participant must agree. Recommended yes, added to the list of plan section 7 before any bot is built.
+
+## Consequences
+
+- If the owner agrees to 1, 5 and 6, one issue (L4a) is opened from this ADR: a command, a feature key, a recorder page pane, tests and the AI-off path, with the plan's milestone and priority set by the owner.
+- No vendor account, store review or spending is needed for L4a. L4b needs all three and waits.
+- The plan's L4 row and section 11 point here.
+
+## Revisit when
+
+- Google announces a real-time replacement for the Meet Media API, or Zoom publishes final RTMS pricing and the account that pays.
+- A pilot customer asks for a bot.
+- The lawyer answers the in-call notice question.
+- A second app wants the same live audio path.
+
+## Sources
+
+Read through web search on 2026-11-13; pages marked unofficial are forum or Q&A posts. Open each before building.
+
+- Google Meet Media API: [release notes](https://developers.google.com/workspace/meet/release-notes), [Workspace release notes](https://developers.google.com/workspace/release-notes), [connectActiveConference](https://developers.google.com/workspace/meet/media-api/reference/rest/connectActiveConference), [Workspace API user data policy](https://developers.google.com/workspace/workspace-api-user-data-developer-policy)
+- Google Meet REST API: [overview](https://developers.google.com/workspace/meet/api/guides/overview), [artifacts](https://developers.google.com/workspace/meet/api/guides/artifacts), [transcripts help](https://support.google.com/meet/answer/12849897), [admin transcript help](https://support.google.com/a/answer/12076932)
+- Google Meet add-ons: [overview](https://developers.google.com/workspace/meet/add-ons/guides/overview), [publish](https://developers.google.com/workspace/meet/add-ons/guides/publish)
+- Zoom: [RTMS app review](https://developers.zoom.us/docs/rtms/meetings/submit-app-review/), [RTMS overview](https://developers.zoom.us/docs/rtms/meetings/), [Meeting SDK](https://developers.zoom.us/docs/meeting-sdk/), [OBF FAQ](https://developers.zoom.us/docs/meeting-sdk/obf-faq/), [RTMS developer preview post](https://developers.zoom.us/blog/realtime-media-streams/); unofficial: Zoom Developer Forum threads on [RTMS pricing](https://devforum.zoom.us/t/rtms-developer-pack-pricing-for-business-account/144203), [billing ownership](https://devforum.zoom.us/t/rtms-entitlement-developer-pack-billing-ownership-and-basic-meeting-hosts/146400), [Linux SDK versus RTMS](https://devforum.zoom.us/t/pricing-feasibility-validation-rtms-vs-linux-sdk-for-external-meeting-capture/141332)
+- Microsoft Teams: [calls and meetings bots](https://learn.microsoft.com/microsoftteams/platform/bots/calls-and-meetings/calls-meetings-bots-overview), [registering a calling bot](https://learn.microsoft.com/microsoftteams/platform/bots/calls-and-meetings/registering-calling-bot), [application-hosted media bots](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots), [getAllTranscripts](https://learn.microsoft.com/en-us/graph/api/onlinemeeting-getalltranscripts?view=graph-rest-1.0), [metered APIs](https://learn.microsoft.com/en-us/graph/metered-api-overview), [verification checks for anonymous joiners](https://learn.microsoft.com/en-us/microsoftteams/join-verification-check); unofficial: Microsoft Q&A threads on bots joining other tenants and on transcript access
+- Third party: [Recall.ai pricing](https://www.recall.ai/pricing), [its 2026 pricing post](https://www.recall.ai/blog/new-recall-ai-pricing-for-2026)

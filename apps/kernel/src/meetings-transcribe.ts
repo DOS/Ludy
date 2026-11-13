@@ -73,9 +73,12 @@ class RunMeter implements AiMeter {
     this.job = job;
   }
 
-  async admit(): Promise<void> {
+  // Admission also sends the call's projected cost when it knows one (a chunk: its measured seconds, priced by the same aiCost the record uses), so a chunk that would cross a
+  // hard-stop budget is refused before the provider call (#2863 item 8). No projection (or a price of 0) is the entry's check alone, as before.
+  async admit(call: AiCall): Promise<void> {
+    const projected = call.expected ? aiCost([call.expected], this.deps.price) : '0';
     try {
-      await this.vy.query('kernel.member_vy.run.check', {});
+      await this.vy.query('kernel.member_vy.run.check', /^0+(?:\.0+)?$/.test(projected) ? {} : { projectedCost: projected });
     } catch (error: unknown) {
       if (error instanceof DomainError && error.code === 'BUDGET_EXHAUSTED') throw new AiBudgetExhaustedError('module', null);
       throw error;

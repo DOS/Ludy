@@ -15,6 +15,7 @@ import {
   DomainError,
   Runtime,
   encryptBlobBuffer,
+  memberVyRuntime,
   sha256Hex,
   wrapMediaKeyWithSubkey,
   type BlobStore,
@@ -626,5 +627,189 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
       await holder.end();
     }
     await clearRuns();
+  });
+
+  // #2863 item 8: a chunk is admitted on its projected cost (its measured seconds times the price per second, 5 for a 600 s chunk at 0.5 a minute), so a chunk that would
+  // cross a hard-stop budget is refused BEFORE the provider call. The budgets below are set relative to what the org has already spent this month (the tests share one org).
+  async function setBudget(scope: 'org' | 'module' | 'agent', target: string, headroom: string, hardStop = true) {
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, $2, $3, crove_kernel.ai_budget_spent($1::uuid, $2, $3) + $4::numeric, $5, $6)`,
+        [orgId, scope, target, headroom, hardStop, users.owner],
+      ),
+    );
+  }
+  const clearBudgets = () => admin((c) => c.query(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]));
+  const usageRows = async () => Number((await admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 AND feature = 'meetings.transcribe'`, [orgId]))).rows[0]?.n);
+  const liveRun = async (who: string) => {
+    await clearRuns();
+    const meetingId = await seedMeeting(who);
+    const { runId } = await start(who, meetingId);
+    return { meetingId, runId, agentId: await agentOf(who) };
+  };
+
+  for (const scope of ['org', 'module', 'agent'] as const) {
+    it(`refuses a chunk that would cross a hard-stop ${scope} budget before the provider call, and the run ends with AI_BUDGET_EXHAUSTED (#2863 item 8)`, async () => {
+      const { meetingId, runId, agentId } = await liveRun('recorder');
+      await setBudget(scope, scope === 'org' ? '*' : scope === 'module' ? 'meetings' : agentId, '7');
+      try {
+        const calls = providerCalls;
+        const rows = await usageRows();
+        expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+        // Chunk 1 (5) fits under the 7 left; chunk 2 would take the spend to 10: refused at its admit, so one provider call and one usage row, not two.
+        expect(providerCalls - calls).toBe(1);
+        expect((await usageRows()) - rows).toBe(1);
+        expect(await runRow(runId)).toEqual({ status: 'failed', error: 'AI_BUDGET_EXHAUSTED' });
+        expect(await status('recorder', meetingId)).toMatchObject({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED' });
+        const body = await admin((c) => c.query<{ body: string | null }>(`SELECT body FROM crove_kernel.member_vy_result WHERE org_id = $1 AND run_id = $2`, [orgId, runId]));
+        expect(body.rows[0]?.body ?? null).toBeNull();
+      } finally {
+        await clearBudgets();
+        await clearRuns();
+      }
+    });
+  }
+
+  it('refuses the first chunk when even one chunk would cross the cap: no provider call and no charge (#2863 item 8)', async () => {
+    const { meetingId, runId } = await liveRun('recorder');
+    await setBudget('module', 'meetings', '4');
+    try {
+      const calls = providerCalls;
+      const rows = await usageRows();
+      expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+      expect(providerCalls).toBe(calls);
+      expect(await usageRows()).toBe(rows);
+      expect(await runRow(runId)).toEqual({ status: 'failed', error: 'AI_BUDGET_EXHAUSTED' });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('lets chunks that stay under a hard-stop cap through, and refuses a chunk that would land exactly on it, since the run\'s own result could not be stored then (#2863 item 8)', async () => {
+    const under = await liveRun('recorder');
+    await setBudget('module', 'meetings', '10.000001');
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', under.meetingId, under.runId), 'both chunks leave the budget unspent').toBe('succeeded');
+      expect(providerCalls - calls).toBe(2);
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+    const exact = await liveRun('recorder');
+    await setBudget('module', 'meetings', '10');
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', exact.meetingId, exact.runId)).toBe('failed');
+      // Chunk 2 would spend the budget to the cent: refused before its call, not sent and paid and then lost at the store.
+      expect(providerCalls - calls).toBe(1);
+      expect(await runRow(exact.runId)).toEqual({ status: 'failed', error: 'AI_BUDGET_EXHAUSTED' });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('never refuses on a soft budget, however small it is (#2863 item 8)', async () => {
+    const { meetingId, runId } = await liveRun('recorder');
+    await setBudget('module', 'meetings', '1', false);
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', meetingId, runId)).toBe('succeeded');
+      expect(providerCalls - calls).toBe(2);
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('is the entry\'s check alone when the audio price is 0: nothing is projected, and a cap with room runs as before (#2863 item 8)', async () => {
+    const { meetingId, runId, agentId } = await liveRun('recorder');
+    await setBudget('module', 'meetings', '1');
+    try {
+      const calls = providerCalls;
+      const free = { ...deps(), price: { inputPerMTok: '0', outputPerMTok: '0', audioPerMinute: '0' } };
+      expect(await runMeetingsTranscribe(free, { orgId, meetingId, runId, agentId })).toBe('succeeded');
+      expect(providerCalls - calls).toBe(2);
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('keeps the kill switches first: with AI off a chunk is refused with AI_STOPPED whatever it costs (#2863 item 8)', async () => {
+    const { meetingId, runId } = await liveRun('recorder');
+    await admin((c) => c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, users.owner]));
+    await setBudget('module', 'meetings', '1');
+    try {
+      const calls = providerCalls;
+      expect(await runJob('recorder', meetingId, runId)).toBe('failed');
+      expect(providerCalls).toBe(calls);
+      expect(await runRow(runId)).toMatchObject({ status: 'failed', error: 'AI_STOPPED' });
+    } finally {
+      await admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND released_at IS NULL`, [orgId, users.owner]));
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('run.check: a projected cost that would reach a hard stop is refused with the entry\'s code and the scope, below it passes, and none or zero is as before (#2863 item 8)', async () => {
+    const { runId, agentId } = await liveRun('recorder');
+    const vy = memberVyRuntime(worker, orgId, { agentId, runId });
+    const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => error as DomainError);
+    await setBudget('module', 'meetings', '7');
+    try {
+      expect(await check({}), 'no projection').toBeNull();
+      expect(await check({ projectedCost: '0' }), 'zero').toBeNull();
+      expect(await check({ projectedCost: '0.000000' }), 'zero with decimals').toBeNull();
+      expect(await check({ projectedCost: '5.000000' }), 'under').toBeNull();
+      expect(await check({ projectedCost: '6.999999' }), 'a hair under the cap').toBeNull();
+      expect(await check({ projectedCost: '7' }), 'exactly the cap: the budget would be spent').toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'module' } });
+      expect(await check({ projectedCost: '7.000001' })).toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'module' } });
+      // The agent's budget is named before the module's and the org's.
+      await setBudget('agent', agentId, '1');
+      await setBudget('org', '*', '1');
+      expect(await check({ projectedCost: '7.000001' })).toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'agent' } });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('run.check: the module and the agent are the run\'s own, so a budget of another module or another agent never refuses it (#2863 item 8)', async () => {
+    const { runId, agentId } = await liveRun('recorder');
+    const vy = memberVyRuntime(worker, orgId, { agentId, runId });
+    const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => error as DomainError);
+    // Budgets that would refuse a projection of 5 if they were counted: another module's and another agent's, both with no room at all.
+    await setBudget('module', 'finance', '0');
+    await setBudget('agent', randomUUID(), '0');
+    try {
+      expect(await check({ projectedCost: '5' })).toBeNull();
+      // And the run's own module budget does refuse, on the same projection.
+      await setBudget('module', 'meetings', '4');
+      expect(await check({ projectedCost: '5' })).toMatchObject({ code: 'BUDGET_EXHAUSTED', details: { scope: 'module' } });
+    } finally {
+      await clearBudgets();
+      await clearRuns();
+    }
+  });
+
+  it('run.check: the projection must be a non-negative decimal of at most 1e9, and only a background run may send one (#2863 item 8)', async () => {
+    const { runId, agentId } = await liveRun('recorder');
+    const vy = memberVyRuntime(worker, orgId, { agentId, runId });
+    const check = (input: Record<string, unknown>) => vy.query('kernel.member_vy.run.check', input).then(() => null, (error: unknown) => (error as DomainError).code);
+    try {
+      for (const bad of ['-1', '1e3', '1000000000.000001', '1000000000.5', '12345678901', '1.1234567', ' 5', '5 ', '', 'abc', '0x10']) {
+        expect(await check({ projectedCost: bad }), `projectedCost ${JSON.stringify(bad)}`).toBe('VALIDATION');
+      }
+      expect(await check({ projectedCost: 5 }), 'a JS number is not a decimal string').toBe('VALIDATION');
+      expect(await check({ projectedCost: '1000000000' }), 'the cap itself, with no budget').toBeNull();
+      // The member's own session has no run to measure against: a projection is refused there, and no projection is as before.
+      expect(await refuses(app.query('kernel.member_vy.run.check', { projectedCost: '5' }, { actor: asUser('recorder'), orgId }))).toBe('FORBIDDEN');
+      expect(await refuses(app.query('kernel.member_vy.run.check', {}, { actor: asUser('recorder'), orgId }))).toBeNull();
+    } finally {
+      await clearRuns();
+    }
   });
 });
