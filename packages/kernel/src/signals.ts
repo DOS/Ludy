@@ -70,10 +70,50 @@ async function readSignals<T>(ctx: QueryContext, name: string, schema: z.ZodType
   return parsed.success ? { status: 'ok', rows: parsed.data } : { status: 'broken' };
 }
 
-// One line's signals read, or null when there is nothing to join: not registered, module off, refused, or an answer that is not the contract's.
-async function signalsOf<T>(ctx: QueryContext, name: string, schema: z.ZodType<T>, input: unknown = {}): Promise<T | null> {
-  const got = await readSignals(ctx, name, schema, input);
-  return got.status === 'ok' ? got.rows : null;
+// What one rule found, and whether it could look: `ok` it looked at everything it needs, `partial` a line refused because the caller sees only part of its books (an entity
+// scope narrower than the org), `unavailable` a line has no read registered, refuses the caller, or answered outside its contract. The pull tool of an AI app (kernel.mcp.signals)
+// reports it, so an empty list of items is never mistaken for "all clear" when a check could not be made; Home ignores it as before.
+export type RuleStatus = 'ok' | 'partial' | 'unavailable';
+export interface RuleCheck {
+  items: TodayItem[];
+  status: RuleStatus;
+}
+const statusOf = (got: Signals<unknown>): RuleStatus => (got.status === 'partial' ? 'partial' : 'unavailable');
+
+export async function checkDealWithoutInvoice(ctx: QueryContext, now?: () => Date): Promise<RuleCheck> {
+  const deals = await readSignals(ctx, CRM_WON_DEALS_SIGNALS_READ, zCrmWonDealSignals);
+  if (deals.status !== 'ok') return { items: [], status: statusOf(deals) };
+  if (deals.rows.length === 0) return { items: [], status: 'ok' };
+  // Finance is asked about the parties of these deals only (ids, no text), so a row cap on its side cannot hide an invoiced customer.
+  const partyIds = [...new Set(deals.rows.map((d) => d.partyId))];
+  const sales = await readSignals(ctx, FINANCE_SALES_SIGNALS_READ, zFinanceSalesSignals, { partyIds });
+  if (sales.status !== 'ok') return { items: [], status: statusOf(sales) };
+  const today = vietnamToday(now?.() ?? new Date());
+  // The latest sale date per party, whatever the number of rows a party comes in.
+  const lastSale = new Map<string, string>();
+  for (const s of sales.rows) if ((lastSale.get(s.partyId) ?? '') < s.lastSaleOn) lastSale.set(s.partyId, s.lastSaleOn);
+  const due = deals.rows
+    .map((deal) => ({ deal, days: daysBetween(deal.wonOn, today) }))
+    // Won long enough ago, and no sales invoice of the party dated on or after the day it was won (an older invoice is another sale).
+    .filter(({ deal, days }) => days >= WON_DEAL_NO_INVOICE_DAYS && !((lastSale.get(deal.partyId) ?? '') >= deal.wonOn))
+    .sort((a, b) => b.days - a.days || (a.deal.dealId < b.deal.dealId ? -1 : 1));
+  const items: TodayItem[] = due.slice(0, SIGNAL_ITEMS_MAX).map(({ deal, days }) => ({
+    kind: 'flag',
+    app: 'crm',
+    id: `signal:won-deal-no-invoice:${deal.dealId}`,
+    title: { key: 'signals.wonDealNoInvoice', params: { days } },
+    amount: deal.amount,
+    currency: 'VND',
+    severity: 'warn',
+    // The day it became due: Home sorts a flag by the nearer dueAt, so the most overdue deal comes first and the grouped item (no dueAt) last.
+    dueAt: dueAt(deal.wonOn),
+    href: '/deals',
+  }));
+  const rest = due.length - items.length;
+  if (rest > 0) {
+    items.push({ kind: 'flag', app: 'crm', id: 'signal:won-deal-no-invoice:more', title: { key: 'signals.wonDealNoInvoiceMore', params: { count: rest } }, count: rest, severity: 'warn', href: '/deals' });
+  }
+  return { items, status: 'ok' };
 }
 
 export function dealWithoutInvoiceQuery(options: { now?: () => Date } = {}) {
@@ -83,46 +123,47 @@ export function dealWithoutInvoiceQuery(options: { now?: () => Date } = {}) {
     access: ALL,
     // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
     mcp: { scope: 'ludy.read' },
-    handler: async (ctx): Promise<TodayItem[]> => {
-      const deals = await signalsOf(ctx, CRM_WON_DEALS_SIGNALS_READ, zCrmWonDealSignals);
-      if (!deals || deals.length === 0) return [];
-      // Finance is asked about the parties of these deals only (ids, no text), so a row cap on its side cannot hide an invoiced customer.
-      const partyIds = [...new Set(deals.map((d) => d.partyId))];
-      const sales = await signalsOf(ctx, FINANCE_SALES_SIGNALS_READ, zFinanceSalesSignals, { partyIds });
-      if (!sales) return [];
-      const today = vietnamToday(options.now?.() ?? new Date());
-      // The latest sale date per party, whatever the number of rows a party comes in.
-      const lastSale = new Map<string, string>();
-      for (const s of sales) if ((lastSale.get(s.partyId) ?? '') < s.lastSaleOn) lastSale.set(s.partyId, s.lastSaleOn);
-      const due = deals
-        .map((deal) => ({ deal, days: daysBetween(deal.wonOn, today) }))
-        // Won long enough ago, and no sales invoice of the party dated on or after the day it was won (an older invoice is another sale).
-        .filter(({ deal, days }) => days >= WON_DEAL_NO_INVOICE_DAYS && !((lastSale.get(deal.partyId) ?? '') >= deal.wonOn))
-        .sort((a, b) => b.days - a.days || (a.deal.dealId < b.deal.dealId ? -1 : 1));
-      const items: TodayItem[] = due.slice(0, SIGNAL_ITEMS_MAX).map(({ deal, days }) => ({
-        kind: 'flag',
-        app: 'crm',
-        id: `signal:won-deal-no-invoice:${deal.dealId}`,
-        title: { key: 'signals.wonDealNoInvoice', params: { days } },
-        amount: deal.amount,
-        currency: 'VND',
-        severity: 'warn',
-        // The day it became due: Home sorts a flag by the nearer dueAt, so the most overdue deal comes first and the grouped item (no dueAt) last.
-        dueAt: dueAt(deal.wonOn),
-        href: '/deals',
-      }));
-      const rest = due.length - items.length;
-      if (rest > 0) {
-        items.push({ kind: 'flag', app: 'crm', id: 'signal:won-deal-no-invoice:more', title: { key: 'signals.wonDealNoInvoiceMore', params: { count: rest } }, count: rest, severity: 'warn', href: '/deals' });
-      }
-      return items;
-    },
+    handler: async (ctx): Promise<TodayItem[]> => (await checkDealWithoutInvoice(ctx, options.now)).items,
   });
 }
 
 // Rule 2 (V5): an overdue sales receivable whose party still has an open deal. Engage lists the open deals the member can open; Accounting is asked about those
 // parties only and lists the ones with a receivable past its due date. One flag per party (a party with several open deals is one item), the overdue total as
 // its amount, `dueAt` the oldest due date so the longest overdue comes first. It is acted on in the deal (the sale is still open), so the item is the CRM's.
+export async function checkReceivableWithOpenDeal(ctx: QueryContext, now?: () => Date): Promise<RuleCheck> {
+  const deals = await readSignals(ctx, CRM_OPEN_DEALS_SIGNALS_READ, zCrmOpenDealSignals);
+  if (deals.status !== 'ok') return { items: [], status: statusOf(deals) };
+  if (deals.rows.length === 0) return { items: [], status: 'ok' };
+  const partyIds = [...new Set(deals.rows.map((d) => d.partyId))];
+  const receivables = await readSignals(ctx, FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ, zFinanceOverdueReceivableSignals, { partyIds });
+  if (receivables.status !== 'ok') return { items: [], status: statusOf(receivables) };
+  const today = vietnamToday(now?.() ?? new Date());
+  // Only the parties of the open deals (a row for another party is ignored); the contract allows one row per party.
+  const wanted = new Set(partyIds);
+  const byParty = new Map<string, { oldestDueOn: string; amount: string }>();
+  for (const r of receivables.rows) if (wanted.has(r.partyId)) byParty.set(r.partyId, { oldestDueOn: r.oldestDueOn, amount: r.amount });
+  const due = [...byParty.entries()]
+    .map(([partyId, r]) => ({ partyId, ...r, days: daysBetween(r.oldestDueOn, today) }))
+    .filter((r) => r.days >= OVERDUE_RECEIVABLE_MIN_DAYS)
+    .sort((a, b) => b.days - a.days || (a.partyId < b.partyId ? -1 : 1));
+  const items: TodayItem[] = due.slice(0, SIGNAL_ITEMS_MAX).map((r) => ({
+    kind: 'flag',
+    app: 'crm',
+    id: `signal:overdue-receivable-open-deal:${r.partyId}`,
+    title: { key: 'signals.overdueReceivableOpenDeal', params: { days: r.days } },
+    amount: r.amount,
+    currency: 'VND',
+    severity: 'warn',
+    dueAt: `${r.oldestDueOn}T00:00:00+07:00`,
+    href: '/deals',
+  }));
+  const rest = due.length - items.length;
+  if (rest > 0) {
+    items.push({ kind: 'flag', app: 'crm', id: 'signal:overdue-receivable-open-deal:more', title: { key: 'signals.overdueReceivableOpenDealMore', params: { count: rest } }, count: rest, severity: 'warn', href: '/deals' });
+  }
+  return { items, status: 'ok' };
+}
+
 export function receivableWithOpenDealQuery(options: { now?: () => Date } = {}) {
   return defineQuery({
     name: RECEIVABLE_WITH_OPEN_DEAL_READ,
@@ -130,38 +171,7 @@ export function receivableWithOpenDealQuery(options: { now?: () => Date } = {}) 
     access: ALL,
     // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
     mcp: { scope: 'ludy.read' },
-    handler: async (ctx): Promise<TodayItem[]> => {
-      const deals = await signalsOf(ctx, CRM_OPEN_DEALS_SIGNALS_READ, zCrmOpenDealSignals);
-      if (!deals || deals.length === 0) return [];
-      const partyIds = [...new Set(deals.map((d) => d.partyId))];
-      const receivables = await signalsOf(ctx, FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ, zFinanceOverdueReceivableSignals, { partyIds });
-      if (!receivables) return [];
-      const today = vietnamToday(options.now?.() ?? new Date());
-      // Only the parties of the open deals (a row for another party is ignored); the contract allows one row per party.
-      const wanted = new Set(partyIds);
-      const byParty = new Map<string, { oldestDueOn: string; amount: string }>();
-      for (const r of receivables) if (wanted.has(r.partyId)) byParty.set(r.partyId, { oldestDueOn: r.oldestDueOn, amount: r.amount });
-      const due = [...byParty.entries()]
-        .map(([partyId, r]) => ({ partyId, ...r, days: daysBetween(r.oldestDueOn, today) }))
-        .filter((r) => r.days >= OVERDUE_RECEIVABLE_MIN_DAYS)
-        .sort((a, b) => b.days - a.days || (a.partyId < b.partyId ? -1 : 1));
-      const items: TodayItem[] = due.slice(0, SIGNAL_ITEMS_MAX).map((r) => ({
-        kind: 'flag',
-        app: 'crm',
-        id: `signal:overdue-receivable-open-deal:${r.partyId}`,
-        title: { key: 'signals.overdueReceivableOpenDeal', params: { days: r.days } },
-        amount: r.amount,
-        currency: 'VND',
-        severity: 'warn',
-        dueAt: `${r.oldestDueOn}T00:00:00+07:00`,
-        href: '/deals',
-      }));
-      const rest = due.length - items.length;
-      if (rest > 0) {
-        items.push({ kind: 'flag', app: 'crm', id: 'signal:overdue-receivable-open-deal:more', title: { key: 'signals.overdueReceivableOpenDealMore', params: { count: rest } }, count: rest, severity: 'warn', href: '/deals' });
-      }
-      return items;
-    },
+    handler: async (ctx): Promise<TodayItem[]> => (await checkReceivableWithOpenDeal(ctx, options.now)).items,
   });
 }
 
@@ -174,63 +184,73 @@ export function receivableWithOpenDealQuery(options: { now?: () => Date } = {}) 
 //     a changed account and cannot see its payments, so the answer is one `warn` item saying the payments could not be checked, never an empty list;
 //   - an answer outside the contract, from either read, is a bug of that line: it is logged and the read fails (`SIGNAL_CONTRACT_BROKEN`), so Home counts it in
 //     `failed` instead of showing a quiet "all clear".
-export function supplierBankChangedQuery(options: { now?: () => Date; log?: Pick<Console, 'error'> } = {}) {
+export async function checkSupplierBankChanged(ctx: QueryContext, options: { now?: () => Date; log?: Pick<Console, 'error'> } = {}): Promise<RuleCheck> {
   const log = options.log ?? console;
   const broken = (read: string): DomainError => {
     log.error(`[signals] ${read} answered outside the signals contract`);
     return new DomainError('SIGNAL_CONTRACT_BROKEN', 500, 'A signals read answered outside its contract');
   };
+  const changes = await readSignals(ctx, FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ, zFinanceSupplierBankChangeSignals);
+  if (changes.status === 'broken') throw broken(FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ);
+  if (changes.status === 'unavailable') return { items: [], status: 'unavailable' };
+  // A partial view of the changes (an entity scope narrower than the org): the member may be missing a changed account, so they are told, never given nothing.
+  if (changes.status === 'partial') {
+    return {
+      items: [{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:partial', title: { key: 'signals.supplierBankChangedPartial' }, severity: 'warn', href: '/inbox' }],
+      status: 'partial',
+    };
+  }
+  const today = vietnamToday(options.now?.() ?? new Date());
+  // The suppliers that changed an account inside the window. A change dated in the future (a clock a little ahead, an effective date) counts as today: the rule
+  // must not fail open on it.
+  const changedOn = new Map<string, string>();
+  for (const c of changes.rows) {
+    const age = Math.max(0, daysBetween(c.changedOn, today));
+    if (age <= SUPPLIER_BANK_CHANGE_DAYS) changedOn.set(c.partyId, c.changedOn);
+  }
+  if (changedOn.size === 0) return { items: [], status: 'ok' };
+  // At most 500 (the contract's cap on the changes read, which is also the payments read's input cap): none is cut.
+  const partyIds = [...changedOn.keys()];
+  const payments = await readSignals(ctx, FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ, zFinanceSupplierPaymentsWaitingSignals, { partyIds });
+  if (payments.status === 'broken') throw broken(FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ);
+  if (payments.status === 'unavailable' || payments.status === 'partial') {
+    // Not checked: say so, once, with how many suppliers changed their account.
+    return {
+      items: [{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:unchecked', title: { key: 'signals.supplierBankChangedUnchecked', params: { count: partyIds.length } }, count: partyIds.length, severity: 'warn', href: '/inbox' }],
+      status: statusOf(payments),
+    };
+  }
+  const wanted = new Set(partyIds);
+  const waiting = new Map<string, { count: number; amount: string }>();
+  for (const p of payments.rows) if (wanted.has(p.partyId)) waiting.set(p.partyId, { count: p.count, amount: p.amount });
+  const hits = [...waiting.entries()]
+    .map(([partyId, w]) => ({ partyId, ...w, days: Math.max(0, daysBetween(changedOn.get(partyId) as string, today)) }))
+    .sort((a, b) => a.days - b.days || (a.partyId < b.partyId ? -1 : 1));
+  const items: TodayItem[] = hits.slice(0, SIGNAL_ITEMS_MAX).map((h) => ({
+    kind: 'flag',
+    app: 'finance',
+    id: `signal:supplier-bank-changed:${h.partyId}`,
+    title: { key: 'signals.supplierBankChanged', params: { days: h.days, count: h.count } },
+    count: h.count,
+    amount: h.amount,
+    currency: 'VND',
+    severity: 'block',
+    href: '/inbox',
+  }));
+  const rest = hits.length - items.length;
+  if (rest > 0) {
+    items.push({ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:more', title: { key: 'signals.supplierBankChangedMore', params: { count: rest } }, count: rest, severity: 'block', href: '/inbox' });
+  }
+  return { items, status: 'ok' };
+}
+
+export function supplierBankChangedQuery(options: { now?: () => Date; log?: Pick<Console, 'error'> } = {}) {
   return defineQuery({
     name: SUPPLIER_BANK_CHANGED_READ,
     input: z.strictObject({}),
     access: ALL,
     // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
     mcp: { scope: 'ludy.read' },
-    handler: async (ctx): Promise<TodayItem[]> => {
-      const changes = await readSignals(ctx, FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ, zFinanceSupplierBankChangeSignals);
-      if (changes.status === 'broken') throw broken(FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ);
-      if (changes.status === 'unavailable') return [];
-      // A partial view of the changes (an entity scope narrower than the org): the member may be missing a changed account, so they are told, never given nothing.
-      if (changes.status === 'partial') return [{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:partial', title: { key: 'signals.supplierBankChangedPartial' }, severity: 'warn', href: '/inbox' }];
-      const today = vietnamToday(options.now?.() ?? new Date());
-      // The suppliers that changed an account inside the window. A change dated in the future (a clock a little ahead, an effective date) counts as today: the rule
-      // must not fail open on it.
-      const changedOn = new Map<string, string>();
-      for (const c of changes.rows) {
-        const age = Math.max(0, daysBetween(c.changedOn, today));
-        if (age <= SUPPLIER_BANK_CHANGE_DAYS) changedOn.set(c.partyId, c.changedOn);
-      }
-      if (changedOn.size === 0) return [];
-      // At most 500 (the contract's cap on the changes read, which is also the payments read's input cap): none is cut.
-      const partyIds = [...changedOn.keys()];
-      const payments = await readSignals(ctx, FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ, zFinanceSupplierPaymentsWaitingSignals, { partyIds });
-      if (payments.status === 'broken') throw broken(FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ);
-      if (payments.status === 'unavailable' || payments.status === 'partial') {
-        // Not checked: say so, once, with how many suppliers changed their account.
-        return [{ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:unchecked', title: { key: 'signals.supplierBankChangedUnchecked', params: { count: partyIds.length } }, count: partyIds.length, severity: 'warn', href: '/inbox' }];
-      }
-      const wanted = new Set(partyIds);
-      const waiting = new Map<string, { count: number; amount: string }>();
-      for (const p of payments.rows) if (wanted.has(p.partyId)) waiting.set(p.partyId, { count: p.count, amount: p.amount });
-      const hits = [...waiting.entries()]
-        .map(([partyId, w]) => ({ partyId, ...w, days: Math.max(0, daysBetween(changedOn.get(partyId) as string, today)) }))
-        .sort((a, b) => a.days - b.days || (a.partyId < b.partyId ? -1 : 1));
-      const items: TodayItem[] = hits.slice(0, SIGNAL_ITEMS_MAX).map((h) => ({
-        kind: 'flag',
-        app: 'finance',
-        id: `signal:supplier-bank-changed:${h.partyId}`,
-        title: { key: 'signals.supplierBankChanged', params: { days: h.days, count: h.count } },
-        count: h.count,
-        amount: h.amount,
-        currency: 'VND',
-        severity: 'block',
-        href: '/inbox',
-      }));
-      const rest = hits.length - items.length;
-      if (rest > 0) {
-        items.push({ kind: 'flag', app: 'finance', id: 'signal:supplier-bank-changed:more', title: { key: 'signals.supplierBankChangedMore', params: { count: rest } }, count: rest, severity: 'block', href: '/inbox' });
-      }
-      return items;
-    },
+    handler: async (ctx): Promise<TodayItem[]> => (await checkSupplierBankChanged(ctx, options)).items,
   });
 }

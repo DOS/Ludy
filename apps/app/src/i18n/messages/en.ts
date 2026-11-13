@@ -10640,6 +10640,7 @@ export const en = {
           set: 'Turn member-owned AI app connections on or off',
         },
         parties: 'Show an AI app the list of customers, suppliers and contacts',
+        signals: 'Show an AI app what needs attention across apps (won deals with no invoice, overdue receivables with an open deal)',
         wake: {
           clear: 'Remove the wake-up receiver of an AI app',
           delivery: 'Read a wake-up waiting to be sent',
