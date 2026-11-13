@@ -9882,6 +9882,9 @@ export const en = {
     },
     finance: {
       today: 'Read what needs you in accounting today',
+      signals: {
+        overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',
+      },
       account: {
         create: 'Add a ledger account',
         update: 'Edit a ledger account',

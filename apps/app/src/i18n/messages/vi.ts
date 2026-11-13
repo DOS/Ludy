@@ -9879,6 +9879,9 @@ export const vi = {
     },
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
+      signals: {
+        overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',
+      },
       account: {
         create: 'Thêm tài khoản kế toán',
         update: 'Sửa tài khoản kế toán',
