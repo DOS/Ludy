@@ -1783,6 +1783,28 @@ export const vi = {
       cancel: 'Hủy',
       corrected: 'Đã sửa',
     },
+    live: {
+      title: 'Bản nháp trực tiếp',
+      draftNote: 'Đây là bản nháp trong lúc họp; bản ghi lời đầy đủ sẽ thay thế nó sau khi cuộc họp được tải lên.',
+      start: 'Bắt đầu ghi chú trực tiếp',
+      stop: 'Dừng',
+      notesNow: 'Cập nhật ghi chú ngay',
+      pageOpen: 'Ghi chú trực tiếp chỉ chạy khi trang này đang mở.',
+      empty: 'Chưa có dòng nào. Các dòng sẽ hiện ra sau mỗi đoạn vài chục giây.',
+      lineTime: 'Từ {start} đến {end}',
+      states: {
+        off: 'Chưa bắt đầu',
+        waiting: 'Đang chờ đoạn tiếp theo',
+        running: 'Đang chạy',
+        stopped: 'Đã dừng',
+      },
+      notEnabled: 'Bản ghi này không phiên âm được ở máy chủ của bạn.',
+      budget: 'Chờ ngân sách AI',
+      aiStopped: 'AI đang tạm dừng',
+      otherStopped: 'Ghi chú trực tiếp đã dừng.',
+      code: 'Mã: {code}',
+      recordingContinues: 'Việc ghi âm vẫn tiếp tục.',
+    },
     followup: {
       open: 'Soạn thư cảm ơn',
       title: 'Thư cảm ơn sau cuộc họp',
@@ -10896,6 +10918,13 @@ export const vi = {
     meetings: {
       live: {
         chunk: 'Nhận một đoạn âm thanh của cuộc họp đang ghi (ghi chú trực tiếp)',
+        notes_copy: 'Chép ghi chú trực tiếp Vy vừa làm vào bản nháp của bạn',
+        notes_input: 'Đọc các dòng nháp mới và ghi chú trước đó để làm ghi chú trực tiếp',
+        notes_start: 'Bắt đầu một lần làm ghi chú trực tiếp cho cuộc họp',
+        start: 'Bắt đầu ghi chú trực tiếp cho cuộc họp',
+        status: 'Xem ghi chú trực tiếp của cuộc họp',
+        stop: 'Dừng ghi chú trực tiếp của cuộc họp',
+        tick: 'Chép các dòng nháp trực tiếp mới và bắt đầu đoạn tiếp theo',
       },
       media: {
         discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',

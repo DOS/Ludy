@@ -331,6 +331,15 @@ import {
   zMeetingReaderResult,
   zMeetingRef,
   zMeetingSettings,
+  zLiveNotesAsk,
+  zLiveNotesDone,
+  zLiveRef,
+  zLiveStart,
+  zLiveStarted,
+  zLiveStatus,
+  zLiveStopped,
+  zLiveTick,
+  zLiveTicked,
   zMeetingExtensionStatus,
   zMeetingSettingsGet,
   zMeetingSearchInput,
@@ -861,6 +870,14 @@ export const contract = {
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
     ownerList: oc.input(zMeetingOwnerListInput).output(zMeetingOwnerList),
+    // Live notes of a meeting being recorded (L4a-2, #3110, ADR-0052): the recorder's own pane. `liveStatus` is the poll, `liveTick` copies a finished window
+    // and starts the next one, and the pair of buttons starts and stops them. Only the recorder of a meeting that opted in at its consent step sees anything.
+    liveStatus: oc.input(zLiveRef).output(zLiveStatus),
+    liveStart: oc.input(zLiveStart).output(zLiveStarted),
+    liveTick: oc.input(zLiveTick).output(zLiveTicked),
+    liveStop: oc.input(zLiveRef).output(zLiveStopped),
+    // The running notes, made by the recorder's Vy from the new preview lines and the previous notes only; the answer says how it went in fixed words.
+    liveNotes: oc.input(zLiveNotesAsk).output(zLiveNotesDone),
     // Links to parties, a deal and the calendar event (L1, #2587): the recorder sets and removes them; a page reads only the meetings its viewer reads.
     links: {
       add: oc.input(zMeetingLinkAdd).output(zMeetingLink),

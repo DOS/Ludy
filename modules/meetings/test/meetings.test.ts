@@ -96,6 +96,11 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.remove',
       'meetings.followup.send',
       'meetings.live.chunk',
+      'meetings.live.start',
+      'meetings.live.stop',
+      'meetings.live.notes_start',
+      'meetings.live.tick',
+      'meetings.live.notes_copy',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -125,6 +130,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.by_target',
       'meetings.link.suggest',
       'meetings.followup.draft',
+      'meetings.live.status',
+      'meetings.live.notes_input',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

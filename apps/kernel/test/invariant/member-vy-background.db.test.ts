@@ -1621,10 +1621,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "crove_meetings.audio_for_member_vy",
       "crove_meetings.meeting_discard_transcribe",
       "crove_meetings.member_vy_media_files",
+      // The live notes door (#3110): reads the run's waiting result row as audio_for_member_vy does, for the live pieces of the recorder's own meeting.
+      "crove_meetings.live_for_member_vy",
     ];
     // Functions whose change has not landed yet (the two-step rule of AGENTS.md: this file runs from the base branch): accepted while absent, and held to the list the moment
-    // they exist. live_for_member_vy (#3110) reads the run's waiting result row as audio_for_member_vy does. Remove an entry once its function is on main.
-    const PENDING = ["crove_meetings.live_for_member_vy"];
+    // they exist. Empty: the frozen list above is exact. Add an entry here only in an invariant-only PR that precedes the change.
+    const PENDING: string[] = [];
     const found = await admin((c) =>
       c.query<{ fn: string }>(
         `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace

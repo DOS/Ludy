@@ -23,6 +23,8 @@ export const meetingsManifest = defineModule({
       ]),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
       live_chunk: columns(['org_id', 'id', 'meeting_id', 'seq', 'file_id', 'size_bytes', 'length_seconds', 'created_at']),
+      // The live transcript preview of a meeting being recorded (ADR-0052 L4a, #3110): the recorder's alone, replaced by the batch transcript. Its text is personal data.
+      live_line: columns(['org_id', 'id', 'meeting_id', 'seq', 'start_seconds', 'end_seconds', 'tainted', 'source_run_id', 'created_at'], { text: 'pii' }),
       media_key: columns(
         ['org_id', 'id', 'meeting_id', 'key_id', 'kind', 'created_at'],
         { wrapped_key: 'sensitive' },

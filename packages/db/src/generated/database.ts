@@ -183,6 +183,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
+  'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
@@ -2742,6 +2743,20 @@ export interface MeetingsLiveChunkTable {
   file_id: ColumnType<string, string, NotGranted>;
   size_bytes: ColumnType<string, string, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.live_line */
+export interface MeetingsLiveLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  seq: ColumnType<number, number, NotGranted>;
+  start_seconds: ColumnType<number, number, NotGranted>;
+  end_seconds: ColumnType<number, number, NotGranted>;
+  text: ColumnType<string, string, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

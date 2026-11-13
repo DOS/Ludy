@@ -1785,6 +1785,28 @@ export const en = {
       cancel: 'Cancel',
       corrected: 'Corrected',
     },
+    live: {
+      title: 'Live draft',
+      draftNote: 'This is a draft made during the meeting; the full transcript replaces it once the recording is uploaded.',
+      start: 'Start live notes',
+      stop: 'Stop',
+      notesNow: 'Update notes now',
+      pageOpen: 'Live notes run only while this page is open.',
+      empty: 'No lines yet. Lines appear every few tens of seconds.',
+      lineTime: 'From {start} to {end}',
+      states: {
+        off: 'Not started',
+        waiting: 'Waiting for the next window',
+        running: 'Running',
+        stopped: 'Stopped',
+      },
+      notEnabled: 'This recording cannot be transcribed on your server.',
+      budget: 'Waiting for AI budget',
+      aiStopped: 'AI is paused',
+      otherStopped: 'Live notes have stopped.',
+      code: 'Code: {code}',
+      recordingContinues: 'The recording itself continues.',
+    },
     followup: {
       open: 'Write a thank-you email',
       title: 'Follow-up email after the meeting',
@@ -10899,6 +10921,13 @@ export const en = {
     meetings: {
       live: {
         chunk: 'Take a piece of the audio of a meeting being recorded (live notes)',
+        notes_copy: 'Copy the live notes Vy just made into your draft',
+        notes_input: 'Read the new draft lines and the earlier notes to make the live notes',
+        notes_start: 'Start one making of the live notes of a meeting',
+        start: 'Start the live notes of a meeting',
+        status: 'See the live notes of a meeting',
+        stop: 'Stop the live notes of a meeting',
+        tick: 'Copy the new live draft lines and start the next window',
       },
       media: {
         discard: 'Remove the stored copy of deleted meeting media',

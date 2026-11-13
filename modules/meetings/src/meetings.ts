@@ -11,6 +11,8 @@ import { resultCommands, resultQueries } from './results.ts';
 import { summaryCommands } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { liveNotesCommands } from './live-notes.ts';
+import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
@@ -982,6 +984,8 @@ export const meetingsCommands = [
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
+  ...liveRunCommands,
+  ...liveNotesCommands,
 ];
 
 export const meetingsQueries = [
@@ -1000,4 +1004,5 @@ export const meetingsQueries = [
   ...summaryRunQueries,
   ...linkQueries,
   ...followupQueries,
+  ...liveRunQueries,
 ];
