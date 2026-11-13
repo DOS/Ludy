@@ -33,7 +33,7 @@ describe('consent gate', () => {
       getMicStream: vi.fn(),
       now: () => 0,
     } satisfies CaptureDeps;
-    const params = { address: 'https://app.ludy.vn', token: 'crx_x', orgId: 'o', uploads: 'direct', title: 'Họp', consentMethod: 'told_at_start', consentAgreed: false, keepVideo: false, streamId: 's' } as const;
+    const params = { address: 'https://app.ludy.vn', token: 'crx_x', orgId: 'o', uploads: 'direct', title: 'Họp', consentMethod: 'told_at_start', consentAgreed: false, keepVideo: false, liveNotes: false, streamId: 's' } as const;
     expect(await startCapture(params, deps)).toEqual({ ok: false, reason: 'consentAgreed' });
     expect(deps.getTabStream).not.toHaveBeenCalled();
     expect(deps.getMicStream).not.toHaveBeenCalled();

@@ -21,6 +21,8 @@ export const meetingsManifest = defineModule({
         'length_seconds',
         'created_at',
       ]),
+      // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
+      live_chunk: columns(['org_id', 'id', 'meeting_id', 'seq', 'file_id', 'size_bytes', 'length_seconds', 'created_at']),
       media_key: columns(
         ['org_id', 'id', 'meeting_id', 'key_id', 'kind', 'created_at'],
         { wrapped_key: 'sensitive' },
@@ -37,6 +39,7 @@ export const meetingsManifest = defineModule({
           'ended_at',
           'length_seconds',
           'keep_video',
+          'live_notes',
           'extension_token_id',
           'consent_method',
           'consent_confirmed_by',

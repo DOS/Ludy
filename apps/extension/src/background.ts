@@ -47,6 +47,7 @@ async function start(request: StartRequest): Promise<StartReply> {
     consentMethod: request.consentMethod as ConsentMethod,
     consentAgreed: request.consentAgreed,
     keepVideo: request.keepVideo,
+    liveNotes: request.liveNotes,
     streamId: request.streamId,
   };
   const reply = (await chrome.runtime.sendMessage(message)) as StartReply;

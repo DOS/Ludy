@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
-import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type MediaKind, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@crove/kernel';
 import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
 import type { SubjectKeyResealDeps, SubjectKeyResealOutcome } from './subject-key-reseal.ts';
@@ -261,7 +261,7 @@ async function resealMediaKeys(deps: ResealDeps, db: Db, current: string, outcom
       meeting_id: string;
       id: string;
       key_id: string;
-      kind: 'audio' | 'video';
+      kind: MediaKind;
       wrapped_key: Buffer;
       created_at: Date;
     }>`
@@ -287,7 +287,7 @@ async function resealOneMediaKey(
   deps: ResealDeps,
   db: Db,
   current: string,
-  row: { org_id: string; meeting_id: string; id: string; key_id: string; kind: 'audio' | 'video'; wrapped_key: Buffer },
+  row: { org_id: string; meeting_id: string; id: string; key_id: string; kind: MediaKind; wrapped_key: Buffer },
 ): Promise<boolean> {
   const binding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: row.key_id };
   const oldSubkey = deps.broker.deriveKey

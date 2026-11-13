@@ -29,6 +29,8 @@ export const zMeetingExtensionStatus = z.strictObject({
   meetingId: zId,
   status: zMeetingStatus,
   keepVideo: z.boolean(),
+  // The recorder ticked "Ghi chú trực tiếp" for this meeting (ADR-0052 L4a): the extension then sends live chunks while it records.
+  liveNotes: z.boolean(),
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
   lengthSeconds: z.number().nullable(),
@@ -46,6 +48,8 @@ export const zMeetingSummary = z.strictObject({
   endedAt: z.string().nullable(),
   lengthSeconds: z.number().nullable(),
   keepVideo: z.boolean(),
+  // Live notes were opted into for this meeting (ADR-0052 L4a), at the consent step, and cannot change afterwards.
+  liveNotes: z.boolean(),
   audioRetentionDate: z.string(),
   // null: the org keeps text until a person deletes the meeting.
   textRetentionDate: z.string().nullable(),
@@ -79,6 +83,8 @@ export const zMeetingCreate = z.strictObject({
   language: zMeetingLanguage.default('vi'),
   visibility: zMeetingVisibility.default('attendees'),
   keepVideo: z.boolean().default(false),
+  // "Ghi chú trực tiếp" (ADR-0052 L4a): off by default, opted in per meeting at the consent step, fixed once the meeting exists.
+  liveNotes: z.boolean().default(false),
   consentMethod: zConsentMethod,
   readerUserIds: z.array(zId).optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
@@ -171,6 +177,37 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   lengthSeconds: z.number().int().positive(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
+
+// One piece of about 15 seconds of the recording, sent while the meeting is recorded (ADR-0052 L4a, issue #3109). The upload route seals it under its own
+// data key and stores the ciphertext; this command only records it. The pieces are consecutive slices of one MediaRecorder stream, so in order they make
+// the recording; the final upload stays the authoritative audio and replaces them. lengthSeconds is what the recorder's clock says, never measured.
+export const LIVE_CHUNK_MAX_BYTES = 1024 * 1024;
+export const LIVE_CHUNK_MAX_COUNT = 1000;
+export const LIVE_CHUNK_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
+export const LIVE_CHUNK_MAX_SECONDS = 120;
+// A meeting takes live chunks for this long after it started: the kernel's 4 hour cap of a run, and a quarter of an hour of grace.
+export const LIVE_CHUNK_WINDOW_SECONDS = 4 * 3600 + 15 * 60;
+
+export const zMeetingLiveChunk = zMeetingRef.extend({
+  seq: z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1),
+  keyId: z.string().min(1).max(64),
+  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]{120}$/),
+  storageKey: z.string().min(1).max(255),
+  generation: z.string().nullable().optional(),
+  sizeBytes: z.number().int().positive().max(LIVE_CHUNK_MAX_BYTES + 28 * 20),
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  contentType: z.string().min(1).max(64),
+  lengthSeconds: z.number().int().min(1).max(LIVE_CHUNK_MAX_SECONDS),
+});
+export type MeetingLiveChunk = z.infer<typeof zMeetingLiveChunk>;
+
+export const zMeetingLiveChunkRecorded = z.strictObject({
+  meetingId: zId,
+  seq: z.number().int(),
+  // true: a chunk with this number was already kept (a retry after a lost answer), so nothing was stored again and the caller drops its new object.
+  duplicate: z.boolean(),
+});
+export type MeetingLiveChunkRecorded = z.infer<typeof zMeetingLiveChunkRecorded>;
 
 // The worker's reseal of one media key after a credential key rotation (system actor only).
 export const zMeetingMediaKeyReseal = z.strictObject({
