@@ -10,7 +10,7 @@
 --    live:<seq> key. Worker login inside the member's sealed context only.
 -- 3. crove_meetings.member_vy_media_files() restated from 20261203030000 with one addition: a live notes run reads the file rows of the live pieces
 --    of its own meeting, as a transcribe run reads the audio segments of its one meeting. The file policy of 20261203030100 is unchanged.
--- 4. crove_meetings.meeting_discard_transcribe() restated from 20261203100000 with the features meetings.live_notes and meetings.live_summary added, so a meeting's removal
+-- 4. crove_meetings.meeting_discard_transcribe() restated from 20261220000000 with the features meetings.live_notes and meetings.live_summary added, so a meeting's removal
 --    cancels a live notes run and deletes its result as it does for transcribe and summary.
 -- 5. crove_meetings.meeting_result.feature takes 'meetings.live_notes': the running notes are ordinary draft rows of the recorder, so the accept and
 --    publish paths, the 5.3 checks and the taint rules already built apply to them unchanged.
@@ -207,14 +207,26 @@ GRANT EXECUTE ON FUNCTION crove_meetings.member_vy_media_files() TO crove_tenant
 -- ---------------------------------------------------------------------------
 -- 4. A meeting's removal reaches its live notes run too
 -- ---------------------------------------------------------------------------
--- Restated from 20261203100000 (the newest definition) with one change: the feature list gains meetings.live_notes and meetings.live_summary. The trigger itself is unchanged.
+-- Restated from 20261220000000 (the newest definition, #2863: one audit row for each run the delete cancels) with one change: the feature lists gain meetings.live_notes and
+-- meetings.live_summary. The trigger itself, its audit rows and its grants are unchanged.
 CREATE OR REPLACE FUNCTION crove_meetings.meeting_discard_transcribe() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  r record;
 BEGIN
-  UPDATE crove_kernel.ai_run r SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'MEETING_REMOVED'
-  WHERE r.org_id = OLD.org_id AND r.status = 'running'
-    AND r.id IN (SELECT v.run_id FROM crove_kernel.member_vy_result v
-                 WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes', 'meetings.live_summary') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id);
+  FOR r IN
+    UPDATE crove_kernel.ai_run a SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'MEETING_REMOVED'
+    WHERE a.org_id = OLD.org_id AND a.status = 'running'
+      AND a.id IN (SELECT v.run_id FROM crove_kernel.member_vy_result v
+                   WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes', 'meetings.live_summary') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id)
+    RETURNING a.id AS run_id,
+              (SELECT v.feature FROM crove_kernel.member_vy_result v WHERE v.org_id = OLD.org_id AND v.run_id = a.id AND v.subject_type = 'meeting' AND v.subject_id = OLD.id LIMIT 1) AS feature
+  LOOP
+    INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
+    VALUES (OLD.org_id, 'system', NULL, 'meetings.vy.run_cancelled', crove_kernel.uuid_v7(), 'ok', 'kernel.ai_run', r.run_id,
+            pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(r.run_id::text, 'UTF8')), 'hex'),
+            pg_catalog.jsonb_build_object('runId', r.run_id, 'meetingId', OLD.id, 'feature', r.feature, 'reason', 'MEETING_REMOVED'));
+  END LOOP;
   DELETE FROM crove_kernel.member_vy_result v
   WHERE v.org_id = OLD.org_id AND v.feature IN ('meetings.transcribe', 'meetings.summary', 'meetings.live_notes', 'meetings.live_summary') AND v.subject_type = 'meeting' AND v.subject_id = OLD.id;
   RETURN OLD;
