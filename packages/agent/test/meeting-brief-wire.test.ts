@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InboxReader, withAiScope, type AiCall, type AiMeter, type AiUsage, type MeetingBriefFacts } from '../src/index.ts';
 
 const FACTS: MeetingBriefFacts = {
-  meeting: { title: 'Tư vấn gói năm', startsOn: '2026-12-02', startsTime: '09:30', guestName: 'Lê Thị Bích Ngọc' },
+  meeting: { title: 'Tư vấn gói năm', startsOn: '2026-12-02', startsTime: '09:30', timeZone: 'Asia/Ho_Chi_Minh', guestName: 'Lê Thị Bích Ngọc' },
   deal: { title: 'Gói phần mềm kế toán', stage: 'Đàm phán', status: 'open', amount: '25000000.00', expectedClose: '2026-12-31', contactName: 'Công ty Ánh Dương' },
   nextSteps: [],
   quote: { label: 'BG-2026-0042', total: '48250000.00', status: 'sent', validUntil: '2026-12-20', expired: false, sentOn: '2026-11-20' },

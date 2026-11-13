@@ -55,7 +55,7 @@ const brief = (over: Partial<MeetingBrief> = {}): MeetingBrief => ({
   ai: 'used',
   bookingId: `${ID}71`,
   dealId: `${ID}40`,
-  meeting: { title: 'Tư vấn thuế', startsOn: '2099-01-02', startsTime: '09:00', guestName: 'Nguyễn Văn Khách' },
+  meeting: { title: 'Tư vấn thuế', startsOn: '2099-01-02', startsTime: '09:00', timeZone: 'Asia/Ho_Chi_Minh', guestName: 'Nguyễn Văn Khách' },
   deal: { title: 'Gói kế toán năm', stage: 'Báo giá', status: 'open', amount: '25000000.00', expectedClose: '2099-01-31', contactName: 'Công ty Hoa Mai' },
   nextSteps: [{ reason: 'quote_unanswered', sinceOn: '2098-12-20' }],
   quote: { label: 'BG-2026-0042', total: '48250000.00', status: 'sent', validUntil: '2099-01-20', expired: false, sentOn: '2098-12-20' },

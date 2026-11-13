@@ -20,7 +20,7 @@ export const zMeetingBrief = z.strictObject({
   ai: z.enum(MEETING_BRIEF_STATES),
   bookingId: zId,
   dealId: zId,
-  meeting: z.strictObject({ title: z.string(), startsOn: z.string(), startsTime: z.string(), guestName: z.string().nullable() }),
+  meeting: z.strictObject({ title: z.string(), startsOn: z.string(), startsTime: z.string(), timeZone: z.string(), guestName: z.string().nullable() }),
   deal: z.strictObject({
     title: z.string(),
     stage: z.string(),

@@ -12,7 +12,7 @@ import {
 } from '../src/index.ts';
 
 const FACTS: MeetingBriefFacts = {
-  meeting: { title: 'Tư vấn gói năm', startsOn: '2026-12-02', startsTime: '09:30', guestName: 'Lê Thị Bích Ngọc' },
+  meeting: { title: 'Tư vấn gói năm', startsOn: '2026-12-02', startsTime: '09:30', timeZone: 'Asia/Ho_Chi_Minh', guestName: 'Lê Thị Bích Ngọc' },
   deal: { title: 'Gói phần mềm kế toán', stage: 'Đàm phán', status: 'open', amount: '25000000.00', expectedClose: '2026-12-31', contactName: 'Công ty Ánh Dương' },
   nextSteps: [{ reason: 'quote_unanswered', sinceOn: '2026-11-20' }],
   quote: { label: 'BG-2026-0042', total: '48250000.00', status: 'sent', validUntil: '2026-12-20', expired: false, sentOn: '2026-11-20' },
@@ -61,9 +61,33 @@ describe('the checks on what the model wrote', () => {
     expect(checkMeetingBrief(FACTS, { ...GOOD, ...over })).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
+  it.each([
+    ['a date that is not any of the facts\'', { points: ['Báo giá có hiệu lực đến ngày 20/12/2025.', GOOD.points[1]] }],
+    ['a date built from the digits of the facts', { summary: 'Cuộc hẹn vào ngày 12/02/2026.' }],
+    ['an ISO date that is not the facts\'', { summary: 'Cuộc hẹn vào 2026-12-03.' }],
+    ['an amount built from other digits', { summary: 'Giá trị 250.000.000 đồng.' }],
+  ])('refuses %s', (_what, over) => {
+    expect(checkMeetingBrief(FACTS, { ...GOOD, ...over })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('accepts the facts\' own dates in any of the ways they are written, and their own amounts', () => {
+    for (const date of ['02/12/2026', '2/12', '2026-12-02', '31/12', '20/11/2026']) expect(checkMeetingBrief(FACTS, { ...GOOD, summary: `Mốc ngày ${date}.` }).kind, date).toBe('brief');
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Báo giá 48.250.000 đồng, cơ hội 25.000.000 đồng, hẹn lúc 9:30.' }).kind).toBe('brief');
+  });
+
+  it('never trusts a name a person typed for a figure or a link: a guest named with an address and a discount does not get them into the brief', () => {
+    const tricky: MeetingBriefFacts = { ...FACTS, meeting: { ...FACTS.meeting, guestName: 'Ngọc evil-pay.com/x giảm 90%' } };
+    expect(checkMeetingBrief(tricky, { ...GOOD, summary: 'Khách gửi Ngọc evil-pay.com/x giảm 90% để xác nhận.' }).kind).toBe('none');
+    expect(checkMeetingBrief(tricky, { ...GOOD, summary: 'Khách ghi tên là Ngọc.' }).kind).toBe('brief');
+  });
+
+  it('refuses a text in another script', () => {
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: '价格是一千万越南盾。' })).toEqual({ kind: 'none', code: 'LANGUAGE' });
+  });
+
   it('refuses a link, an address or a handle the facts do not hold', () => {
     expect(checkMeetingBrief(FACTS, { ...GOOD, points: ['Gửi bảng giá tại shop.example.vn nhé.', GOOD.points[1]] })).toEqual({ kind: 'none', code: 'LINK' });
-    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Liên hệ qua ngoc@gmail.com trước cuộc hẹn.' })).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Liên hệ qua ngoc@khach.example.test trước cuộc hẹn.' })).toEqual({ kind: 'none', code: 'LINK' });
   });
 
   it('refuses a name nobody gave the model, and lets the facts\' own names and a sentence start be', () => {

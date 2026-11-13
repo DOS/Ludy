@@ -30,7 +30,7 @@ export interface MeetingBriefSource {
   dealId: string;
   // Whether the org lets customers' words reach a model (the default is yes, as for reply drafts).
   wordsAllowed: boolean;
-  meeting: { title: string; startsOn: string; startsTime: string; guestName: string | null };
+  meeting: { title: string; startsOn: string; startsTime: string; timeZone: string; guestName: string | null };
   deal: { title: string; stage: string; status: 'open' | 'won' | 'lost'; amount: string | null; expectedClose: string | null; contactName: string };
   nextSteps: Array<{ reason: MeetingBriefStepReason; sinceOn: string }>;
   quote: { label: string; total: string; status: 'sent' | 'accepted' | 'declined' | 'superseded'; validUntil: string; expired: boolean; sentOn: string | null } | null;
@@ -40,7 +40,7 @@ export interface MeetingBriefSource {
 
 // "09:30" on the wall clock of the zone.
 function timeOf(timeZone: string, at: number): string {
-  const minutes = Math.round((((at + zoneOffsetMs(timeZone, at)) % DAY_MS) + DAY_MS) % DAY_MS / 60_000);
+  const minutes = Math.floor((((at + zoneOffsetMs(timeZone, at)) % DAY_MS) + DAY_MS) % DAY_MS / 60_000);
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
@@ -82,8 +82,8 @@ export const meetingBriefSourceQuery = defineQuery({
       SELECT pg_catalog.left(m.body, ${MESSAGE_CHARS}::int) AS body
       FROM crove_kernel.conversation_message m
       JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
-      WHERE c.org_id = ${ctx.orgId}::uuid AND c.party_id = ${deal.party_id}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.body <> ''
-      ORDER BY m.id DESC LIMIT ${MEETING_BRIEF_MESSAGES}::int`.execute(ctx.trx);
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.party_id = ${deal.party_id}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL AND m.body <> ''
+      ORDER BY m.sent_at DESC, m.id DESC LIMIT ${MEETING_BRIEF_MESSAGES}::int`.execute(ctx.trx);
     const startsAt = Date.parse(booking.startsAt);
     const amount = money(deal.amount);
     const quote = quotes.rows[0];
@@ -91,11 +91,11 @@ export const meetingBriefSourceQuery = defineQuery({
       bookingId: booking.id,
       dealId: booking.deal.id,
       wordsAllowed: setting.rows[0]?.auto_draft ?? true,
-      meeting: { title: booking.eventType.title, startsOn: zonedDate(booking.timeZone, startsAt), startsTime: timeOf(booking.timeZone, startsAt), guestName: booking.visitor.name },
+      meeting: { title: booking.eventType.title, startsOn: zonedDate(booking.timeZone, startsAt), startsTime: timeOf(booking.timeZone, startsAt), timeZone: booking.timeZone, guestName: booking.visitor.name },
       deal: { title: deal.title, stage: deal.stage, status: deal.kind, amount: amount.greaterThan(0) ? amount.toFixed() : null, expectedClose: deal.expected_close, contactName: deal.party_name },
       nextSteps: steps.rows.map((r) => ({ reason: r.reason, sinceOn: r.since_on })),
       quote: quote
-        ? { label: quote.revision > 1 ? `${quote.number}-R${quote.revision}` : quote.number, total: money(quote.total).toFixed(), status: quote.status, validUntil: quote.valid_until, expired: quote.expired, sentOn: quote.sent_on }
+        ? { label: quote.revision > 1 ? `${quote.number}-R${quote.revision}` : quote.number, total: quote.total, status: quote.status, validUntil: quote.valid_until, expired: quote.expired, sentOn: quote.sent_on }
         : null,
       messages: said.rows.map((r) => r.body).reverse(),
     };

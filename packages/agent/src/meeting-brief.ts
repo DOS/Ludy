@@ -6,10 +6,13 @@
 // What the checks keep out, whatever the model wrote (they do not trust the instructions, and the output is tainted until the person has read it). The brief is refused, and the person
 // reads the facts list alone (nothing is cut or repaired), when it:
 // - is empty, has fewer than 2 or more than 3 points, or is over its length;
-// - holds a figure the facts do not hold: a digit run, a figure with its unit ("15tr", "20%"), a number said in words, a currency. The facts' own figures count whether or not they are written the
-//   way they were given (1.250.000 is 1250000). What a customer wrote gives back only a small number or a phone number, never a price;
+// - holds a figure the facts do not hold: a digit run, a figure with its unit ("15tr", "20%"), a number said in words, a currency. The figures that count are the ones code built (the amounts, the
+//   dates, the time, the quote's number), written whether or not in the way they were given (1.250.000 is 1250000); a name or a title typed by a person is never a source of figures. A date
+//   must be one of the facts' dates and a grouped amount one of the facts' two amounts. What a customer wrote gives back only a small number or a phone number, never a price;
 // - holds a link, a web address or a handle the facts do not hold;
-// - writes a capitalised word in the middle of a sentence that none of the facts holds (a name of a person, a business or a place nobody gave it).
+// - writes a capitalised word in the middle of a sentence that none of the facts holds (a name of a person, a business or a place nobody gave it). This is a net with holes, not a proof: a name
+//   at the start of a sentence or in lower case is not looked at, and a person reads the brief before relying on it;
+// - uses a script other than Latin (Vietnamese is Latin): the checks above read Vietnamese and English only.
 // The model is told no secret: not the guest's email or phone, the customer's address, tax code, bank account, a credential or the org's settings, and the customer's words and every name are
 // fenced as untrusted data. Nothing is stored or sent here; the brief is computed when it is read.
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
@@ -28,6 +31,8 @@ export interface MeetingBriefFacts {
     // The day and the time of day (HH:mm) in the booking's own zone.
     startsOn: string;
     startsTime: string;
+    // The zone of that day and time (the booking's own, which is the guest's when they booked).
+    timeZone: string;
     // The guest's name as they typed it (untrusted), or null once an erasure cleared it.
     guestName: string | null;
   };
@@ -57,7 +62,7 @@ export interface MeetingBrief {
 export type MeetingBriefResult =
   | { kind: 'brief'; brief: MeetingBrief }
   // No brief, and why, as a short code (never the model's words).
-  | { kind: 'none'; code: 'EMPTY' | 'POINTS' | 'TOO_LONG' | 'FIGURES' | 'LINK' | 'NAME' };
+  | { kind: 'none'; code: 'EMPTY' | 'POINTS' | 'TOO_LONG' | 'LANGUAGE' | 'FIGURES' | 'LINK' | 'NAME' };
 
 export const MEETING_BRIEF_MESSAGES_MAX = 5;
 export const MEETING_BRIEF_MESSAGE_CHARS = 300;
@@ -93,7 +98,7 @@ export function meetingBriefInstructions(): string {
 export function meetingBriefPrompt(facts: MeetingBriefFacts): string {
   const { meeting, deal, quote } = facts;
   const lines = [
-    `Meeting: ${oneLine(meeting.title, NAME_CHARS)}, on ${meeting.startsOn} at ${meeting.startsTime}.`,
+    `Meeting: ${oneLine(meeting.title, NAME_CHARS)}, on ${meeting.startsOn} at ${meeting.startsTime} (time zone ${oneLine(meeting.timeZone, NAME_CHARS)}).`,
     meeting.guestName ? `Guest's name: ${oneLine(meeting.guestName, NAME_CHARS)}.` : 'The guest\'s name is not known.',
     `Deal: ${oneLine(deal.title, NAME_CHARS)}, with ${oneLine(deal.contactName, NAME_CHARS)}. Stage: ${oneLine(deal.stage, NAME_CHARS)} (${deal.status}).`,
     deal.amount === null ? 'The deal has no amount yet.' : `Deal amount: ${crmFollowupDong(deal.amount)}.`,
@@ -126,16 +131,34 @@ const viDate = (day: string): string => {
   return `${d}/${m}/${y}`;
 };
 
-// Everything the facts say, as the business's own text: what a figure, a date, a name or a link of the brief is compared with (customers' words are apart, below).
-function trustedTexts(facts: MeetingBriefFacts): string[] {
+// The figures code built, as the text a brief may repeat: the amounts, the dates, the time, the quote's number. These are the only source of figures, links and addresses: a name or a title is typed
+// by a person (a guest on the public page, a customer's profile) and can hold a link or "giảm 90%", so it is never trusted for them.
+function figureTexts(facts: MeetingBriefFacts): string[] {
   const { meeting, deal, quote } = facts;
-  const days = [meeting.startsOn, deal.expectedClose, ...facts.nextSteps.map((s) => s.sinceOn), quote?.validUntil ?? null, quote?.sentOn ?? null].flatMap((d) => (d === null ? [] : [d, viDate(d)]));
+  const days = [meeting.startsOn, deal.expectedClose, ...facts.nextSteps.map((s) => s.sinceOn), quote?.validUntil ?? null, quote?.sentOn ?? null].flatMap((d) => (d === null ? [] : [d, viDate(d), viDate(d).replace(/\b0(\d)/gu, '$1')]));
   const time = /^(\d{1,2}):(\d{2})$/u.exec(meeting.startsTime);
-  const texts = [meeting.title, meeting.guestName ?? '', deal.title, deal.stage, deal.contactName, meeting.startsTime, ...(time ? [`${Number(time[1])}:${time[2]}`] : []), ...days];
+  const texts = [meeting.startsTime, ...(time ? [`${Number(time[1])}:${time[2]}`] : []), ...days];
   if (deal.amount !== null) texts.push(crmFollowupDong(deal.amount));
   if (quote) texts.push(quote.label, crmFollowupDong(quote.total));
   return texts;
 }
+
+// The names and titles of the facts: the words a brief may use to name things, and nothing else.
+const nameTexts = (facts: MeetingBriefFacts): string[] => [facts.meeting.title, facts.meeting.guestName ?? '', facts.deal.title, facts.deal.stage, facts.deal.contactName];
+
+// A date as the day and month (and the year, when written) it says, so "02/12/2026", "2/12" and "2026-12-02" are one day.
+const DATE = /(?<![\d./-])(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{1,2}\/\d{1,2})(?!\d|[/.-]\d)/gu;
+function dayKeys(text: string): string[] {
+  return [...text.matchAll(DATE)].map((m) => {
+    const parts = m[0].split(/[/.-]/u).map(Number);
+    const [a = 0, b = 0, c] = parts;
+    if (m[0].length >= 10 && /^\d{4}-/u.test(m[0])) return `${c}-${b}-${a}`;
+    return c === undefined ? `${a}-${b}` : `${a}-${b}-${c < 100 ? 2000 + c : c}`;
+  });
+}
+// A grouped amount ("48.250.000") without its separators.
+const AMOUNT = /(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?!\d)/gu;
+const amountKeys = (text: string): string[] => [...text.matchAll(AMOUNT)].map((m) => m[0].replace(/[.,]/gu, ''));
 
 // Words a sentence may carry with a capital in its middle without naming anyone ("VAT", the product's own name).
 const CAPITAL_OK = new Set(['VAT', 'Zalo', 'Ludy', 'Dy']);
@@ -163,15 +186,19 @@ export function checkMeetingBrief(facts: MeetingBriefFacts, output: { summary?: 
   if (summary === '' || points.some((p) => p === '')) return { kind: 'none', code: 'EMPTY' };
   if (points.length < MEETING_BRIEF_POINTS_MIN || points.length > MEETING_BRIEF_POINTS_MAX) return { kind: 'none', code: 'POINTS' };
   if (Array.from(summary).length > MEETING_BRIEF_SUMMARY_MAX || points.some((p) => Array.from(p).length > MEETING_BRIEF_POINT_MAX)) return { kind: 'none', code: 'TOO_LONG' };
-  const trusted = trustedTexts(facts);
+  // Another script (the checks read Vietnamese and English only): refused as it stands.
+  if ([summary, ...points].some((t) => /[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(t))) return { kind: 'none', code: 'LANGUAGE' };
+  const trusted = figureTexts(facts);
   const texts = [summary, ...points];
-  // What is left of a text once the facts' own names and titles are cut out of it: their own dots and number words ("Gói 100 triệu view") are the business's, not the model's.
+  const days = new Set(trusted.flatMap(dayKeys).flatMap((k) => [k, k.split('-').slice(0, 2).join('-')]));
+  const amounts = new Set(trusted.flatMap(amountKeys));
+  // What is left of a text once the figures code built are cut out of it (an amount, a date and the quote's number have dots and digits of their own).
   const rest = (text: string) => trusted.filter((t) => t.trim().length >= 3).sort((x, y) => y.length - x.length).reduce((left, t) => left.split(t).join(' '), text);
   // The facts' own figures are the business's; the customer's words give back only a small number or a phone number (a quantity, a size), never a price.
-  if (texts.some((t) => draftFiguresOutside(t, trusted, facts.messages).length > 0 || hasNumberWords(rest(t)))) return { kind: 'none', code: 'FIGURES' };
+  if (texts.some((t) => draftFiguresOutside(t, trusted, facts.messages).length > 0 || hasNumberWords(rest(t)) || dayKeys(t).some((k) => !days.has(k)) || amountKeys(t).some((k) => !amounts.has(k)))) return { kind: 'none', code: 'FIGURES' };
   // Any address, on any domain (an email, "pay.example.cn", "name (at) host"), and any link or handle the facts do not hold.
   if (texts.some((t) => hasAddress(rest(t)) || draftLinksOutside(t, trusted).length > 0)) return { kind: 'none', code: 'LINK' };
-  const known = new Set([...trusted, ...facts.messages].flatMap(wordsOf));
+  const known = new Set([...trusted, ...nameTexts(facts), ...facts.messages].flatMap(wordsOf));
   if (texts.some((t) => inventsName(t, known))) return { kind: 'none', code: 'NAME' };
   return { kind: 'brief', brief: { summary, points } };
 }

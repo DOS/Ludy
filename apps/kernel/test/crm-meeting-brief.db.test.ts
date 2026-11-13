@@ -173,7 +173,7 @@ suite('the meeting brief of a booking linked to a deal on PostgreSQL (#3115)', (
       bookingId: booking,
       dealId: deal.id,
       wordsAllowed: true,
-      meeting: { title: 'Tư vấn thuế', startsOn: day, startsTime: '09:00', guestName: 'Nguyễn Văn Khách' },
+      meeting: { title: 'Tư vấn thuế', startsOn: day, startsTime: '09:00', timeZone: VN, guestName: 'Nguyễn Văn Khách' },
       deal: { title: 'Gói kế toán năm', status: 'open', amount: '15000000', expectedClose: null, contactName: 'Công ty Hoa Mai' },
       quote: { label: 'BG-2026-0042', total: quote.total, status: 'sent', expired: false },
       messages: ['Chị cần thêm 3 tài khoản nữa nhé'],
