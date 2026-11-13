@@ -5,7 +5,7 @@ These are cover and header images for Ludy's social profiles. They use the brand
 
 | File | Where it goes | Size | Note |
 |---|---|---|---|
-| `linkedin-cover-1128x191.png` | LinkedIn company page banner | 1128 x 191 | The text sits right of the logo, which overlaps the banner's lower left |
+| `linkedin-cover-1128x191.png` | LinkedIn company page banner | 1128 x 191 | One row, left to right, starting right of the page logo, which overlaps the lower left; "for solo founders & SMEs in Vietnam" |
 | `linkedin-cover-4200x700.png` | The same banner, high resolution | 4200 x 700 | LinkedIn's larger recommended size |
 | `facebook-cover-1640x624.png` | Facebook page cover | 1640 x 624 | The content stays in the center, which is safe on both phone and desktop crops |
 | `x-header-1500x500.png` | X (Twitter) header | 1500 x 500 | The text is placed clear of the profile photo |
