@@ -86,6 +86,10 @@ turn on `sprint_review` with `line_scopes`.
   (MCP endpoint, deterministic signal rules, signed wake-up webhook); Ludy
   Cloud includes one Vy by default, and the other AI coworkers are paid
   per-org add-ons.
+- Owner decision 2026-11-13: slice 3d of the member-bound MCP grant (the first private tool
+  and signal for member grants) is deferred, because of the risk of exposing private
+  data. No private tool is built; the member catalog stays empty and the scope
+  `ludy.member.read` stays dark until the owner reopens it.
 - Owner decision 2026-11-11 (Platform PO chat, popup "Đồng ý"): an AI app
   connected over MCP sees full customer and invoice data like a HubSpot or
   Twenty MCP does (person names, email, phone, address, tax code, invoice
