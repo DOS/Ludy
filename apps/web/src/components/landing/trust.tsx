@@ -1,52 +1,56 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { Database, FileText, Server, Sparkles } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { CopyCommand } from './copy-command';
 import { Section, SectionHead } from './ui';
 
-// Why the numbers can be trusted, the audit log that proves it, and the one command that runs Ludy locally.
+const PART_ICONS = [Server, Database, FileText];
+
+// Your data stays yours (owner request, 2026-11-12): a picture of where the data lives (on your own server, with the AI at arm's length and
+// optional), four short promises, and the one command that runs Ludy.
 export function Trust({ dict }: { dict: Dictionary }) {
   const { trust } = dict;
   return (
     <Section id="ma-nguon-mo" labelledBy="trust-title" tinted>
       <SectionHead id="trust-title" title={trust.title} lead={trust.lead} />
-      <dl className="grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
-        {trust.points.map((point) => (
-          <div key={point.title} className="border-t border-line-strong/60 pt-4">
-            <dt className="font-medium">{point.title}</dt>
-            <dd className="mt-2 text-sm text-muted">{point.body}</dd>
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-10">
+        <div className="min-w-0">
+          {/* The map: your server holds Ludy, the database and the files; the AI sits outside, dashed, because it is optional. */}
+          <div className="grid items-stretch gap-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,0.7fr)] sm:gap-3" role="group" aria-label={trust.mapTitle}>
+            <div className="rounded-xl border border-line-strong/60 bg-surface p-4">
+              <p className="text-xs font-semibold tracking-wide text-subtle uppercase">{trust.mapTitle}</p>
+              <ul className="mt-3 flex flex-col gap-2">
+                {trust.mapParts.map((part, i) => {
+                  const Icon = PART_ICONS[i] ?? Server;
+                  return (
+                    <li key={part} className="flex items-center gap-3 rounded-lg bg-surface-2 px-3 py-2.5 text-sm font-medium">
+                      <Icon className="size-5 shrink-0 text-accent-ink" aria-hidden="true" />
+                      {part}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div aria-hidden="true" className="flex items-center justify-center text-subtle sm:px-1">
+              <span className="hidden h-px w-8 border-t border-dashed border-accent sm:block" />
+              <span className="h-6 w-px border-l border-dashed border-accent sm:hidden" />
+            </div>
+            <div className="flex flex-col justify-center gap-2 rounded-xl border border-dashed border-accent/70 bg-surface p-4">
+              <Sparkles className="size-5 text-accent-ink" aria-hidden="true" />
+              <p className="text-sm font-medium">{trust.mapAi}</p>
+              <p className="text-xs text-subtle">{trust.mapAiNote}</p>
+            </div>
           </div>
-        ))}
-      </dl>
-
-      <div className="mt-14 grid gap-8 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:gap-10">
-        <div className="min-w-0 rounded-lg border border-line bg-surface">
-          <h3 id="trust-log-title" className="border-b border-line px-4 py-3 text-sm font-semibold">
-            {trust.logTitle}
-          </h3>
-          {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1, #1629). */}
-          <div role="group" aria-labelledby="trust-log-title" tabIndex={0} className="overflow-x-auto">
-            <table className="w-full min-w-[520px] border-collapse text-[13px]">
-              <thead>
-                <tr className="border-b border-line text-left text-xs text-subtle">
-                  {trust.logCols.map((col) => (
-                    <th key={col} scope="col" className="px-4 py-2 font-medium">
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {trust.log.map(([at, who, what]) => (
-                  <tr key={`${at}-${who}`} className="border-b border-line last:border-b-0">
-                    <td className="num px-4 py-2.5 whitespace-nowrap text-subtle">{at}</td>
-                    <td className="px-4 py-2.5 font-medium whitespace-nowrap">{who}</td>
-                    <td className="px-4 py-2.5 text-muted">{what}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="mt-5 grid gap-3 sm:grid-cols-2">
+            {trust.cards.map((card, i) => (
+              <li key={card.key} className="rounded-xl border border-line bg-surface p-4">
+                <h3 className={`font-display text-base font-semibold ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>{card.title}</h3>
+                <p className="mt-1.5 text-sm text-muted">{card.body}</p>
+              </li>
+            ))}
+          </ul>
         </div>
-        <div id="tu-host" className="min-w-0 scroll-mt-24">
+        <div id="tu-host" className="min-w-0 scroll-mt-24 rounded-xl border border-line bg-surface p-5 sm:p-6">
           <h3 className="font-display text-xl font-semibold">{trust.selfHostTitle}</h3>
           <p className="mt-2 text-sm text-muted">{trust.selfHostBody}</p>
           <div className="mt-4">

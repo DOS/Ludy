@@ -342,9 +342,18 @@ function TurnstileWidget({ siteKey, round, onToken }: { siteKey: string; round: 
   );
 }
 
+// The deal a "Đặt lịch" link of a deal names (#3103): `?deal=<id>` in the address. Only an id is taken; the server keeps it when it is a deal of the org and shows the visitor nothing of it.
+// The form the server's id check takes (RFC 9562 version 1 to 8, variant 8 to b): an address the server would refuse is dropped here, so a hand-edited link never stops a booking.
+const DEAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export function dealIdOf(search: string): string | null {
+  const id = new URLSearchParams(search).get('deal');
+  return id !== null && DEAL_ID.test(id) ? id.toLowerCase() : null;
+}
+
 function Book({ path, zone }: { path: string; zone: string }) {
   const t = useTranslations('booking');
   const { locale } = useLocaleSetting();
+  const [dealId] = useState(() => dealIdOf(window.location.search));
   const [now] = useState(() => Date.now());
   const [slot, setSlot] = useState<Slot | null>(null);
   const [form, setForm] = useState({ name: '', email: '', phone: '', note: '' });
@@ -387,6 +396,7 @@ function Book({ path, zone }: { path: string; zone: string }) {
       phone: form.phone.trim() || null,
       note: form.note.trim() || null,
       timeZone: zone,
+      ...(dealId ? { dealId } : {}),
       ...(siteKey && check ? { turnstile: check } : {}),
     });
   };

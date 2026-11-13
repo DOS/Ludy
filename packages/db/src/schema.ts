@@ -267,6 +267,7 @@ export const AGENT_KINDS = ['org_chart', 'member_vy'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
 export const MEMBER_VY_TABLE_MODES = ['read', 'write'] as const;
+export const MCP_MEMBER_TABLE_MODES = ['read'] as const;
 export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
 export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
@@ -550,6 +551,16 @@ export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number
 export type EInvoiceConnectionTable = Refine<
   G.FinanceEinvoiceConnectionTable,
   { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
+export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
+export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
+export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
+export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
+export type MarketplaceConnectionTable = Refine<
+  G.FinanceMarketplaceConnectionTable,
+  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
@@ -891,6 +902,7 @@ export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
+export type McpMemberTableTable = Refine<G.KernelMcpMemberTableTable, { mode: (typeof MCP_MEMBER_TABLE_MODES)[number] }>;
 export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
 export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
@@ -1074,7 +1086,7 @@ export type MeetingsTranscriptSegmentTable = Refine<
 // The summary and the action items of a meeting (#2580): a row is a draft, the recorder's own, until the recorder publishes it.
 export const MEETING_RESULT_STAGES = ['draft', 'published'] as const;
 export type MeetingResultStage = (typeof MEETING_RESULT_STAGES)[number];
-export const MEETING_RESULT_FEATURES = ['manual', 'meetings.summary'] as const;
+export const MEETING_RESULT_FEATURES = ['manual', 'meetings.summary', 'meetings.live_notes'] as const;
 export type MeetingResultFeature = (typeof MEETING_RESULT_FEATURES)[number];
 export const ACTION_ITEM_STATUSES = ['suggested', 'accepted'] as const;
 export type ActionItemStatus = (typeof ACTION_ITEM_STATUSES)[number];
@@ -1171,6 +1183,7 @@ type Refined = Tables<{
   'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
   'crove_kernel.member_vy_result': MemberVyResultTable;
   'crove_kernel.member_vy_table': MemberVyTableTable;
+  'crove_kernel.mcp_member_table': McpMemberTableTable;
   'crove_kernel.permission_default': PermissionDefaultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;
@@ -1186,6 +1199,7 @@ type Refined = Tables<{
   'crove_finance.bank_party_rule': BankPartyRuleTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
+  'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;

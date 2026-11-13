@@ -55,16 +55,22 @@ describe('the build-time policy (apps/app/vite-csp.ts)', () => {
     for (const turnstile of [false, true]) {
       for (const storage of [undefined, 'https://files.example.com']) {
         expect(together({ apiOrigin: API, storageOrigin: storage, turnstile }), `${turnstile} ${storage}`).toEqual(
-          directives(contentSecurityPolicy(`${API}/auth/v1`, storage ?? null, turnstile)),
+          directives(contentSecurityPolicy(`${API}/auth/v1`, storage ?? null, turnstile, API)),
         );
       }
     }
   });
 
+  it('lets the app play media from a blob and from the API origin, which default-src would refuse', () => {
+    expect(metaCsp({ apiOrigin: API })).toContain(`media-src 'self' blob: ${API}`);
+    expect(contentSecurityPolicy('/auth/v1', null)).toContain("media-src 'self' blob:");
+    expect(contentSecurityPolicy('/auth/v1', null)).not.toContain('https://');
+  });
+
   it('allows the origin of Supabase Auth when it is not the one of the API', () => {
     const policy = metaCsp({ apiOrigin: API, authOrigin: 'https://auth.example.com' });
     expect(policy).toContain("connect-src 'self' https://auth.example.com https://api.example.com");
-    expect(together({ apiOrigin: API, authOrigin: 'https://auth.example.com' })).toEqual(directives(contentSecurityPolicy('https://auth.example.com/auth/v1', null, false).replace('https://auth.example.com', 'https://auth.example.com https://api.example.com')));
+    expect(together({ apiOrigin: API, authOrigin: 'https://auth.example.com' })).toEqual(directives(contentSecurityPolicy('https://auth.example.com/auth/v1', null, false, API).replace('https://auth.example.com', 'https://auth.example.com https://api.example.com')));
   });
 
   it('reads the origins from the build environment, and injects nothing without VITE_API_URL', () => {

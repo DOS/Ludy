@@ -189,6 +189,8 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
@@ -256,9 +258,11 @@ import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
+import { zFollowupDraftInput, zFollowupDrafted } from './crm-followup.ts';
+import { zMeetingBrief, zMeetingBriefInput } from './crm-meeting-brief.ts';
 import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
-import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
+import { zBookingCancel, zBookingDealChanged, zBookingDealLink, zBookingDealUnlink, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, zDealBookings, zDealBookingsQuery } from './crm.ts';
 import {
   zHrDependentAdd,
   zHrDependentEnd,
@@ -311,6 +315,15 @@ import {
   zMeetingCreate,
   zMeetingCreated,
   zMeetingDeleted,
+  zMeetingOwnerList,
+  zMeetingLink,
+  zMeetingLinkAdd,
+  zMeetingLinkRemove,
+  zMeetingLinkRemoved,
+  zMeetingOfTarget,
+  zMeetingOwnerListInput,
+  zMeetingsOfTargetInput,
+  zMeetingLinkSuggested,
   zMeetingDetail,
   zMeetingListInput,
   zMeetingReaderAdd,
@@ -318,8 +331,19 @@ import {
   zMeetingReaderResult,
   zMeetingRef,
   zMeetingSettings,
+  zLiveNotesAsk,
+  zLiveNotesDone,
+  zLiveRef,
+  zLiveStart,
+  zLiveStarted,
+  zLiveStatus,
+  zLiveStopped,
+  zLiveTick,
+  zLiveTicked,
   zMeetingExtensionStatus,
   zMeetingSettingsGet,
+  zMeetingSearchInput,
+  zMeetingSearchResult,
   zMeetingSettingsSet,
   zMeetingSummary,
   zTranscript,
@@ -328,6 +352,8 @@ import {
   zTranscriptDraftStore,
   zTranscriptDraftStored,
   zTranscribeRunRef,
+  zTranscribeCancel,
+  zTranscribeCancelled,
   zTranscribeStart,
   zTranscribeStarted,
   zTranscribeStatus,
@@ -355,7 +381,9 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
+import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
@@ -535,6 +563,28 @@ export const contract = {
   },
   // The member's connected extension devices in the org of the request (issue #2582, ADR-0047 point 10): their tokens'
   // standing, never a hash, and a revoke of one. Only the member's own; the extension itself cannot reach either.
+  // The grants an owner or admin gave MCP clients (ADR-0051, #2975): the org's list (never a token) and the revoke of one. The consent itself is an
+  // HTTP route of the authorization server, not a procedure.
+  mcp: {
+    grant: {
+      list: oc.input(z.strictObject({})).output(z.array(zMcpGrantView)),
+      revoke: oc.input(zMcpGrantRevoke).output(zMcpGrantRevoked),
+    },
+    // Whether members may connect their own AI app (an owner turns it on; off by default).
+    memberGrants: {
+      get: oc.input(z.strictObject({})).output(zMcpMemberGrantsView),
+      set: oc.input(zMcpMemberGrantsSet).output(zMcpMemberGrantsView),
+    },
+    // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the receiver and schedule an owner or admin sets, and a secret shown once.
+    wake: {
+      get: oc.input(zMcpWakeGetInput).output(z.array(zMcpWakeView)),
+      set: oc.input(zMcpWakeSet).output(zMcpWakeWithSecret),
+      rotateSecret: oc.input(zMcpWakeGrantRef).output(zMcpWakeWithSecret),
+      clear: oc.input(zMcpWakeGrantRef).output(zMcpWakeCleared),
+      // A `ping` to the receiver, to see it arrive: at most one a minute per grant.
+      test: oc.input(zMcpWakeGrantRef).output(zMcpWakeTested),
+    },
+  },
   extension: {
     tokens: {
       list: oc.input(z.strictObject({})).output(z.array(zExtensionToken)),
@@ -612,8 +662,13 @@ export const contract = {
       list: oc.input(zBookingListQuery).output(z.array(zBookingItem)),
       cancel: oc.input(zBookingCancel).output(z.object({ bookingId: z.string(), status: z.literal('cancelled') })),
       move: oc.input(zBookingMove).output(z.object({ bookingId: z.string(), startsAt: z.string() })),
+      // Link a booking to a deal and take the link off (#3103); a person confirms Dy's suggestion with `linkDeal`. Neither mails anyone.
+      linkDeal: oc.input(zBookingDealLink).output(zBookingDealChanged),
+      unlinkDeal: oc.input(zBookingDealUnlink).output(zBookingDealChanged),
       // Times to offer a client (#1440): read-only; the model, when the deployment has one, reads the pasted message.
       suggest: oc.input(zBookingSuggestInput).output(zBookingSuggestion),
+      // Dy's brief before a confirmed, upcoming booking linked to a deal (#3115): the facts by code and, when the model is on, a summary and 2 to 3 points; computed when read, nothing stored or sent.
+      meetingBrief: oc.input(zMeetingBriefInput).output(zMeetingBrief),
     },
     // The contacts of the CRM (K4, #2228): the org's parties, searched without Vietnamese marks, filtered and sorted by a
     // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
@@ -650,6 +705,8 @@ export const contract = {
       list: oc.input(zDealListQuery).output(zDealPage),
       get: oc.input(zDealRef).output(zDeal),
       byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
+      // The deal's bookings the caller may read, upcoming and past (#3103); owners, admins and members only, since a booking shows its guest.
+      bookings: oc.input(zDealBookingsQuery).output(zDealBookings),
       // The conversations of the deal's contact since the deal opened (#2333), newest activity first, with no message body.
       conversations: oc.input(zDealRef).output(z.array(zConversationOther)),
       create: oc.input(zDealCreate).output(zDeal),
@@ -663,6 +720,8 @@ export const contract = {
       list: oc.input(zNextStepListQuery).output(zNextStepPage),
       done: oc.input(zNextStepDone).output(zNextStepChanged),
       snooze: oc.input(zNextStepSnooze).output(zNextStepChanged),
+      // Dy's draft of the follow-up message for one step (#3101): a read for owners, admins and members; it sends nothing and stores no text.
+      draft: oc.input(zFollowupDraftInput).output(zFollowupDrafted),
     },
     // After how many days without a change an open deal raises a next step: everyone reads, owners and admins set it.
     dealSetting: {
@@ -810,11 +869,39 @@ export const contract = {
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
+    ownerList: oc.input(zMeetingOwnerListInput).output(zMeetingOwnerList),
+    // Live notes of a meeting being recorded (L4a-2, #3110, ADR-0052): the recorder's own pane. `liveStatus` is the poll, `liveTick` copies a finished window
+    // and starts the next one, and the pair of buttons starts and stops them. Only the recorder of a meeting that opted in at its consent step sees anything.
+    liveStatus: oc.input(zLiveRef).output(zLiveStatus),
+    liveStart: oc.input(zLiveStart).output(zLiveStarted),
+    liveTick: oc.input(zLiveTick).output(zLiveTicked),
+    liveStop: oc.input(zLiveRef).output(zLiveStopped),
+    // The running notes, made by the recorder's Vy from the new preview lines and the previous notes only; the answer says how it went in fixed words.
+    liveNotes: oc.input(zLiveNotesAsk).output(zLiveNotesDone),
+    // Links to parties, a deal and the calendar event (L1, #2587): the recorder sets and removes them; a page reads only the meetings its viewer reads.
+    links: {
+      add: oc.input(zMeetingLinkAdd).output(zMeetingLink),
+      remove: oc.input(zMeetingLinkRemove).output(zMeetingLinkRemoved),
+      list: oc.input(zMeetingRef).output(z.array(zMeetingLink)),
+      byTarget: oc.input(zMeetingsOfTargetInput).output(z.array(zMeetingOfTarget)),
+      // Vy's tainted suggestion for the recorder (L1, #2587): contacts and deals the transcript names. Nothing is linked by it.
+      suggest: oc.input(zMeetingRef).output(zMeetingLinkSuggested),
+    },
+    // The follow-up email after a meeting (L3, #2590): the recorder drafts it from the published summary, words it (Vy words the lead-in and the closing only, told no fact; fixed words with
+    // AI off) and sends it, one mail per address, checked recipients. Nothing is sent without `send`, a person's own command.
+    followup: {
+      draft: oc.input(zMeetingRef).output(zFollowupDraft),
+      wording: oc.input(zFollowupWordingAsk).output(zFollowupWording),
+      send: oc.input(zFollowupSendCall).output(zFollowupSent),
+    },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
     },
+    // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
+    search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
@@ -822,6 +909,8 @@ export const contract = {
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
       // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
       start: oc.input(zTranscribeStart).output(zTranscribeStarted),
+      // The recorder stops their own run (#3033), so a lost job does not hold their slot until it expires.
+      cancel: oc.input(zTranscribeCancel).output(zTranscribeCancelled),
       status: oc.input(zTranscribeRunRef).output(zTranscribeStatus),
       copyResult: oc.input(zTranscriptCopy).output(zTranscriptDraftStored),
     },
@@ -1607,7 +1696,7 @@ export const contract = {
           // approves it. HR_RUN_NOT_FOUND (404), HR_RUN_NOT_APPROVED, HR_POSTING_OPEN, HR_POSTING_DONE, PERIOD_LOCKED (409), HR_POSTING_ADJUSTMENTS, HR_POSTING_MISMATCH (422).
           z.object({ command: z.literal('finance.payroll_posting.record'), input: zHrPostingRequest, idempotencyKey: zId }),
           // The payment of a pay run's net pay or one remittance (#2532): the server builds the voucher from the frozen run; an owner or an admin approves. HR_RUN_NOT_FOUND (404),
-          // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
+          // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_POSTING_REVERSED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
           z.object({ command: z.literal('finance.payroll_payment.record'), input: zHrPaymentRequest, idempotencyKey: zId }),
         ]),
       )
@@ -1915,6 +2004,25 @@ export const contract = {
     incomePreview: oc.input(z.object({ fileId: zId })).output(zMarketplaceIncomePreview),
     incomeConfirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceIncomeConfirmResult),
     incomeReject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    // The org's own seller account at a marketplace (#2519, ADR-0045 point 7): the adapters this deployment enabled and, for the platforms none serves, the file the org brings.
+    // The credential is sealed in the kernel and never in an answer, a log or an audit row. Every member reads the connections; owners and admins connect, test, pull and disconnect.
+    // A pull only stages what it reads, in the Inbox, for a member to confirm exactly as for an uploaded file; it never writes an order or moves stock by itself.
+    providers: oc.output(zMarketplaceProviders),
+    connections: {
+      list: oc.output(z.array(zMarketplaceConnection)),
+      // MARKETPLACE_DISABLED (404) for an adapter this deployment does not offer, MARKETPLACE_PLATFORM (422) for a platform the adapter does not serve, MARKETPLACE_FIELDS (422) when the
+      // fields are not the adapter's, MARKETPLACE_CONNECTION_EXISTS (409), FORBIDDEN (403) unless owner or admin.
+      connect: oc.input(zMarketplaceConnect).output(z.object({ id: zId })),
+      // MARKETPLACE_PROVIDER_NOT_READY (503) for an adapter that is reached through the worker.
+      test: oc.input(z.object({ id: zId })).output(zMarketplaceConnectionTested),
+      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+      // Asks for the orders now: the offline adapter only (a real one is polled by the worker on its own schedule). The job is queued; the answer is whether it was. MARKETPLACE_DISABLED (404),
+      // MARKETPLACE_PROVIDER_NOT_READY (503), CHANNEL_NOT_ACTIVE (409).
+      pollNow: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+    },
+    // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
+    // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
+    balance: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceBalance),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

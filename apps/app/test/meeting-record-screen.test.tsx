@@ -21,13 +21,14 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), queryClient: client.current, errorMessage: String, uploadMeetingMedia: vi.fn() };
+  return { orpc: node([]), queryClient: client.current, errorMessage: String, uploadMeetingMedia: vi.fn(), sendLiveChunk: vi.fn() };
 });
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
     useParams: () => ({ slug: 'acme' }),
+    useSearch: () => ({}),
     useNavigate: () => vi.fn(),
     Link: ({ children, to }: { children?: ReactNode; to: string }) => createElement('a', { href: to }, children),
   };
@@ -62,6 +63,12 @@ describe('MeetingRecordPage before recording', () => {
   it('offers "record video too", unticked by default', () => {
     expect(html).toContain(en.meetings.record.withVideo);
     expect(/id="record-video"[^>]*aria-checked="true"/.test(html)).toBe(false);
+  });
+
+  it('offers "Ghi chú trực tiếp" with its hint, unticked by default', () => {
+    expect(html).toContain(en.meetings.record.liveNotes);
+    expect(html).toContain(en.meetings.record.liveNotesHint);
+    expect(/id="record-live-notes"[^>]*aria-checked="true"/.test(html)).toBe(false);
   });
 
   it('says nothing here uses AI', () => {

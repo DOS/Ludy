@@ -2,8 +2,7 @@
 // Record a meeting in the app, end to end (AI Meeting Notes M7, #2581): a real Chromium with a fake microphone records
 // with the real MediaRecorder, the page is reloaded mid-recording, the recording is recovered from the real IndexedDB
 // store and uploaded through the real media route, and the meeting then has its audio.
-// The crove-media sandbox is not part of this stack (compose profile `media`; the worker job that calls it is M4), so
-// normalization is covered by the crove-media image job and this test asserts the upload and the decrypted playback.
+// The crove-media sandbox is part of this stack: the upload route measures the recording's length in it (#2985).
 import { expect, test, type Page } from '@playwright/test';
 import { sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';

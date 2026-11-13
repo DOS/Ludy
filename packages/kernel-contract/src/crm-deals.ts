@@ -253,6 +253,8 @@ export const zNextStepListQuery = z.strictObject({
   scope: z.enum(NEXT_STEP_SCOPES).optional(),
   cursor: zNextStepCursor.nullable().optional(),
   limit: z.number().int().min(1).max(NEXT_STEP_PAGE_SIZE).optional(),
+  // Only the steps of the deals of this contact (the conversation's contact panel offers the follow-up draft of each, #3101).
+  partyId: zId.optional(),
 });
 export type NextStepListQuery = z.infer<typeof zNextStepListQuery>;
 export const zNextStep = z.object({

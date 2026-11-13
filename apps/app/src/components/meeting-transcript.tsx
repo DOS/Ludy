@@ -5,7 +5,7 @@
 // recorder's own click copies it here as the draft. Without AI (or with transcription off) there is no button and no
 // transcript, and the recording and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { TranscriptSegment } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -29,7 +29,7 @@ export function clock(seconds: number): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-function Line({ segment, editable }: { segment: TranscriptSegment; editable: boolean }) {
+function Line({ segment, editable, focused }: { segment: TranscriptSegment; editable: boolean; focused: boolean }) {
   const t = useTranslations('meetings.transcript');
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
@@ -47,9 +47,14 @@ function Line({ segment, editable }: { segment: TranscriptSegment; editable: boo
     },
   });
   const unchanged = text.trim() === segment.text && speaker.trim() === segment.speakerLabel;
+  // The line a search hit opened the page at: scrolled to the middle once and marked.
+  const ref = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView?.({ block: 'center' });
+  }, [focused]);
 
   return (
-    <li className="space-y-1 py-2 text-sm" data-testid="transcript-line">
+    <li ref={ref} className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'} data-testid="transcript-line" {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="font-mono">{clock(segment.startSeconds)}</span>
         {editing ? (
@@ -104,8 +109,12 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
       return t('vy.codes.AI_STOPPED');
     case 'TRANSCRIBE_OFF':
       return t('vy.codes.TRANSCRIBE_OFF');
+    case 'TRANSCRIBE_NO_BROKER':
+      return t('vy.codes.TRANSCRIBE_NO_BROKER');
     case 'TRANSCRIBE_RUNNING':
       return t('vy.codes.TRANSCRIBE_RUNNING');
+    case 'TRANSCRIBE_OTHER_RUNNING':
+      return t('vy.codes.TRANSCRIBE_OTHER_RUNNING');
     case 'MEETING_NO_AUDIO':
       return t('vy.codes.MEETING_NO_AUDIO');
     case 'TRANSCRIPT_EMPTY':
@@ -114,6 +123,8 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
       return t('vy.codes.TRANSCRIPT_TOO_LONG');
     case 'RUN_ENDED':
       return t('vy.codes.RUN_ENDED');
+    case 'RUN_CANCELLED':
+      return t('vy.codes.RUN_CANCELLED');
     default:
       return null;
   }
@@ -136,6 +147,8 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
     void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
   };
   const start = useMutation({ mutationFn: () => orpc.meetings.transcript.start.call({ meetingId }), onSuccess: refresh });
+  // Stops the recorder's own run (#3033), so a lost job does not hold their slot until it expires.
+  const stop = useMutation({ mutationFn: () => orpc.meetings.transcript.cancel.call({ meetingId }), onSuccess: refresh });
   const copy = useMutation({
     mutationFn: (runId: string) => orpc.meetings.transcript.copyResult.call({ meetingId, runId }),
     onSuccess: refresh,
@@ -150,21 +163,41 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
         <CardDescription className="text-xs text-muted-foreground">{t('vy.desc')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {running && <p role="status">{t('vy.running')}</p>}
+        {running && (
+          <div className="space-y-2">
+            <p role="status">{t('vy.running')}</p>
+            <p className="text-xs text-muted-foreground">{t('vy.stopHint')}</p>
+            <Button size="sm" variant="outline" loading={stop.isPending} onClick={() => {
+                start.reset();
+                copy.reset();
+                stop.mutate();
+              }}>
+              {t('vy.stop')}
+            </Button>
+          </div>
+        )}
         {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
         {data.state === 'ready' && data.runId && !copy.isSuccess && (
           <div className="space-y-2">
             <p>{t('vy.ready')}</p>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
-            <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(data.runId as string)}>
+            <Button size="sm" loading={copy.isPending} onClick={() => {
+                start.reset();
+                stop.reset();
+                copy.mutate(data.runId as string);
+              }}>
               {t('vy.copy')}
             </Button>
           </div>
         )}
         {data.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${codeText(t, data.errorCode) ?? t('vy.codes.default')}`}</ErrorText>}
-        {(start.error || copy.error) && <ErrorText>{refusalText(t, start.error ?? copy.error)}</ErrorText>}
+        {(start.error || copy.error || stop.error) && <ErrorText>{refusalText(t, start.error ?? copy.error ?? stop.error)}</ErrorText>}
         {!running && (
-          <Button size="sm" variant={data.state === 'none' ? 'default' : 'outline'} loading={start.isPending} onClick={() => start.mutate()}>
+          <Button size="sm" variant={data.state === 'none' ? 'default' : 'outline'} loading={start.isPending} onClick={() => {
+              copy.reset();
+              stop.reset();
+              start.mutate();
+            }}>
             {data.state === 'none' ? t('vy.start') : t('vy.restart')}
           </Button>
         )}
@@ -173,7 +206,7 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   );
 }
 
-export function MeetingTranscript({ meetingId }: { meetingId: string }) {
+export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: string; focusSegmentId?: string }) {
   const t = useTranslations('meetings.transcript');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   if (query.isPending) return null;
@@ -200,7 +233,7 @@ export function MeetingTranscript({ meetingId }: { meetingId: string }) {
       <CardContent>
         <ul className="divide-y">
           {transcript.segments.map((segment) => (
-            <Line key={segment.id} segment={segment} editable={transcript.isRecorder} />
+            <Line key={segment.id} segment={segment} editable={transcript.isRecorder} focused={segment.id === focusSegmentId} />
           ))}
         </ul>
       </CardContent>

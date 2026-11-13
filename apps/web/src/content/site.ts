@@ -25,3 +25,22 @@ export type AppPageKey = keyof typeof APP_PAGES;
 // folded into Ludy Engage on 2026-11-03 (owner decision, #2435, #2440): /crm is now /engage.
 export const RETIRED_PAGES: Readonly<Record<string, string>> = { '/crm': '/engage' };
 export const appPagePath = (key: AppPageKey) => APP_PAGES[key].path;
+
+// Pages that are not an app: legal text. Same rule as the app pages (one public path for both languages, the English tree
+// at `enRoute` behind the proxy). /privacy is the address the Chrome Web Store listing of the Ludy extension links
+// (ludy.vn and ludy.so both serve this app); it is in the footer and the sitemap but is not an app card.
+export const LEGAL_PAGES = {
+  privacy: { path: '/privacy', enRoute: '/en/privacy' },
+} as const;
+export type LegalPageKey = keyof typeof LEGAL_PAGES;
+// The version of the privacy page and the day it took effect (ISO date). The copy of both languages shows them, and
+// privacy-page.test.ts checks that they do. Change them in the same commit as any change to what the page says.
+export const PRIVACY_VERSION = '1.0';
+export const PRIVACY_UPDATED = '2026-11-13';
+// Where a privacy request goes by email (deletion, export, questions): the address the owner gave on 2026-11-13. null hides the
+// contact line, so a deployment of this site with no address shows none. Never invent one.
+export const PRIVACY_CONTACT_EMAIL: string | null = 'hi@ludy.so';
+// Who operates Ludy Cloud, as the privacy page names it: the English form of the legal name the owner gave on 2026-11-13. The
+// Vietnamese page uses it too until the owner gives a Vietnamese registered name: change this one constant then. No address
+// is shown, because none has been given.
+export const PRIVACY_OPERATOR = 'DOS LTD';

@@ -13,6 +13,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { DealForm, refreshDeals, type Member } from './deal-form.tsx';
+import { DealBookings } from './booking-deal.tsx';
 import { DealQuotes } from './deal-quotes.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
@@ -38,6 +39,8 @@ function Card({
   onMove,
   onEdit,
   onQuotes,
+  onBookings,
+  bookingsOpen,
   dragging,
   dropBefore,
 }: {
@@ -50,6 +53,8 @@ function Card({
   onMove: (stageId: string) => void;
   onEdit: () => void;
   onQuotes: () => void;
+  onBookings: () => void;
+  bookingsOpen: boolean;
   dragging: boolean;
   dropBefore: boolean;
 }) {
@@ -95,6 +100,9 @@ function Card({
           <Button type="button" size="sm" variant="ghost" onClick={onQuotes}>
             {t('quotes')}
           </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onBookings} aria-expanded={bookingsOpen} data-testid="deal-card-bookings">
+            {t('bookings')}
+          </Button>
         </div>
       )}
     </li>
@@ -116,6 +124,7 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
   const [over, setOver] = useState<Drop | null>(null);
   const [editing, setEditing] = useState<Deal | null>(null);
   const [quoting, setQuoting] = useState<Deal | null>(null);
+  const [booking, setBooking] = useState<Deal | null>(null);
   // A move into a lost stage waits for its reason.
   const [losing, setLosing] = useState<{ deal: Deal; drop: Drop } | null>(null);
   const [reason, setReason] = useState('');
@@ -183,6 +192,7 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
 
   return (
     <div className="space-y-3">
+      {booking && <DealBookings key={booking.id} deal={booking} canEdit={canEdit} />}
       {quoting && <DealQuotes key={quoting.id} deal={quoting} canEdit={canEdit} onClose={() => setQuoting(null)} />}
       {editing && <DealForm key={editing.version} deal={editing} members={members} onDone={() => setEditing(null)} />}
       {losing && (
@@ -261,6 +271,8 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
                   onMove={(stageId) => place(deal, { stageId, beforeDealId: null })}
                   onEdit={() => setEditing(deal)}
                   onQuotes={() => setQuoting(deal)}
+                  onBookings={() => setBooking((b) => (b?.id === deal.id ? null : deal))}
+                  bookingsOpen={booking?.id === deal.id}
                 />
               ))}
             </ul>

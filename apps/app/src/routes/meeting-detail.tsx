@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useEffect, useState, type FormEvent } from 'react';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -9,13 +9,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
+import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
+import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
 
 const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting' } as const;
 
@@ -31,6 +34,8 @@ export function MeetingDetailPage() {
   const f = useFormat();
   const navigate = useNavigate();
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
+  // A search hit names the transcript line to open at (L2, #2589).
+  const { seg } = useSearch({ strict: false }) as { seg?: string };
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [newReaderUserId, setNewReaderUserId] = useState('');
@@ -44,6 +49,9 @@ export function MeetingDetailPage() {
   const [videoLoading, setVideoLoading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
+  // The player streams the video by a short-lived ticket (#2703); the element and the ticket player are kept for its error events.
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const videoPlayer = useRef<VideoTicketPlayer | null>(null);
 
   const meetingQuery = useQuery(
     orpc.meetings.get.queryOptions({
@@ -71,23 +79,26 @@ export function MeetingDetailPage() {
     setAudioLoading(false);
     setVideoLoading(false);
     let createdAudioUrl: string | null = null;
-    let createdVideoUrl: string | null = null;
 
     // Video is fetched after the audio finishes: the server allows one large transfer per member at a time.
     const loadVideo = () => {
       if (!active || !meeting?.hasVideo) return;
       setVideoLoading(true);
       setVideoError(null);
-      apiFetch(`/api/meetings/${meeting.id}/video`)
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.blob();
-        })
-        .then((blob) => {
-          if (active) {
-            createdVideoUrl = URL.createObjectURL(blob);
-            setVideoUrl(createdVideoUrl);
-          }
+      // No download into memory: a ticket, then the <video> streams ranges from the kernel by itself.
+      const player = createVideoTicketPlayer({
+        fetchTicket: () => fetchVideoTicket(meeting.id),
+        urlFor: (ticket) => videoStreamUrl(meeting.id, ticket),
+        element: () => videoRef.current,
+        onFailure: (err) => {
+          if (active) setVideoError(err instanceof Error && err.message === 'VIDEO_TICKET_INVALID' ? t('detail.videoPlayFailed') : errorMessage(err));
+        },
+      });
+      videoPlayer.current = player;
+      player
+        .start()
+        .then((url) => {
+          if (active) setVideoUrl(url);
         })
         .catch((err: unknown) => {
           if (active) setVideoError(errorMessage(err));
@@ -102,7 +113,6 @@ export function MeetingDetailPage() {
       setAudioError(null);
       apiFetch(`/api/meetings/${meeting.id}/audio`)
         .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.blob();
         })
         .then((blob) => {
@@ -124,8 +134,9 @@ export function MeetingDetailPage() {
 
     return () => {
       active = false;
+      videoPlayer.current?.stop();
+      videoPlayer.current = null;
       if (createdAudioUrl) URL.revokeObjectURL(createdAudioUrl);
-      if (createdVideoUrl) URL.revokeObjectURL(createdVideoUrl);
     };
   }, [meeting?.id, meeting?.hasAudio, meeting?.hasVideo]);
 
@@ -289,7 +300,15 @@ export function MeetingDetailPage() {
               {videoLoading && <div className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
               {videoError && <ErrorText>{videoError}</ErrorText>}
               {videoUrl && (
-                <video controls className="w-full max-h-96 rounded-lg bg-muted" src={videoUrl} />
+                <video
+                  ref={videoRef}
+                  controls
+                  preload="metadata"
+                  className="w-full max-h-96 rounded-lg bg-muted"
+                  src={videoUrl}
+                  onLoadedMetadata={() => videoPlayer.current?.mediaLoaded()}
+                  onError={() => videoPlayer.current?.mediaError()}
+                />
               )}
             </CardContent>
           </Card>
@@ -300,8 +319,9 @@ export function MeetingDetailPage() {
         )}
       </div>
 
+      <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
-      <MeetingTranscript meetingId={id} />
+      <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
       <MeetingResults meetingId={id} readers={meeting.readers} />
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -333,6 +353,8 @@ export function MeetingDetailPage() {
             </div>
           </CardContent>
         </Card>
+
+        <MeetingLinks meetingId={meeting.id} isRecorder={meeting.isRecorder} />
 
         {/* Readers List Card */}
         {meeting.visibility === 'attendees' && (

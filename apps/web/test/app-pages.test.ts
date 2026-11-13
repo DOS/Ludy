@@ -15,7 +15,10 @@ import { engageEn } from '../src/content/engage-en';
 import { engageVi } from '../src/content/engage-vi';
 import { notesEn } from '../src/content/notes-en';
 import { notesVi } from '../src/content/notes-vi';
-import { APP_PAGES, RETIRED_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
+import type { PrivacyBlock, PrivacyCopy } from '../src/content/privacy';
+import { privacyEn } from '../src/content/privacy-en';
+import { privacyVi } from '../src/content/privacy-vi';
+import { APP_PAGES, LEGAL_PAGES, PRIVACY_CONTACT_EMAIL, PRIVACY_OPERATOR, PRIVACY_UPDATED, PRIVACY_VERSION, RETIRED_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
 import { vi } from '../src/content/vi';
 
 const COPY: Record<AppPageKey, { vi: AppPageCopy; en: AppPageCopy }> = {
@@ -55,7 +58,7 @@ describe('app pages', () => {
 
   it('are in the sitemap once, at the one address of both languages, with no /en entry and no alternates', () => {
     const entries = sitemap();
-    expect(entries.map((entry) => entry.url).sort()).toEqual([`${SITE_URL}/`, ...KEYS.map((key) => `${SITE_URL}${APP_PAGES[key].path}`)].sort());
+    expect(entries.map((entry) => entry.url).sort()).toEqual([`${SITE_URL}/`, ...KEYS.map((key) => `${SITE_URL}${APP_PAGES[key].path}`), ...Object.values(LEGAL_PAGES).map((page) => `${SITE_URL}${page.path}`)].sort());
     for (const entry of entries) {
       expect(entry.url, entry.url).not.toMatch(/\/en(\/|$)/);
       expect(entry.alternates, entry.url).toBeUndefined();
@@ -102,10 +105,108 @@ describe('app pages', () => {
   });
 
   it('are linked from the home page card and the footer in each language', () => {
-    const modules = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'modules.tsx'), 'utf8');
     const footer = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'site-footer.tsx'), 'utf8');
-    // The footer lists every page from the registry; the cards name theirs one by one.
+    // The footer lists every page from the registry; the home page's app cards (components/landing/app-cards.tsx) name theirs in the copy, so
+    // every page has a card in each language, and the card component links it through the registry.
     expect(footer).toContain('Object.keys(APP_PAGES)');
-    for (const key of KEYS) expect(modules, key).toContain(`appPagePath('${key}')`);
+    const cards = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'app-cards.tsx'), 'utf8');
+    expect(cards).toContain('appPagePath(item.page');
+    for (const dict of [vi, en]) for (const key of KEYS) expect(dict.appCards.items.some((item) => item.page === key), `${dict.lang} ${key}`).toBe(true);
+  });
+});
+
+// The privacy page (/privacy): the address the Chrome Web Store listing of the Ludy extension links. ludy.vn and ludy.so
+// both serve this app, so the one path works on both hosts (no host check in src/proxy.ts).
+const textOf = (copy: PrivacyCopy) => JSON.stringify(copy);
+// Every string of the copy on its own line, so a pattern can look for punctuation without meeting the JSON's own.
+const stringsOf = (value: unknown): string[] => (typeof value === 'string' ? [value] : value !== null && typeof value === 'object' ? Object.values(value).flatMap(stringsOf) : []);
+const blockCount = (block: PrivacyBlock) => (block.kind === 'p' ? 1 : block.kind === 'list' ? block.items.length : block.rows.length);
+
+describe('privacy page', () => {
+  it('lives at /privacy and /en/privacy, each with its own social preview image', () => {
+    expect(LEGAL_PAGES.privacy.path).toBe('/privacy');
+    expect(LEGAL_PAGES.privacy.enRoute).toBe('/en/privacy');
+    for (const dir of [join(app, '(vi)', 'privacy'), join(app, '(en)', 'en', 'privacy')]) {
+      expect(existsSync(join(dir, 'page.tsx')), dir).toBe(true);
+      expect(existsSync(join(dir, 'opengraph-image.tsx')), dir).toBe(true);
+    }
+  });
+
+  it('is in the sitemap once, at the public address, and is linked from the footer in both languages', () => {
+    expect(sitemap().filter((entry) => entry.url === `${SITE_URL}/privacy`)).toHaveLength(1);
+    const footer = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'site-footer.tsx'), 'utf8');
+    expect(footer).toContain('LEGAL_PAGES.privacy.path');
+    expect(vi.footer.privacy.length).toBeGreaterThan(0);
+    expect(en.footer.privacy.length).toBeGreaterThan(0);
+  });
+
+  it('has the same sections, lists, tables and rows in both languages', () => {
+    expect(privacyEn.sections.map((section) => section.id)).toEqual(privacyVi.sections.map((section) => section.id));
+    privacyVi.sections.forEach((section, i) => {
+      const twin = privacyEn.sections[i]!;
+      expect(twin.blocks.map((block) => block.kind), section.id).toEqual(section.blocks.map((block) => block.kind));
+      expect(twin.blocks.map(blockCount), section.id).toEqual(section.blocks.map(blockCount));
+    });
+  });
+
+  it('covers the extension fully: what it records, consent first, where it goes, who reads, retention, revoke', () => {
+    expect(privacyVi.sections.map((section) => section.id)).toEqual(['summary', 'extension', 'storage', 'readers', 'transcription', 'retention', 'rights', 'cloud', 'changes']);
+    const vietnamese = textOf(privacyVi);
+    const english = textOf(privacyEn);
+    for (const must of ['app.ludy.vn', '30 ngày', '7 ngày', '12 tháng', '90 ngày', 'Ghi cả video', 'thiết bị đã kết nối', 'không bán dữ liệu', 'không theo dõi']) expect(vietnamese.toLowerCase(), must).toContain(must.toLowerCase());
+    for (const must of ['app.ludy.vn', '30 days', '7 days', '12 months', '90 days', 'Record video too', 'connected devices', 'does not sell data', 'track you']) expect(english.toLowerCase(), must).toContain(must.toLowerCase());
+  });
+
+  it('shows the version and the day, and says the policy is under review, in both languages', () => {
+    expect(PRIVACY_VERSION).toMatch(/^\d+\.\d+$/);
+    expect(PRIVACY_UPDATED).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const [y, m, d] = PRIVACY_UPDATED.split('-') as [string, string, string];
+    expect(privacyVi.versionLine).toContain(`Phiên bản ${PRIVACY_VERSION}`);
+    expect(privacyVi.versionLine).toContain(`${d}/${m}/${y}`);
+    expect(privacyEn.versionLine).toContain(`Version ${PRIVACY_VERSION}`);
+    expect(privacyEn.versionLine).toContain(`${Number(d)} ${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][Number(m) - 1]} ${y}`);
+    expect(privacyVi.reviewNotice).toMatch(/đang được rà soát và có thể được cập nhật/);
+    expect(privacyEn.reviewNotice).toMatch(/being reviewed and may be updated/);
+  });
+
+  it('holds no placeholder, no dash and no value the repository does not have', () => {
+    for (const [lang, copy] of [['vi', privacyVi], ['en', privacyEn]] as const) {
+      const text = stringsOf(copy).join('\n');
+      expect(text, lang).not.toMatch(/[–—]/);
+      // No bracketed fill-in, no to-do marker, no ellipsis stand-in.
+      expect(text, lang).not.toMatch(/\[[^\]]*\]|\bTODO\b|\bTBD\b|\bXXX\b|\.\.\./);
+      // No email address, no phone number and no street address was given to write here: the contact line comes from PRIVACY_CONTACT_EMAIL alone.
+      expect(text, lang).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
+      expect(text.toLowerCase(), lang).not.toMatch(/siêu|đột phá|supercharge|revolution|game-chang/);
+    }
+  });
+
+  it('has a title and a description of its own, in length for a search result', () => {
+    const titles = new Set<string>([vi.meta.title, en.meta.title]);
+    for (const copy of [privacyVi, privacyEn]) {
+      expect(titles.has(copy.meta.title)).toBe(false);
+      titles.add(copy.meta.title);
+      expect(copy.meta.description.length).toBeGreaterThan(80);
+      expect(copy.meta.description.length).toBeLessThanOrEqual(320);
+    }
+  });
+
+  it('names the operator and the owner-given contact email, and shows no address', () => {
+    expect(PRIVACY_OPERATOR).toBe('DOS LTD');
+    expect(PRIVACY_CONTACT_EMAIL).toMatch(/^[\w.+-]+@[\w-]+(\.[\w-]+)+$/);
+    // The operator is read from the one constant by both languages (no name typed into a string), so the Vietnamese registered name is a one-line change.
+    for (const file of ['privacy-vi.ts', 'privacy-en.ts']) {
+      const source = readFileSync(join(import.meta.dirname, '..', 'src', 'content', file), 'utf8');
+      expect(source, file).toContain('${PRIVACY_OPERATOR}');
+      expect(source, file).not.toContain('DOS LTD');
+    }
+    expect(textOf(privacyVi)).not.toMatch(/địa chỉ trụ sở|trụ sở chính/i);
+  });
+
+  it('shows the contact line as a mailto link only when an address is set, so a page is never published with an invented one', () => {
+    const page = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'privacy-page.tsx'), 'utf8');
+    expect(page).toContain('contactEmail !== null');
+    expect(page).toContain('href={`mailto:${contactEmail}`}');
+    expect(page).toContain("contactEmail = PRIVACY_CONTACT_EMAIL");
   });
 });

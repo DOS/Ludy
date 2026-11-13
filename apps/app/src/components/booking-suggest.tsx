@@ -17,12 +17,17 @@ import { errorMessage, orpc } from '../lib/api.ts';
 import { dayLabel, timeIn } from '../lib/booking.ts';
 import { whenOf } from '../routes/booking-page.tsx';
 
-export const bookingLinkOf = (origin: string, org: string, type: string) => `${origin}/-/b/${encodeURIComponent(org)}/${encodeURIComponent(type)}`;
+// The address of a type's booking page. With a deal (#3103) the address names it, so the client's booking arrives linked to the deal; the server keeps the link only when it is a deal
+// of the org, and the page shows the client nothing of it.
+export const bookingLinkOf = (origin: string, org: string, type: string, dealId?: string) =>
+  `${origin}/-/b/${encodeURIComponent(org)}/${encodeURIComponent(type)}${dealId ? `?deal=${encodeURIComponent(dealId)}` : ''}`;
 
-export function BookingSuggestCard({ slug }: { slug: string }) {
+// `dealId`: "Đặt lịch" from a deal's panel (#3103); `startOpen` and `onClose` let that panel open and close the card itself.
+export function BookingSuggestCard({ slug, dealId, startOpen = false, onClose }: { slug: string; dealId?: string; startOpen?: boolean; onClose?: () => void }) {
   const t = useTranslations('bookings.suggest');
   const { locale } = useLocaleSetting();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(startOpen);
+  const close = () => (onClose ? onClose() : setOpen(false));
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const types = useQuery({ ...orpc.crm.eventTypes.list.queryOptions(), enabled: open });
   const active = (types.data ?? []).filter((e) => e.active);
@@ -43,7 +48,7 @@ export function BookingSuggestCard({ slug }: { slug: string }) {
   const aiRead = result?.ai === 'used' && result.windows.length > 0;
 
   function draftOf(s: BookingSuggestion): string {
-    const link = bookingLinkOf(window.location.origin, slug, s.eventType.slug);
+    const link = bookingLinkOf(window.location.origin, slug, s.eventType.slug, dealId);
     if (s.slots.length === 0) return t('replyNone', { title: s.eventType.title, link });
     const lines = s.slots.map((x) => `- ${whenOf(x, s.timeZone, locale)}`).join('\n');
     return t('reply', { title: s.eventType.title, slots: lines, link });
@@ -75,12 +80,13 @@ export function BookingSuggestCard({ slug }: { slug: string }) {
       <div>
         <h2 className="text-sm font-medium text-foreground">{t('title')}</h2>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+        {dealId && <p className="text-xs text-subtle-foreground">{t('forDeal')}</p>}
       </div>
       {types.error && <ErrorText>{errorMessage(types.error)}</ErrorText>}
       {types.isSuccess && active.length === 0 ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm text-muted-foreground">{t('noTypes')}</p>
-          <Button size="sm" type="button" variant="ghost" onClick={() => setOpen(false)}>
+          <Button size="sm" type="button" variant="ghost" onClick={close}>
             {t('close')}
           </Button>
         </div>
@@ -104,7 +110,7 @@ export function BookingSuggestCard({ slug }: { slug: string }) {
             <Button loading={suggest.isPending} size="sm" type="submit" disabled={!chosen || suggest.isPending}>
               {t('submit')}
             </Button>
-            <Button size="sm" type="button" variant="ghost" onClick={() => setOpen(false)}>
+            <Button size="sm" type="button" variant="ghost" onClick={close}>
               {t('close')}
             </Button>
           </div>
