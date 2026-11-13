@@ -356,7 +356,8 @@ async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput)
 export async function transcribeChunks(config: TranscribeConfig, chunks: readonly TranscribeInput[], onUsage?: AiUsageSink): Promise<TranscriptSegment[]> {
   const done: TranscriptSegment[][] = [];
   for (const chunk of chunks) {
-    const { segments } = await metered('meetings.transcribe', () => transcribeAudio(config, chunk), onUsage);
+    // The chunk's measured seconds are known before the call, so the meter can refuse a chunk that would cross a hard-stop budget (#2863 item 8): the same seconds transcribeAudio reports.
+    const { segments } = await metered('meetings.transcribe', () => transcribeAudio(config, chunk), onUsage, { inputTokens: 0, outputTokens: 0, audioSeconds: Math.max(0, chunk.lengthSeconds) });
     done.push(segments);
   }
   return mergeChunkTranscripts(done);

@@ -628,13 +628,38 @@ export const memberVyRunFinish = defineCommand({
 
 // The admit of a background run (ADR-0049 decision 6): entering the member-scoped context re-checks the member, vy.use, the org, module and agent kill
 // switches, the global ai switch, the hard-stop budget and that the run is live, so a feature calls this before each model call and the entry is the check.
-// It reads nothing and answers nothing.
+// It answers nothing but ok.
+//
+// A call that costs a known amount (a transcription chunk: its measured seconds times the price per second) also sends that `projectedCost`, and the check refuses the call
+// before it is made when it would REACH a hard-stop budget (#2863 item 8): spent + projected >= the limit, the entry's own rule (spent >= limit) applied to the spend the call
+// would leave, so a run no longer overruns by up to one chunk. A call that would land exactly on the limit is refused too: the budget would then be spent, and the store of the
+// run's result (its own entry) would be refused, so the paid text would be thrown away. Only hard stops count, as in ai_budget_exhausted; a soft budget never refuses. The module
+// and the agent are the run's own, from the sealed context and never from the input, so a call cannot name another target to dodge a budget. A missing or zero projection is the
+// entry's check alone. The sum is decimal arithmetic in the database (numeric), never a JS number. A refusal is the entry's own code, BUDGET_EXHAUSTED, naming the scope as meter.check does.
+// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
+const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
+const ZERO_COST = /^0+(?:\.0+)?$/;
+
 export const memberVyRunCheck = defineQuery({
   name: 'kernel.member_vy.run.check',
-  input: z.object({}),
+  input: z.object({ projectedCost: PROJECTED_COST.optional() }),
   access: MEMBER_ROLES,
   memberVy: { reads: [] },
-  handler: async (): Promise<{ ok: true }> => ({ ok: true }),
+  handler: async (ctx: QueryContext, input): Promise<{ ok: true }> => {
+    const projected = input.projectedCost;
+    if (projected === undefined || ZERO_COST.test(projected)) return { ok: true };
+    if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới kiểm tra được chi phí dự kiến', { rule: 'member_vy_context' });
+    const { module, agentId } = ctx.memberVy;
+    const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
+      SELECT (SELECT b.scope FROM crove_kernel.budget_policy b
+              WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
+                AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
+                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
+              ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
+    const scope = rows[0]?.scope;
+    if (scope) throw new DomainError('BUDGET_EXHAUSTED', 422, 'Vy đã hết ngân sách tháng này', { scope });
+    return { ok: true };
+  },
 });
 
 // The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the

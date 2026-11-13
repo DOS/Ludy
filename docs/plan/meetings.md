@@ -160,7 +160,7 @@ Proposed in ADR-0047 point 2, an owner decision (section 14, Q2):
 ## 10. Budgets and the kill switch
 
 - Two feature keys in `AI_FEATURES`, both counting against a `meetings` module budget: `meetings.transcribe` and `meetings.summary`.
-- **The meter learns audio length.** A transcription call records the audio seconds next to the tokens, priced by a deployment setting per audio minute (no price in this plan). Before the call the meter is asked with the length the sandbox measured, so a long recording cannot overrun the budget; refused, the meeting waits (`usage_deferral` `ai_budget`) and starts when the month turns or the owner raises the budget.
+- **The meter learns audio length.** A transcription call records the audio seconds next to the tokens, priced by a deployment setting per audio minute (no price in this plan). Before the call the meter is asked with the length the sandbox measured, so a long recording cannot overrun the budget (done for the background run, #2863 item 8: each chunk is admitted on its measured seconds times the audio price, and a chunk that would reach a hard-stop budget is refused before the provider call); refused, the meeting waits (`usage_deferral` `ai_budget`) and starts when the month turns or the owner raises the budget.
 - **Caps** (proposed): 2 hours a meeting; an audio upload up to 300 MB; with video, up to 2 GB; the per-minute upload rate of the file grants applies. Video costs storage, not AI: only its audio is transcribed.
 - **Kill switch:** the existing "Dừng AI" for the org, the `meetings` module or the whole deployment stops new transcription and summary calls; calls in flight finish; recording and storage go on (section 5.4).
 
