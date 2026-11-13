@@ -247,9 +247,21 @@ export async function runConversationSync(deps: SendDeps, job: ConversationSyncJ
     return 'failed';
   }
   let stored = 0;
-  for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
-    const ingested = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
-    stored += ingested.stored;
+  try {
+    for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
+      const ingested = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+      stored += ingested.stored;
+    }
+  } catch (error) {
+    if (work.provider !== 'youtube') throw error;
+    // The platform was asked and its units are spent whatever happens after: they are counted, and the poll comes back by its own interval, never by the
+    // job's retry (which would ask Google again, uncounted, while the store is failing).
+    await deps.runtime.execute(
+      'kernel.conversation.history_record',
+      { connectionId: job.connectionId, complete: false, gapFrom: null, gapTo: null, quota: { units: Math.min(answer.units ?? 0, 1000), outcome: 'retry', newMessages: 0, blockedUntil: null } },
+      options,
+    );
+    return 'failed';
   }
   await deps.runtime.execute(
     'kernel.conversation.history_record',

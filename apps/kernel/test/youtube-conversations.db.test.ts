@@ -25,7 +25,7 @@ const suite = ADMIN ? describe : describe.skip;
 const APP = { clientId: '123456789012-abcdefgh12345678.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const CHANNEL = 'UCabcdefghijklmnopqrstuv';
 const OTHER_CHANNEL = 'UCzyxwvutsrqponmlkjihgfe';
-const CUSTOMER = 'UCcustomercustomercustom1';
+const CUSTOMER = 'UCcustomercustomercustom';
 const VIDEO = 'dQw4w9WgXcQ';
 const SECRET_TEXT = 'Số điện thoại 0909123456 của khách Lê Thị Hoa';
 const THREAD = 'UgxAAAAAAAAAAAAAAAAAAAAAAAAB';
@@ -129,7 +129,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
         return json({
           items: [
             { id: THREAD, snippet: { videoId: VIDEO, channelId: CHANNEL, totalReplyCount: 0, topLevelComment: comment(THREAD, SECRET_TEXT, nowIso()) } },
-            { id: SECOND, snippet: { videoId: VIDEO, channelId: CHANNEL, totalReplyCount: 0, topLevelComment: comment(SECOND, 'Mua ở đâu vậy shop?', nowIso(), { author: 'UCsecondcustomersecond1', name: '@nguoi.mua' }) } },
+            { id: SECOND, snippet: { videoId: VIDEO, channelId: CHANNEL, totalReplyCount: 0, topLevelComment: comment(SECOND, 'Mua ở đâu vậy shop?', nowIso(), { author: 'UCsecondcustomersecond12', name: '@nguoi.mua' }) } },
           ],
         });
       }
@@ -184,7 +184,7 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     expect(detail.messages).toHaveLength(1);
     expect(detail.messages[0]).toMatchObject({ direction: 'in', body: SECRET_TEXT });
 
-    // Dy's draft for the new comment thread: asked, written by the system job through the AI budget meter within YouTube's rule, tainted, and live for the
+    // Dy's draft for the new comment thread: asked, written by the system job through the AI budget meter within the draft's own limit, tainted, and live for the
     // person to read; it sends nothing (the reply below is the person's own press of Send).
     const asked = await rt.execute<{ draftId: string; queued: boolean }>('kernel.conversation.draft_request', { conversationId: convId }, asOwner);
     expect(asked.queued).toBe(true);
@@ -201,14 +201,15 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
       },
     };
     expect(await runConversationDraft({ runtime: worker, writer, meter: systemMeter(worker, { price: { inputPerMTok: '1000', outputPerMTok: '3000' } }) }, { orgId, draftId: asked.draftId, conversationId: convId })).toBe('written');
-    expect(seen[0]).toMatchObject({ maxChars: 8000, messages: [{ from: 'customer', text: SECRET_TEXT }] });
+    expect(seen[0]).toMatchObject({ maxChars: 2000, messages: [{ from: 'customer', text: SECRET_TEXT }] });
     detail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner);
     expect(detail.draft).toMatchObject({ state: 'live', source: 'asked', tainted: true });
     expect(detail.messages).toHaveLength(1);
     expect(platform.filter((c) => c.method === 'POST')).toHaveLength(0);
 
     // A reply: over the rule is refused, hiding is not offered in v1, and the person's own Send goes out exactly once as comments.insert under the thread.
-    await expect(rt.execute('kernel.conversation.reply', { conversationId: convId, body: 'x'.repeat(8001), lastSeenSeq: 1 }, asOwner)).rejects.toMatchObject({ code: 'REPLY_TOO_LONG' });
+    // YouTube's rule is the core's own 8,000, which the input schema already enforces.
+    await expect(rt.execute('kernel.conversation.reply', { conversationId: convId, body: 'x'.repeat(8001), lastSeenSeq: 1 }, asOwner)).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(rt.execute('kernel.conversation.hide', { messageId: detail.messages[0]!.id, hidden: true }, asOwner)).rejects.toMatchObject({ code: 'HIDE_NOT_SUPPORTED' });
     const { messageId } = await rt.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: convId, body: 'Dạ bột mì số 11 ạ!', lastSeenSeq: 1 }, asOwner);
     expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId, action: 'reply' })).toBe('accepted');

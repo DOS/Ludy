@@ -29,6 +29,7 @@ export function YoutubeCommentsPanel({ connectionId, isAdmin }: { connectionId: 
         <span className="font-medium text-foreground">{t('youtubeComments.label')}</span>
       </label>
       {!s.enabled && <p className="text-subtle-foreground">{t(s.scopeGranted ? 'youtubeComments.hint' : 'youtubeComments.needsScope')}</p>}
+      {s.enabled && !s.scopeGranted && <p className="text-destructive" role="status" data-testid="youtube-scope-lost">{t('youtubeComments.needsScope')}</p>}
       {s.enabled && (
         <div className="space-y-0.5 text-subtle-foreground" data-testid="youtube-quota">
           <p>{t('youtubeComments.units', { used: f.number(s.pollUnitsUsed), budget: f.number(s.pollBudget), replies: f.number(s.replyUnitsUsed) })}</p>

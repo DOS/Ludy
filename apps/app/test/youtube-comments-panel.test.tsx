@@ -78,6 +78,11 @@ describe('YoutubeCommentsPanel (#3134)', () => {
     expect(noScope).toMatch(/data-testid="youtube-comments-toggle"[^>]*disabled|disabled[^>]*data-testid="youtube-comments-toggle"/);
   });
 
+  it('says so when the switch is on but the grant lost the comment scope', () => {
+    expect(render([status({ scopeGranted: false })])).toContain('data-testid="youtube-scope-lost"');
+    expect(render([status()])).not.toContain('youtube-scope-lost');
+  });
+
   it('is only for owners and admins to change', () => {
     expect(render([status()], false)).toMatch(/disabled/);
     expect(render([status()], true)).not.toMatch(/<button[^>]*disabled/);

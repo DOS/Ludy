@@ -124,6 +124,8 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const HOUR_MS = 3_600_000;
+// How far before the last read a YouTube poll starts (#3134).
+const YOUTUBE_POLL_OVERLAP_MS = 30 * 60_000;
 // The most messages one detail read returns (a thread longer than this shows its latest).
 export const CONVERSATION_MESSAGES_MAX = 500;
 
@@ -2689,7 +2691,10 @@ export const conversationHistoryBegin = defineCommand({
     // Back to the last read, or to the connection's start, and never further than the window.
     const floor = new Date(ctx.now.getTime() - HISTORY_WINDOW_DAYS * 24 * HOUR_MS);
     const from = row.history_synced_at ?? row.connected_at;
-    return { action: 'call', provider: row.provider, since: (from && from.getTime() > floor.getTime() ? from : floor).toISOString() };
+    // A YouTube poll reads back a margin before the last one ended (#3134): a comment published while the poll ran, or listed late, is dated before the
+    // next `since`, and would otherwise be dropped for good. The ingest is idempotent on the comment id, so the overlap costs no extra request.
+    const start = row.provider === 'youtube' && from ? new Date(from.getTime() - YOUTUBE_POLL_OVERLAP_MS) : from;
+    return { action: 'call', provider: row.provider, since: (start && start.getTime() > floor.getTime() ? start : floor).toISOString() };
   },
 });
 
@@ -3175,6 +3180,8 @@ export const conversationYoutubeCommentsSet = defineCommand({
     if (input.enabled && !row.scopes.includes(YOUTUBE_COMMENT_SCOPE)) {
       throw new DomainError('YOUTUBE_SCOPE_MISSING', 409, 'Kênh YouTube này chưa cho phép đọc bình luận. Hãy kết nối lại và cho phép quyền quản lý bình luận');
     }
+    // Switching it on again changes nothing (it would otherwise force a new read of the whole window and reset the interval).
+    if (input.enabled && row.comments_enabled) return { enabled: true };
     await ctx.trx
       .updateTable('crove_kernel.channel_connection')
       .set(input.enabled ? { comments_enabled: true, history_synced_at: null, history_next_at: ctx.now, history_idle_polls: 0, history_requested_at: null } : { comments_enabled: false, history_next_at: null })
