@@ -336,7 +336,12 @@ describe('ThreadsConversations.history (#3133)', () => {
     expect(await failing({ body: { data: [{ id: POST }] } }, err(10, 403))).toMatchObject({ kind: 'failed', retry: false });
     expect(await failing({ body: { data: [{ id: POST }] } }, err(2, 500))).toMatchObject({ kind: 'failed', retry: true });
     // A post that is gone is skipped.
-    expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 400))).toMatchObject({ kind: 'ok', events: [] });
+    expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 404))).toMatchObject({ kind: 'ok', events: [] });
+    // An invalid request is not a missing post: the read fails, so no gap is cleared by a read that read nothing.
+    expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 400))).toMatchObject({ kind: 'failed', retry: false });
+    // A next page is unread history even when this page is short.
+    const short = threads({ [posts]: [{ body: { data: [{ id: POST }] } }], [conversation]: [{ body: { data: [row('18100000000000060', POST, '2026-11-12T10:00:00+0000')], paging: { next: 'https://graph.threads.net/next' } } }] });
+    expect(await new ThreadsPublisher(short.fetchImpl, fast).conversations.history?.(input)).toMatchObject({ kind: 'ok', complete: false });
     // More recent posts than one pass reads is a gap, not a complete read.
     const morePosts = threads({ [posts]: [{ body: { data: [{ id: POST }], paging: { next: 'https://graph.threads.net/next' } } }], [conversation]: [{ body: { data: [] } }] });
     expect(await new ThreadsPublisher(morePosts.fetchImpl, fast).conversations.history?.({ ...input, maxChats: 1 })).toMatchObject({ kind: 'ok', complete: false });

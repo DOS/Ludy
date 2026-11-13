@@ -293,7 +293,7 @@ export class ThreadsConversations implements ConversationAdapter {
     const maxPosts = Math.max(1, Math.min(input.maxChats, RECONCILE_POSTS_MAX));
     const failed = (error: unknown): ConversationHistoryResult => {
       const result = this.api.failure(error);
-      if (result.kind === 'rejected' && (result.error === 'token_expired' || result.error === 'permission')) return { kind: 'failed', retry: false, ...(result.code ? { code: result.code } : {}) };
+      if (result.kind === 'rejected' && (result.error === 'token_expired' || result.error === 'permission' || result.error === 'bad_request')) return { kind: 'failed', retry: false, ...(result.code ? { code: result.code } : {}) };
       const code = result.kind === 'rejected' || result.kind === 'unknown' ? result.code : undefined;
       return { kind: 'failed', retry: true, ...(code ? { code } : {}) };
     };
@@ -326,9 +326,10 @@ export class ThreadsConversations implements ConversationAdapter {
           params: { fields: 'id,text,username,timestamp,replied_to,is_reply_owned_by_me,hide_status', reverse: 'true', limit: String(RECONCILE_REPLIES_PER_POST) },
         });
       } catch (error) {
-        // A post that is gone has nothing to read; any other failure ends the pass.
+        // A post that is gone (HTTP 404) has nothing to read; any other failure, an invalid field or parameter included, ends the pass: skipping it
+        // would record a read that read nothing and clear the gap.
         const result = this.api.failure(error);
-        if (result.kind === 'rejected' && result.error === 'bad_request') continue;
+        if (result.kind === 'rejected' && result.error === 'bad_request' && result.httpStatus === 404) continue;
         return failed(error);
       }
       const rows = (Array.isArray(answer.data) ? answer.data : []).filter((row) => row && typeof row === 'object');
@@ -360,7 +361,8 @@ export class ThreadsConversations implements ConversationAdapter {
         const event = eventFromValue(input.externalAccountId, at, { ...row, id, root_post: postId, replied_to: top === id ? postId : top, timestamp: at }, now, ownUsername);
         if (event) events.push(event);
       }
-      if (!reachedSince && rows.length >= RECONCILE_REPLIES_PER_POST && typeof answer.paging?.next === 'string') complete = false;
+      // A next page that was not read is unread history, whatever the size of this one.
+      if (!reachedSince && typeof answer.paging?.next === 'string') complete = false;
     }
     return { kind: 'ok', events: sortEvents(events), complete, oldest: oldestMs !== null ? new Date(oldestMs).toISOString() : null };
   }
