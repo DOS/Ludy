@@ -10,7 +10,7 @@
 // Agents never run either: neither declares an agent surface.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@crove/kernel-contract';
+import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, ORDER_SOURCE_KIND, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
@@ -155,6 +155,17 @@ export const einvoiceIssueRequest = defineQuery({
     const series = draft.seriesId
       ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.seriesId).executeTakeFirst()
       : undefined;
+    // The orders this draft's lines came from, each once in the order of the first line that names it (the card asks Engage whether one was cancelled; ADR-0050 point 2, #2849).
+    const sourced = await ctx.trx
+      .selectFrom('crove_finance.einvoice_draft_line')
+      .select(['source_id', 'line_no'])
+      .where('org_id', '=', ctx.orgId)
+      .where('draft_id', '=', draftId)
+      .where('source_kind', '=', ORDER_SOURCE_KIND)
+      .where('source_id', 'is not', null)
+      .orderBy('line_no')
+      .execute();
+    const sourceOrderIds = [...new Set(sourced.map((l) => (l.source_id as string).toLowerCase()))];
     const hash = (await sql<{ hash: string | null }>`SELECT crove_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
     return {
       draftId,
@@ -170,6 +181,7 @@ export const einvoiceIssueRequest = defineQuery({
       subtotal: draft.subtotal,
       vatAmount: draft.vatAmount,
       lines: draft.lines,
+      sourceOrderIds,
       current: draft.state === 'draft' && hash === payload.data.contentHash,
     };
   },
