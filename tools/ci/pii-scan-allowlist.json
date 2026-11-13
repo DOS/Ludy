@@ -125,5 +125,15 @@
       "apps/app/test/field.test.tsx"
     ],
     "reason": "minimal addresses for the email-budget key and the address validator, including one with an invalid domain on purpose"
+  },
+  {
+    "kind": "email",
+    "values": [
+      "hi@ludy.so"
+    ],
+    "paths": [
+      "apps/web/src/content/site.ts"
+    ],
+    "reason": "the project's own public contact address on its domain, given by the owner on 2026-11-13 for the privacy page (ludy.so/privacy); not a person's address"
   }
 ]
