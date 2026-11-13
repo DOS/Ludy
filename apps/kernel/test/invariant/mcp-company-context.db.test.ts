@@ -90,7 +90,7 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-1)', (
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
         `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-         WHERE s.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~ 'mcp_company'
+         WHERE s.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~ '''mcp_company'''
          ORDER BY 1`,
       ),
     );
