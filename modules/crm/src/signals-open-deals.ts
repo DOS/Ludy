@@ -22,6 +22,8 @@ export const crmOpenDealsSignals = defineQuery({
   name: 'crm.signals.open_deals',
   input: z.strictObject({}),
   access: ALL,
+  // An AI app the owner or an admin connected may run this read (ADR-0051, #2975, step S2): ids, dates and amounts only, run in the sealed context of the grant (no user, so nothing bound to a user answers).
+  mcp: { scope: 'ludy.read' },
   handler: async (ctx): Promise<CrmOpenDealSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows } = await sql<{ deal_id: string; party_id: string }>`
