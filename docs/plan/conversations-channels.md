@@ -47,7 +47,7 @@ All six channels are **providers** of the conversation core. Nothing about tenan
 | Retention, erasure, export, purge (CV6, built) | Provider-neutral by construction (they work on the tables), so a new channel needs only a test that its rows are covered. **CV6 is accepted, so a live channel may handle a real customer's messages** once its live check passes |
 | Saved replies, `{tên}` placeholder, intent sorting, contact match, reply drafts (CV3, CV8, #3102) | Unchanged and provider-neutral |
 
-**The AI part, the same on every channel (AGENTS.md "AI part named").** Dy, the Engage coworker in Hộp thư, works on the new channel exactly as on Messenger and Zalo: a **reply draft** written by the system context from the tainted thread text (`ConversationWriter` in `packages/agent`, `metered('conversation.draft', ...)` under the AI budget meter and the org's `auto_draft` switch), the **saved replies** matched without a model, the **intent label** suggestion and the **likely contacts** list. A draft stays inside the channel's `replyMax` and window, never invents a price or a link, and **a person presses Send**; an agent never sends, hides or resolves, and with AI off the inbox works as before. Each build issue's acceptance names this for its channel.
+**The AI part, the same on every channel (AGENTS.md "AI part named").** Dy, the Engage coworker in Hộp thư, works on the new channel exactly as on Messenger and Zalo: a **reply draft** written by the system context from the tainted thread text (`ConversationWriter` in `packages/agent`, `metered('conversation.draft', ...)` under the AI budget meter; the org's `auto_draft` switch governs the automatic drafts of new conversations, while a draft a member asks for is theirs to ask, as built in CV8), the **saved replies** matched without a model, the **intent label** suggestion and the **likely contacts** list. A draft stays inside the channel's `replyMax` and window, never invents a price or a link, and **a person presses Send**; an agent never sends, hides or resolves, and with AI off the inbox works as before. Each build issue's acceptance names this for its channel.
 
 **The small core changes a channel may need** (each named in its build issue, so no hidden work):
 1. a `whatsapp` entry in `CHANNEL_PROVIDERS` (the others exist);
@@ -91,6 +91,7 @@ All six channels are **providers** of the conversation core. Nothing about tenan
 - The adapter has `reply` only. The status webhook maps `failed` to the message's `send_state = failed` with the error code worded for a person; `sent`, `delivered` and `read` are answered 200 and stored nowhere, as Zalo's seen mark.
 - An `unknown` send outcome stays `unknown` (no history to reconcile against), shown as "was sent" only, never re-sent by a button.
 - Inbound image: the pending attachment row names the **media id** instead of an address, and the worker resolves it with the connection's token in two calls (the URL, then the bytes) inside the 5-minute life of the URL. The job carries ids only; the token never leaves the sealed credential. The Meta media hosts go in the allowlist [live].
+- **Contract change this needs** (the build issue's, shared with Telegram): today an inbound image is `{ kind: 'image', url }` with an https `url` (`zConversationEventImage` in `packages/kernel-contract/src/conversations.ts`, `InboundConversationEvent.attachments` in `packages/channel/src/conversation.ts`) and the pending `conversation_attachment` row keeps that address in `source_url` until the bytes are stored. A provider whose media needs a token gets a second shape, `{ kind: 'image', mediaRef }` (exactly one of `url` or `mediaRef`), a provider-scoped reference (the WhatsApp media id, the Telegram `file_id`) that is not a URL and holds no token; the pending row stores it in the same `pii` column, or a sibling one, under the same rules (cleared when stored, never in a job, event, audit row or log, deleted at six days); and the fetch job asks the provider's adapter to turn the reference into bytes with the sealed credential instead of fetching a stored address. No token-bearing URL is ever persisted. This is a migration and a protected-path change, so it gets the security review.
 - Phone privacy: `wa_id` is the customer's phone number, so it is class `pii`, never in an audit row, a job, an event or a log; the party is still never created automatically.
 
 **What a person sets up** (owner action, no agent signs in): section 6. **Who pays**: the business pays Meta from the payment method on its own WABA; inside the window a free-form reply is free [S]. One secondary source says service messages become chargeable on 2026-10-01 while another says free until 2026-09-30, so **whether a reply inside the window costs the business anything is a [live] check** (read the business's own billing page after the test), and the connect screen tells the business that Meta bills its own account. Ludy pays nothing per message.
@@ -109,7 +110,7 @@ All six channels are **providers** of the conversation core. Nothing about tenan
 | Reply | `sendMessage` with `chat_id` and `text`, up to 4096 characters (`TELEGRAM_TEXT_MAX` already in `packages/channel/src/telegram.ts`). In Business mode the same call carries `business_connection_id` and appears as the owner's own message | [M], [S] |
 | Window | None: a bot may answer a user who started it at any time (`windowHours: null`). A blocked bot gets a refusal that maps to `permission` | [M], [live] |
 | Limits | About one message a second to one chat, 20 a minute to a group, about 30 a second across chats; beyond that 429 errors. **Paid broadcasts** (0.1 Star a message over the free 30 a second) are off by default and Ludy never turns them on | [O] |
-| Attachments | `photo` arrives as sizes with a `file_id`; `getFile` gives a `file_path`; the bytes come from `https://api.telegram.org/file/bot<TOKEN>/<file_path>`, **a URL that contains the token**, so it is built inside the job, never stored, logged or put in an event. Download limit about 20 MB per file | [M], [live] |
+| Attachments | `photo` arrives as sizes with a `file_id`; `getFile` gives a `file_path`; the bytes come from `https://api.telegram.org/file/bot<TOKEN>/<file_path>`, **a URL that contains the token**, so it is built inside the job, never stored, logged or put in an event; the event carries the `file_id` as a `mediaRef` (the contract change of section 4.1). Download limit about 20 MB per file | [M], [live] |
 | Names | `from.first_name`, `last_name`, `username` arrive in each update; `from.id` is the identity | [M] |
 | History | None for bots. A missed update may be lost: how long Telegram holds undelivered updates and how it retries a failing webhook is not confirmed | [U] |
 | Telegram Business mode | An owner with Telegram Premium connects a bot to their **own account** in Telegram's settings (Business, Chatbots); the bot then receives and answers the owner's own customer chats. Each account connects one business bot (one blog [S]). This is the mode that fits a shop owner who already chats with customers from a personal account; the Premium subscription is the owner's own | [S], [live] |
@@ -239,7 +240,18 @@ Each channel is one end-to-end issue (migration if any, server, contract, UI, te
 
 Issue numbers are written into the PR and added here when the issues are opened: see the PR for the list.
 
-## 10. Risks
+## 10. Official pages to read first
+
+The official pages that appeared in this pass's search results, **listed but not read** (section 2). Each build issue reads its own and upgrades the tags:
+
+- WhatsApp: pricing <https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing>, media <https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/media>, per-user marketing limits <https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/marketing-templates/per-user-limits/>, Embedded Signup <https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/version-3-public-preview/>.
+- Telegram: Bot API <https://core.telegram.org/bots/api>, Bots FAQ (limits, paid broadcasts) <https://core.telegram.org/bots/faq>.
+- Threads: retrieve and manage replies <https://developers.facebook.com/docs/threads/retrieve-and-manage-replies>.
+- YouTube: quota costs <https://developers.google.com/youtube/v3/determine_quota_cost>, `comments.insert` <https://developers.google.com/youtube/v3/docs/comments/insert>, `commentThreads.insert` <https://developers.google.com/youtube/data/reference/rest/v3/commentThreads/insert>.
+- TikTok: Research API comment query (not usable for an inbox) <https://developers.tiktok.com/doc/research-api-specs-query-video-comments>; the Business Messaging API pages were not among the results.
+- Shopee, Lazada, TikTok Shop: no official chat page was among the results.
+
+## 11. Risks
 
 | Risk | Mitigation |
 |---|---|

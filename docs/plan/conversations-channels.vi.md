@@ -11,7 +11,7 @@
 
 | Hạng | Kênh | Hợp với người Việt đến đâu | Rào cản | Ai trả tiền | Kết luận |
 |---|---|---|---|---|---|
-| 1 | **WhatsApp Business** (Cloud API) | Vừa trong nước, cao với khách nước ngoài, du lịch, xuất khẩu. Zalo và Messenger vẫn dẫn đầu | Cần tài khoản WhatsApp Business và một số điện thoại; với Ludy Cloud phục vụ doanh nghiệp khác cần Meta xác minh doanh nghiệp và duyệt ứng dụng | Doanh nghiệp trả cho Meta bằng tài khoản của mình; trả lời tự do trong 24 giờ là miễn phí (nguồn phụ) | **Làm trước**, ưu tiên P1 |
+| 1 | **WhatsApp Business** (Cloud API) | Vừa trong nước, cao với khách nước ngoài, du lịch, xuất khẩu. Zalo và Messenger vẫn dẫn đầu | Cần tài khoản WhatsApp Business và một số điện thoại; với Ludy Cloud phục vụ doanh nghiệp khác cần Meta xác minh doanh nghiệp và duyệt ứng dụng | Doanh nghiệp trả cho Meta bằng tài khoản của mình; trả lời trong 24 giờ có mất phí hay không **chưa chắc** (các nguồn phụ nói khác nhau), lần kiểm tra thật sẽ xem hóa đơn của doanh nghiệp | **Làm trước**, ưu tiên P1 |
 | 2 | **Chat người mua trên Shopee, Lazada, TikTok Shop** | Rất cao với hộ kinh doanh bán trên sàn | Chưa xác nhận có API chat chính thức; cần Ludy đăng ký làm đối tác của từng sàn (quyết định #2523); dữ liệu người mua bị che và chỉ giữ khoảng 90 ngày | Chưa rõ | **Chưa làm bây giờ**, xem lại sau #2523 |
 | 3 | **TikTok** (bình luận và tin nhắn riêng) | Cao | Phải xin quyền dùng API tin nhắn doanh nghiệp; có quy định theo vùng; chưa thấy API liệt kê bình luận cho tài khoản doanh nghiệp | Doanh nghiệp, tài khoản TikTok Business của mình | **Làm, nhưng chờ được cấp quyền**, P2 |
 | 4 | **Telegram** (chat với bot, sau đó Telegram Business) | Thấp đến vừa | Không cần duyệt; chế độ Business cần chủ shop có Telegram Premium | Miễn phí (Premium do chủ shop tự trả) | **Làm**, P2 |
@@ -22,7 +22,7 @@
 
 Không có mô hình tenancy mới. Mỗi kênh chỉ là một "nhà cung cấp" mới của lõi hội thoại: một bộ đọc tin đến (webhook có kiểm chữ ký, hoặc quét định kỳ), một bộ gửi trả lời, một dòng quy tắc (độ dài tối đa, cửa sổ trả lời), tất cả đi qua đường ghi duy nhất của lõi. Lưu trữ, xóa dữ liệu theo yêu cầu, xuất dữ liệu đều dùng lại phần đã làm xong ở CV6.
 
-**Phần AI, giống nhau ở mọi kênh:** đồng nghiệp AI của Hộp thư (Dy) soạn bản nháp trả lời từ nội dung khách viết, gợi ý nhãn ý định và gợi ý hồ sơ liên hệ. Mỗi lần gọi mô hình đi qua đồng hồ ngân sách AI và công tắc AI của tổ chức. **Người bấm Gửi**, AI không tự gửi, không tự ẩn, không tự đóng; tắt AI thì hộp thư vẫn chạy bình thường.
+**Phần AI, giống nhau ở mọi kênh:** đồng nghiệp AI của Hộp thư (Dy) soạn bản nháp trả lời từ nội dung khách viết, gợi ý nhãn ý định và gợi ý hồ sơ liên hệ. Mỗi lần gọi mô hình đi qua đồng hồ ngân sách AI. Bản nháp tự động khi có hội thoại mới đi qua công tắc AI của tổ chức; bản nháp do thành viên tự bấm "Soạn nháp" thì không đi qua công tắc này (đúng như đã làm ở CV8). **Người bấm Gửi**, AI không tự gửi, không tự ẩn, không tự đóng; tắt AI thì hộp thư vẫn chạy bình thường.
 
 ## Điểm riêng từng kênh
 
