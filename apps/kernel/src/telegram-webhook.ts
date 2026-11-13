@@ -58,6 +58,9 @@ export class TelegramReplayCache {
 // replayed, and the unique message id alone must not be what keeps a purged or erased thread from coming back (CV6).
 export const TELEGRAM_NOTICE_MAX_AGE_MS = 48 * 3_600_000;
 
+// The one answer to every request whose secret does not check out.
+export const TELEGRAM_UNAUTHORIZED = { status: 401, code: 'WEBHOOK_SIGNATURE' } as const;
+
 export type TelegramWebhookOutcome =
   | { status: 200; parked: boolean }
   | { status: 401; code: 'WEBHOOK_SIGNATURE' }
@@ -76,7 +79,7 @@ export async function acceptTelegramWebhook(
   replays?: TelegramReplayCache,
 ): Promise<TelegramWebhookOutcome> {
   // Before the body is read, before any database call.
-  if (!telegramWebhookAuthorized(config, request)) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
+  if (!telegramWebhookAuthorized(config, request)) return TELEGRAM_UNAUTHORIZED;
   const body = await request.body();
   let update: unknown;
   try {

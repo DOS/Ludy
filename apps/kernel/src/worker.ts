@@ -1435,9 +1435,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (conversationPublishers && conversationBroker) {
     await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job.
+      // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job. The
+      // webhook's address is the API's own origin (PUBLIC_URL, where webhooks are answered), not the web app's.
       if (job.data.action === 'chat') {
-        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.appUrl ?? deps.publicUrl ?? '' }, job.data);
+        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.publicUrl ?? '' }, job.data);
         console.log(`[conversations] chat ${job.data.on ? 'enable' : 'disable'} ${job.data.connectionId}: ${outcome}`);
         return;
       }

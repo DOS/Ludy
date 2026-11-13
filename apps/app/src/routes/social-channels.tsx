@@ -645,7 +645,7 @@ export function SocialChannelsPage() {
                         </Button>
                       ) : null
                     )}
-                    {c.provider === 'telegram' && c.status === 'active' && <TelegramChats channel={c} canEdit={isAdmin} />}
+                    {c.provider === 'telegram' && (c.status === 'active' || c.chatState !== 'off') && c.status !== 'revoked' && <TelegramChats channel={c} canEdit={isAdmin} active={c.status === 'active'} />}
                   </div>
                   {isAdmin &&
                     (confirming === c.id ? (

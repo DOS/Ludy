@@ -200,42 +200,63 @@ export interface ChatHookDeps {
   broker: CredentialBroker;
   // The provider's adapter (Telegram's), which makes the platform call.
   adapter: (provider: string) => ConversationAdapter | undefined;
-  // The deployment's public address (APP_URL): the webhook is `<baseUrl>/api/channels/telegram/webhook/<hook>`. Telegram only takes https.
+  // The API's public origin (PUBLIC_URL, where webhooks are answered): the webhook is `<baseUrl>/api/channels/telegram/webhook/<hook>`. Telegram only takes https.
   baseUrl: string;
 }
 
 // Sets or deletes the connection's webhook and records the outcome. The returned text is for the log: a state or a code, nothing a platform
 // said and nothing of the hook. The adapter builds the address and the secret from the hook and the deployment's key and never returns them.
+// If the hook that was wanted changed while the call was made (a reconnect gave a new one), the answer is not applied and the job looks again, a few
+// times at most, so Telegram ends up pointing at the hook the database holds.
 export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationChatJob): Promise<string> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const action = job.on ? ('enable' as const) : ('disable' as const);
-  const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: job.connectionId, action }, options);
-  if (work.action !== 'call' || !work.hook) return 'none';
-  const record = async (outcome: 'done' | 'failed', extra: { botId?: string; code?: string } = {}): Promise<void> => {
-    await deps.runtime.execute('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action, outcome, ...extra }, options);
-  };
-  const failed = async (code: string): Promise<string> => {
-    await record('failed', { code });
-    return `failed:${code}`;
-  };
-  const adapter = deps.adapter('telegram');
-  if (!adapter?.chatHook) return failed('NO_ADAPTER');
-  let opened: Opened;
-  try {
-    opened = await open(deps, job);
-  } catch {
-    return failed('CREDENTIAL_ERROR');
+  let usedHookFp: string | undefined;
+  let last = 'none';
+  for (let round = 0; round < 3; round++) {
+    const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: job.connectionId, action, ...(usedHookFp ? { usedHookFp } : {}) }, options);
+    if (work.action !== 'call' || (job.on && !work.hook)) return last;
+    const record = (outcome: 'done' | 'failed', extra: { botId?: string; code?: string } = {}) =>
+      deps.runtime.execute<{ applied: boolean; hookChanged: boolean }>('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action, outcome, ...(work.hookFp ? { hookFp: work.hookFp } : {}), ...extra }, options);
+    const failed = async (code: string): Promise<{ text: string; again: boolean }> => {
+      const recorded = await record('failed', { code });
+      return { text: `failed:${code}`, again: recorded.hookChanged };
+    };
+    const adapter = deps.adapter('telegram');
+    let outcome: { text: string; again: boolean };
+    if (!adapter?.chatHook) {
+      outcome = await failed('NO_ADAPTER');
+    } else {
+      let opened: Opened | null = null;
+      try {
+        opened = await open(deps, job);
+      } catch {
+        opened = null;
+      }
+      if (!opened) {
+        outcome = await failed('CREDENTIAL_ERROR');
+      } else if (opened.kind === 'refused') {
+        outcome = await failed(opened.code);
+      } else {
+        let answer;
+        try {
+          answer = await adapter.chatHook({ secret: opened.secret, on: job.on, hook: work.hook ?? '', baseUrl: deps.baseUrl, key: deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key ?? null, takenBotIds: work.takenBotIds ?? [] });
+        } catch {
+          answer = { kind: 'failed' as const, retry: true, code: 'ADAPTER_ERROR' };
+        }
+        if (answer.kind === 'failed') {
+          outcome = await failed(answer.code);
+        } else {
+          const recorded = await record('done', job.on && answer.botId ? { botId: answer.botId } : {});
+          outcome = { text: job.on ? 'on' : 'off', again: recorded.hookChanged };
+        }
+      }
+    }
+    last = outcome.text;
+    if (!outcome.again) return last;
+    usedHookFp = work.hookFp;
   }
-  if (opened.kind === 'refused') return failed(opened.code);
-  let answer;
-  try {
-    answer = await adapter.chatHook({ secret: opened.secret, on: job.on, hook: work.hook, baseUrl: deps.baseUrl, key: deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key ?? null, takenBotIds: work.takenBotIds ?? [] });
-  } catch {
-    answer = { kind: 'failed' as const, retry: true, code: 'ADAPTER_ERROR' };
-  }
-  if (answer.kind === 'failed') return failed(answer.code);
-  await record('done', job.on && answer.botId ? { botId: answer.botId } : {});
-  return job.on ? 'on' : 'off';
+  return `${last}:busy`;
 }
 
 // A chat switch queued where this worker has no channel to make the call through: the attempt is recorded as failed, so the screen says so and

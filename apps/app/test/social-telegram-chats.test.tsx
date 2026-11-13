@@ -20,11 +20,13 @@ const { TelegramChats } = await import('../src/components/social-telegram-chats.
 
 type State = 'off' | 'enabling' | 'on' | 'disabling';
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ').trim();
-function render(chatState: State, chatError: string | null, canEdit: boolean, locale: 'vi' | 'en' = 'vi'): string {
+const NOW = Date.parse('2026-11-13T12:00:00Z');
+function render(chatState: State, chatError: string | null, canEdit: boolean, locale: 'vi' | 'en' = 'vi', extra: { active?: boolean; changedSecondsAgo?: number } = {}): string {
+  const chatChangedAt = new Date(NOW - (extra.changedSecondsAgo ?? 5) * 1000).toISOString();
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={(locale === 'vi' ? viMessages : enMessages) as never} timeZone="Asia/Ho_Chi_Minh">
-        <TelegramChats channel={{ id: '00000000-0000-4000-8000-0000000000aa', chatState, chatError }} canEdit={canEdit} />
+        <TelegramChats channel={{ id: '00000000-0000-4000-8000-0000000000aa', chatState, chatError, chatChangedAt }} canEdit={canEdit} active={extra.active ?? true} now={NOW} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -61,8 +63,28 @@ describe('the Telegram chats card', () => {
     expect(text(render('off', 'WEBHOOK_NEEDS_HTTPS', true))).toContain('Telegram chỉ gửi tin về địa chỉ https');
     expect(text(render('off', 'TELEGRAM_TOKEN_REFUSED', true))).toContain('hãy kết nối lại kênh');
     expect(text(render('off', 'TELEGRAM_502', true))).toContain('mã lỗi TELEGRAM_502');
-    // A failure is shown only while off: once on, an old code is not.
-    expect(text(render('on', 'BOT_IN_USE', true))).not.toContain('Bot này đang nhận tin nhắn ở một kênh');
+    // While a switch is under way no old failure is shown.
+    expect(text(render('enabling', 'BOT_IN_USE', true))).not.toContain('Bot này đang nhận tin nhắn ở một kênh');
+  });
+
+  it('offers the switch again when it stood too long, and says it may have been interrupted', () => {
+    const turningOn = render('enabling', null, true, 'vi', { changedSecondsAgo: 300 });
+    expect(text(turningOn)).toContain('có thể đã bị gián đoạn');
+    expect(text(turningOn)).toContain('Bật nhận tin nhắn của khách');
+    const turningOff = render('disabling', null, true, 'vi', { changedSecondsAgo: 300 });
+    expect(text(turningOff)).toContain('có thể đã bị gián đoạn');
+    expect(text(turningOff)).toContain('Tắt nhận tin nhắn');
+    // Inside the window there is no button and no warning.
+    expect(render('disabling', null, true, 'vi', { changedSecondsAgo: 30 })).not.toContain('<button');
+    expect(text(render('disabling', null, true, 'vi', { changedSecondsAgo: 30 }))).not.toContain('gián đoạn');
+  });
+
+  it('lets a connection that no longer works be turned off but not on, and shows a failed reconnect while on', () => {
+    const expiredOn = render('on', null, true, 'vi', { active: false });
+    expect(text(expiredOn)).toContain('Tắt nhận tin nhắn');
+    expect(render('off', null, true, 'vi', { active: false })).not.toContain('<button');
+    // A reconnect that did not take leaves the old webhook on and says why.
+    expect(text(render('on', 'TELEGRAM_TOKEN_REFUSED', true))).toContain('hãy kết nối lại kênh');
   });
 
   it('shows members the state without a button', () => {
