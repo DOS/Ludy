@@ -488,6 +488,28 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       // A decided draft's text is gone, so a retention purge or an erasure has nothing of Vy's text to delete.
       expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_draft WHERE org_id = $1 AND body IS NOT NULL', [o.orgId]))[0]?.n).toBe('0');
     });
+
+    it('a reply that still holds the contact-name placeholder is refused, writes nothing and leaves the draft and the saved reply as they were (#3102)', async () => {
+      const o = await org();
+      const saved = await rt.execute<{ id: string }>('kernel.conversation.saved_reply_create', { title: 'Chào', body: 'Chào {tên}, shop còn hàng ạ', keywords: ['còn hàng'] }, { actor: asUser(o.owner), orgId: o.orgId });
+      await ingest(o, [event('g')]);
+      const id = await threadOf(o, 'g');
+      const asked = await request(o, id);
+      expect(await run(o, model(written).writer, asked.draftId, id)).toBe('written');
+      const sent = () => rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [o.orgId, id]);
+      // Every spelling of the placeholder is refused, in a public and in a private reply alike, before anything is read or written.
+      for (const body of ['Chào {tên}, shop còn hàng ạ', 'Chào {Tên} ạ', 'Chào {ten} ạ', 'Chào { tên } ạ']) {
+        await expect(rt.execute('kernel.conversation.reply', { conversationId: id, body, lastSeenSeq: 1, draftId: asked.draftId, savedReplyId: saved.id }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'REPLY_PLACEHOLDER' });
+      }
+      await expect(rt.execute('kernel.conversation.reply_privately', { messageId: randomUUID(), body: 'Chào {tên} ạ' }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'REPLY_PLACEHOLDER' });
+      expect((await sent())[0]?.n).toBe('0');
+      expect((await drafts(o)).map((d) => d.state)).toEqual(['live']);
+      expect((await rt.query<SavedReplyListed>('kernel.conversation.saved_reply_list', {}, { actor: asUser(o.owner), orgId: o.orgId })).replies[0]?.useCount).toBe(0);
+      // The text the box fills is accepted, and the saved reply is counted.
+      await rt.execute('kernel.conversation.reply', { conversationId: id, body: 'Chào Lan, shop còn hàng ạ', lastSeenSeq: 1, draftId: asked.draftId, savedReplyId: saved.id }, { actor: asUser(o.owner), orgId: o.orgId });
+      expect((await sent())[0]?.n).toBe('1');
+      expect((await rt.query<SavedReplyListed>('kernel.conversation.saved_reply_list', {}, { actor: asUser(o.owner), orgId: o.orgId })).replies[0]?.useCount).toBe(1);
+    });
   });
 
   describe('new conversations', () => {

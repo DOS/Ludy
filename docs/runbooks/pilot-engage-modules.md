@@ -40,6 +40,19 @@ CRM needs none of this. Social and its inbox work without any channel app (draft
    - Meta webhook (Page and Instagram objects): `<PUBLIC_URL>/api/channels/facebook/webhook`, with the verify token of step 2 ([facebook-conversations-live-check.md](facebook-conversations-live-check.md), section 0).
    - Zalo OA webhook: `<APP_URL>/api/channels/zalo/webhook` ([zalo-conversations-live-check.md](zalo-conversations-live-check.md), section 0).
 2. **[OPERATOR]** in `/opt/crove/.env`, set the settings of those apps (names in `.env.example`): `CHANNEL_META_APP_ID`, `CHANNEL_META_APP_SECRET`, `CHANNEL_META_WEBHOOK_VERIFY_TOKEN` (a fresh random token), `CHANNEL_INSTAGRAM_APP_ID` and `CHANNEL_INSTAGRAM_APP_SECRET` when Instagram uses its own app, `CHANNEL_ZALO_APP_ID`, `CHANNEL_ZALO_APP_SECRET`, `CHANNEL_ZALO_OA_SECRET_KEY`. Leave `CHANNEL_FACEBOOK_HISTORY` and `CHANNEL_ZALO_HISTORY` off until their live checks pass.
+3. **Other posting channels** (owner decision 2026-11-13: add each one whose app secret already exists in the secret manager; skip the rest). For each, **[PERSON]** adds the redirect address `<APP_URL>/channels/oauth/<id>/callback` in that app's console, and **[OPERATOR]** sets its settings in `.env`. These channels post only; none of them feeds the inbox.
+
+   | Channel | `<id>` in the redirect | Settings |
+   | --- | --- | --- |
+   | Threads | `threads` | `CHANNEL_THREADS_APP_ID`, `CHANNEL_THREADS_APP_SECRET` |
+   | TikTok | `tiktok` | `CHANNEL_TIKTOK_CLIENT_KEY`, `CHANNEL_TIKTOK_CLIENT_SECRET` (posts stay private until TikTok audits the app; leave `CHANNEL_TIKTOK_INBOX` false) |
+   | YouTube | `youtube` | `CHANNEL_GOOGLE_CLIENT_ID`, `CHANNEL_GOOGLE_CLIENT_SECRET` |
+   | LinkedIn (a person) | `linkedin` | `CHANNEL_LINKEDIN_CLIENT_ID`, `CHANNEL_LINKEDIN_CLIENT_SECRET` |
+   | Pinterest | `pinterest` | `CHANNEL_PINTEREST_APP_ID`, `CHANNEL_PINTEREST_APP_SECRET` |
+
+   - **Not X:** X bills each post to the app's account, which is new spending; it stays off until the owner approves that cost.
+   - Telegram, Discord, Bluesky and Mastodon need no app: they are on by default and each org connects its own bot, webhook or account.
+   - Threads, Zalo and Instagram fetch images from presigned storage addresses, so image posts need `STORAGE=s3` with a public endpoint; text posts work without it.
 
 ## 2. Turn the modules on
 

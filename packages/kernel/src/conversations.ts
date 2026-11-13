@@ -100,6 +100,7 @@ import {
   type ConversationSummary,
   type SavedReplyListed,
   type SavedReplyView,
+  hasNamePlaceholder,
 } from '@crove/kernel-contract';
 import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
@@ -1140,6 +1141,12 @@ async function markRead(ctx: CommandContext, conversationId: string, userId: str
     .execute();
 }
 
+// A reply that still holds the contact-name placeholder `{tên}` is refused before anything is read or written (#3102): the box fills it when a saved reply
+// is picked, so a body that still has it means the fill was skipped, and the braces must never reach a customer. The error names no text.
+const refuseUnfilledPlaceholder = (body: string): void => {
+  if (hasNamePlaceholder(body)) throw new DomainError('REPLY_PLACEHOLDER', 422, 'Câu trả lời còn chỗ trống {tên} chưa điền, hãy sửa lại trước khi gửi');
+};
+
 export const conversationReply = defineCommand({
   name: 'kernel.conversation.reply',
   input: zConversationReply,
@@ -1150,6 +1157,7 @@ export const conversationReply = defineCommand({
   target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
   handler: async (ctx, input): Promise<{ messageId: string; seq: number }> => {
     const me = requireUser(ctx);
+    refuseUnfilledPlaceholder(input.body);
     const conversation = await lockConversation(ctx, input.conversationId);
     const connection = await connectionOf(ctx, conversation.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
@@ -1257,6 +1265,7 @@ export const conversationReplyPrivately = defineCommand({
   target: (input) => ({ type: 'kernel.conversation_message', id: input.messageId }),
   handler: async (ctx, input): Promise<ConversationPrivateReplied> => {
     const me = requireUser(ctx);
+    refuseUnfilledPlaceholder(input.body);
     const comment = await ctx.trx
       .selectFrom('crove_kernel.conversation_message')
       .select(['id', 'conversation_id', 'channel_connection_id', 'kind', 'direction', 'external_message_id', 'author_identity_id', 'sent_at', 'platform_removed_at'])

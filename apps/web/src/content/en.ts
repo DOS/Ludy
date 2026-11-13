@@ -618,6 +618,7 @@ export const en: Dictionary = {
     github: 'GitHub',
     docs: 'Docs',
     security: 'Security',
+    privacy: 'Privacy',
     copyright: '© 2026 Ludy',
   },
 };

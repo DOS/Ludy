@@ -5,7 +5,7 @@ import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOU
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { McpWakeView } from '@crove/kernel-contract';
+import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
@@ -43,7 +43,7 @@ import {
 } from '@crove/kernel';
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
-import type { QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
+import type { FollowupSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -52,6 +52,7 @@ import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
+import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
@@ -372,6 +373,10 @@ export function createRpcHandler(
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
   const quoteCoworker = quoteAi(conversationReader?.quoteLines ? { quoteLines: conversationReader.quoteLines.bind(conversationReader) } : null, suggestionBudget());
+
+  // The sales coworker's draft of the follow-up message for a "Cần theo dõi" step (#3101): the same reader and model, a budget of its own. It is told only the reason of the step and a hint, never a fact
+  // of the deal; the facts and the link are composed by code, and what it answers is a text for the person to read, edit and send. Nothing is stored or sent.
+  const followupCoworker = crmFollowupAi(conversationReader?.crmFollowupWords ? { crmFollowupWords: conversationReader.crmFollowupWords.bind(conversationReader) } : null, suggestionBudget());
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -980,6 +985,13 @@ export function createRpcHandler(
         list: os.crm.nextSteps.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.next_step.list', input, { actor, orgId }))),
         done: os.crm.nextSteps.done.handler(crmCommand('crm.next_step.done')),
         snooze: os.crm.nextSteps.snooze.handler(crmCommand('crm.next_step.snooze')),
+        draft: os.crm.nextSteps.draft.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const source = await runtime.query<FollowupSource>('crm.followup.source', { nextStepId: input.nextStepId }, { actor, orgId });
+            const makeLink = (quoteId: string) => runtime.execute<QuoteLinkCreated>('crm.quote.create_link', { quoteId }, { actor, orgId });
+            return draftCrmFollowup({ ai: followupCoworker, publicUrl: channels?.publicUrl ?? '', makeLink }, orgId, actor.userId, source, input.hint);
+          }),
+        ),
       },
       dealSetting: {
         get: os.crm.dealSetting.get.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal_setting.get', {}, { actor, orgId }))),

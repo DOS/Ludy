@@ -15,6 +15,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
+import { FollowupReplyInsert } from './followup-draft.tsx';
 import { QuoteReplyInsert } from './quote-send.tsx';
 
 const refresh = () => {
@@ -182,6 +183,7 @@ export function ContactPanel({ conversationId, onOpen }: { conversationId: strin
       {canWrite && c.contact.partyId === null && <ContactSuggestions conversationId={conversationId} lastSeq={c.lastSeq} />}
       {canWrite && <LinkContact key={`${conversationId}:${c.contact.partyId ?? ''}`} conversationId={conversationId} defaultName={c.contact.displayName ?? ''} hasParty={c.contact.partyId !== null} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <QuoteReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
+      {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <FollowupReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-foreground">{t('others')}</h3>
         {others.length === 0 ? (
