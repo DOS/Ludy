@@ -187,7 +187,7 @@ So v1 on Zalo is **direct messages only, in Hộp thư**; Zalo comments have no 
 
 ### 6.6 Later providers
 
-TikTok (comments exist on its Display side; not researched), Threads replies, YouTube comments and WhatsApp: the same core and the same intake; each is an adapter capability (`readInbound`, `reply`) and a build issue of its own. Customer email is the next family (section 6.7).
+WhatsApp, Telegram, TikTok, Threads replies and YouTube comments: the same core and the same intake; each is an adapter capability (`readInbound`, `reply`) and a build issue of its own. **Planned in [conversations-channels.md](conversations-channels.md)** (owner decision 2026-11-13, #3128): the ranking for Vietnamese small businesses, each channel's API, limits, cost and live check, what is left out (marketplace buyer chat waits for the partner decision #2523) and the build order. Customer email is the next family (section 6.7).
 
 ### 6.7 Email (a conversation channel; built in #2439, as built below)
 
