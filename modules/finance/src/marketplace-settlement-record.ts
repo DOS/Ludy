@@ -7,7 +7,7 @@
 // - finance.marketplace_settlement.record (R3): runs only through kernel.proposal.approve. It builds the entry again from the stored lines, in the approver's context, and refuses a stored proposal that
 //   differs from it (a proposal row written some other way cannot post lines the settlement does not hold). Then, in the same transaction, it finds the platform's party (crove_finance.marketplace_party;
 //   created with its link on the platform's first posting, one per entity and platform) and records the voucher with the settlement on it (one voucher per settlement: a unique index holds it,
-//   20261212121500) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   20261228011500) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
 // The commands are made by createMarketplaceSettlementCommands so a test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses.
 // No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
