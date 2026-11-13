@@ -973,6 +973,7 @@ export function createRpcHandler(
         list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
         get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
         byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
+        bookings: os.crm.deals.bookings.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.bookings', input, { actor, orgId }))),
         conversations: os.crm.deals.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.conversations', input, { actor, orgId }))),
         create: os.crm.deals.create.handler(crmCommand('crm.deal.create')),
         update: os.crm.deals.update.handler(crmCommand('crm.deal.update')),
@@ -1061,6 +1062,9 @@ export function createRpcHandler(
         list: os.crm.bookings.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.booking.list', input, { actor, orgId }))),
         cancel: os.crm.bookings.cancel.handler(crmCommand('crm.booking.cancel')),
         move: os.crm.bookings.move.handler(crmCommand('crm.booking.move')),
+        // A booking and a deal (#3103): a person links one, or takes the link off; neither mails anyone.
+        linkDeal: os.crm.bookings.linkDeal.handler(crmCommand('crm.booking.link_deal')),
+        unlinkDeal: os.crm.bookings.unlinkDeal.handler(crmCommand('crm.booking.unlink_deal')),
         // Times to offer a client (#1440): the type's free slots, inside the days and times the client's message asks
         // for when the deployment's model can read it (a paid call, on the drafts' budget), else the next free ones.
         // Read-only: the member sends the reply. A model that fails or is off leaves the next free slots and says so.
