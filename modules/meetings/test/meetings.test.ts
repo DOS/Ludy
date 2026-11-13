@@ -95,6 +95,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.add',
       'meetings.link.remove',
       'meetings.followup.send',
+      'meetings.live.chunk',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');

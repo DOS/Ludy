@@ -10764,6 +10764,9 @@ export const en = {
       },
     },
     meetings: {
+      live: {
+        chunk: 'Take a piece of the audio of a meeting being recorded (live notes)',
+      },
       media: {
         discard: 'Remove the stored copy of deleted meeting media',
         orphan_keys: 'List the stored copies of deleted meeting media',

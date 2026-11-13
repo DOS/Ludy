@@ -10761,6 +10761,9 @@ export const vi = {
       },
     },
     meetings: {
+      live: {
+        chunk: 'Nhận một đoạn âm thanh của cuộc họp đang ghi (ghi chú trực tiếp)',
+      },
       media: {
         discard: 'Xóa bản lưu của tệp cuộc họp đã bị hủy',
         orphan_keys: 'Liệt kê bản lưu của tệp cuộc họp đã bị hủy',
