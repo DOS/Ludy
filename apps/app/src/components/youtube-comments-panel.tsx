@@ -4,6 +4,7 @@
 // every channel of the Google project) or the budget resets. Nothing is read or stored until the switch is on.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
+import { YOUTUBE_POLL_MAX_UNITS } from '@crove/kernel-contract';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -20,7 +21,7 @@ export function YoutubeCommentsPanel({ connectionId, isAdmin }: { connectionId: 
   const s = list.data?.find((row) => row.connectionId === connectionId);
   if (!s) return null;
   const blocked = s.blockedUntil !== null;
-  const overBudget = s.pollUnitsUsed + 8 > s.pollBudget;
+  const overBudget = s.pollUnitsUsed + YOUTUBE_POLL_MAX_UNITS > s.pollBudget;
   return (
     <section className="mt-2 space-y-1 text-xs" aria-label={t('youtubeComments.label')} data-testid="youtube-comments">
       <label className="flex items-center gap-2 text-sm">
