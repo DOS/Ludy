@@ -10568,9 +10568,6 @@ export const en = {
         },
       },
       member_vy: {
-        live_chunks: {
-          open: 'Open the pieces of a meeting being recorded for the Vy live notes run',
-        },
         memory: {
           delete: 'Delete something Vy remembers about you',
           list: 'See what Vy remembers about you',

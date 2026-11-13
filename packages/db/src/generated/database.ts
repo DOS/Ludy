@@ -2735,6 +2735,7 @@ export interface MeetingsLiveLineTable {
   start_seconds: ColumnType<number, number, NotGranted>;
   end_seconds: ColumnType<number, number, NotGranted>;
   text: ColumnType<string, string, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }

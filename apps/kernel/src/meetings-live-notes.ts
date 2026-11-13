@@ -3,7 +3,7 @@
 // started, and a window is at most LIVE_WINDOW_PIECES pieces of about fifteen seconds:
 //   1. the run is the recorder's member-scoped agent context (memberVyRuntime): every call enters it afresh, so the member being active, vy.use, the org,
 //      module and agent kill switches, the global `ai` switch, a spent hard-stop budget and the run being live are re-checked at every step;
-//   2. kernel.member_vy.live_chunks.open answers the ids and the per-piece wrapped keys of the pieces after the one the preview reached (never plaintext), and
+//   2. kernel.member_vy.meeting_audio.open, in its live mode, answers the ids and the per-piece wrapped keys of the pieces after the one the preview reached (never plaintext), and
 //      it is called again before EACH piece, so a meeting deleted, shredded or taken from the recorder mid-window stops the window before the next piece;
 //   3. each piece is transcribed behind RunMeter, whose admit enters the member context again with the call's projected cost, so a piece that would cross a
 //      hard-stop budget is refused before the provider call;
@@ -26,7 +26,7 @@ import {
   type SystemActor,
 } from '@crove/kernel-runtime';
 import { LIVE_LINE_TEXT_MAX, LIVE_WINDOW_PIECES, zLiveResult } from '@crove/kernel-contract';
-import { TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
+import { TRANSCRIPT_RESULT_MAX, liveContainerHeader, livePieceFile } from '@crove/mod-meetings';
 import { failureCode } from './meetings-transcribe.ts';
 import type { MediaMeasurer } from './meetings-measure.ts';
 
@@ -56,6 +56,7 @@ const PIECE_CIPHERTEXT_MAX = 4 * 1024 * 1024;
 interface OpenPiece {
   seq: number;
   lengthSeconds: number;
+  startOffsetSeconds: number;
   keyId: string;
   wrappedKey: Buffer | Uint8Array;
   fileId: string;
@@ -103,8 +104,8 @@ class WindowMeter implements AiMeter {
 }
 
 // One piece, fetched and decrypted under its own key. The door is opened again for every piece, so the whole gate is re-checked before each one.
-async function openPiece(deps: MeetingsLiveNotesDeps, job: MeetingsLiveNotesJob, vy: MemberVyRuntime, seq: number): Promise<{ input: TranscribeInput; language: string } | null> {
-  const window = await vy.execute<OpenWindow>('kernel.member_vy.live_chunks.open', { meetingId: job.meetingId, afterSeq: seq - 1, limit: 1 });
+async function fetchPiece(deps: MeetingsLiveNotesDeps, job: MeetingsLiveNotesJob, vy: MemberVyRuntime, seq: number): Promise<{ bytes: Uint8Array; piece: OpenPiece; language: string } | null> {
+  const window = await vy.execute<OpenWindow>('kernel.member_vy.meeting_audio.open', { meetingId: job.meetingId, live: { afterSeq: seq - 1, limit: 1 } });
   const piece = window.pieces.find((p) => p.seq === seq);
   // Gone since the window was listed (the final recording landed and the sweep took it): the window simply ends here.
   if (!piece) return null;
@@ -118,24 +119,46 @@ async function openPiece(deps: MeetingsLiveNotesDeps, job: MeetingsLiveNotesJob,
     dataKey = unwrapMediaKeyWithSubkey(Buffer.from(piece.wrappedKey), { ...binding, keyId: piece.keyId }, subkey);
     const ciphertext = await readVerified(deps.store, { key: piece.storageKey, generation: piece.generation, sha256: piece.sha256 }, PIECE_CIPHERTEXT_MAX);
     const plain = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, binding);
-    const copy = new Uint8Array(plain);
+    const bytes = new Uint8Array(plain);
     plain.fill(0);
-    // What the meter charges is what crove-media measures in these bytes, never the length the sender claimed.
-    let measured: number;
-    try {
-      measured = await deps.measurer.measureBytes('audio', copy);
-    } catch (error) {
-      copy.fill(0);
-      throw error;
-    }
-    return {
-      input: { audio: copy, mimeType: piece.contentType, language: window.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: 0 },
-      language: window.language,
-    };
+    return { bytes, piece, language: window.language };
   } finally {
     dataKey?.fill(0);
     subkey.fill(0);
   }
+}
+
+// One piece as a file the provider and the sandbox can read, and its measured length. A piece after the first is the middle of a stream, so the header of the first piece
+// goes in front of it (liveContainerHeader); that header is read once per window and wiped with the rest. What the meter charges is what crove-media measures in the file, never
+// the length the sender claimed, and a sandbox that is down fails the window before a call is made.
+async function openPiece(
+  deps: MeetingsLiveNotesDeps,
+  job: MeetingsLiveNotesJob,
+  vy: MemberVyRuntime,
+  seq: number,
+  header: { value: Uint8Array | null | undefined },
+): Promise<{ input: TranscribeInput; piece: OpenPiece } | null> {
+  const fetched = await fetchPiece(deps, job, vy, seq);
+  if (!fetched) return null;
+  if (seq > 0 && header.value === undefined) {
+    const first = await fetchPiece(deps, job, vy, 0);
+    header.value = first ? liveContainerHeader(first.bytes) : null;
+    first?.bytes.fill(0);
+  }
+  const file = livePieceFile(seq, fetched.bytes, header.value ?? null);
+  const copy = new Uint8Array(file);
+  fetched.bytes.fill(0);
+  let measured: number;
+  try {
+    measured = await deps.measurer.measureBytes('audio', copy);
+  } catch (error) {
+    copy.fill(0);
+    throw error;
+  }
+  return {
+    input: { audio: copy, mimeType: fetched.piece.contentType, language: fetched.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: 0 },
+    piece: fetched.piece,
+  };
 }
 
 // One window, start to end. Returns the state it left the run in; never throws for a failed window (the failure is stored), only for a lost database.
@@ -143,31 +166,33 @@ export async function runMeetingsLiveNotes(deps: MeetingsLiveNotesDeps, job: Mee
   const vy = memberVyRuntime(deps.runtime, job.orgId, { agentId: job.agentId, runId: job.runId });
   let code: string | null = null;
   try {
-    const listed = await vy.execute<OpenWindow>('kernel.member_vy.live_chunks.open', {
+    const listed = await vy.execute<OpenWindow>('kernel.member_vy.meeting_audio.open', {
       meetingId: job.meetingId,
-      afterSeq: job.afterSeq,
-      limit: Math.min(Math.max(job.pieces, 1), LIVE_WINDOW_PIECES),
+      live: { afterSeq: job.afterSeq, limit: Math.min(Math.max(job.pieces, 1), LIVE_WINDOW_PIECES) },
     });
     const scope = { orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new WindowMeter(deps, vy, job) };
     const lines: Array<[number, number, number, string]> = [];
-    // The piece's own place in the recording: each piece is about fifteen seconds, and the first piece of the meeting starts at zero.
-    for (const piece of listed.pieces) {
-      const opened = await openPiece(deps, job, vy, piece.seq);
+    // The header of the first piece, read when the first later piece needs it.
+    const header: { value: Uint8Array | null | undefined } = { value: undefined };
+    for (const listedPiece of listed.pieces) {
+      const opened = await openPiece(deps, job, vy, listedPiece.seq, header);
       if (!opened) break;
-      let seconds = 0;
+      const piece = opened.piece;
       try {
-        seconds = opened.input.lengthSeconds;
+        const seconds = opened.input.lengthSeconds;
         const segments = await withAiScope(scope, () => transcribeChunks(deps.provider, [opened.input]));
         const text = segments
           .map((s) => s.text.trim())
           .filter((t) => t !== '')
           .join(' ')
           .slice(0, LIVE_LINE_TEXT_MAX);
-        if (text !== '') lines.push([piece.seq, piece.seq * 15, piece.seq * 15 + Math.max(1, seconds), text]);
+        // Where the piece sits in the recording: the lengths of the pieces before it (the recorder's clock), and its own length as measured.
+        if (text !== '') lines.push([piece.seq, piece.startOffsetSeconds, piece.startOffsetSeconds + Math.max(1, seconds), text]);
       } finally {
         opened.input.audio.fill(0);
       }
     }
+    header.value?.fill(0);
     const body = JSON.stringify(zLiveResult.parse({ v: 1, lines }));
     if (body.length > TRANSCRIPT_RESULT_MAX) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The window is longer than a result holds');
     const stored = await vy.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'ready', body } });

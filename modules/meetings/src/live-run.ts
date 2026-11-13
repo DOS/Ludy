@@ -6,9 +6,9 @@
 //                         window's run (kernel.member_vy.run.start, which checks vy.use, the four kill switches and the budget) and asks the worker for the
 //                         job through an event that carries ids only.
 //   (the worker)          enters the recorder's member-scoped context for that one run, reads that window's pieces through the live door
-//                         (kernel.member_vy.live_chunks.open), transcribes them metered by audio length, refreshes the notes when the window asks for it,
-//                         and writes ONLY kernel.member_vy_result.
-//   meetings.live.tick    (live-notes.ts) the pane's poll, the recorder's own action: copies a finished window into the preview lines and the running notes,
+//                         (kernel.member_vy.meeting_audio.open in its live mode), transcribes them metered by audio length, and writes ONLY
+//                         kernel.member_vy_result. The running notes are a run of their own (meetings.live.notes_start, below).
+//   meetings.live.tick    (live-notes.ts) the pane's poll, the recorder's own action: copies a finished window into the preview lines,
 //                         then starts the next window. The one command here that reads the private result row.
 //   meetings.live.stop    the recorder stops the live notes; the recording and its upload are untouched.
 //   meetings.live.status  what the pane shows: the opt-in, whether this deployment can do it, the state of the latest window and the lines so far.

@@ -53,6 +53,8 @@ export async function replaceDraft(
     if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
   }
   await ctx.trx.deleteFrom('crove_meetings.transcript_segment').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'draft').execute();
+  // The batch transcript replaces the live preview (ADR-0052 L4a, #3110): once a real transcript is stored the "Bản nháp trực tiếp" lines are gone, with the text they held.
+  if (segments.length > 0) await ctx.trx.deleteFrom('crove_meetings.live_line').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
   for (let i = 0; i < segments.length; i += INSERT_BATCH) {
     const rows = segments.slice(i, i + INSERT_BATCH).map((s) => ({
       org_id: ctx.orgId,

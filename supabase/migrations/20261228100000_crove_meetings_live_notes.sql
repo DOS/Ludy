@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS crove_meetings.live_line (
   start_seconds integer NOT NULL CHECK (start_seconds >= 0),
   end_seconds integer NOT NULL CHECK (end_seconds >= 0),
   text text NOT NULL CHECK (pg_catalog.length(text) BETWEEN 1 AND 4000),
-  -- The run whose result this line was copied from: the taint of a sink (ADR-0049 decision 4). Never null in practice; nullable so a line outlives its run row.
+  -- The model's words (a transcription of untrusted audio): tainted for as long as the line exists, and never shown to anyone but the recorder; there is no review that clears it
+  -- (the preview is replaced by the batch transcript, never published). The run it was copied from is the taint's source (ADR-0049 decision 4); nullable so a line outlives its run row.
+  tainted boolean NOT NULL DEFAULT true CHECK (tainted),
   source_run_id uuid,
   created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id),
@@ -72,6 +74,7 @@ CREATE OR REPLACE FUNCTION crove_meetings.live_for_member_vy(
 RETURNS TABLE (
   seq integer,
   length_seconds integer,
+  start_offset_seconds integer,
   file_id uuid,
   is_english boolean,
   key_id text,
@@ -127,7 +130,10 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  SELECT c.seq, c.length_seconds, c.file_id, v_english, k.key_id, k.wrapped_key
+  -- start_offset_seconds: where the piece begins in the recording, the sum of the lengths of the pieces before it (the recorder's own clock, never measured).
+  SELECT c.seq, c.length_seconds,
+         (SELECT COALESCE(SUM(x.length_seconds), 0)::integer FROM crove_meetings.live_chunk x WHERE x.org_id = c.org_id AND x.meeting_id = c.meeting_id AND x.seq < c.seq),
+         c.file_id, v_english, k.key_id, k.wrapped_key
   FROM crove_meetings.live_chunk c
   JOIN crove_meetings.media_key k ON k.org_id = c.org_id AND k.meeting_id = c.meeting_id AND k.kind = 'live:' OPERATOR(pg_catalog.||) c.seq::text
   WHERE c.org_id = v_org AND c.meeting_id = p_meeting_id AND c.seq > p_after_seq

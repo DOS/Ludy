@@ -10565,9 +10565,6 @@ export const vi = {
         },
       },
       member_vy: {
-        live_chunks: {
-          open: 'Mở các đoạn âm thanh đang ghi của cuộc họp cho lượt Vy ghi chú trực tiếp',
-        },
         memory: {
           delete: 'Xóa một mục Vy ghi nhớ về bạn',
           list: 'Xem những gì Vy ghi nhớ về bạn',

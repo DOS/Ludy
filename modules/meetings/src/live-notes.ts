@@ -90,6 +90,8 @@ export const liveTick = defineCommand({
                 start_seconds: startSeconds,
                 end_seconds: Math.max(startSeconds, endSeconds),
                 text,
+                // The model's words, kept tainted and tied to the run they came from (a sink, ADR-0049 decision 4).
+                tainted: true,
                 source_run_id: latest.runId,
               })
               .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'seq']).doNothing())
