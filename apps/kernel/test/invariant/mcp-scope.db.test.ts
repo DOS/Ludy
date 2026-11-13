@@ -32,6 +32,20 @@ const suite = ADMIN ? describe : describe.skip;
 
 // Every query an MCP grant may run, with its scope. Adding one is a security change: read what it returns first, and keep member-private data out.
 const REACHABLE = ['kernel.mcp.about:ludy.read', 'kernel.mcp.parties:ludy.read', 'finance.mcp.invoices:ludy.read'];
+// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the three kernel rules and the six line reads they
+// call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
+// on its own; a name outside this list still fails, and so does a missing name of REACHABLE.
+const SIGNALS = [
+  'kernel.signals.deal_without_invoice:ludy.read',
+  'kernel.signals.receivable_with_open_deal:ludy.read',
+  'kernel.signals.supplier_bank_changed:ludy.read',
+  'finance.signals.sales:ludy.read',
+  'finance.signals.overdue_receivables:ludy.read',
+  'finance.signals.supplier_bank_changes:ludy.read',
+  'finance.signals.supplier_payments_waiting:ludy.read',
+  'crm.signals.won_deals:ludy.read',
+  'crm.signals.open_deals:ludy.read',
+];
 
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
@@ -43,7 +57,8 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
 
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
-    expect(carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort()).toEqual([...REACHABLE].sort());
+    const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
+    expect(names.filter((n) => !SIGNALS.includes(n))).toEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
