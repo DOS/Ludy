@@ -255,7 +255,7 @@ export type SavedReplyView = z.infer<typeof zSavedReplyView>;
 // still holds it, so the braces never reach a customer. No other field is a placeholder. Case and the missing diacritic are tolerated ("{Tên}", "{ten}"),
 // and spaces inside the braces; the body is read in NFC so a name typed with combining marks matches too.
 export const SAVED_REPLY_NAME_PLACEHOLDER = '{tên}';
-const NAME_PLACEHOLDER = /\{[^\S\n]*t[eê]n[^\S\n]*\}/giu;
+const NAME_PLACEHOLDER = /\{+[^\S\n]*t[eê]n[^\S\n]*\}+/giu;
 // The longest name that is put into a reply: a platform name is untrusted text of any length.
 const FILLED_NAME_MAX = 100;
 
@@ -288,14 +288,18 @@ export function fillNamePlaceholder(text: string, name: string | null | undefine
   if (!hasNamePlaceholder(body)) return text;
   const filled = usableName(name);
   if (filled !== null) return body.replace(NAME_PLACEHOLDER, () => filled);
+  // Each placeholder becomes a mark, and only the spaces and the marks of punctuation next to a mark are tidied: the rest of the text stays as written.
+  const MARK = '\u0001';
   return body
-    .replace(NAME_PLACEHOLDER, '')
-    .replace(/[^\S\n]+([,.;:!?…])/gu, '$1')
-    .replace(/[,;:][^\S\n]*(?=[,.;:!?…])/gu, '')
-    .replace(/(^|\n)[^\S\n]*[,;:]+[^\S\n]*/gu, '$1')
-    .replace(/[^\S\n]{2,}/gu, ' ')
-    .replace(/[^\S\n]+(?=\n|$)/gu, '')
-    .replace(/(^|\n)[^\S\n]+/gu, '$1')
+    .replaceAll(MARK, '')
+    .replace(NAME_PLACEHOLDER, MARK)
+    .replace(/\u0001(?:[^\S\n]*\u0001)+/gu, MARK)
+    .replace(/(^|\n)[^\S\n]*\u0001[^\S\n]*(?:[,;:]+[^\S\n]*)?/gu, '$1')
+    .replace(/[,;:][^\S\n]*\u0001(?=[,.!?…])/gu, '')
+    .replace(/([([])[^\S\n]*\u0001[^\S\n]*/gu, '$1')
+    .replace(/[^\S\n]*\u0001(?=[,.;:!?…)\]])/gu, '')
+    .replace(/[^\S\n]*\u0001[^\S\n]*(?=\n|$)/gu, '')
+    .replace(/[^\S\n]*\u0001[^\S\n]*/gu, ' ')
     .trim();
 }
 

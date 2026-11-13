@@ -71,8 +71,23 @@ describe('fillNamePlaceholder', () => {
     expect(fillNamePlaceholder('Chào {tên}\nShop mở cửa 8h đến 21h.\n\nCảm ơn {tên}', null)).toBe('Chào\nShop mở cửa 8h đến 21h.\n\nCảm ơn');
   });
 
+  it('tidies only around the dropped placeholder and leaves the rest of the text as written', () => {
+    expect(fillNamePlaceholder('Chào {tên}. Gồm: áo ...và nhiều hơn', null)).toBe('Chào. Gồm: áo ...và nhiều hơn');
+    expect(fillNamePlaceholder('Cảm ơn {tên} :) hẹn gặp', null)).toBe('Cảm ơn :) hẹn gặp');
+    expect(fillNamePlaceholder('{tên}\n:) vui\n  - mục 1  x', null)).toBe(':) vui\n  - mục 1  x');
+    expect(fillNamePlaceholder('Mở 8 : 30 cho {tên}', null)).toBe('Mở 8 : 30 cho');
+    expect(fillNamePlaceholder('(Chị {tên}) ơi', null)).toBe('(Chị) ơi');
+    expect(fillNamePlaceholder('({tên} ơi)', null)).toBe('(ơi)');
+    expect(fillNamePlaceholder('Chào, {tên}, shop có ạ', null)).toBe('Chào, shop có ạ');
+  });
+
+  it('fills a placeholder written with doubled braces, leaving no brace', () => {
+    expect(fillNamePlaceholder('Chào {{tên}}!', 'Mai')).toBe('Chào Mai!');
+    expect(fillNamePlaceholder('Chào {{tên}}!', null)).toBe('Chào!');
+  });
+
   it('never leaves a placeholder behind, whichever name or none is given', () => {
-    const bodies = ['{tên}', 'a {tên}{tên} b', '{ten}, {Tên}; { TÊN }!', 'Xin chào {tên}'];
+    const bodies = ['{tên}', '{{tên}}', 'x {tên}} y', 'a {tên}{tên} b', '{ten}, {Tên}; { TÊN }!', 'Xin chào {tên}'];
     for (const body of bodies) {
       for (const name of [null, '', 'Lan', '{tên}', '{{tên}}']) {
         const out = fillNamePlaceholder(body, name);
