@@ -313,7 +313,7 @@ export const zHrBankFileExport = z.strictObject({ runId: zId, rows: z.number().i
 export type HrBankFileExport = z.infer<typeof zHrBankFileExport>;
 
 // Where the posting and the payments of an approved pay run stand (#2532), for the card of the month: read from the books and the open proposals by finance, never from a line, so it holds no
-// name and no amount. A posting is `none` (not asked for), `pending` (a proposal waits in the Inbox), `posted`, or `reversed` (its entry was reversed: there is nothing left to pay against).
+// name and no amount. A posting is `none` (not asked for), `pending` (a proposal waits in the Inbox), `posted`, or `reversed` (every posting of the run was reversed and none waits: nothing to pay against until it is posted again, #2931).
 // A payment is `none`, `pending` or `recorded`, by kind. `proposalId` is the open proposal of a pending step, so the card can link to it.
 export const PAYROLL_SETTLEMENT_POSTING = ['none', 'pending', 'posted', 'reversed'] as const;
 export const PAYROLL_SETTLEMENT_PAYMENT = ['none', 'pending', 'recorded'] as const;

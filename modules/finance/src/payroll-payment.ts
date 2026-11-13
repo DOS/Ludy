@@ -28,14 +28,15 @@ const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
 // no posting any more, so nothing is paid against it (#2854); a payment voucher that was reversed no longer holds its kind, so it can be recorded again. Read under the HR module's lock on the
 // run when a proposal is asked for, and again when it is approved.
 async function checkPayable(ctx: QueryContext, runId: string, kind: string): Promise<void> {
-  const posting = await ctx.trx
+  // A run can be posted again after a reversal (#2931), so it may hold several posting vouchers: it is payable against the one that stands.
+  const postings = await ctx.trx
     .selectFrom('crove_finance.journal_voucher as j')
     .select(['j.id', reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed')])
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payroll_run_id', '=', runId)
-    .executeTakeFirst();
-  if (!posting) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
-  if (posting.reversed) throw new DomainError('HR_PAYMENT_POSTING_REVERSED', 409, 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được');
+    .execute();
+  if (postings.length === 0) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
+  if (postings.every((p) => p.reversed)) throw new DomainError('HR_PAYMENT_POSTING_REVERSED', 409, 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được');
   const paid = await ctx.trx
     .selectFrom('crove_finance.cash_voucher as v')
     .select('v.id')

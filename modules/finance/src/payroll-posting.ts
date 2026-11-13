@@ -3,21 +3,23 @@
 // (hr.payroll.posting.prepare: the finance proposal path asks it, in the requester's context, so the lines come from the run and never from the requester); this command is what an
 // owner or an admin approves. It runs only through kernel.proposal.approve, on the stored payload:
 // - it checks the payload again as a general journal voucher (its shape, its accounts in the org's chart and in use, its total) and that the month is not closed;
-// - it refuses a run that already has a posting (the database holds this too: one voucher per run, a unique index);
+// - it refuses a run that already has a live posting (the database holds this too: one voucher per run that is not reversed, a trigger; a reversed posting frees the run, #2931);
 // - it inserts the voucher, which names the run and the proposal, and posts its entry through the posting path, in the same transaction. The database checks at commit that the proposal
 //   has such a voucher (crove_finance.ledger_effect_recorded) before it moves to 'executed'.
 // No finance code reads a payroll table: the run's id is the voucher's source, carried in the payload, and the lines are one per account (the detail stays on the run). A posting is
 // corrected by reversing its entry (finance.journal.reverse) while the period lock allows it.
 import { PAYROLL_POSTING_MAPS, money } from '@crove/l10n-vn';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
-import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
+import { JOURNAL_VOUCHER_SOURCE, journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
+import { reversedSource } from './source-entry.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -73,6 +75,17 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promis
   return { legalEntityId, total: journalVoucherTotal(input.lines) };
 }
 
+// The posting of a run that stands: a voucher naming the run whose entry was not reversed (a reversed one no longer holds the run, #2931; the database rule is the trigger of 20261227014500).
+async function livePosting(ctx: QueryContext, runId: string): Promise<{ id: string } | undefined> {
+  return ctx.trx
+    .selectFrom('crove_finance.journal_voucher as j')
+    .select('j.id')
+    .where('j.org_id', '=', ctx.orgId)
+    .where('j.payroll_run_id', '=', runId)
+    .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
+    .executeTakeFirst();
+}
+
 // The check the HR module calls (ctx.run) when it builds the proposal from a frozen run: it validates the entry it hands over and returns it as a general journal voucher payload. It writes
 // nothing and reads no payroll table; owners and admins only, like the proposal it serves.
 export const checkPayrollPosting = defineCommand({
@@ -91,7 +104,8 @@ export const checkPayrollPosting = defineCommand({
   access: MANAGERS,
   writes: [],
   handler: async (ctx, input) => {
-    const posted = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', input.payrollRunId).executeTakeFirst();
+    // Only a live posting ends the request: one whose entry was reversed frees the run to be posted again (#2931).
+    const posted = await livePosting(ctx, input.payrollRunId);
     if (posted) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
     const checked = await checkPostingLines(ctx, input);
     const payload: JournalVoucherProposal = {
@@ -140,7 +154,7 @@ export const recordPayrollPosting = defineCommand({
     if (checked.total !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
-    const done = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', payload.payrollRunId).executeTakeFirst();
+    const done = await livePosting(ctx, payload.payrollRunId);
     if (done) throw new DomainError('HR_POSTING_DONE', 409, 'Bảng lương này đã được hạch toán');
     // The entry is built again from the frozen run, in the approver's context (the HR module's own command: no payroll table is read from here), and the stored proposal must equal it. A proposal
     // row not written by the preparer (raw SQL) cannot post lines the run does not hold.
