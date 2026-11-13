@@ -37,6 +37,8 @@ const PUBLIC: Record<string, string> = {
     "Zalo OA's signed notice of a customer's message (conversation core, #2304, plan docs/plan/conversations.md section 6.1): checks X-ZEvent-Signature over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
   '/api/channels/facebook/webhook':
     "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
+  '/api/channels/whatsapp/webhook':
+    "WhatsApp Business webhook for customers' messages (conversation core, #3131, plan docs/plan/conversations-channels.md section 4.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the WhatsApp app's secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection by the phone number id), and answers 401 to a missing or wrong signature without saying why",
   '/api/extension/token':
     "the Ludy extension's one-time code exchange (#2582, ADR-0047 point 10): the code (256 random bits, 5 minutes, single use, stored only as its SHA-256) is the credential and PKCE S256 binds it to the verifier only the extension holds; a body cap of 1 KB, a per-client rate limit, the code and verifier checked for shape before the database, one 400 answer for every refusal, only hashes reach SQL, and nothing of any org in the answer but for a valid exchange",
   '/api/meetings/:id/video/stream':
@@ -110,6 +112,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     zaloWebhook: { appId: '4318000000000000001', oaSecretKey: 'k'.repeat(24) },
     // The Meta app and its verify token, so the Page webhook is registered and listed (conversation core CV2, #2307).
     facebookWebhook: { appSecret: 's'.repeat(32), verifyToken: 'v'.repeat(24) },
+    // The WhatsApp app's secret and verify token, so its webhook is registered and listed (conversation core, #3131).
+    whatsappWebhook: { appSecret: 'w'.repeat(32), verifyToken: 'u'.repeat(24) },
     stream: { hub: { ready: false }, tickets: unused, slots: unused, recheckSeconds: 30 } as unknown as NonNullable<HttpDeps['stream']>,
     // The MCP endpoint's authorization server, so /mcp, /oauth/* and the well-known routes are registered and listed (#2975).
     oauth: { provider: { callback: () => async () => undefined }, issuer: 'http://localhost', resource: 'http://localhost/mcp', verifyAccessToken: async () => null } as unknown as NonNullable<HttpDeps['oauth']>,

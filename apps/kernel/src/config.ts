@@ -394,6 +394,20 @@ const schema = z.object({
   // Reconcile recent comments on connected Facebook Pages that granted pages_read_user_content (conversation core CV2, #2307).
   CHANNEL_FACEBOOK_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
+  // WhatsApp Business, Cloud API (conversation core, #3131): the secret of the Meta app the WhatsApp product belongs to, which may be the Pages app's (set the same
+  // value) or another app. Set, a business may connect its number by hand on the Channels screen (a system user token, the phone number id and the WABA id,
+  // sealed) and the worker sends its replies with it; the secret also proves the Graph calls (appsecret_proof) and checks the webhook's X-Hub-Signature-256.
+  // A credential: read from the environment only, never logged, stored or put in an answer.
+  CHANNEL_WHATSAPP_APP_SECRET: optional,
+  // The secret CHANNEL_WHATSAPP_APP_SECRET replaces while Meta may still sign notices with it during a rotation.
+  CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS: optional,
+  // The verify token Meta sends on GET /api/channels/whatsapp/webhook when the callback URL is saved in the app dashboard. With the app secret above, the route
+  // /api/channels/whatsapp/webhook exists and customers' messages to the connected numbers are taken in. A credential, as the secret is.
+  CHANNEL_WHATSAPP_VERIFY_TOKEN: optional,
+  // The hosts a customer's image on WhatsApp may be fetched from (conversation core CV5c, #3131): domain suffixes separated by commas, each matching the host itself
+  // and its subdomains. Unset: the built-in list (WHATSAPP_MEDIA_HOSTS in @crove/channel), which is [M] until the live check settles it. An image from any other
+  // host is never fetched, and the connection's token is never sent to one.
+  CHANNEL_WHATSAPP_MEDIA_HOSTS: optional,
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
   // Marketing API together), so the same id and secret can be given twice; but a Meta user token carries every permission
@@ -848,6 +862,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CHANNEL_ZALO_OA_SECRET_KEY !== undefined) {
     if (!config.CHANNEL_ZALO_APP_ID) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY needs CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY is the OA secret key of the Zalo app: 8 to 200 characters, no spaces');
+  }
+  if (config.CHANNEL_WHATSAPP_APP_SECRET !== undefined && !/^\S{8,200}$/.test(config.CHANNEL_WHATSAPP_APP_SECRET)) throw new Error('CHANNEL_WHATSAPP_APP_SECRET is the secret of the Meta app of the WhatsApp product: 8 to 200 characters, no whitespace');
+  if (config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS !== undefined) {
+    if (config.CHANNEL_WHATSAPP_APP_SECRET === undefined) throw new Error('CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is set without CHANNEL_WHATSAPP_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS === config.CHANNEL_WHATSAPP_APP_SECRET) throw new Error('CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is the same as CHANNEL_WHATSAPP_APP_SECRET: remove it');
+  }
+  if (config.CHANNEL_WHATSAPP_VERIFY_TOKEN !== undefined) {
+    if (config.CHANNEL_WHATSAPP_APP_SECRET === undefined) throw new Error('CHANNEL_WHATSAPP_VERIFY_TOKEN needs CHANNEL_WHATSAPP_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_WHATSAPP_VERIFY_TOKEN)) throw new Error('CHANNEL_WHATSAPP_VERIFY_TOKEN is the verify token of the WhatsApp webhook: 8 to 200 characters, no spaces');
+  }
+  if (config.CHANNEL_WHATSAPP_MEDIA_HOSTS !== undefined) {
+    const hosts = zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS);
+    if (hosts.length === 0 || hosts.length > 20 || hosts.some((h) => !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(h))) {
+      throw new Error('CHANNEL_WHATSAPP_MEDIA_HOSTS is up to 20 domain names (for example fbsbx.com) separated by commas, each matching the domain and its subdomains');
+    }
   }
   if (config.CHANNEL_ZALO_MEDIA_HOSTS !== undefined) {
     const hosts = zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS);

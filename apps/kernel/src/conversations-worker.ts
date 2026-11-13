@@ -16,6 +16,7 @@ import {
   parseFacebookNotices,
   parseInstagramNotices,
   parseSandboxNotice,
+  parseWhatsAppNotices,
   parseZaloNotice,
   type ConversationAdapter,
   type ConversationNotice,
@@ -26,7 +27,7 @@ import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, typ
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@crove/agent';
 import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, UsageLimits } from '@crove/kernel';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
+import { fetchConversationImage, fetchConversationMedia, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -47,6 +48,8 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   instagram: parseInstagramNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
+  // WhatsApp Business (#3131): X-Hub-Signature-256 was checked by the route before the body was parked.
+  whatsapp: parseWhatsAppNotices,
 };
 
 export interface ClaimedNotice {
@@ -268,6 +271,12 @@ export interface AttachmentDeps {
   store: BlobStore;
   // The deployment's own list of media hosts (CHANNEL_ZALO_MEDIA_HOSTS); unset, each provider's own.
   hosts?: readonly string[] | undefined;
+  // The deployment's own list of another provider's media hosts (CHANNEL_WHATSAPP_MEDIA_HOSTS, #3131); an empty list is the provider's own.
+  providerHosts?: Readonly<Record<string, readonly string[]>> | undefined;
+  // For an image given by a reference (#3131): the credential broker that opens the connection's token inside this job, and the provider's adapter that turns the
+  // reference into bytes with it. Without them such an image is dropped (nothing can fetch it).
+  broker?: CredentialBroker | undefined;
+  adapter?: ((provider: string) => ConversationAdapter | undefined) | undefined;
   // Tests only: the egress guard's resolver, address check and port.
   egress?: FetchConversationImageOptions['egress'];
 }
@@ -283,7 +292,25 @@ export async function runConversationAttachment(deps: AttachmentDeps, job: Conve
     await deps.runtime.execute('kernel.conversation.attachment_record', { outcome: 'failed', attachmentId: job.attachmentId, retry, code }, options);
     return retry ? 'retry' : 'dropped';
   };
-  const got = await fetchConversationImage(source.sourceUrl, { hosts: mediaHostsOf(source.provider, deps.hosts), ...(deps.egress ? { egress: deps.egress } : {}) });
+  const hosts = mediaHostsOf(source.provider, deps.hosts, deps.providerHosts);
+  let got: Awaited<ReturnType<typeof fetchConversationImage>>;
+  if (source.sourceUrl !== null) {
+    got = await fetchConversationImage(source.sourceUrl, { hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
+  } else if (source.mediaRef !== null) {
+    // The reference is turned into bytes by the adapter with the connection's sealed token, opened here and nowhere else; nothing of it is logged or put in a job.
+    const adapter = deps.adapter?.(source.provider);
+    if (!adapter?.media || !deps.broker) return failed(false, 'NO_MEDIA_ADAPTER');
+    let opened: Opened;
+    try {
+      opened = await open({ runtime: deps.runtime, broker: deps.broker, adapter: deps.adapter as (provider: string) => ConversationAdapter | undefined }, job);
+    } catch {
+      return failed(true, 'CREDENTIAL_ERROR');
+    }
+    if (opened.kind === 'refused') return failed(false, opened.code);
+    got = await fetchConversationMedia(adapter, { externalAccountId: opened.externalAccountId, secret: opened.secret, mediaRef: source.mediaRef, hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
+  } else {
+    return 'none';
+  }
   if (got.kind === 'failed') return failed(got.retry, got.code);
   const sha256 = sha256Hex(got.bytes);
   let generation: string;

@@ -34,7 +34,7 @@ import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
 import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { connectPlatforms, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
+import { connectPlatforms, isMessagingOnly, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
 import type { QueueSuggestion } from '../lib/social-best-time.ts';
 import { copySlots } from '../lib/social-queue-copy.ts';
@@ -400,10 +400,12 @@ export function SocialChannelsPage() {
   const voices = useQuery(orpc.social.brandVoices.list.queryOptions({ input: {} }));
   const orgVoice = voices.data?.find((v) => v.connectionId === null);
   const channelVoice = new Map((voices.data ?? []).filter((v) => v.connectionId !== null).map((v) => [v.connectionId as string, v]));
-  const listed = useQuery(orpc.channels.list.queryOptions({ input: {} }));
+  const listed = useQuery(orpc.channels.list.queryOptions({ input: { includeMessaging: true } }));
   // A member limited to some channels (#1081) sees those here: the others' queues and settings are not theirs.
   const scope = useChannelScope();
   const channels = { ...listed, data: listed.data?.filter((c) => scope.allows(c.id)), isLoading: listed.isLoading || scope.loading };
+  // The channels a post can go to: a messaging-only one (WhatsApp, #3131) has none of the publishing settings the cards below are for.
+  const publishing = (channels.data ?? []).filter((c) => !isMessagingOnly(c.provider));
   const policyRows = useQuery(orpc.social.policies.list.queryOptions({ input: {} }));
   const policies = new Map((policyRows.data ?? []).map((p) => [p.connectionId, p.approvalsRequired]));
   const reminders = new Map((policyRows.data ?? []).map((p) => [p.connectionId, p.reviewReminders]));
@@ -462,6 +464,16 @@ export function SocialChannelsPage() {
     mutationFn: () => client.channels.connectTelegram({ botToken: tg.botToken.trim(), channel: tg.channel.trim() }),
     onSuccess: () => {
       setTg({ botToken: '', channel: '' });
+      void queryClient.invalidateQueries();
+    },
+  });
+  // WhatsApp (#3131): a system user token, the phone number id and the WABA id, checked once by the server against the number and sealed; the form forgets the token.
+  const whatsappOn = getConfig().channels?.whatsapp ?? false;
+  const [wa, setWa] = useState({ accessToken: '', phoneNumberId: '', wabaId: '' });
+  const connectWhatsApp = useMutation({
+    mutationFn: () => client.channels.connectWhatsApp({ accessToken: wa.accessToken.trim(), phoneNumberId: wa.phoneNumberId.trim(), wabaId: wa.wabaId.trim() }),
+    onSuccess: () => {
+      setWa({ accessToken: '', phoneNumberId: '', wabaId: '' });
       void queryClient.invalidateQueries();
     },
   });
@@ -527,7 +539,7 @@ export function SocialChannelsPage() {
       start.mutate({ provider: c.provider as OAuthProvider, ...(comments ? { comments: true } : {}) });
     }
   };
-  const canReconnect = (c: Channel) => isAdmin && c.status !== 'revoked' && (c.provider === 'bluesky' ? blueskyOn : c.provider === 'telegram' ? telegramOn : c.provider === 'mastodon' ? mastodonOn : c.provider === 'discord' ? discordOn : c.provider === 'wordpress' ? wordpressOn : oauth.includes(c.provider as OAuthProvider));
+  const canReconnect = (c: Channel) => isAdmin && c.status !== 'revoked' && (c.provider === 'bluesky' ? blueskyOn : c.provider === 'telegram' ? telegramOn : c.provider === 'whatsapp' ? whatsappOn : c.provider === 'mastodon' ? mastodonOn : c.provider === 'discord' ? discordOn : c.provider === 'wordpress' ? wordpressOn : oauth.includes(c.provider as OAuthProvider));
   const disconnect = useMutation({
     mutationFn: (connectionId: string) => client.channels.disconnect({ connectionId, idempotencyKey: crypto.randomUUID() }),
     onSuccess: () => {
@@ -577,8 +589,8 @@ export function SocialChannelsPage() {
           <Card className="block p-4">
             <PublishHoldCard key={slug} />
           </Card>
-          <BannedWordsCard channels={(channels.data ?? []).filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
-          <ReviewChecklistCard channels={(channels.data ?? []).filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
+          <BannedWordsCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
+          <ReviewChecklistCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
           {channels.data && <ChannelAccessCard channels={channels.data} canEdit={isAdmin} />}
           <Card className="block space-y-2 p-4">
             <div>
@@ -589,7 +601,7 @@ export function SocialChannelsPage() {
           </Card>
           <ShareCard />
           {/* Once the channels are loaded: before, every set would read as having none left. */}
-          {channels.data && <ChannelSetsCard channels={channels.data.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />}
+          {channels.data && <ChannelSetsCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />}
           {channels.isLoading ? (
             <Spinner />
           ) : channels.error ? (
@@ -662,20 +674,25 @@ export function SocialChannelsPage() {
                     ))}
                 </div>
                 {confirming === c.id && <p className="text-xs text-muted-foreground">{t('disconnectHint')}</p>}
-                <div className="border-t pt-3">
-                  <ReviewPolicy channel={c} required={policies.get(c.id) ?? 1} reminders={reminders.get(c.id) ?? true} shortLinks={shortLinks.get(c.id) ?? false} fourEyes={fourEyes.get(c.id) ?? false} clientApproval={clientApproval.get(c.id) ?? false} canEdit={isAdmin} canOwn={role === 'owner'} loading={policyRows.isLoading} />
-                </div>
-                <div className="border-t pt-3">
-                  {!policyRows.isLoading && <SignatureEditor key={signatures.get(c.id) ?? 'none'} connectionId={c.id} revoked={c.status === 'revoked'} signature={signatures.get(c.id) ?? null} canEdit={isAdmin} />}
-                </div>
-                <div className="border-t pt-3">
-                  <p className="mb-2 text-sm font-medium text-muted-foreground">{t('voice.channelTitle')}</p>
-                  {!voices.isLoading && <VoiceEditor key={channelVoice.get(c.id)?.updatedAt ?? 'none'} connectionId={c.id} voice={channelVoice.get(c.id)} canEdit={isAdmin} inherited={orgVoice !== undefined} />}
-                </div>
-                <div className="border-t pt-3">
-                  <p className="mb-2 text-sm font-medium text-muted-foreground">{t('queueTitle')}</p>
-                  <QueueEditor channel={c} canEdit={isAdmin} copyTargets={(channels.data ?? []).filter((x) => x.id !== c.id && x.status !== 'revoked')} />
-                </div>
+                {/* A messaging-only channel (WhatsApp, #3131) has no queue, voice, signature or review policy: its card is its name, state and disconnect. */}
+                {!isMessagingOnly(c.provider) && (
+                  <>
+                    <div className="border-t pt-3">
+                      <ReviewPolicy channel={c} required={policies.get(c.id) ?? 1} reminders={reminders.get(c.id) ?? true} shortLinks={shortLinks.get(c.id) ?? false} fourEyes={fourEyes.get(c.id) ?? false} clientApproval={clientApproval.get(c.id) ?? false} canEdit={isAdmin} canOwn={role === 'owner'} loading={policyRows.isLoading} />
+                    </div>
+                    <div className="border-t pt-3">
+                      {!policyRows.isLoading && <SignatureEditor key={signatures.get(c.id) ?? 'none'} connectionId={c.id} revoked={c.status === 'revoked'} signature={signatures.get(c.id) ?? null} canEdit={isAdmin} />}
+                    </div>
+                    <div className="border-t pt-3">
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">{t('voice.channelTitle')}</p>
+                      {!voices.isLoading && <VoiceEditor key={channelVoice.get(c.id)?.updatedAt ?? 'none'} connectionId={c.id} voice={channelVoice.get(c.id)} canEdit={isAdmin} inherited={orgVoice !== undefined} />}
+                    </div>
+                    <div className="border-t pt-3">
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">{t('queueTitle')}</p>
+                      <QueueEditor channel={c} canEdit={isAdmin} copyTargets={publishing.filter((x) => x.id !== c.id && x.status !== 'revoked')} />
+                    </div>
+                  </>
+                )}
               </Card>
             ))
           )}
@@ -821,6 +838,29 @@ export function SocialChannelsPage() {
                 {t('connectWith', { provider: providerName('telegram') })}
               </Button>
               {connectTelegram.error && <ErrorText>{errorMessage(connectTelegram.error)}</ErrorText>}
+            </form>
+          )}
+          {whatsappOn && isAdmin && (
+            <form
+              className="space-y-2 border-t pt-3"
+              data-testid="whatsapp-connect"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (wa.accessToken.trim() && wa.phoneNumberId.trim() && wa.wabaId.trim()) connectWhatsApp.mutate();
+              }}
+            >
+              <p className="text-sm font-medium text-foreground">{providerName('whatsapp')}</p>
+              <Label htmlFor="wa-token">{t('whatsappAccessToken')}</Label>
+              <Input id="wa-token" type="password" autoComplete="off" value={wa.accessToken} placeholder="EAAG..." onChange={(e) => setWa({ ...wa, accessToken: e.target.value })} />
+              <Label htmlFor="wa-phone">{t('whatsappPhoneNumberId')}</Label>
+              <Input id="wa-phone" autoComplete="off" inputMode="numeric" value={wa.phoneNumberId} onChange={(e) => setWa({ ...wa, phoneNumberId: e.target.value })} />
+              <Label htmlFor="wa-waba">{t('whatsappWabaId')}</Label>
+              <Input id="wa-waba" autoComplete="off" inputMode="numeric" value={wa.wabaId} onChange={(e) => setWa({ ...wa, wabaId: e.target.value })} />
+              <p className="text-xs text-subtle-foreground">{t('whatsappHint')}</p>
+              <Button type="submit" variant="outline" size="sm" disabled={!wa.accessToken.trim() || !wa.phoneNumberId.trim() || !wa.wabaId.trim() || connectWhatsApp.isPending}>
+                {t('connectWith', { provider: providerName('whatsapp') })}
+              </Button>
+              {connectWhatsApp.error && <ErrorText>{errorMessage(connectWhatsApp.error)}</ErrorText>}
             </form>
           )}
           {discordOn && isAdmin && (

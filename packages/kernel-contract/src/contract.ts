@@ -595,7 +595,9 @@ export const contract = {
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
   channels: {
-    list: oc.input(z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() })).output(z.array(zChannelConnection)),
+    // includeEmail: every channel a member may read, email and the messaging-only ones included. includeMessaging: the messaging-only channels (WhatsApp, #3131), which
+    // never publish, so the composer and every Social picker leave them out unless they ask.
+    list: oc.input(z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional(), includeMessaging: z.boolean().optional() })).output(z.array(zChannelConnection)),
     // The offline sandbox channel, when the deployment enables it. Connecting again with the same key reconnects the
     // same sandbox account.
     connectSandbox: oc
@@ -622,6 +624,11 @@ export const contract = {
       .output(z.object({ connectionId: zId, reconnected: z.boolean() })),
     connectTelegram: oc
       .input(z.object({ botToken: z.string().trim().min(1).max(100), channel: z.string().trim().min(1).max(100) }))
+      .output(z.object({ connectionId: zId, reconnected: z.boolean() })),
+    // A WhatsApp Business number, Cloud API (#3131): a system user token, the phone number id and the WABA id, pasted by an owner or admin. The server checks the
+    // token against the phone number once, then seals it with the phone number id and drops it; the formats are checked by the server, in words.
+    connectWhatsApp: oc
+      .input(z.object({ accessToken: z.string().trim().min(1).max(700), phoneNumberId: z.string().trim().min(1).max(40), wabaId: z.string().trim().min(1).max(40) }))
       .output(z.object({ connectionId: zId, reconnected: z.boolean() })),
     // A Discord channel (#832): the URL of a webhook a server admin made in the channel's settings. The server checks the
     // webhook with Discord, then seals its token; the format is checked by the server, in words.

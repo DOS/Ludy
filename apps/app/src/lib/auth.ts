@@ -44,7 +44,7 @@ export interface PublicConfig {
   bankFeeds?: { sandbox: boolean };
   // The ad platforms the deployment offers (ADR-0040): the offline sandbox.
   ads?: { sandbox: boolean };
-  channels?: { sandbox: boolean; bluesky?: boolean; telegram?: boolean; mastodon?: boolean; discord?: boolean; wordpress?: boolean; oauth?: string[] };
+  channels?: { sandbox: boolean; bluesky?: boolean; telegram?: boolean; mastodon?: boolean; discord?: boolean; wordpress?: boolean; whatsapp?: boolean; oauth?: string[] };
 }
 
 let config: PublicConfig | null = null;
