@@ -160,7 +160,7 @@ services:
       BRAND_NAME: ${BRAND_NAME:-}
       # The app's feedback and support link (https: or mailto:); empty hides it.
       SUPPORT_URL: ${SUPPORT_URL:-}
-      # The browser extension ids that may sign in (#2740); empty keeps the store's id (none until the listing exists).
+      # The browser extension ids that may sign in (#2740); empty keeps the Chrome Web Store build's id (#3010); a list replaces it.
       EXTENSION_IDS: ${EXTENSION_IDS:-}
       # The MCP endpoint and its OAuth 2.1 authorization server (ADR-0051, #2975): off unless OAUTH_SERVER=on, which needs OAUTH_JWKS and OAUTH_COOKIE_KEYS
       # (docs/runbooks/mcp-endpoint.md) and APP_URL, when set, to be PUBLIC_URL's own origin.

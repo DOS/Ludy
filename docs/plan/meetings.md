@@ -260,7 +260,7 @@ The Meetings line paused here on 2026-11-12 (the owner is moving to a new machin
 | Item | Who | What |
 |---|---|---|
 | Summary switch-on (runbook `meetings-ai.md`, S1 to S4) | The owner, then the coordinator | Approve in the coordinator's chat; the coordinator runs the steps |
-| #2584 (M10), #3010 | The owner | Upload the extension package (artifact of the `extension-package` workflow) to the Chrome Web Store, following `docs/runbooks/extension-store.md`; give the store id, which an agent adds to `DEFAULT_EXTENSION_IDS` |
+| #2584 (M10), #3010 | The owner | Upload the extension package (artifact of the `extension-package` workflow) to the Chrome Web Store, following `docs/runbooks/extension-store.md`; give the store id, which an agent adds to `DEFAULT_EXTENSION_IDS` (uploaded 2026-11-13; the id is wired by #3010) |
 | #3013 | The owner | A tag ruleset that protects `ext-v*` tags, if a public release page is wanted |
 | #2585 (M11), #2578 (M4) | The owner, a lawyer | Answers to section 7, the consented eval recordings, and a transcription provider key |
 | #328 | The owner, a lawyer | Review of the privacy notice the store listing links to |
