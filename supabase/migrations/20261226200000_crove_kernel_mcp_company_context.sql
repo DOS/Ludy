@@ -1,5 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- PROTOTYPE of step 3e-2, run only to see which pinned invariants it touches; not committed in 3e-1.
+-- ADR-0051 decision 2, issue #2975, slice 3 step 3e-2: a company MCP grant (an owner's or admin's) enters a sealed context with no user, as a member-bound grant
+-- does, so nothing bound to a user (a private note, a table of Vy's catalog) answers it. enter_mcp_company_context re-checks the grant's standing, reads the
+-- grantor's role live (owner or admin, else refused), and seals an agent-shaped, read-only, tainted R0 context that names the grant and the grantor. Idempotent.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.enter_mcp_company_context(p_org_id uuid, p_grant_id uuid)
