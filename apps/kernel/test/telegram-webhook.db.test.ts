@@ -518,6 +518,12 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
   it('gives the hook up when the connection is disconnected, and refuses chats for a connection that is not a Telegram one', async () => {
     const { hook } = await turnOn(a);
     expect(await rows('SELECT chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on' }]);
+    // While chats are on it is refused (the webhook is removed by turning off, which needs the token a disconnect forgets); turned off first it goes.
+    await expect(api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { ...asOwner(a), idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'CHAT_IS_ON', status: 409 });
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: false }, asOwner(a));
+    const gone = telegram();
+    expect(await runTelegramChatHook(hookDeps(gone.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(gone.calls.map((c) => c.method)).toEqual(['deleteWebhook']);
     await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { ...asOwner(a), idempotencyKey: randomUUID() });
     expect(await rows('SELECT chat_state, chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null }]);
     // An update still arriving on the old hook finds no connection and is dropped after storing nothing.
@@ -534,11 +540,37 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     await expect(api.execute('kernel.channel.telegram_chat_set', { connectionId: sandbox, on: true }, asOwner(b))).rejects.toMatchObject({ code: 'CHAT_NOT_SUPPORTED' });
   });
 
+  it('gives a reconnected connection a new hook and so a new secret, and sets the webhook again with the new token', async () => {
+    // The bot of org B answers chats (the test before left it off with a failed delete).
+    hookB = (await turnOn(b)).hook;
+    const before = (await rows<{ chat_hook: string; chat_state: string }>('SELECT chat_hook, chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]))[0] as { chat_hook: string; chat_state: string };
+    expect(before.chat_state).toBe('on');
+    // The owner pastes the bot token again: the same account reconnects on the same row.
+    const sealed = vault.seal(JSON.stringify({ botToken: TOKEN_B, username: null }), { orgId: b.orgId, provider: 'telegram', externalAccountId: CHANNEL_B });
+    const again = await api.execute<{ connectionId: string; reconnected: boolean }>(
+      'kernel.channel.connect',
+      { provider: 'telegram', externalAccountId: CHANNEL_B, displayName: 'Kênh thử', scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+      asOwner(b),
+    );
+    expect(again).toEqual({ connectionId: b.connectionId, reconnected: true });
+    const [after] = await rows<{ chat_hook: string; chat_state: string }>('SELECT chat_hook, chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]);
+    expect(after?.chat_state).toBe('enabling');
+    expect(after?.chat_hook).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(after?.chat_hook).not.toBe(before.chat_hook);
+    const t = telegram();
+    expect(await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: true })).toBe('on');
+    expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_B, json: { url: `${APP_URL}${BASE}/${after?.chat_hook}`, secret_token: secretOf(after?.chat_hook as string), allowed_updates: ['message'] } }]);
+    // The secret of the old hook opens nothing on the new one, and an update on the old hook finds no connection.
+    expect((await post(app, after?.chat_hook as string, update('x'), signed(before.chat_hook))).status).toBe(401);
+    hookB = after?.chat_hook as string;
+    // A connect event of the reconnect and the queued switch carry ids only, never the hook.
+    expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE payload::text LIKE $1', [`%${after?.chat_hook}%`])).length).toBe(0);
+  });
+
   it('lists the chat state of a connection and keeps the hook out of the list and the export', async () => {
     const list = await api.query<Array<{ id: string; chatState: string; chatError: string | null }>>('kernel.channel.list', {}, asOwner(b));
-    // The failed delete of the test before left it off with the code for the screen to word.
-    expect(list.find((c) => c.id === b.connectionId)).toMatchObject({ chatState: 'off', chatError: 'TELEGRAM_TOKEN_REFUSED' });
-    hookB = (await turnOn(b)).hook;
+    // The reconnect before left it on (its webhook set again with the new hook).
+    expect(list.find((c) => c.id === b.connectionId)).toMatchObject({ chatState: 'on', chatError: null });
     const after = await api.query<Array<{ id: string; chatState: string; chatError: string | null }>>('kernel.channel.list', {}, asOwner(b));
     const row = after.find((c) => c.id === b.connectionId);
     expect(row).toMatchObject({ chatState: 'on', chatError: null });

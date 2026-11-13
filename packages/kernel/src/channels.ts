@@ -42,6 +42,9 @@ function credentialError(error: unknown): never {
   }
 }
 
+// A fresh hook for a Telegram connection's webhook (#3132): 32 random bytes, base64url, 43 characters.
+const newChatHook = (): string => randomBytes(32).toString('base64url');
+
 function requireUser(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới kết nối được kênh');
   return ctx.actor.userId;
@@ -89,7 +92,7 @@ export const channelConnect = defineCommand({
     // member who reconnects becomes its connector, so the credential lives on their membership from now on.
     const existing = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['id'])
+      .select(['id', 'chat_state'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', input.provider)
       .where('external_account_id', '=', input.externalAccountId)
@@ -100,6 +103,17 @@ export const channelConnect = defineCommand({
     if (existing) {
       await ctx.trx.updateTable('crove_kernel.channel_connection').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       id = existing.id;
+      // A Telegram connection that answers chats gets a new hook, and so a new secret, with its new token (#3132): the webhook is set again by a job,
+      // with the token that was just sealed. A connection being turned off stays as it is.
+      if (input.provider === 'telegram' && (existing.chat_state === 'on' || existing.chat_state === 'enabling')) {
+        await ctx.trx
+          .updateTable('crove_kernel.channel_connection')
+          .set({ chat_hook: newChatHook(), chat_state: 'enabling', chat_error: null, chat_bot_id: null })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', id)
+          .execute();
+        await ctx.emit(TELEGRAM_CHAT_QUEUED, { connectionId: id, action: 'enable' });
+      }
     } else {
       const row = await ctx.trx
         .insertInto('crove_kernel.channel_connection')
@@ -130,12 +144,17 @@ export const channelDisconnect = defineCommand({
     requireUser(ctx);
     const row = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['status', 'provider'])
+      .select(['status', 'provider', 'chat_state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    // A Telegram connection that still receives chats is turned off first (#3132): turning off is what removes the webhook at Telegram, which
+    // needs the token this disconnect forgets.
+    if (row.status !== 'revoked' && row.chat_state === 'on') {
+      throw new DomainError('CHAT_IS_ON', 409, 'Hãy tắt nhận tin nhắn của khách trước khi ngắt kết nối kênh này, để Ludy gỡ webhook ở Telegram');
+    }
     if (row.status !== 'revoked') {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
@@ -539,7 +558,7 @@ export const channelTelegramChatSet = defineCommand({
       if (state === 'disabling') throw new DomainError('CHAT_BUSY', 409, 'Đang tắt nhận tin nhắn, hãy thử lại sau ít giây');
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
-        .set({ chat_hook: randomBytes(32).toString('base64url'), chat_state: 'enabling', chat_error: null, chat_bot_id: null })
+        .set({ chat_hook: newChatHook(), chat_state: 'enabling', chat_error: null, chat_bot_id: null })
         .where('org_id', '=', where.org)
         .where('id', '=', where.id)
         .execute();
