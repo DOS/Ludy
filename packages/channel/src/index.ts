@@ -19,6 +19,7 @@ export * from './zalo-conversation.ts';
 export * from './whatsapp-conversation.ts';
 export * from './bluesky.ts';
 export * from './threads.ts';
+export * from './threads-conversation.ts';
 export * from './linkedin.ts';
 export * from './google-business.ts';
 export * from './telegram.ts';

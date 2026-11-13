@@ -258,6 +258,15 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
     ctx.audit({ connection_id: connectionId, ...out });
     return out;
   }
+  // A Threads profile that did not opt in to reading replies (#3133) has none stored, whatever the platform pushes for the app.
+  if (connection.provider === 'threads') {
+    const scopes = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    if (!scopes?.scopes.includes('threads_read_replies')) {
+      out.ignored = inputEvents.length;
+      ctx.audit({ connection_id: connectionId, ...out });
+      return out;
+    }
+  }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
   const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
   for (const { event } of events) {
@@ -375,6 +384,23 @@ const customerLock = (ctx: CommandContext, provider: string, externalUserId: str
 // The thread an email joins (#2439): the one that holds a Message-ID the mail names in In-Reply-To or References, within this org and this
 // channel only, so an id that points at another org's conversation finds nothing and opens a thread of its own. A mail that names none opens a
 // thread whose id is its own Message-ID. The subject never joins threads: a wrong merge would show one customer another's mail.
+// Threads nests replies to any depth, and a reply names its direct parent, not the top-level reply that opens the thread (#3133): when that parent is a
+// message already stored on this connection (the profile's own answer, or a customer's reply that came first), the new reply joins its thread. A parent
+// not stored (the top-level reply, or an ancestor outside what was read) leaves the event's own thread id.
+async function nestedThreadId(ctx: CommandContext, connectionId: string, provider: string, event: ConversationEvent): Promise<string> {
+  if (provider !== 'threads' || event.kind !== 'comment_thread' || event.threadId === event.messageId) return event.threadId;
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message as m')
+    .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .select('c.external_thread_id')
+    .where('m.org_id', '=', ctx.orgId)
+    .where('m.channel_connection_id', '=', connectionId)
+    .where('m.external_message_id', '=', event.threadId)
+    .where('c.kind', '=', 'comment_thread')
+    .executeTakeFirst();
+  return row?.external_thread_id ?? event.threadId;
+}
+
 async function emailThreadId(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<string> {
   const refs = [...new Set(event.refs ?? [])];
   // A sender the receiving server did not vouch for may be anyone writing as the customer: the mail opens a thread of its own.
@@ -459,7 +485,10 @@ async function ingestEvent(
   // The platform says a message of ours did not reach the customer (WhatsApp's status `failed`, #3131): it only marks the stored outbound message with that
   // platform id, and never makes a message, a thread or an identity.
   if (original.deliveryFailed) return original.direction === 'out' ? applyDeliveryFailed(ctx, connectionId, original) : 'ignored';
-  let event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
+  let event: ConversationEvent =
+    original.kind === 'email'
+      ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) }
+      : { ...original, threadId: await nestedThreadId(ctx, connectionId, provider, original) };
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
     .select(['id', 'conversation_id', 'body', 'direction', 'hidden_at', 'platform_removed_at', 'author_identity_id', 'sender_verified'])
@@ -537,6 +566,7 @@ async function ingestEvent(
   // The thread is found again under the lock: a mail of this customer that was in flight at the same time (the first mail, as this one answers it) has
   // committed by now, and the first lookup may have missed it.
   if (original.kind === 'email') event = { ...original, threadId: await emailThreadId(ctx, connectionId, original) };
+  else event = { ...original, threadId: await nestedThreadId(ctx, connectionId, provider, original) };
   // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
   // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
   const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
@@ -2629,7 +2659,9 @@ export const conversationHistoryBegin = defineCommand({
     // hour, and make no platform call.
     if (
       (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) ||
-      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments'))
+      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments')) ||
+      // A Threads profile connected without the "also read and answer replies" opt-in (#3133) has no reply-reading permission.
+      (row.provider === 'threads' && !row.scopes.includes('threads_read_replies'))
     ) {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')

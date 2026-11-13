@@ -17,6 +17,7 @@ import {
   parseInstagramNotices,
   parseSandboxNotice,
   parseWhatsAppNotices,
+  parseThreadsNotices,
   parseZaloNotice,
   type ConversationAdapter,
   type ConversationNotice,
@@ -50,6 +51,8 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   zalo_oa: parseZaloNotice,
   // WhatsApp Business (#3131): X-Hub-Signature-256 was checked by the route before the body was parked.
   whatsapp: parseWhatsAppNotices,
+  // Threads replies (#3133): X-Hub-Signature-256 was checked with the Threads app's secret by the route before the body was parked.
+  threads: parseThreadsNotices,
 };
 
 export interface ClaimedNotice {

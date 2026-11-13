@@ -31,6 +31,8 @@ export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
 // WhatsApp Business (Cloud API) text body limit [M until the live check, docs/runbooks/whatsapp-conversations-live-check.md].
 export const CONVERSATION_WHATSAPP_REPLY_MAX = 4_096;
+// Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
+export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
 export const CONVERSATION_EVENTS_MAX = 1_000;
 export const CONVERSATION_LIST_MAX = 100;
@@ -66,6 +68,11 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // 2200 characters, reversible hide/unhide, no reply window) and Instagram direct messages (up to 1000 characters, 24-hour standard
   // window plus 7-day HUMAN_AGENT window = 168 hours).
   instagram: { kinds: ['comment_thread', 'direct'], replyMax: CONVERSATION_INSTAGRAM_COMMENT_MAX, canHide: true, windowHours: 168 },
+  // Threads replies to the business's own posts (#3133, plan docs/plan/conversations-channels.md section 4.4): public comment threads, one
+  // per top-level reply, no reply window. No private-message API was found. `canHide` stays false until the live check confirms that
+  // `POST /{reply-id}/manage_reply` hides a top-level reply (docs/runbooks/threads-conversations-live-check.md, row 8); the adapter has the
+  // call already, so confirming it is a one-word change here. `replyMax` 500 is Threads' post limit [U].
+  threads: { kinds: ['comment_thread'], replyMax: CONVERSATION_THREADS_REPLY_MAX, canHide: false, windowHours: null },
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
