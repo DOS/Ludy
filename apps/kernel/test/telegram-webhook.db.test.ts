@@ -138,11 +138,17 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     return { orgId, ownerId, connectionId, token };
   }
 
+  // The worker's side of the switch: the Telegram adapter over a recorded Telegram.
+  const hookDeps = (fetchImpl: Fetch, baseUrl = APP_URL) => {
+    const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: fetchImpl })).conversations;
+    return { runtime: worker, broker: vault, adapter: (provider: string) => (provider === 'telegram' ? adapter : undefined), baseUrl };
+  };
+
   // Turns chats on through the command and runs the job the relay would queue, against a recorded Telegram. Returns the hook the connection got.
   async function turnOn(o: Org): Promise<{ hook: string; calls: ReturnType<typeof telegram>['calls'] }> {
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: o.connectionId, on: true }, asOwner(o));
     const t = telegram();
-    const outcome = await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: t.fetchImpl }, { orgId: o.orgId, connectionId: o.connectionId, action: 'chat', on: true });
+    const outcome = await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: o.orgId, connectionId: o.connectionId, action: 'chat', on: true });
     expect(outcome).toBe('on');
     const [row] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [o.orgId, o.connectionId]);
     return { hook: (row as { chat_hook: string }).chat_hook, calls: t.calls };
@@ -204,14 +210,14 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const [same] = await rows<{ chat_hook: string }>('SELECT chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
     expect(same?.chat_hook).toBe(before?.chat_hook);
     const t = telegram();
-    const outcome = await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: t.fetchImpl }, { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true });
+    const outcome = await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true });
     expect(outcome).toBe('on');
     hookA = before?.chat_hook as string;
     // One setWebhook with this bot's token, the hook in the path, the derived secret as secret_token, and only private messages asked for.
     expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_A, json: { url: `${APP_URL}${BASE}/${hookA}`, secret_token: secretOf(hookA), allowed_updates: ['message'] } }]);
     expect(await rows('SELECT chat_state, chat_error, chat_bot_id FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on', chat_error: null, chat_bot_id: '111111111' }]);
     // The same job again finds the connection already on and calls nothing.
-    expect(await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: t.fetchImpl }, { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true })).toBe('none');
+    expect(await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: true })).toBe('none');
     expect(t.calls).toHaveLength(1);
     // Only an owner or an admin may; a viewer is refused and a connection of another provider is not a bot.
     const viewerId = (await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `viewer-${randomUUID().slice(0, 8)}@telegram.test`, name: null })) as string;
@@ -479,17 +485,17 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     ).connectionId;
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: second, on: true }, asOwner(a));
     const idle = telegram();
-    expect(await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: idle.fetchImpl }, { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:BOT_IN_USE');
+    expect(await runTelegramChatHook(hookDeps(idle.fetchImpl), { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:BOT_IN_USE');
     expect(idle.calls).toHaveLength(0);
     expect(await rows('SELECT chat_state, chat_hook, chat_error FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, second])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: 'BOT_IN_USE' }]);
     // A plain-http deployment cannot take a Telegram webhook: refused in words before any call.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: second, on: true }, asOwner(a));
     await rows("UPDATE crove_kernel.channel_connection SET chat_bot_id = NULL WHERE org_id = $1", [a.orgId]);
-    expect(await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: 'http://localhost:8080', fetch: idle.fetchImpl }, { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:WEBHOOK_NEEDS_HTTPS');
+    expect(await runTelegramChatHook(hookDeps(idle.fetchImpl, 'http://localhost:8080'), { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:WEBHOOK_NEEDS_HTTPS');
     // Telegram refuses the address: recorded as a code, the connection is off again with nothing to delete.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: second, on: true }, asOwner(a));
     const refusing = telegram({ setWebhook: [{ status: 400, body: { ok: false, error_code: 400, description: 'Bad Request: bad webhook: HTTPS url must be provided for webhook' } }] });
-    expect(await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: refusing.fetchImpl }, { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:TELEGRAM_WEBHOOK_REFUSED');
+    expect(await runTelegramChatHook(hookDeps(refusing.fetchImpl), { orgId: a.orgId, connectionId: second, action: 'chat', on: true })).toBe('failed:TELEGRAM_WEBHOOK_REFUSED');
     expect(await rows('SELECT chat_state, chat_hook FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, second])).toEqual([{ chat_state: 'off', chat_hook: null }]);
     // Off: the command marks it disabling and keeps the hook until the job has deleted the webhook with this bot's token.
     expect(await api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: false }, asOwner(a))).toEqual({ chatState: 'disabling' });
@@ -497,13 +503,13 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     // While it is being turned off an update on the hook is still taken in (nothing in flight is lost), and turning on again waits.
     await expect(api.execute('kernel.channel.telegram_chat_set', { connectionId: a.connectionId, on: true }, asOwner(a))).rejects.toMatchObject({ code: 'CHAT_BUSY' });
     const off = telegram();
-    expect(await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: off.fetchImpl }, { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(await runTelegramChatHook(hookDeps(off.fetchImpl), { orgId: a.orgId, connectionId: a.connectionId, action: 'chat', on: false })).toBe('off');
     expect(off.calls).toEqual([{ method: 'deleteWebhook', token: TOKEN_A, json: {} }]);
     expect(await rows('SELECT chat_state, chat_hook, chat_error FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: null }]);
     // A failed delete leaves it off in Ludy with the code for the screen: nothing is received any more either way.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: b.connectionId, on: false }, asOwner(b));
     const dead = telegram({ deleteWebhook: [{ status: 401, body: { ok: false, error_code: 401, description: 'Unauthorized' } }] });
-    expect(await runTelegramChatHook({ runtime: worker, broker: vault, baseUrl: APP_URL, fetch: dead.fetchImpl }, { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: false })).toBe('failed:TELEGRAM_TOKEN_REFUSED');
+    expect(await runTelegramChatHook(hookDeps(dead.fetchImpl), { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: false })).toBe('failed:TELEGRAM_TOKEN_REFUSED');
     expect(await rows('SELECT chat_state, chat_hook, chat_error FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId])).toEqual([{ chat_state: 'off', chat_hook: null, chat_error: 'TELEGRAM_TOKEN_REFUSED' }]);
     // Neither the hook, the secret nor the token is in anything the job returned or recorded.
     expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE detail::text LIKE $1 OR detail::text LIKE $2', [`%${TOKEN_A}%`, `%${hookA}%`])).length).toBe(0);

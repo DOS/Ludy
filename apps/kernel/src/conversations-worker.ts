@@ -16,17 +16,11 @@ import {
   parseFacebookNotices,
   parseInstagramNotices,
   TELEGRAM_HOOK_KEY_INFO,
-  deleteTelegramWebhook,
   parseSandboxNotice,
   parseTelegramChatNotice,
   parseZaloNotice,
-  setTelegramWebhook,
-  telegramBotId,
-  telegramHookSecret,
-  telegramSecretOf,
   type ConversationAdapter,
   type ConversationNotice,
-  type Fetch,
 } from '@crove/channel';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
@@ -204,14 +198,14 @@ export type ConversationChatJob = { orgId: string; connectionId: string; action:
 export interface ChatHookDeps {
   runtime: Runtime;
   broker: CredentialBroker;
+  // The provider's adapter (Telegram's), which makes the platform call.
+  adapter: (provider: string) => ConversationAdapter | undefined;
   // The deployment's public address (APP_URL): the webhook is `<baseUrl>/api/channels/telegram/webhook/<hook>`. Telegram only takes https.
   baseUrl: string;
-  // Tests only.
-  fetch?: Fetch | undefined;
 }
 
 // Sets or deletes the connection's webhook and records the outcome. The returned text is for the log: a state or a code, nothing a platform
-// said and nothing of the hook.
+// said and nothing of the hook. The adapter builds the address and the secret from the hook and the deployment's key and never returns them.
 export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationChatJob): Promise<string> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const action = job.on ? ('enable' as const) : ('disable' as const);
@@ -224,6 +218,8 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
     await record('failed', { code });
     return `failed:${code}`;
   };
+  const adapter = deps.adapter('telegram');
+  if (!adapter?.chatHook) return failed('NO_ADAPTER');
   let opened: Opened;
   try {
     opened = await open(deps, job);
@@ -231,25 +227,15 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
     return failed('CREDENTIAL_ERROR');
   }
   if (opened.kind === 'refused') return failed(opened.code);
-  const token = telegramSecretOf(opened.secret)?.botToken;
-  if (!token) return failed('TELEGRAM_NO_TOKEN');
-  if (action === 'disable') {
-    const result = await deleteTelegramWebhook(token, deps.fetch);
-    if (result.kind === 'failed') return failed(result.code);
-    await record('done');
-    return 'off';
+  let answer;
+  try {
+    answer = await adapter.chatHook({ secret: opened.secret, on: job.on, hook: work.hook, baseUrl: deps.baseUrl, key: deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key ?? null, takenBotIds: work.takenBotIds ?? [] });
+  } catch {
+    answer = { kind: 'failed' as const, retry: true, code: 'ADAPTER_ERROR' };
   }
-  const botId = telegramBotId(token);
-  // One bot has one webhook: a second connection of the org that holds the same bot would take the first one's.
-  if ((work.takenBotIds ?? []).includes(botId)) return failed('BOT_IN_USE');
-  if (!deps.baseUrl.startsWith('https://')) return failed('WEBHOOK_NEEDS_HTTPS');
-  const key = deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key;
-  if (!key) return failed('NO_HOOK_KEY');
-  const url = `${deps.baseUrl.replace(/\/+$/, '')}/api/channels/telegram/webhook/${work.hook}`;
-  const result = await setTelegramWebhook(token, { url, secretToken: telegramHookSecret(key, work.hook) }, deps.fetch);
-  if (result.kind === 'failed') return failed(result.code);
-  await record('done', { botId });
-  return 'on';
+  if (answer.kind === 'failed') return failed(answer.code);
+  await record('done', job.on && answer.botId ? { botId: answer.botId } : {});
+  return job.on ? 'on' : 'off';
 }
 
 // A chat switch queued where this worker has no channel to make the call through: the attempt is recorded as failed, so the screen says so and

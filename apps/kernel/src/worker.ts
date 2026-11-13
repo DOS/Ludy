@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
 import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TELEGRAM_CHAT_QUEUED, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
+import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -1437,7 +1437,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (!job) return;
       // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job.
       if (job.data.action === 'chat') {
-        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, baseUrl: deps.appUrl ?? deps.publicUrl ?? '' }, job.data);
+        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.appUrl ?? deps.publicUrl ?? '' }, job.data);
         console.log(`[conversations] chat ${job.data.on ? 'enable' : 'disable'} ${job.data.connectionId}: ${outcome}`);
         return;
       }
@@ -2459,7 +2459,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               // Telegram bot chats switched on or off (#3132): the job sets or deletes the webhook; ids only (never the hook), and no retry: a failure is
               // recorded for the screen and a person turns it on again. With no channel here the attempt is recorded as failed at once.
-              if (row.type === TELEGRAM_CHAT_QUEUED) {
+              if (row.type === 'kernel.channel.chat_queued') {
                 const chatJob: ConversationChatJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'chat', on: row.payload.action !== 'disable' };
                 if (deps.channels?.publishers && deps.channels.broker) {
                   await boss.send(QUEUES.conversationsReply, chatJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `chat:${chatJob.on ? 'on' : 'off'}:${row.event_id}`), retryLimit: 0 });

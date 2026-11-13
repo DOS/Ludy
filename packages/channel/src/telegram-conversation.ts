@@ -9,7 +9,7 @@
 // connection holds, and the `secret_token` Telegram echoes in X-Telegram-Bot-Api-Secret-Token is not stored anywhere but derived from the
 // hook under a key of the deployment (telegramHookSecret), so the route can check it before it reads the body or asks the database.
 import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { ConversationNoticeError, type ConversationAdapter, type ConversationCallResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
+import { ConversationNoticeError, type ConversationAdapter, type ConversationCallResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
 import { TELEGRAM_TEXT_MAX, TelegramClient, TelegramError, telegramSecretOf } from './telegram.ts';
 import type { Fetch } from './oauth.ts';
 
@@ -170,12 +170,14 @@ export interface TelegramConversationsOptions {
 export class TelegramConversations implements ConversationAdapter {
   readonly provider = 'telegram' as const;
   private readonly client: TelegramClient;
+  private readonly fetchImpl: Fetch | undefined;
   private readonly lastSent = new Map<string, number>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: TelegramConversationsOptions = {}) {
     this.client = new TelegramClient(options.fetch, 15_000);
+    this.fetchImpl = options.fetch;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
@@ -198,6 +200,24 @@ export class TelegramConversations implements ConversationAdapter {
     } catch (error) {
       return replyFailure(error);
     }
+  }
+
+  // Points the bot's webhook at the connection's hook, or takes it away. On: refused before any call when another connection of the org holds the
+  // same bot, when the deployment's address is not https (Telegram only takes https) or when there is no key to derive the secret from.
+  async chatHook(input: ConversationChatHookInput): Promise<ConversationChatHookResult> {
+    const s = telegramSecretOf(input.secret);
+    if (!s) return { kind: 'failed', retry: false, code: 'TELEGRAM_NO_TOKEN' };
+    const botId = telegramBotId(s.botToken);
+    if (!input.on) {
+      const deleted = await deleteTelegramWebhook(s.botToken, this.fetchImpl);
+      return deleted.kind === 'done' ? { kind: 'done', botId } : deleted;
+    }
+    if (input.takenBotIds.includes(botId)) return { kind: 'failed', retry: false, code: 'BOT_IN_USE' };
+    if (!input.baseUrl.startsWith('https://')) return { kind: 'failed', retry: false, code: 'WEBHOOK_NEEDS_HTTPS' };
+    if (!input.key) return { kind: 'failed', retry: false, code: 'NO_HOOK_KEY' };
+    const url = `${input.baseUrl.replace(/\/+$/, '')}/api/channels/telegram/webhook/${input.hook}`;
+    const set = await setTelegramWebhook(s.botToken, { url, secretToken: telegramHookSecret(input.key, input.hook) }, this.fetchImpl);
+    return set.kind === 'done' ? { kind: 'done', botId } : set;
   }
 }
 

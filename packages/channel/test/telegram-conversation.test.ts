@@ -278,6 +278,31 @@ describe('turning the webhook on and off', () => {
     expect(await deleteTelegramWebhook(TOKEN, fetchImpl)).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' });
   });
 
+  it('turns chats on through the adapter: the address and the secret are built from the hook and the key, and nothing of them comes back', async () => {
+    const { calls, fetchImpl } = bot([ok(true), ok(true)]);
+    const adapter = new TelegramConversations({ fetch: fetchImpl });
+    const hook = newTelegramHookId();
+    const input = { secret: SECRET, on: true, hook, baseUrl: 'https://ludy.example.com/', key: KEY, takenBotIds: ['999'] };
+    const on = await adapter.chatHook(input);
+    expect(on).toEqual({ kind: 'done', botId: '123456789' });
+    expect(calls[0]).toMatchObject({ method: 'setWebhook', token: TOKEN, json: { url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}`, secret_token: telegramHookSecret(KEY, hook), allowed_updates: ['message'] } });
+    expect(JSON.stringify(on)).not.toMatch(new RegExp(`${hook}|${telegramHookSecret(KEY, hook)}`));
+    const off = await adapter.chatHook({ ...input, on: false });
+    expect(off).toEqual({ kind: 'done', botId: '123456789' });
+    expect(calls[1]).toMatchObject({ method: 'deleteWebhook', json: {} });
+  });
+
+  it('refuses chats on before any call: the same bot already answers, a plain-http address, no key, no token', async () => {
+    const { calls, fetchImpl } = bot([]);
+    const adapter = new TelegramConversations({ fetch: fetchImpl });
+    const base = { secret: SECRET, on: true, hook: newTelegramHookId(), baseUrl: 'https://ludy.example.com', key: KEY, takenBotIds: [] as string[] };
+    expect(await adapter.chatHook({ ...base, takenBotIds: ['123456789'] })).toEqual({ kind: 'failed', retry: false, code: 'BOT_IN_USE' });
+    expect(await adapter.chatHook({ ...base, baseUrl: 'http://localhost:8080' })).toEqual({ kind: 'failed', retry: false, code: 'WEBHOOK_NEEDS_HTTPS' });
+    expect(await adapter.chatHook({ ...base, key: null })).toEqual({ kind: 'failed', retry: false, code: 'NO_HOOK_KEY' });
+    expect(await adapter.chatHook({ ...base, secret: '{}' })).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_NO_TOKEN' });
+    expect(calls).toHaveLength(0);
+  });
+
   it('is built from random ids: two hooks never collide in a thousand draws', () => {
     const ids = new Set(Array.from({ length: 1000 }, () => newTelegramHookId()));
     expect(ids.size).toBe(1000);
