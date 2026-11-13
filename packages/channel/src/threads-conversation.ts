@@ -326,10 +326,8 @@ export class ThreadsConversations implements ConversationAdapter {
           params: { fields: 'id,text,username,timestamp,replied_to,is_reply_owned_by_me,hide_status', reverse: 'true', limit: String(RECONCILE_REPLIES_PER_POST) },
         });
       } catch (error) {
-        // A post that is gone (HTTP 404) has nothing to read; any other failure, an invalid field or parameter included, ends the pass: skipping it
-        // would record a read that read nothing and clear the gap.
-        const result = this.api.failure(error);
-        if (result.kind === 'rejected' && result.error === 'bad_request' && result.httpStatus === 404) continue;
+        // Any failure ends the pass, a rejection of the post included: what an error for a deleted post looks like is not confirmed (live check), and
+        // skipping a post would record a read that read nothing and clear the gap. A post deleted since the list is gone from the next one.
         return failed(error);
       }
       const rows = (Array.isArray(answer.data) ? answer.data : []).filter((row) => row && typeof row === 'object');

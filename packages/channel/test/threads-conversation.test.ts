@@ -335,8 +335,8 @@ describe('ThreadsConversations.history (#3133)', () => {
     expect(await failing({ network: true })).toMatchObject({ kind: 'failed', retry: true });
     expect(await failing({ body: { data: [{ id: POST }] } }, err(10, 403))).toMatchObject({ kind: 'failed', retry: false });
     expect(await failing({ body: { data: [{ id: POST }] } }, err(2, 500))).toMatchObject({ kind: 'failed', retry: true });
-    // A post that is gone is skipped.
-    expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 404))).toMatchObject({ kind: 'ok', events: [] });
+    // A rejection of a post's read, a 404 included, fails the pass: nothing is skipped on a guess about what a missing post looks like.
+    expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 404))).toMatchObject({ kind: 'failed', retry: false });
     // An invalid request is not a missing post: the read fails, so no gap is cleared by a read that read nothing.
     expect(await failing({ body: { data: [{ id: POST }] } }, err(100, 400))).toMatchObject({ kind: 'failed', retry: false });
     // A next page is unread history even when this page is short.
