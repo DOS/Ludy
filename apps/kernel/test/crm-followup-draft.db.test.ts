@@ -58,7 +58,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     const party = (name: string, email: string | null = null) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email) VALUES ($1, $2, 'organization', $3) RETURNING id", [orgId, name, email]).then((r) => (r[0] as { id: string }).id);
     const newDeal = async (user: string, partyId: string, over: Record<string, unknown> = {}) => {
       await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
-      return exec<Deal>(user, 'crm.deal.create', { partyId, title: 'Cơ hội nội bộ 4242', amount: '15000000', expectedClose: null, ...over });
+      return exec<Deal>(user, 'crm.deal.create', { partyId, title: 'Cơ hội nội bộ XYZZY', amount: '15000000', expectedClose: null, ...over });
     };
     const age = (dealId: string, days: number) => rows('UPDATE crove_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
     const raise = () => worker.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: SYSTEM, orgId });
@@ -144,7 +144,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     expect(facts).toMatchObject({ nextStepId: step.id, reason: 'quote_unanswered', dealId: deal.id, contactName: 'Công ty Hoa Mai', contactEmail: 'hoamai@khach.test', days: 6, quote: { id: quote.id, label: 'BG-2026-0042', total: quote.total } });
     expect(facts.orgName).not.toBe('');
     // The facts hold no customer message, tax code, address, phone or the deal's own title.
-    expect(JSON.stringify(facts)).not.toContain('4242');
+    expect(JSON.stringify(facts)).not.toContain('XYZZY');
 
     const asked: Array<Parameters<CrmFollowupGenerator>[0]> = [];
     const crmFollowup: CrmFollowupGenerator = async (args) => {
@@ -269,6 +269,50 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_WAITING' });
     await o.raise();
     await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'NEXT_STEP_NOT_OPEN' });
+  });
+
+  it('takes the days and the quote of one draft from the same quote: a revision sent later, two sent quotes, and an expired quote', async () => {
+    const o = await org();
+    const deal = await o.newDeal(o.member, await o.party('Công ty Hoa Mai'));
+    // An old quote (sent 9 days ago) raises the step; a revision sent yesterday does not close it, and must not be told as "9 days ago".
+    const old = await o.sentQuote(deal.id, 9, 20, 'BG-2026-0300');
+    await o.raise();
+    const step = await o.stepOf(deal.id);
+    expect(step.reason).toBe('quote_unanswered');
+    const revision = await o.sentQuote(deal.id, 1, 25, 'BG-2026-0301');
+    const facts = await o.source(o.member, step.id);
+    // The unanswered step is about the quote sent longest ago, and its days are that quote's own.
+    expect(facts.quote?.id).toBe(old.id);
+    expect(facts.quote?.label).toBe('BG-2026-0300');
+    expect(facts.days).toBe(9);
+    expect(revision.id).not.toBe(old.id);
+
+    // The old quote expires (its last day was yesterday): it is no longer reminded about, and the revision still is not the quote of an unanswered step's days.
+    await rows("UPDATE crove_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1 WHERE org_id = $1 AND id = $2", [o.orgId, old.id]);
+    const after = await o.source(o.member, step.id);
+    expect(after.quote?.id).toBe(revision.id);
+    expect(after.days).toBe(1);
+    // With every sent quote expired there is nothing to remind about, and no link is made.
+    await rows("UPDATE crove_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1 WHERE org_id = $1 AND id = $2", [o.orgId, revision.id]);
+    await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_WAITING' });
+    expect(await o.links()).toHaveLength(0);
+  });
+
+  it('gives a draft with no link, not an error, when the quote already has the most live links', async () => {
+    const o = await org();
+    const deal = await o.newDeal(o.member, await o.party('Công ty Hoa Mai'));
+    const quote = await o.sentQuote(deal.id, 6, 20, 'BG-2026-0400');
+    await o.raise();
+    const step = await o.stepOf(deal.id);
+    for (let i = 0; i < 20; i += 1) {
+      const made = await o.exec<QuoteLinkCreated>(o.member, 'crm.quote.create_link', { quoteId: quote.id }).catch((e: { code?: string }) => e);
+      if ('code' in made) break;
+    }
+    const got = await o.draft(o.member, step.id, null);
+    expect(got.hasLink).toBe(false);
+    expect(got.quoteId).toBe(quote.id);
+    expect(got.text).toContain(crmFollowupDong(quote.total));
+    expect(got.text).not.toContain('http');
   });
 
   it('refuses a viewer, does not find another org\'s step or an unknown one, and a second org sees only its own', async () => {

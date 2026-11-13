@@ -54,11 +54,17 @@ export interface CrmFollowupDeps {
 
 export async function draftCrmFollowup(deps: CrmFollowupDeps, orgId: string, userId: string, source: FollowupSource, hint: string | undefined): Promise<FollowupDrafted> {
   const base = deps.publicUrl.trim().replace(/\/+$/, '');
-  // The facts come first, so a quote whose link cannot be made (too many links, long expired) refuses before any paid call.
+  // The facts come first, so a link that fails for a real reason refuses before any paid call.
   let url: string | null = null;
   if (source.quote && base !== '') {
-    const link = await deps.makeLink(source.quote.id);
-    url = `${base}${link.path.startsWith(QUOTE_PAGE_PATH) ? link.path : `${QUOTE_PAGE_PATH}#${link.path}`}`;
+    try {
+      const link = await deps.makeLink(source.quote.id);
+      url = `${base}${link.path.startsWith(QUOTE_PAGE_PATH) ? link.path : `${QUOTE_PAGE_PATH}#${link.path}`}`;
+    } catch (error: unknown) {
+      // Too many live links on the quote, or its links can no longer open: the draft has no link and says so; the person can revoke a link or revise the quote. Any other failure is real.
+      const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code: unknown }).code : null;
+      if (code !== 'QUOTE_LINK_LIMIT' && code !== 'QUOTE_LINK_EXPIRED') throw error;
+    }
   }
   const facts: CrmFollowupFacts = {
     reason: source.reason,

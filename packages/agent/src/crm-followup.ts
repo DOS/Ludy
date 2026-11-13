@@ -153,6 +153,13 @@ export function crmFollowupSubject(facts: CrmFollowupFacts): string {
 
 const plain = (value: string): string => value.normalize('NFD').replace(/\p{M}+/gu, '').replace(/đ/gi, 'd').toLowerCase();
 const tokens = (value: string): string[] => plain(value).split(/[^\p{L}\p{N}]+/u).filter((t) => t !== '');
+// The words of a company form: "Công ty TNHH Ánh Dương" is told by "Ánh Dương", so a text that says "công ty" is not saying the name.
+const FORM_WORDS = new Set(['cong', 'ty', 'tnhh', 'cp', 'co', 'phan', 'mtv', 'hkd', 'dntn', 'jsc', 'ltd', 'llc']);
+const nameTokens = (value: string): string[] => {
+  const all = tokens(value);
+  const kept = all.filter((t) => !FORM_WORDS.has(t));
+  return kept.length > 0 ? kept : all;
+};
 const hasRun = (haystack: string[], needle: string[]): boolean => {
   if (needle.length === 0) return false;
   for (let i = 0; i + needle.length <= haystack.length; i += 1) if (needle.every((t, j) => haystack[i + j] === t)) return true;
@@ -164,12 +171,28 @@ const hasRun = (haystack: string[], needle: string[]): boolean => {
 export function saysName(text: string, names: readonly string[]): boolean {
   const read = tokens(text);
   for (const name of names) {
-    const parts = tokens(name);
+    const parts = nameTokens(name);
     if (parts.length >= 2) {
       if (parts.length === 2 ? hasRun(read, parts) : parts.some((_, i) => i + 1 < parts.length && hasRun(read, [parts[i] as string, parts[i + 1] as string]))) return true;
     } else if (parts.length === 1) {
       const exact = name.trim();
       if (exact !== '' && new RegExp(`(?<![\\p{L}\\p{N}])${exact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(text.normalize('NFC'))) return true;
+    }
+  }
+  return false;
+}
+
+// Words a text may start with a capital in the middle of a sentence ("anh/chị" at the start of a sentence is not one).
+const CAPITAL_OK = new Set(['Anh', 'Chị', 'Bên', 'Dạ', 'Vâng', 'Ludy']);
+
+/** Whether a text writes a name nobody gave it: a capitalised word that does not start a sentence ("Chào chị Lan, ..."). The model is told no name, so any name it writes is made up; a false
+ * refusal (a product or place name) costs only the fixed words. */
+export function inventsName(text: string): boolean {
+  for (const sentence of text.split(/(?<=[.!?:])\s+|\n+/u)) {
+    const words = sentence.trim().split(/\s+/u);
+    for (const raw of words.slice(1)) {
+      const word = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+      if (/^\p{Lu}/u.test(word) && !CAPITAL_OK.has(word.split('/')[0] ?? word)) return true;
     }
   }
   return false;
@@ -185,7 +208,7 @@ export function checkCrmFollowupWords(names: readonly string[], output: { lead?:
   // No allowance for a name that holds a digit or a dot: the words never say a name, so every figure and address is refused outright.
   const problem = reminderTextProblem(lead, '') ?? reminderTextProblem(closing, '');
   if (problem) return { kind: 'none', code: problem };
-  if (saysName(lead, names) || saysName(closing, names)) return { kind: 'none', code: 'NAME' };
+  if (saysName(lead, names) || saysName(closing, names) || inventsName(lead) || inventsName(closing)) return { kind: 'none', code: 'NAME' };
   return { kind: 'words', words: { lead, closing } };
 }
 

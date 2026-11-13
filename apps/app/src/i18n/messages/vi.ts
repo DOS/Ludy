@@ -2744,7 +2744,7 @@ export const vi = {
         close: 'Đóng',
         sendHint: 'Tin này chưa được gửi đi đâu cả. Bạn đọc, sửa rồi tự bấm gửi: trong ô trả lời của cuộc trò chuyện với khách, hoặc trong thư email của bạn.',
         linkMade: 'Đã tạo một liên kết xem báo giá cho tin này. Bạn thu hồi được ở thẻ Báo giá của cơ hội.',
-        noLink: 'Chưa tạo được liên kết xem báo giá vì máy chủ chưa biết địa chỉ công khai, nên tin này chưa có liên kết.',
+        noLink: 'Chưa tạo được liên kết xem báo giá (báo giá đã đủ số liên kết còn hạn, hoặc máy chủ chưa biết địa chỉ công khai), nên tin này chưa có liên kết. Bạn thu hồi bớt liên kết ở thẻ Báo giá rồi soạn lại.',
         noEmail: 'Khách này chưa có email. Bạn điền địa chỉ người nhận trong thư.',
         replyTitle: 'Tin nhắc khách',
         replyInsert: 'Chèn vào ô trả lời',

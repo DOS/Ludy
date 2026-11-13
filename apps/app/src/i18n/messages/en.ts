@@ -2746,7 +2746,7 @@ export const en = {
         close: 'Close',
         sendHint: 'Nothing has been sent. Read it, edit it and send it yourself: in the reply box of the conversation with the customer, or in your own email.',
         linkMade: 'A link to view the quote was made for this message. You can revoke it on the deal\'s Quotes tab.',
-        noLink: 'No link to view the quote could be made because the server does not know its public address, so this message has no link.',
+        noLink: 'No link to view the quote could be made (the quote already has the most live links, or the server does not know its public address), so this message has no link. Revoke a link on the Quotes tab and write it again.',
         noEmail: 'This customer has no email. Type the recipient in your mail.',
         replyTitle: 'Reminders for this customer',
         replyInsert: 'Put in the reply box',

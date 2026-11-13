@@ -16,6 +16,7 @@ import {
   crmFollowupDong,
   crmFollowupInstructions,
   crmFollowupPrompt,
+  inventsName,
   saysName,
   type CrmFollowupFacts,
   type CrmFollowupGenerator,
@@ -74,6 +75,7 @@ describe('the words of the model', () => {
     ['an email address', { ...WORDS, closing: 'Viết cho sales@shop nhé @shop.' }, 'LINK'],
     ['the contact\'s name', { ...WORDS, lead: 'Chào chị Hoa Mai, bên mình nhắn về báo giá.' }, 'NAME'],
     ['the whole name without marks', { ...WORDS, lead: 'nguyen thi hoa mai oi, bao gia nam ben duoi.' }, 'NAME'],
+    ['a name nobody gave it', { ...WORDS, lead: 'Chào chị Lan, bên mình nhắn về báo giá.' }, 'NAME'],
     ['the org\'s name', { ...WORDS, closing: 'Công ty TNHH Ánh Dương cảm ơn anh/chị.' }, 'NAME'],
     ['an empty lead', { ...WORDS, lead: '  ' }, 'EMPTY'],
     ['a lead over its length', { ...WORDS, lead: 'a '.repeat(CRM_FOLLOWUP_LEAD_MAX) }, 'TOO_LONG'],
@@ -87,6 +89,20 @@ describe('the words of the model', () => {
     expect(saysName('Anh/chị cứ an tâm nhé.', ['An'])).toBe(false);
     expect(saysName('chào hoa mai', ['Nguyễn Thị Hoa Mai'])).toBe(true);
     expect(saysName('chào bà Hoa', ['Nguyễn Thị Hoa Mai'])).toBe(false);
+  });
+
+  it('does not take the words of a company form for the name, and still refuses the rest of it', () => {
+    const org = ['Công ty TNHH Ánh Dương'];
+    expect(saysName('Bên mình là một công ty nhỏ, rất mong được hỗ trợ anh/chị.', org)).toBe(false);
+    expect(saysName('Cảm ơn anh/chị đã tin tưởng ánh dương.', org)).toBe(true);
+    expect(checkCrmFollowupWords(org, { lead: 'Công ty bên mình nhắn để hỏi xem anh/chị đã xem báo giá chưa.', closing: 'Cảm ơn anh/chị.' }).kind).toBe('words');
+  });
+
+  it('refuses a capitalised word in the middle of a sentence, and lets the start of each sentence be', () => {
+    expect(inventsName('Chào chị Lan, bên mình nhắn.')).toBe(true);
+    expect(inventsName('Bên mình nhắn để hỏi. Anh/chị cứ trả lời nhé. Cảm ơn anh/chị.')).toBe(false);
+    expect(inventsName('Bên mình gửi lại báo giá cho anh Minh.')).toBe(true);
+    expect(inventsName('Dạ, bên mình nhắn để hỏi xem anh/chị cần gì thêm không.')).toBe(false);
   });
 
   it('goes through the reader: one metered-shaped call, the tokens reported, and the words checked', async () => {

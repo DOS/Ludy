@@ -21,7 +21,7 @@ export interface FollowupSource {
   contactEmail: string | null;
   // The org's own name: the words of a draft never say it.
   orgName: string;
-  // The days quiet; since the expected close; since the quote was sent; for an expiring quote the days left (0 on its last day). Never below 0.
+  // The days quiet; since the expected close; since the sent quote of the draft was sent; for an expiring quote the days left (0 on its last day). Never below 0.
   days: number;
   // The deal's current sent quote, if it has one; null for a deal with none.
   quote: { id: string; label: string; total: string; validUntil: string } | null;
@@ -43,16 +43,26 @@ export const followupSource = defineQuery({
     const step = found.rows[0];
     if (!step) throw new DomainError('NEXT_STEP_NOT_FOUND', 404, 'Không tìm thấy việc cần theo dõi này');
     if (step.status !== 'open' || step.closed) throw new DomainError('NEXT_STEP_NOT_OPEN', 409, 'Việc này đã xong hoặc đã đóng, không cần soạn tin nhắc nữa');
-    const sent = await sql<{ id: string; number: string | null; revision: number; total: string; valid_until: string; left_days: number }>`
+    const quoteStep = step.reason === 'quote_unanswered' || step.reason === 'quote_expiring';
+    // Only a quote that is still valid today (expiry is not stored, so an expired quote stays `sent`: it is never reminded about). Each step takes the quote its own reason is about, so the days
+    // and the quote of one draft are always the same quote's: an unanswered step the one sent longest ago, an expiring step the one that expires first, any other step the latest sent.
+    const order =
+      step.reason === 'quote_unanswered'
+        ? sql`coalesce(q.sent_at, q.created_at) ASC, q.id ASC`
+        : step.reason === 'quote_expiring'
+          ? sql`q.valid_until ASC, q.id ASC`
+          : sql`coalesce(q.sent_at, q.created_at) DESC, q.id DESC`;
+    const sent = await sql<{ id: string; number: string | null; revision: number; total: string; valid_until: string; left_days: number; sent_days: number }>`
       SELECT q.id, q.number, q.revision, q.total::text AS total, q.valid_until::text AS valid_until,
-             greatest((q.valid_until - (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS left_days
+             greatest((q.valid_until - (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS left_days,
+             greatest(((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - (coalesce(q.sent_at, q.created_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS sent_days
       FROM crove_crm.quote q
       WHERE q.org_id = ${ctx.orgId}::uuid AND q.deal_id = ${step.deal_id}::uuid AND q.status = 'sent' AND q.number IS NOT NULL
-      ORDER BY coalesce(q.sent_at, q.created_at) DESC, q.id DESC
+        AND q.valid_until >= (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+      ORDER BY ${order}
       LIMIT 1`.execute(ctx.trx);
     const quote = sent.rows[0] ?? null;
-    const quoteStep = step.reason === 'quote_unanswered' || step.reason === 'quote_expiring';
-    // A step about a quote that nobody waits for any more (accepted, declined, replaced or deleted) closes at the next daily run; until then there is nothing to remind about.
+    // A step about a quote that nobody waits for any more (accepted, declined, replaced, deleted or expired) closes at the next daily run or stays until it is dealt with; there is nothing to remind about.
     if (quoteStep && !quote) throw new DomainError('QUOTE_NOT_WAITING', 409, 'Báo giá này đã được trả lời hoặc thay bằng bản mới, không cần nhắc nữa');
     return {
       nextStepId: step.id,
@@ -61,7 +71,7 @@ export const followupSource = defineQuery({
       contactName: step.party_name,
       contactEmail: step.party_email,
       orgName: step.org_name,
-      days: step.reason === 'quote_expiring' && quote ? quote.left_days : step.days,
+      days: quote && step.reason === 'quote_expiring' ? quote.left_days : quote && step.reason === 'quote_unanswered' ? quote.sent_days : step.days,
       quote: quote ? { id: quote.id, label: quote.revision > 1 ? `${quote.number}-R${quote.revision}` : (quote.number as string), total: quote.total, validUntil: quote.valid_until } : null,
     };
   },
