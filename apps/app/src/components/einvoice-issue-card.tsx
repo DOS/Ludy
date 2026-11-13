@@ -69,7 +69,7 @@ export function EInvoiceIssueCard({ view, title, slug, pending }: { view: UseQue
           <AlertDescription>{t('issueStale')}</AlertDescription>
         </Alert>
       )}
-      {/* Only a request still waiting has an approval to think twice about; a few orders at most make one draft. */}
+      {/* Only a request still waiting has an approval to think twice about; a draft made from more than five orders is rare, so only the first five are checked and the rest are not. */}
       {pending && draft?.sourceOrderIds.slice(0, 5).map((orderId) => <CancelledOrderNote key={orderId} orderId={orderId} />)}
       <Link to="/o/$slug/sales-invoices" params={{ slug }} className="inline-block text-sm text-link hover:underline">
         {t('issueOpenScreen')}
