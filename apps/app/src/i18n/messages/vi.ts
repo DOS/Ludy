@@ -2432,6 +2432,7 @@ export const vi = {
     youtubeComments: {
       label: 'Đọc và trả lời cả bình luận dưới video của kênh này',
       hint: 'Bình luận dưới video YouTube của bạn sẽ về Hộp thư và bạn trả lời tại đó. YouTube không có thông báo đẩy cho bình luận, nên hệ thống đọc định kỳ (nhiều nhất 15 phút một lần), mỗi lần đọc tốn đơn vị trong hạn mức mỗi ngày của YouTube, hạn mức này dùng chung cho mọi kênh kết nối vào hệ thống. Mặc định tắt cho tới khi bạn bật.',
+      reconnect: 'Kết nối lại kênh này',
       needsScope: 'YouTube chưa cho phép đọc bình luận của kênh này. Hãy kết nối lại kênh và cho phép quyền bình luận, rồi bật mục này.',
       units: 'Hôm nay: đọc bình luận dùng {used}/{budget} đơn vị; trả lời dùng {replies} đơn vị (50 đơn vị một câu)',
       blocked: 'Hạn mức YouTube trong ngày đã hết. Đọc và trả lời sẽ tiếp tục sau {when}.',

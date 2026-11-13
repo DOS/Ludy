@@ -133,6 +133,17 @@ describe('YouTubeConversations.history (#3134)', () => {
     expect(new Set(answer.events.map((e) => e.messageId)).size).toBe(answer.events.length);
   });
 
+  it('treats a body that is not JSON as a failed read, never as an empty page, and says when a thread has more replies than one page', async () => {
+    // A 200 whose body is not JSON reads as null in the client.
+    const raw: Fetch = async () => new Response('<html>', { status: 200 });
+    expect(await read(adapter(raw))).toMatchObject({ kind: 'failed', retry: true, code: 'YOUTUBE_BAD_RESPONSE', units: 1 });
+    const first = thread(THREAD, comment(THREAD), [], 150);
+    const { fetchImpl } = google({ [LIST]: [{ body: { items: [first] } }], 'GET /youtube/v3/comments': [{ body: { items: [comment(`${THREAD}.AAAAAAAAAAA`, { parentId: THREAD })], nextPageToken: 'MORE' } }] });
+    const answer = await read(adapter(fetchImpl));
+    expect(answer.kind === 'ok' && answer.complete).toBe(false);
+    expect(answer.kind === 'ok' && answer.events.map((e) => e.messageId)).toContain(`${THREAD}.AAAAAAAAAAA`);
+  });
+
   it('maps a spent project quota to a held poll until the reset, and counts the refused request as a unit', async () => {
     const { fetchImpl } = google({ [LIST]: [refusal(403, 'quotaExceeded')] });
     const answer = await read(adapter(fetchImpl));

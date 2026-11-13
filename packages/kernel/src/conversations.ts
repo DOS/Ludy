@@ -222,13 +222,15 @@ interface ConnectionRow {
   updated_at: Date;
 }
 // A YouTube connection's quota counters (#3134), as the pure functions of the contract read them.
-async function youtubeQuotaRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string) {
-  return ctx.trx
+async function youtubeQuotaRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, lock = false) {
+  const query = ctx.trx
     .selectFrom('crove_kernel.channel_connection')
     .select(['provider', 'status', 'scopes', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_idle_polls', 'history_synced_at'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', connectionId)
-    .executeTakeFirst();
+    .where('id', '=', connectionId);
+  // The two writers of the counters (a poll's record and an accepted reply's units) read the row under a lock, so two transactions on one connection
+  // never write totals computed from the same stale read; the readers that only decide do not lock.
+  return (lock ? query.forUpdate() : query).executeTakeFirst();
 }
 
 // A reply to a YouTube comment is refused up front while Google has said the project's quota is spent (a call would be refused anyway, and costs a
@@ -1647,7 +1649,7 @@ const zCallResult = z.discriminatedUnion('kind', [
 // nothing.
 // A reply YouTube accepted cost 50 units of the project's day [O]: counted beside the connection's polling budget, so the screen shows what was spent.
 async function countYoutubeReplyUnits(ctx: CommandContext, connectionId: string): Promise<void> {
-  const row = await youtubeQuotaRow(ctx, connectionId);
+  const row = await youtubeQuotaRow(ctx, connectionId, true);
   if (row?.provider !== 'youtube') return;
   const q = youtubeQuotaNow({ resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until }, ctx.now);
   await ctx.trx
@@ -2702,7 +2704,7 @@ export const conversationHistoryBegin = defineCommand({
 // nothing new waits longer (15, 30, 60, then 120 minutes), a failed one waits 30 minutes (120 when only a person can fix it), and Google's own quota
 // spent holds polling until its reset. The next poll also waits for the budget's reset when the rest of the day's budget cannot hold one more.
 async function youtubeRecord(ctx: CommandContext, connectionId: string, quota: NonNullable<z.infer<typeof zConversationHistoryRecord>['quota']>): Promise<{ counted: boolean }> {
-  const row = await youtubeQuotaRow(ctx, connectionId);
+  const row = await youtubeQuotaRow(ctx, connectionId, true);
   if (row?.provider !== 'youtube') return { counted: false };
   const state = { resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until };
   const q = youtubeQuotaNow(state, ctx.now);

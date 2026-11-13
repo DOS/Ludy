@@ -5,15 +5,20 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import { YOUTUBE_POLL_MAX_UNITS } from '@crove/kernel-contract';
+import { Button } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 
-export function YoutubeCommentsPanel({ connectionId, isAdmin }: { connectionId: string; isAdmin: boolean }) {
+// `onReconnect` is given to owners and admins: it starts the reconnect of this channel when its grant lacks the comment scope.
+export function YoutubeCommentsPanel({ connectionId, isAdmin, onReconnect }: { connectionId: string; isAdmin: boolean; onReconnect?: (() => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
-  const list = useQuery(orpc.conversations.youtubeComments.queryOptions({ input: {}, refetchInterval: 60_000 }));
+  const live = useStreamLive();
+  // The realtime stream does not carry this query, so it is read every minute while the stream is down and at the slow safety interval while it is up.
+  const list = useQuery({ ...orpc.conversations.youtubeComments.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
   const set = useMutation({
     mutationFn: (enabled: boolean) => client.conversations.setYoutubeComments({ connectionId, enabled }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.youtubeComments.key() }),
@@ -29,6 +34,11 @@ export function YoutubeCommentsPanel({ connectionId, isAdmin }: { connectionId: 
         <span className="font-medium text-foreground">{t('youtubeComments.label')}</span>
       </label>
       {!s.enabled && <p className="text-subtle-foreground">{t(s.scopeGranted ? 'youtubeComments.hint' : 'youtubeComments.needsScope')}</p>}
+      {!s.scopeGranted && onReconnect && (
+        <Button variant="outline" size="sm" onClick={onReconnect} data-testid="youtube-reconnect">
+          {t('youtubeComments.reconnect')}
+        </Button>
+      )}
       {s.enabled && !s.scopeGranted && <p className="text-destructive" role="status" data-testid="youtube-scope-lost">{t('youtubeComments.needsScope')}</p>}
       {s.enabled && (
         <div className="space-y-0.5 text-subtle-foreground" data-testid="youtube-quota">

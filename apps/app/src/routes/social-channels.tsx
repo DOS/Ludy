@@ -647,7 +647,7 @@ export function SocialChannelsPage() {
                         </Button>
                       ) : null
                     )}
-                    {c.provider === 'youtube' && c.status === 'active' && <YoutubeCommentsPanel connectionId={c.id} isAdmin={isAdmin} />}
+                    {c.provider === 'youtube' && c.status === 'active' && <YoutubeCommentsPanel connectionId={c.id} isAdmin={isAdmin} onReconnect={canReconnect(c) && !start.isPending ? () => start.mutate({ provider: 'youtube' }) : undefined} />}
                     {c.provider === 'threads' && c.status === 'active' && (
                       c.scopes.includes('threads_read_replies') ? (
                         <p className="mt-1 text-xs text-subtle-foreground">{t('threadsCommentsEnabled')}</p>

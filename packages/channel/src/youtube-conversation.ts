@@ -181,6 +181,9 @@ export class YouTubeConversations implements ConversationAdapter {
       try {
         answer = (await this.api.call<ListAnswer<ThreadResource>>('GET', `${API}/commentThreads?${query}`, token)).body;
         units += 1;
+        // A 200 that is not JSON is an unreadable page, never an empty one: reading it as empty would record a complete read and move the cursor past
+        // comments that were never seen.
+        if (answer === null) return { kind: 'failed', retry: true, code: 'YOUTUBE_BAD_RESPONSE', units };
       } catch (error) {
         return failed(error);
       }
@@ -220,6 +223,12 @@ export class YouTubeConversations implements ConversationAdapter {
       try {
         const answer = await this.api.call<ListAnswer<CommentResource>>('GET', `${API}/comments?part=snippet&parentId=${encodeURIComponent(threadId)}&maxResults=100&textFormat=plainText`, token);
         units += 1;
+        if (answer.body === null) {
+          complete = false;
+          continue;
+        }
+        // More replies than one page holds: what follows is not read in this poll (the cap on a poll's units), and the read says so.
+        if (typeof answer.body.nextPageToken === 'string' && answer.body.nextPageToken !== '') complete = false;
         for (const reply of Array.isArray(answer.body?.items) ? answer.body.items : []) {
           const event = eventOf(input.externalAccountId, threadId, videoId, reply);
           if (event && Date.parse(event.at) >= sinceMs) events.push(event);

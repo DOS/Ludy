@@ -2434,6 +2434,7 @@ export const en = {
     youtubeComments: {
       label: 'Also read and answer comments on this channel’s videos',
       hint: 'Comments on your YouTube videos come into the Inbox, and you reply from there. YouTube has no push for comments, so they are read every 15 minutes at most, and each reading spends units of YouTube’s daily quota, which every channel connected to this system shares. Off until you turn it on.',
+      reconnect: 'Reconnect this channel',
       needsScope: 'YouTube has not allowed reading comments for this channel. Reconnect the channel and allow the comment permission, then turn this on.',
       units: 'Today: reading used {used} of {budget} units; replies used {replies} units (50 each)',
       blocked: 'YouTube’s daily quota is spent. Reading and replying resume after {when}.',

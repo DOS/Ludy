@@ -49,13 +49,13 @@ const status = (over: Partial<YoutubeCommentsStatus> = {}): YoutubeCommentsStatu
   ...over,
 });
 
-function render(rows: YoutubeCommentsStatus[] | null, isAdmin = true, locale: 'en' | 'vi' = 'en'): string {
+function render(rows: YoutubeCommentsStatus[] | null, isAdmin = true, locale: 'en' | 'vi' = 'en', onReconnect?: () => void): string {
   // The query's key is the route's path and its input.
   client.current.setQueryData(['conversations', 'youtubeComments', {}], rows ?? undefined);
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <YoutubeCommentsPanel connectionId={ID} isAdmin={isAdmin} />
+        <YoutubeCommentsPanel connectionId={ID} isAdmin={isAdmin} onReconnect={onReconnect} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -81,6 +81,13 @@ describe('YoutubeCommentsPanel (#3134)', () => {
   it('says so when the switch is on but the grant lost the comment scope', () => {
     expect(render([status({ scopeGranted: false })])).toContain('data-testid="youtube-scope-lost"');
     expect(render([status()])).not.toContain('youtube-scope-lost');
+  });
+
+  it('offers the reconnect only when the grant lacks the scope and the person may reconnect', () => {
+    const lost = status({ scopeGranted: false });
+    expect(render([lost], true, 'en', () => undefined)).toContain('data-testid="youtube-reconnect"');
+    expect(render([lost], true, 'en')).not.toContain('youtube-reconnect');
+    expect(render([status()], true, 'en', () => undefined)).not.toContain('youtube-reconnect');
   });
 
   it('is only for owners and admins to change', () => {
