@@ -169,7 +169,8 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   // A body that still holds the placeholder is refused by the command, whatever the box did: nothing is sent and the box keeps the text.
   await box.fill('Chào {tên}, shop còn hàng ạ.');
   await page.getByTestId('conversation-send').click();
-  await expect(page.getByText('Câu trả lời còn chỗ trống tên khách chưa điền')).toBeVisible();
+  // The screen shows the kernel's own Vietnamese message for this code.
+  await expect(page.getByText('Câu trả lời còn chỗ trống {tên} chưa điền')).toBeVisible();
   expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
   await expect(box).toHaveValue('Chào {tên}, shop còn hàng ạ.');
 });
