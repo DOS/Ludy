@@ -159,6 +159,12 @@ function dayKeys(text: string): string[] {
 // A grouped amount ("48.250.000") without its separators.
 const AMOUNT = /(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?!\d)/gu;
 const amountKeys = (text: string): string[] => [...text.matchAll(AMOUNT)].map((m) => m[0].replace(/[.,]/gu, ''));
+// A clock time read as hour and minute, so "9:30" and "09:30" are one time: each whole time of a brief must be the meeting's, not two numbers that happen to be among the facts' digits.
+const TIME = /(?<![\d:.,/-])\d{1,2}:\d{2}(?![\d:])/gu;
+const timeKeys = (text: string): string[] => [...text.matchAll(TIME)].map((m) => {
+  const [h = '', mm = ''] = m[0].split(':');
+  return `${Number(h)}:${mm}`;
+});
 
 // Words a sentence may carry with a capital in its middle without naming anyone ("VAT", the product's own name).
 const CAPITAL_OK = new Set(['VAT', 'Zalo', 'Ludy', 'Dy']);
@@ -192,10 +198,11 @@ export function checkMeetingBrief(facts: MeetingBriefFacts, output: { summary?: 
   const texts = [summary, ...points];
   const days = new Set(trusted.flatMap(dayKeys).flatMap((k) => [k, k.split('-').slice(0, 2).join('-')]));
   const amounts = new Set(trusted.flatMap(amountKeys));
+  const times = new Set(trusted.flatMap(timeKeys));
   // What is left of a text once the figures code built are cut out of it (an amount, a date and the quote's number have dots and digits of their own).
   const rest = (text: string) => trusted.filter((t) => t.trim().length >= 3).sort((x, y) => y.length - x.length).reduce((left, t) => left.split(t).join(' '), text);
   // The facts' own figures are the business's; the customer's words give back only a small number or a phone number (a quantity, a size), never a price.
-  if (texts.some((t) => draftFiguresOutside(t, trusted, facts.messages).length > 0 || hasNumberWords(rest(t)) || dayKeys(t).some((k) => !days.has(k)) || amountKeys(t).some((k) => !amounts.has(k)))) return { kind: 'none', code: 'FIGURES' };
+  if (texts.some((t) => draftFiguresOutside(t, trusted, facts.messages).length > 0 || hasNumberWords(rest(t)) || dayKeys(t).some((k) => !days.has(k)) || amountKeys(t).some((k) => !amounts.has(k)) || timeKeys(t).some((k) => !times.has(k)))) return { kind: 'none', code: 'FIGURES' };
   // Any address, on any domain (an email, "pay.example.cn", "name (at) host"), and any link or handle the facts do not hold.
   if (texts.some((t) => hasAddress(rest(t)) || draftLinksOutside(t, trusted).length > 0)) return { kind: 'none', code: 'LINK' };
   const known = new Set([...trusted, ...nameTexts(facts), ...facts.messages].flatMap(wordsOf));

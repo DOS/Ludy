@@ -2872,6 +2872,7 @@ export const en = {
         buttonOf: 'Prepare for the meeting {when}',
         title: 'Prepare for the meeting',
         close: 'Hide',
+        closeOf: 'Hide the preparation for the meeting {when}',
         loading: 'Preparing…',
         proposal: '{sales} proposes',
         pointsTitle: 'Worth raising in the meeting',

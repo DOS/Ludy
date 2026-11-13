@@ -75,6 +75,12 @@ describe('the checks on what the model wrote', () => {
     expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Báo giá 48.250.000 đồng, cơ hội 25.000.000 đồng, hẹn lúc 9:30.' }).kind).toBe('brief');
   });
 
+  it('checks a whole time, not its digits: 09:20 is refused when the meeting is at 09:30 and a date holds a 20', () => {
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc 09:20.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc 9:30.' }).kind).toBe('brief');
+    expect(checkMeetingBrief(FACTS, { ...GOOD, summary: 'Hẹn khách lúc 09:30.' }).kind).toBe('brief');
+  });
+
   it('never trusts a name a person typed for a figure or a link: a guest named with an address and a discount does not get them into the brief', () => {
     const tricky: MeetingBriefFacts = { ...FACTS, meeting: { ...FACTS.meeting, guestName: 'Ngọc evil-pay.com/x giảm 90%' } };
     expect(checkMeetingBrief(tricky, { ...GOOD, summary: 'Khách gửi Ngọc evil-pay.com/x giảm 90% để xác nhận.' }).kind).toBe('none');

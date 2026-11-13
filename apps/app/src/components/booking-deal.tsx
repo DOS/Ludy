@@ -97,7 +97,7 @@ function MeetingBriefPanel({ booking }: { booking: BookingItem }) {
   const when = whenOf({ start: booking.startsAt, end: booking.endsAt }, zone, locale);
   return (
     <div className="space-y-1" data-testid="booking-brief">
-      <Button size="sm" variant="outline" aria-expanded={open} aria-label={t('buttonOf', { when })} data-testid="booking-brief-open" onClick={() => setOpen((o) => !o)}>
+      <Button size="sm" variant="outline" aria-expanded={open} aria-label={t(open ? 'closeOf' : 'buttonOf', { when })} data-testid="booking-brief-open" onClick={() => setOpen((o) => !o)}>
         {open ? t('close') : t('button')}
       </Button>
       {open &&

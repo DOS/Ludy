@@ -80,6 +80,8 @@ describe('the entry to the brief (#3115)', () => {
     expect(html).toContain('data-testid="booking-brief-open"');
     expect(html).toContain('Chuẩn bị cuộc hẹn');
     expect(html).toContain('aria-expanded="false"');
+    // Its name starts with the visible label.
+    expect(html).toMatch(/aria-label="Chuẩn bị cuộc hẹn [^"]+"/);
     expect(html).not.toContain('data-testid="booking-brief-body"');
   });
 

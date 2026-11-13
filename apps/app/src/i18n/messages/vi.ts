@@ -2870,6 +2870,7 @@ export const vi = {
         buttonOf: 'Chuẩn bị cuộc hẹn {when}',
         title: 'Chuẩn bị cuộc hẹn',
         close: 'Ẩn',
+        closeOf: 'Ẩn bản chuẩn bị cuộc hẹn {when}',
         loading: 'Đang chuẩn bị…',
         proposal: '{sales} đề xuất',
         pointsTitle: 'Nên nêu trong cuộc hẹn',
