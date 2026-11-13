@@ -32,12 +32,18 @@ const KERNEL_FILES: Record<string, string[]> = {
   'apps/kernel/src/member-vy-ports.ts': [],
   'apps/kernel/src/member-vy-worker.ts': [],
 };
-const CONSUMER_FILES = ['modules/meetings/src/summary.ts', 'modules/meetings/src/transcribe.ts'];
+const CONSUMER_FILES = ['modules/meetings/src/live-notes.ts', 'modules/meetings/src/summary.ts', 'modules/meetings/src/transcribe.ts'];
+// Consumer files and barrel importers whose feature PR has not landed yet (the two-step rule of AGENTS.md: this file, which runs from the base
+// branch, accepts the new file before it exists). A pending path is exempt ONLY while it is absent: the moment the file exists every check below
+// applies to it in full, so the ratchet is unchanged by it. Remove an entry once its file is on main. One path per line, sorted (#3110).
+const PENDING_FILES = new Set<string>(['apps/kernel/src/meetings-live-notes.ts', 'modules/meetings/src/live-notes.ts']);
+const pending = (path: string): boolean => PENDING_FILES.has(path) && !existsSync(join(ROOT, path));
 const READER_FILES = [...Object.keys(KERNEL_FILES), ...CONSUMER_FILES];
 // The files that import a reader file whose helpers could carry the private rows out (the kernel's internals and the db package import their own files freely).
 const IMPORTERS: Record<string, string[]> = {
   'apps/kernel/src/member-vy-ports.ts': ['apps/kernel/src/http.ts', 'apps/kernel/src/kernel.ts', 'apps/kernel/src/rpc.ts'],
   'apps/kernel/src/member-vy-worker.ts': ['apps/kernel/src/worker.ts'],
+  'modules/meetings/src/live-notes.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'modules/meetings/src/summary.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'modules/meetings/src/transcribe.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'packages/db/src/schema.ts': ['packages/db/src/cells.ts', 'packages/db/src/index.ts'],
@@ -61,7 +67,7 @@ const IMPORTERS: Record<string, string[]> = {
 // Only the meetings entry is listed: the @crove/kernel and @crove/db entries are imported by nearly every file, and what they export of the Vy files is the kernel's own
 // namespaces (member_vy.*, vy_data.*, personal_data.*), which the importers lists above and the namespace check already pin.
 const BARREL_IMPORTERS: Record<string, string[]> = {
-  'modules/meetings/src/index.ts': ['apps/kernel/src/kernel.ts', 'apps/kernel/src/media-seal.ts', 'apps/kernel/src/meetings-transcribe.ts'],
+  'modules/meetings/src/index.ts': ['apps/kernel/src/kernel.ts', 'apps/kernel/src/media-seal.ts', 'apps/kernel/src/meetings-live-notes.ts', 'apps/kernel/src/meetings-transcribe.ts'],
 };
 
 const PRIVATE_ROWS =
@@ -256,7 +262,7 @@ describe('what a member’s Vy wrote is named only by the files that may, and re
 
   it('no file outside the frozen list names a private row (a constant, a helper or a command in any other file is caught here)', () => {
     expect(readers.map((f) => f.path).filter((p) => !READER_FILES.includes(p))).toEqual([]);
-    for (const path of READER_FILES) expect(existsSync(join(ROOT, path)), `${path} exists`).toBe(true);
+    for (const path of READER_FILES) expect(existsSync(join(ROOT, path)) || pending(path), `${path} exists`).toBe(true);
   });
 
   it('the kernel’s own files define only commands of their own namespaces', () => {
@@ -270,6 +276,7 @@ describe('what a member’s Vy wrote is named only by the files that may, and re
   it('every command defined in a consumer file has a literal name and is a sink or a known consumer', () => {
     const allowed = new Set([...MEMBER_VY_SINKS, ...MEMBER_VY_KNOWN_CONSUMERS]);
     for (const path of CONSUMER_FILES) {
+      if (pending(path)) continue;
       const file = files.find((f) => f.path === path);
       const found = commandBlocks(file?.text ?? '');
       expect(found.length, `${path} defines commands`).toBeGreaterThan(0);
@@ -283,13 +290,16 @@ describe('what a member’s Vy wrote is named only by the files that may, and re
     for (const f of files) {
       for (const target of importedFiles(f)) if (READER_FILES.includes(target) && target !== f.path) (found[target] ??= []).push(f.path);
     }
-    for (const path of READER_FILES) expect([...new Set(found[path] ?? [])].sort(), `importers of ${path}`).toEqual([...(IMPORTERS[path] ?? [])].sort());
+    for (const path of READER_FILES) {
+      if (pending(path)) continue;
+      expect([...new Set(found[path] ?? [])].sort(), `importers of ${path}`).toEqual([...(IMPORTERS[path] ?? [])].filter((p) => !pending(p)).sort());
+    }
     // A package entry that re-exports a reader file is a way in too: the files that import that package by name are frozen as well.
     for (const [entry, importers] of Object.entries(BARREL_IMPORTERS)) {
       const names = packageNames[entry] ?? [];
       expect(names.length, `${entry} is a package entry`).toBeGreaterThan(0);
       const via = files.filter((f) => importedFiles(f).includes(entry) && f.path !== entry).map((f) => f.path);
-      expect([...new Set(via)].sort(), `importers of ${entry}`).toEqual([...importers].sort());
+      expect([...new Set(via)].sort(), `importers of ${entry}`).toEqual([...importers].filter((p) => !pending(p)).sort());
     }
   });
 
