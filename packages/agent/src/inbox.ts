@@ -16,6 +16,7 @@ import { metered } from './meter.ts';
 import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
+import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
 import { checkFollowupWords, followupInstructions, followupPrompt, type FollowupWordsRequest, type FollowupWordsResult } from './followup.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 import {
@@ -95,6 +96,7 @@ const zReminderOut = z.object({
 export type IntentGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zIntentOut> | null; usage?: AiUsage }>;
 export type RankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zRankOut> | null; usage?: AiUsage }>;
 export type FollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
+export type CrmFollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
@@ -200,6 +202,7 @@ export class InboxReader {
   private readonly generateCompanyRank: CompanyRankGenerator;
   private readonly generateReminder: ReminderGenerator;
   private readonly generateFollowup: FollowupGenerator;
+  private readonly generateCrmFollowup: CrmFollowupGenerator;
   private readonly generateOverview: OverviewGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
@@ -209,7 +212,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -249,6 +252,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('meetings.followup_words', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateCrmFollowup =
+      generators.crmFollowup ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('crm.followup_draft', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -367,6 +378,15 @@ export class InboxReader {
     const { output, usage } = await this.generateFollowup({ system: followupInstructions(request), prompt: followupPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkFollowupWords(output);
+  }
+
+  /** The lead-in and the closing of a follow-up message to a customer about a quiet deal or an unanswered quote (#3101), or why there are none: the model is told none of the facts, and its words are
+   * refused when they hold a figure, a link, an address or the name of the contact or of the org, or are empty or too long (crm-followup.ts). names: the contact's name and the org's name, which the words
+   * must not say. onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async crmFollowupWords(request: CrmFollowupWordsRequest, names: readonly string[], onUsage?: (usage: AiUsage) => void): Promise<CrmFollowupWordsResult> {
+    const { output, usage } = await this.generateCrmFollowup({ system: crmFollowupInstructions(), prompt: crmFollowupPrompt(request) });
+    if (usage) onUsage?.(usage);
+    return checkCrmFollowupWords(names, output);
   }
 
   /** The finance coworker on payroll (#2534): what probably changes this month, the anomalies code found in a sentence each, and one payslip explained, from the pseudonymized sheet only
