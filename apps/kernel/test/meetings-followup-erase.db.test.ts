@@ -420,21 +420,33 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
         expect(out.erased.filter((r) => r.column.startsWith('crove_meetings.'))).toEqual([]);
       });
 
-      // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to
-      // bite by one follow-up mail with a very large payload (about 54 MB of text: the matcher needs over a second for it, against the 400 ms below).
+      // The scan runs under a statement timeout of its own: one the timeout stops skips the by-text pass and says so, and the rest of the erasure is done. The timeout is made to bite
+      // deterministically, not by data volume (#3073): for the test only, the database's matcher (crove_kernel.text_mentions) is wrapped so that it sleeps for 30 s on one marker text, and
+      // one follow-up mail carries that marker as its subject. The scan must evaluate the matcher on that mail, so it can never finish inside the 2 s timeout below, however fast the runner.
+      // The wrapper changes nothing for any other text, and the real matcher is put back when the test ends (each run has its own database).
       it('skips the by-text pass and says so when the scan hits the statement timeout, and still erases the rest', async () => {
         const value = 'cham.qua@erase.test';
         const small = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản chốt.` });
         const leftover = await seedSent({ recorder: 'owner', summary: `Gửi ${value} bản hai.` });
         await sqlAdmin("UPDATE crove_meetings.meeting_result SET summary = 'Đã sửa.' WHERE org_id = $1 AND meeting_id = $2", [orgId, leftover]);
-        const big = randomUUID();
+        const slow = randomUUID();
+        const SLOW_MARKER = 'slow-scan-marker-3073';
         await admin(async (c) => {
           await c.query('BEGIN');
+          await c.query('ALTER FUNCTION crove_kernel.text_mentions(text, text, text) RENAME TO text_mentions_real');
+          await c.query(
+            `CREATE FUNCTION crove_kernel.text_mentions(p_text text, p_kind text, p_value text) RETURNS boolean LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $f$
+             BEGIN
+               IF p_text = '${SLOW_MARKER}' THEN PERFORM pg_catalog.pg_sleep(30); END IF;
+               RETURN crove_kernel.text_mentions_real(p_text, p_kind, p_value);
+             END $f$`,
+          );
+          await c.query('GRANT EXECUTE ON FUNCTION crove_kernel.text_mentions(text, text, text) TO crove_tenant');
           await c.query('SET LOCAL session_replication_role = replica');
           await c.query(
             `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status)
-             VALUES ($1, 'transactional', 'meetings.followup', $2, 'x.y', 'lon@erase.test', repeat('e', 64), 'Thư lớn', jsonb_build_object('t', repeat('khong co gi o day ', 3000000)), '<' || gen_random_uuid()::text || '@erase.test>', 'queued')`,
-            [orgId, big],
+             VALUES ($1, 'transactional', 'meetings.followup', $2, 'x.y', 'cham@erase.test', repeat('e', 64), $3, jsonb_build_object('t', 'khong co gi o day'), '<' || gen_random_uuid()::text || '@erase.test>', 'queued')`,
+            [orgId, slow, SLOW_MARKER],
           );
           await c.query('COMMIT');
         });
@@ -442,7 +454,8 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
           const url = new URL(adminUrl);
           url.username = 'crove_app';
           url.password = 'test-app-pw';
-          const fast = createPool({ connectionString: url.toString(), max: 2, statementTimeoutMs: 400 });
+          // 2 s: far above what the other statements of the erasure need, far below the 30 s the marker mail makes the scan wait.
+          const fast = createPool({ connectionString: url.toString(), max: 2, statementTimeoutMs: 2000 });
           pools.push(fast);
           const quick = new Runtime(createDb(fast), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
           const out = await quick.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa('owner'), orgId, idempotencyKey: randomUUID() });
@@ -455,7 +468,9 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
           await admin(async (c) => {
             await c.query('BEGIN');
             await c.query('SET LOCAL session_replication_role = replica');
-            await c.query('DELETE FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [orgId, big]);
+            await c.query('DELETE FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [orgId, slow]);
+            await c.query('DROP FUNCTION crove_kernel.text_mentions(text, text, text)');
+            await c.query('ALTER FUNCTION crove_kernel.text_mentions_real(text, text, text) RENAME TO text_mentions');
             await c.query('COMMIT');
           });
         }
