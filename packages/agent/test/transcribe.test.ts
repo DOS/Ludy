@@ -409,7 +409,18 @@ describe('transcription behind the AI budget meter', () => {
     const transcript = await withAiScope({ orgId: 'org-1', meter }, () => transcribeChunks(provider.config, [chunk(0), chunk(600)]));
     expect(transcript.map((s) => [s.startSeconds, s.text])).toEqual([[0, 'một'], [600, 'hai']]);
     expect(events).toEqual(['admit', 'record', 'admit', 'record']);
-    expect(calls[0]).toEqual({ feature: 'meetings.transcribe', module: 'meetings', orgId: 'org-1', agentId: null, memberRunId: null });
+    // The admit sees the chunk's measured seconds before the call (#2863 item 8): the same seconds the record then reports.
+    expect(calls[0]).toEqual({ feature: 'meetings.transcribe', module: 'meetings', orgId: 'org-1', agentId: null, memberRunId: null, expected: { inputTokens: 0, outputTokens: 0, audioSeconds: 600 } });
+  });
+
+  it('tells the meter each chunk\'s own expected seconds at admit, equal to what it then records, and never a negative length (#2863 item 8)', async () => {
+    const provider = fakeProvider([{ body: { text: 'một' } }, { body: { text: 'hai' } }]);
+    const { meter, calls } = recordingMeter();
+    const recorded: AiUsage[] = [];
+    const both: AiMeter = { admit: (call) => meter.admit(call), record: async (_call, used) => void recorded.push(used) };
+    await withAiScope({ orgId: 'org-1', meter: both }, () => transcribeChunks(provider.config, [{ ...chunk(0), lengthSeconds: 90 }, { ...chunk(600), lengthSeconds: -5 }]));
+    expect(calls.map((c) => c.expected)).toEqual([{ inputTokens: 0, outputTokens: 0, audioSeconds: 90 }, { inputTokens: 0, outputTokens: 0, audioSeconds: 0 }]);
+    expect(recorded).toEqual(calls.map((c) => c.expected));
   });
 
   it('tells the meter the chunk\'s measured audio seconds, and the cost is priced by the audio minute', async () => {

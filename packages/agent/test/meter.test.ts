@@ -45,6 +45,17 @@ describe('metered', () => {
     expect(seen).toEqual([{ inputTokens: 120, outputTokens: 30 }]);
   });
 
+  it('gives the meter what the caller expects the call to use, when it says so, and nothing otherwise (#2863 item 8)', async () => {
+    const { meter, admitted } = recorder();
+    const expected: AiUsage = { inputTokens: 0, outputTokens: 0, audioSeconds: 600 };
+    await withAiScope({ orgId: 'org-1', meter }, async () => {
+      await metered('meetings.transcribe', async () => ({ usage: { inputTokens: 0, outputTokens: 0, audioSeconds: 600 } }), undefined, expected);
+      await metered('social.draft', async () => answer);
+    });
+    expect(admitted[0]?.expected).toEqual(expected);
+    expect(admitted[1]).not.toHaveProperty('expected');
+  });
+
   it('does not run the call when the meter refuses it (a spent budget), and records nothing', async () => {
     const { meter, recorded } = recorder(() => {
       throw new AiBudgetExhaustedError('org', '2026-12-01T00:00:00.000Z');
