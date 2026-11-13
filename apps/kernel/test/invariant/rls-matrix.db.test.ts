@@ -2348,7 +2348,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           start_seconds: 0,
           end_seconds: 15,
           text: 'rls-matrix',
-          source_run_id: null,
         },
       };
     },
