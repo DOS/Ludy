@@ -9876,6 +9876,7 @@ export const vi = {
         reorder: 'Sắp xếp lại các giai đoạn của quy trình bán hàng',
       },
       signals: {
+        open_deals: 'Xem các deal đang mở, để đối chiếu với công nợ quá hạn',
         won_deals: 'Xem các deal đã thắng, để đối chiếu với hóa đơn bán hàng',
       },
       today: 'Xem việc CRM cần bạn trong hôm nay',
