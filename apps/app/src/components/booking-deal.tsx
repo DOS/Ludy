@@ -115,9 +115,10 @@ export function DealBookings({ deal, canEdit }: { deal: { id: string; title: str
     </div>
   );
   return (
-    <section className="space-y-3" aria-label={t('panelTitle')} data-testid="deal-bookings">
+    <section className="space-y-3" aria-label={t('panelTitle', { title: deal.title })} data-testid="deal-bookings">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-medium text-foreground">{t('panelTitle')}</h3>
+        {/* Names the deal: on the board this panel sits above every card, so the heading is what says whose bookings these are. */}
+        <h3 className="text-sm font-medium text-foreground">{t('panelTitle', { title: deal.title })}</h3>
         <Button size="sm" variant="outline" onClick={() => setBooking((o) => !o)} aria-expanded={booking} data-testid="deal-book">
           {t('book')}
         </Button>
@@ -126,6 +127,10 @@ export function DealBookings({ deal, canEdit }: { deal: { id: string; title: str
       {booking && <BookingSuggestCard slug={slug} dealId={deal.id} startOpen onClose={() => setBooking(false)} />}
       {bookings.error ? (
         <ErrorText>{errorMessage(bookings.error)}</ErrorText>
+      ) : bookings.isPending ? (
+        <p className="text-sm text-muted-foreground" role="status" data-testid="deal-bookings-loading">
+          {t('loading')}
+        </p>
       ) : bookings.data ? (
         <div className="space-y-3">
           {group('upcoming', bookings.data.upcoming)}

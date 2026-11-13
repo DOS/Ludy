@@ -2848,7 +2848,8 @@ export const vi = {
     movePick: 'Chọn giờ mới:',
     // Lịch hẹn gắn với cơ hội (#3103): trên một cơ hội, và trên từng lịch hẹn của màn này.
     deal: {
-      panelTitle: 'Lịch hẹn của cơ hội này',
+      panelTitle: 'Lịch hẹn của cơ hội "{title}"',
+      loading: 'Đang tải lịch hẹn…',
       panelHint: 'Các lịch hẹn đã liên kết với cơ hội. Bạn thấy những lịch do bạn chủ trì; chủ sở hữu và quản trị viên thấy tất cả.',
       book: 'Đặt lịch',
       emptyUpcoming: 'Chưa có lịch hẹn sắp tới.',

@@ -91,7 +91,8 @@ describe('the deal panel (#3103)', () => {
       upcoming: [booking('00000000-0000-4000-8000-000000000071'), booking('00000000-0000-4000-8000-000000000072', { status: 'cancelled' })],
       past: [booking('00000000-0000-4000-8000-000000000073', { startsAt: '2030-12-02T02:00:00.000Z', endsAt: '2030-12-02T02:30:00.000Z' })],
     });
-    expect(html).toContain('Lịch hẹn của cơ hội này');
+    // The heading names the deal, so on the board (one panel above every card) it says whose bookings these are.
+    expect(html).toContain('Lịch hẹn của cơ hội &quot;Gói kế toán năm&quot;');
     expect(count(html, 'data-testid="deal-booking"')).toBe(3);
     expect(count(html, 'data-testid="deal-booking-unlink"')).toBe(3);
     expect(count(html, 'data-testid="deal-book"')).toBe(1);
@@ -117,6 +118,22 @@ describe('the deal panel (#3103)', () => {
     expect(count(empty, 'data-testid="deal-booking"')).toBe(0);
     const erased = panel(true, { upcoming: [booking('00000000-0000-4000-8000-000000000071', { visitor: { name: null, email: null, phone: null, note: null } })], past: [] });
     expect(erased).toContain('Đã xóa theo yêu cầu');
+  });
+
+  it('says the bookings are loading until they arrive, then lists them', () => {
+    setActiveLocale('vi');
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client.current}>
+        <I18nProvider>
+          <DealBookings deal={{ id: DEAL_ID, title: 'Gói kế toán năm' }} canEdit />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    expect(count(html, 'data-testid="deal-bookings-loading"')).toBe(1);
+    expect(html).toContain('Đang tải lịch hẹn');
+    expect(count(html, 'data-testid="deal-bookings-upcoming"')).toBe(0);
+    // With the data in the cache there is no loading line.
+    expect(count(panel(true, { upcoming: [], past: [] }), 'data-testid="deal-bookings-loading"')).toBe(0);
   });
 
   it('shows a viewer nothing: a viewer reads no booking', () => {

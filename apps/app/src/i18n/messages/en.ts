@@ -2850,7 +2850,8 @@ export const en = {
     movePick: 'Pick a new time:',
     // Bookings linked to a deal (#3103): on a deal, and on each booking of this screen.
     deal: {
-      panelTitle: 'Bookings of this deal',
+      panelTitle: 'Bookings of the deal "{title}"',
+      loading: 'Loading bookings…',
       panelHint: 'The bookings linked to the deal. You see the ones you host; owners and admins see all of them.',
       book: 'Book',
       emptyUpcoming: 'No upcoming bookings.',
