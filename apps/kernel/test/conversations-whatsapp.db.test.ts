@@ -124,6 +124,8 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       { provider: 'whatsapp', externalAccountId: phoneId, displayName: 'Tiệm Bánh An Nhiên', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
       { actor: asUser(owner), orgId },
     );
+    // The connection began long ago: an event dated before it is the earlier holder's (see 'one number, one organization'), and the tests date messages minutes back.
+    await rows("UPDATE crove_kernel.channel_connection SET connected_at = now() - interval '30 days' WHERE org_id = $1 AND id = $2", [orgId, connected.connectionId]);
     return { orgId, owner, admin: adm, member, viewer, phoneId, connectionId: connected.connectionId };
   }
 
@@ -255,6 +257,30 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { actor: asUser(a.owner), orgId: a.orgId });
       const taken = await connect(b, a.phoneId);
       expect(taken.connectionId).not.toBe(a.connectionId);
+    });
+
+    it('does not hand a new holder the earlier holder’s customers: a notice waiting from before the number changed hands is ignored, one dated after it is stored', async () => {
+      const a = await org();
+      const b = await org();
+      // A customer of A writes; the notice waits (the worker is busy), then A disconnects and B connects the same number.
+      expect((await post(app, customerNotice(a, message(LAN, { timestamp: secondsAgo(120) })))).status).toBe(200);
+      expect(await waiting()).toBe(1);
+      await api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { actor: asUser(a.owner), orgId: a.orgId });
+      const sealed = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId: b.orgId, provider: 'whatsapp', externalAccountId: a.phoneId });
+      await api.execute(
+        'kernel.channel.connect',
+        { provider: 'whatsapp', externalAccountId: a.phoneId, displayName: 'Tiệm B', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+        { actor: asUser(b.owner), orgId: b.orgId },
+      );
+      const holder: Org = { ...b, phoneId: a.phoneId };
+      expect(await intake()).toMatchObject({ dropped: 0 });
+      // The old message reached nobody: not A (disconnected), not B (it began before B held the number).
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[a.orgId, b.orgId]])).toHaveLength(0);
+      // A customer who writes after B connected is B's.
+      expect((await post(app, customerNotice(holder, message(MINH, { timestamp: secondsAgo(-5) })))).status).toBe(200);
+      expect(await intake()).toMatchObject({ dropped: 0 });
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
     });
   });
 
@@ -765,8 +791,11 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
         { external_user_id: MINH, display_name: 'Lan Nguyễn' },
         { external_user_id: expect.stringMatching(/^erased:k1:[0-9a-f]{64}$/), display_name: null },
       ]);
-      // The same notice delivered again after the erasure (the message is dated before it) brings nothing back.
-      expect((await post(app, customerNotice(o, first))).status).toBe(200);
+      // The same notice delivered again after the erasure (the message is dated before it) brings nothing back. It goes through an instance with an empty replay
+      // cache, so it is parked and reaches the ingest guard (the first instance would answer it 200 from its cache and park nothing).
+      const fresh = createHttpApp({ config: appConfig, runtime: api, store, authenticate: createAuthenticator(appConfig, db), pool: pools[0] as pg.Pool, aiEnabled: false, whatsappWebhook: { appSecret: APP_SECRET, verifyToken: VERIFY }, whatsappReplays: new WhatsAppReplayCache() });
+      expect((await post(fresh, customerNotice(o, first))).status).toBe(200);
+      expect(await waiting()).toBe(1);
       expect(await intake()).toMatchObject({ dropped: 0 });
       expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, LAN])).toHaveLength(0);
       const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_contact'", [o.orgId]));

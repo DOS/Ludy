@@ -267,10 +267,18 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
       return out;
     }
   }
+  // A WhatsApp number can change hands (one org disconnects it, another connects it) while notices of the first are still waiting: a notice names no org
+  // and may wait up to seven days. An event dated before this connection began is the earlier holder's customer's, never ours. A reconnect of a live
+  // connection keeps its row and its date; a number connected again after a disconnect is a new row, so its date is the start of this holder.
+  let notBefore: number | null = null;
+  if (connection.provider === 'whatsapp') {
+    const since = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('connected_at').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    notBefore = since ? new Date(since.connected_at).getTime() : null;
+  }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
   const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
   for (const { event } of events) {
-    if (!rules.kinds.includes(event.kind)) {
+    if (!rules.kinds.includes(event.kind) || (notBefore !== null && Date.parse(event.at) < notBefore)) {
       out.ignored++;
       continue;
     }

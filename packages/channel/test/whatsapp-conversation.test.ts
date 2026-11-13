@@ -247,7 +247,8 @@ const replyInput = (over: Partial<Parameters<WhatsAppConversations['reply']>[0]>
   postId: null,
   contactId: CUSTOMER,
   text: 'Dạ shop gửi bảng giá ạ',
-  lastInboundAt: new Date(NOW - 3_600_000).toISOString(),
+  // The adapter reads the real clock for the 24-hour window, so the customer's last message is dated from it (a fixed date would age out of the window).
+  lastInboundAt: new Date(Date.now() - 3_600_000).toISOString(),
   callKey: 'call-1',
   ...over,
 });
