@@ -289,17 +289,17 @@ export function fillNamePlaceholder(text: string, name: string | null | undefine
   const filled = usableName(name);
   if (filled !== null) return body.replace(NAME_PLACEHOLDER, () => filled);
   // Each placeholder becomes a mark, and only the spaces and the marks of punctuation next to a mark are tidied: the rest of the text stays as written.
-  const MARK = '\u0001';
+  const MARK = '\uE000';
   return body
     .replaceAll(MARK, '')
     .replace(NAME_PLACEHOLDER, MARK)
-    .replace(/\u0001(?:[^\S\n]*\u0001)+/gu, MARK)
-    .replace(/(^|\n)[^\S\n]*\u0001[^\S\n]*(?:[,;:]+[^\S\n]*)?/gu, '$1')
-    .replace(/[,;:][^\S\n]*\u0001(?=[,.!?…])/gu, '')
-    .replace(/([([])[^\S\n]*\u0001[^\S\n]*/gu, '$1')
-    .replace(/[^\S\n]*\u0001(?=[,.;:!?…)\]])/gu, '')
-    .replace(/[^\S\n]*\u0001[^\S\n]*(?=\n|$)/gu, '')
-    .replace(/[^\S\n]*\u0001[^\S\n]*/gu, ' ')
+    .replace(/\uE000(?:[^\S\n]*\uE000)+/gu, MARK)
+    .replace(/(^|\n)[^\S\n]*\uE000[^\S\n]*(?:[,;:]+[^\S\n]*)?/gu, '$1')
+    .replace(/[,;:][^\S\n]*\uE000(?=[,.!?…])/gu, '')
+    .replace(/([([])[^\S\n]*\uE000[^\S\n]*/gu, '$1')
+    .replace(/[^\S\n]*\uE000(?=[,.;:!?…)\]])/gu, '')
+    .replace(/[^\S\n]*\uE000[^\S\n]*(?=\n|$)/gu, '')
+    .replace(/[^\S\n]*\uE000[^\S\n]*/gu, ' ')
     .trim();
 }
 
