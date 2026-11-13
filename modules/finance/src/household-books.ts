@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { zHouseholdBook, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdBookRule, type HouseholdS1a } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { sum, toMoney } from '@crove/l10n-vn';
 import { householdProfileView } from './household.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
