@@ -137,3 +137,39 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?c=[0-9a-f-]{36}`));
   await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();
 });
+
+test('a saved reply with the contact-name placeholder shows the contact name in the reply box before Send, and Send refuses a body that still holds it (#3102)', async ({ page }) => {
+  await signInNewUser(page, newEmail('conversations-name'));
+  const slug = await createOrg(page, 'Công ty Tên Khách');
+  await publishOnSandbox(page, 'Trang Tên Khách', 'Bài để khách hỏi');
+  const comments = page.getByTestId('post-comments');
+  await comments.getByTestId('sandbox-comment-open').click();
+  await comments.getByTestId('sandbox-comment-text').fill('Còn hàng không shop?');
+  await comments.getByTestId('sandbox-comment-send').click();
+  await expect(comments.getByTestId('conversation-item')).toHaveCount(1, { timeout: 30_000 });
+
+  // The org's saved reply, with the placeholder, answering the words "còn hàng".
+  exec(`INSERT INTO crove_kernel.saved_reply (org_id, title, body, keywords) SELECT t.org_id, 'Chào khách', 'Chào {tên}, shop còn hàng ạ.', ARRAY['còn hàng'] FROM crove_kernel.tenant t WHERE t.slug = :'slug'`, { slug });
+
+  // The Inbox: link the customer to a contact so the thread has a name, then pick the saved reply.
+  await page.goto(`/o/${slug}/social/inbox?kind=comment_thread`);
+  await page.getByTestId('conversation-tab-new').click();
+  await page.getByTestId('conversation-item').first().click();
+  const panel = page.getByTestId('contact-panel');
+  await panel.getByRole('button', { name: 'Tạo liên hệ mới' }).click();
+  await panel.getByLabel('Tên liên hệ mới').fill('Chị Mai Hương');
+  await panel.getByRole('button', { name: 'Tạo và gắn' }).click();
+  await expect(panel.getByTestId('contact-name')).toHaveText('Chị Mai Hương');
+
+  // The name is in the box, not the braces, so the person reads the final text before pressing Send.
+  const box = page.getByTestId('conversation-reply-text');
+  await page.getByTestId('conversation-suggestion').filter({ hasText: 'Chào khách' }).click();
+  await expect(box).toHaveValue('Chào Chị Mai Hương, shop còn hàng ạ.');
+
+  // A body that still holds the placeholder is refused by the command, whatever the box did: nothing is sent and the box keeps the text.
+  await box.fill('Chào {tên}, shop còn hàng ạ.');
+  await page.getByTestId('conversation-send').click();
+  await expect(page.getByText('Câu trả lời còn chỗ trống tên khách chưa điền')).toBeVisible();
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
+  await expect(box).toHaveValue('Chào {tên}, shop còn hàng ạ.');
+});

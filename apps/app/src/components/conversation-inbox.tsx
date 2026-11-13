@@ -21,7 +21,7 @@ import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPage
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { StepUpPrompt } from './two-factor.tsx';
-import { DraftPanel } from './conversation-drafts.tsx';
+import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
 
@@ -743,11 +743,13 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       <DraftPanel
         detail={detail}
         onUse={(draft) => {
-          setText(draft.body ?? '');
+          // A draft may keep the saved reply's `{tên}` as a fill (#3102): it is filled here, as for a saved reply.
+          setText(replyTextFor(draft.body ?? '', detail));
           setFrom({ draftId: draft.id });
         }}
         onUseSaved={(reply) => {
-          setText(reply.body);
+          // `{tên}` becomes the contact's name here, in the box, before Send (#3102); with no name it is dropped.
+          setText(replyTextFor(reply.body, detail));
           // The text is now the saved reply's, so it no longer began from a draft.
           setFrom({ savedReplyId: reply.id });
         }}
