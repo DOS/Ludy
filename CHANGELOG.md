@@ -4,6 +4,8 @@ What changed in each release that reaches the pilot. A release is a `v*` tag of 
 
 ## Unreleased (on `main` after v0.3.2)
 
+- **Bookings linked to deals** (#3103): a deal lists its upcoming and past bookings, "Đặt lịch" on a deal gives the client a booking link that carries the deal, and on the Lịch hẹn screen Dy suggests the guest's open deal by email or phone (no AI model) for a person to confirm; link and unlink are audited commands.
+
 ## v0.3.2 (2026-11-13)
 
 Before the first deploy of this release: link the GHCR package `ghcr.io/dos/ludy-media` to the repository for the deploy token (one time), or the deploy stops at pull and changes nothing.

@@ -11,6 +11,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { BookingDeal } from '../components/booking-deal.tsx';
 import { BookingFeedCard } from '../components/booking-feed.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
@@ -124,6 +125,8 @@ function BookingRow({
             </a>
           )}
           {b.status === 'confirmed' && b.meeting.state === 'pending' && <p className="text-xs text-muted-foreground">{t('meet.pending')}</p>}
+          {/* The deal of the booking, or Dy's suggestion of one (#3103): a person links it with a click. */}
+          <BookingDeal booking={b} />
           {b.status === 'confirmed' && b.meeting.state === 'failed' && (
             <Badge variant="warning" data-testid="booking-meet-failed">
               {t('meet.failed')}
@@ -190,7 +193,7 @@ export function BookingsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const manager = org.data?.role === 'owner' || org.data?.role === 'admin';
   const bookings = useQuery({
-    ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }),
+    ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period, withSuggestions: true } }),
     enabled: org.data !== undefined,
     // A Google Meet that is still being made (C7, #1375) settles within minutes and sends no stream hint: while a listed booking waits for it, the list is read again.
     // A cancelled booking never settles, so only confirmed ones keep the poll going.

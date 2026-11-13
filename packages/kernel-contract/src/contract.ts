@@ -260,7 +260,7 @@ import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCan
 import { zFollowupDraftInput, zFollowupDrafted } from './crm-followup.ts';
 import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDeleted, zQuoteReport, zQuoteReportQuery, zQuoteLinkCreated, zQuoteLinkRevoke, zQuoteLinkRevoked, zQuoteListQuery, zQuotePage, zQuoteRef, zQuoteSave, zQuoteSend, zQuoteSent, zQuoteLogoSet, zQuoteSetting, zQuoteSettingSet, zQuoteSuggestInput, zQuoteSuggested, zQuoteSummary } from './crm-quotes.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
-import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
+import { zBookingCancel, zBookingDealChanged, zBookingDealLink, zBookingDealUnlink, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, zDealBookings, zDealBookingsQuery } from './crm.ts';
 import {
   zHrDependentAdd,
   zHrDependentEnd,
@@ -659,6 +659,9 @@ export const contract = {
       list: oc.input(zBookingListQuery).output(z.array(zBookingItem)),
       cancel: oc.input(zBookingCancel).output(z.object({ bookingId: z.string(), status: z.literal('cancelled') })),
       move: oc.input(zBookingMove).output(z.object({ bookingId: z.string(), startsAt: z.string() })),
+      // Link a booking to a deal and take the link off (#3103); a person confirms Dy's suggestion with `linkDeal`. Neither mails anyone.
+      linkDeal: oc.input(zBookingDealLink).output(zBookingDealChanged),
+      unlinkDeal: oc.input(zBookingDealUnlink).output(zBookingDealChanged),
       // Times to offer a client (#1440): read-only; the model, when the deployment has one, reads the pasted message.
       suggest: oc.input(zBookingSuggestInput).output(zBookingSuggestion),
     },
@@ -697,6 +700,8 @@ export const contract = {
       list: oc.input(zDealListQuery).output(zDealPage),
       get: oc.input(zDealRef).output(zDeal),
       byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
+      // The deal's bookings the caller may read, upcoming and past (#3103); owners, admins and members only, since a booking shows its guest.
+      bookings: oc.input(zDealBookingsQuery).output(zDealBookings),
       // The conversations of the deal's contact since the deal opened (#2333), newest activity first, with no message body.
       conversations: oc.input(zDealRef).output(z.array(zConversationOther)),
       create: oc.input(zDealCreate).output(zDeal),

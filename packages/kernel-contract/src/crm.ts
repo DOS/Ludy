@@ -1,6 +1,7 @@
 // The crm module's booking slice (issue #1314, plan docs/plan/calendar.md): event types, the kinds of meeting a client
 // books with a member on a public page (C3, #1318). The slot rules they carry feed freeSlots() in calendar.ts.
 import { z } from 'zod';
+import { DEAL_STAGE_KINDS } from './crm-deals.ts';
 import { zId } from './schemas.ts';
 
 // google_meet (C7, #1375): the meeting link is made for each booking through the host's Google connection; the fixed link in the type's location, when one
@@ -83,6 +84,9 @@ export const zBookingRequest = z.strictObject({
   phone: z.string().trim().max(30).nullable().optional(),
   note: z.string().trim().max(1000).nullable().optional(),
   timeZone: z.string().min(1).max(64),
+  // The deal a "Đặt lịch" link of a deal names (#3103): the page copies it from its address. The server keeps it only when it names a deal of the org, and says nothing
+  // otherwise; the visitor reads nothing of the deal.
+  dealId: zId.optional(),
 });
 export type BookingRequest = z.infer<typeof zBookingRequest>;
 
@@ -134,8 +138,16 @@ export type BookingManageAsk = z.infer<typeof zBookingManageAsk>;
 
 // The bookings screen of the app (#1320): a member's own bookings (those of the types they host), or the org's for
 // owners and admins; upcoming ones first to last, past ones last to first.
-export const zBookingListQuery = z.strictObject({ scope: z.enum(['mine', 'org']), period: z.enum(['upcoming', 'past']) });
+// `withSuggestions` (#3103): also look for Dy's deal suggestions for the bookings that have no deal; only the bookings screen asks, the Home and invoice reads leave it off.
+export const zBookingListQuery = z.strictObject({ scope: z.enum(['mine', 'org']), period: z.enum(['upcoming', 'past']), withSuggestions: z.boolean().optional() });
 export type BookingListQuery = z.infer<typeof zBookingListQuery>;
+// Why Dy suggests a deal for a booking (#3103), strongest first: the booking's contact is the deal's contact; the guest's email is the deal contact's email (compared
+// without case); the guest's phone is the deal contact's phone (compared by phoneKey, so +84 and 0 are one number).
+export const BOOKING_DEAL_MATCHES = ['contact', 'email', 'phone'] as const;
+export type BookingDealMatch = (typeof BOOKING_DEAL_MATCHES)[number];
+export const BOOKING_DEAL_SUGGESTIONS_MAX = 3;
+export const zBookingDealSuggestion = z.strictObject({ id: z.string(), title: z.string(), stage: z.string(), match: z.enum(BOOKING_DEAL_MATCHES) });
+export type BookingDealSuggestion = z.infer<typeof zBookingDealSuggestion>;
 export const zBookingItem = z.strictObject({
   id: z.string(),
   eventType: z.strictObject({ id: z.string(), slug: z.string(), title: z.string(), active: z.boolean() }),
@@ -155,10 +167,25 @@ export const zBookingItem = z.strictObject({
   calendarEventId: z.string(),
   // The Google Meet of the booking (C7, #1375): its state, and the join link once it is ready.
   meeting: z.strictObject({ state: z.enum(BOOKING_MEETING_STATES), url: z.string().nullable() }),
+  // The deal the booking is linked to (#3103), or null. Deals are readable by every role that reads bookings.
+  deal: z.strictObject({ id: z.string(), title: z.string(), stage: z.string(), status: z.enum(DEAL_STAGE_KINDS) }).nullable(),
+  // Dy's suggestions (#3103): the guest's open deals, found by a fixed rule (never a model), for a booking that has no deal yet; a person links one with a click. At most
+  // BOOKING_DEAL_SUGGESTIONS_MAX, best match first; empty for a linked booking, and on a read that does not look (the Home read).
+  dealSuggestions: z.array(zBookingDealSuggestion),
 });
 export type BookingItem = z.infer<typeof zBookingItem>;
 export const zBookingCancel = z.strictObject({ bookingId: zId });
 export const zBookingMove = z.strictObject({ bookingId: zId, startsAt: z.iso.datetime({ offset: true }) });
+// Link a booking to a deal, or take the link off (#3103). A booking has at most one deal; linking it to another deal moves the link. Both answer the booking and its deal now.
+export const zBookingDealLink = z.strictObject({ bookingId: zId, dealId: zId });
+export const zBookingDealUnlink = z.strictObject({ bookingId: zId });
+export const zBookingDealChanged = z.strictObject({ bookingId: z.string(), dealId: z.string().nullable() });
+export type BookingDealChanged = z.infer<typeof zBookingDealChanged>;
+// The deal panel's read (#3103): the deal's bookings the caller may read, upcoming first to last and past last to first (at most BOOKING_DEAL_LIST_MAX each).
+export const BOOKING_DEAL_LIST_MAX = 50;
+export const zDealBookingsQuery = z.strictObject({ dealId: zId });
+export const zDealBookings = z.strictObject({ upcoming: z.array(zBookingItem), past: z.array(zBookingItem) });
+export type DealBookings = z.infer<typeof zDealBookings>;
 
 // Booking times for a reply to a client (#1440): the member picks an event type and may paste the client's message,
 // which the deployment's model reads for the days and times asked for (tainted, shown as the AI's reading); the slots
