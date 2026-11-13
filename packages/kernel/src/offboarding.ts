@@ -44,7 +44,7 @@ export const EXPORT_TABLES = {
   'kernel.calendar_event': { from: 'crove_kernel.calendar_event', omit: [] },
   // Connected channel accounts (ADR-0025). Their sealed tokens (crove_kernel.credential) are secrets and stay out.
   // The keyed hash of the Meta user who granted a connection (Meta's data deletion callback) is the deployment's, not the org's.
-  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash'] },
+  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash', 'chat_hook'] },
   // Which members use which channels (#2303), and the conversation core (CV6, #2305): the customers' comments and messages, the
   // identities they wrote under, the org's internal notes on them and its retention. Read marks are per-member state and stay out.
   'kernel.channel_access': { from: 'crove_kernel.channel_access', omit: [] },

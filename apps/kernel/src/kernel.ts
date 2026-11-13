@@ -10,6 +10,7 @@ import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
+  TELEGRAM_HOOK_KEY_INFO,
   TelegramConversations,
   TelegramPublisher,
   DiscordPublisher,
@@ -692,6 +693,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
+          // Telegram bot chats (#3132): the route exists where Telegram is on and the credential key can derive the webhook secret.
+          ...(config.CHANNEL_TELEGRAM === 'true' && resolved.broker.deriveKeys ? { telegramWebhook: { keys: () => (resolved.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO) ?? []).map((k) => k.key) } } : {}),
           ...(conversationSecrets && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets.primary, ...(conversationSecrets.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(

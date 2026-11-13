@@ -15,16 +15,24 @@ import {
   ConversationNoticeError,
   parseFacebookNotices,
   parseInstagramNotices,
+  TELEGRAM_HOOK_KEY_INFO,
+  deleteTelegramWebhook,
   parseSandboxNotice,
+  parseTelegramChatNotice,
   parseZaloNotice,
+  setTelegramWebhook,
+  telegramBotId,
+  telegramHookSecret,
+  telegramSecretOf,
   type ConversationAdapter,
   type ConversationNotice,
+  type Fetch,
 } from '@crove/channel';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@crove/agent';
-import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, UsageLimits } from '@crove/kernel';
+import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, TelegramChatWork, UsageLimits } from '@crove/kernel';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
@@ -47,7 +55,13 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   instagram: parseInstagramNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
+  // Telegram bot chats (#3132): the hook and its secret were checked by the route before the update was parked; the notice's account id is the hook.
+  telegram_chat: parseTelegramChatNotice,
 };
+
+// The intake providers whose notice names a connection's hook rather than a platform account (the hook is an opaque capability, never an org):
+// the worker finds the connection by the hook.
+const HOOK_PROVIDERS: ReadonlySet<string> = new Set(['telegram_chat']);
 
 export interface ClaimedNotice {
   seq: string;
@@ -71,8 +85,9 @@ const finishNotice = async (workerDb: Db, seq: string): Promise<void> => {
 };
 
 async function connectionsFor(workerDb: Db, provider: string, accountId: string): Promise<Array<{ orgId: string; connectionId: string }>> {
-  const { rows } = await sql<{ org_id: string; connection_id: string }>`
-    SELECT org_id, connection_id FROM crove_kernel.conversation_connections_for(${provider}, ${accountId})`.execute(workerDb);
+  const { rows } = HOOK_PROVIDERS.has(provider)
+    ? await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM crove_kernel.conversation_chat_hook_connections(${accountId})`.execute(workerDb)
+    : await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM crove_kernel.conversation_connections_for(${provider}, ${accountId})`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id }));
 }
 
@@ -175,6 +190,72 @@ export async function failUnsendable(runtime: Runtime, job: ConversationJob): Pr
   }
   const work = await runtime.execute<{ action: string; callKey?: string }>('kernel.conversation.reply_begin', { messageId: job.messageId }, options);
   if (work.action === 'call' && work.callKey) await runtime.execute('kernel.conversation.reply_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Telegram bot chats on and off (#3132). The webhook is set (or deleted) by a job on this queue, ids only in its data: the worker alone opens
+// the bot token. The hook that makes the webhook's address, and the secret derived from it, are built here from the stored hook and the
+// deployment's key, used for the one call and never logged, stored or returned.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// `on`: the webhook is to be set (true) or deleted (false). One action value, so the job is a member of the queue's union that a check narrows away.
+export type ConversationChatJob = { orgId: string; connectionId: string; action: 'chat'; on: boolean };
+
+export interface ChatHookDeps {
+  runtime: Runtime;
+  broker: CredentialBroker;
+  // The deployment's public address (APP_URL): the webhook is `<baseUrl>/api/channels/telegram/webhook/<hook>`. Telegram only takes https.
+  baseUrl: string;
+  // Tests only.
+  fetch?: Fetch | undefined;
+}
+
+// Sets or deletes the connection's webhook and records the outcome. The returned text is for the log: a state or a code, nothing a platform
+// said and nothing of the hook.
+export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationChatJob): Promise<string> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  const action = job.on ? ('enable' as const) : ('disable' as const);
+  const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: job.connectionId, action }, options);
+  if (work.action !== 'call' || !work.hook) return 'none';
+  const record = async (outcome: 'done' | 'failed', extra: { botId?: string; code?: string } = {}): Promise<void> => {
+    await deps.runtime.execute('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action, outcome, ...extra }, options);
+  };
+  const failed = async (code: string): Promise<string> => {
+    await record('failed', { code });
+    return `failed:${code}`;
+  };
+  let opened: Opened;
+  try {
+    opened = await open(deps, job);
+  } catch {
+    return failed('CREDENTIAL_ERROR');
+  }
+  if (opened.kind === 'refused') return failed(opened.code);
+  const token = telegramSecretOf(opened.secret)?.botToken;
+  if (!token) return failed('TELEGRAM_NO_TOKEN');
+  if (action === 'disable') {
+    const result = await deleteTelegramWebhook(token, deps.fetch);
+    if (result.kind === 'failed') return failed(result.code);
+    await record('done');
+    return 'off';
+  }
+  const botId = telegramBotId(token);
+  // One bot has one webhook: a second connection of the org that holds the same bot would take the first one's.
+  if ((work.takenBotIds ?? []).includes(botId)) return failed('BOT_IN_USE');
+  if (!deps.baseUrl.startsWith('https://')) return failed('WEBHOOK_NEEDS_HTTPS');
+  const key = deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key;
+  if (!key) return failed('NO_HOOK_KEY');
+  const url = `${deps.baseUrl.replace(/\/+$/, '')}/api/channels/telegram/webhook/${work.hook}`;
+  const result = await setTelegramWebhook(token, { url, secretToken: telegramHookSecret(key, work.hook) }, deps.fetch);
+  if (result.kind === 'failed') return failed(result.code);
+  await record('done', { botId });
+  return 'on';
+}
+
+// A chat switch queued where this worker has no channel to make the call through: the attempt is recorded as failed, so the screen says so and
+// nothing stays enabling with no job.
+export async function failChatHook(runtime: Runtime, job: ConversationChatJob): Promise<void> {
+  await runtime.execute('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action: job.on ? 'enable' : 'disable', outcome: 'failed', code: 'CHANNEL_NOT_CONFIGURED' }, { actor: SYSTEM, orgId: job.orgId });
 }
 
 // The jobs that read from a platform beyond the webhook (CV5b, #2329), on the same queue as a reply: ids only, never a name or a message.
@@ -382,7 +463,7 @@ type Opened = { kind: 'ok'; externalAccountId: string; secret: string } | { kind
 
 // The credential of a connection, opened here and nowhere else. kernel.channel.credential refuses once the member who connected
 // the account may no longer use it or the connection is not active.
-async function open(deps: SendDeps, job: { orgId: string; connectionId: string }): Promise<Opened> {
+async function open(deps: Pick<SendDeps, 'runtime' | 'broker'>, job: { orgId: string; connectionId: string }): Promise<Opened> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   let sealed: SealedChannelCredential;
   try {
