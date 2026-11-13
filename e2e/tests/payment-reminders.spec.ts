@@ -20,6 +20,8 @@ const DUE = Date.UTC(2026, 9, 15);
 const DAYS_LATE = Math.floor((Date.now() + 7 * 3_600_000 - DUE) / 86_400_000);
 const NOTICE = DAYS_LATE >= 30 ? 'Thông báo cuối' : DAYS_LATE >= 15 ? 'Nhắc lần hai' : 'Nhắc lần đầu';
 const SUBJECT = DAYS_LATE >= 30 ? /Thông báo cuối/ : DAYS_LATE >= 15 ? /Nhắc lần hai/ : /Nhắc thanh toán/;
+// The template's opening words for that level: the final notice drops the "Theo ghi nhận" sentence of the first two.
+const OPENING = DAYS_LATE >= 30 ? /Đây là thông báo cuối cùng của chúng tôi/ : /Theo ghi nhận của chúng tôi/;
 
 interface Summary {
   ID: string;
@@ -108,7 +110,7 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     // The deployment has no model: the coworker's wording says so and the template words stay.
     await draft.getByTestId('reminder-wording').click();
     await expect(draft.getByTestId('reminder-wording-state')).toContainText('chưa bật AI');
-    await expect(draft.getByLabel('Mở đầu')).toHaveValue(/Theo ghi nhận của chúng tôi/);
+    await expect(draft.getByLabel('Mở đầu')).toHaveValue(OPENING);
     // The words are editable; what they say about money is only words.
     await draft.getByLabel('Mở đầu').fill('Kính nhờ Quý khách kiểm tra giúp các hóa đơn dưới đây. Con số 1 đồng trong câu này chỉ là lời, không phải số liệu.');
     await page.getByTestId('reminder-send').click();
