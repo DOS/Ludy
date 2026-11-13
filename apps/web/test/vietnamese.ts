@@ -14,6 +14,8 @@ const ALLOWED: ReadonlyArray<readonly [phrase: string, reason: string]> = [
   ['Nhà hàng Sen Vàng', 'an example customer of the Engage page, a restaurant, named in Vietnamese'],
   ['Cửa hàng Bình An', 'an example customer of the Engage page, a shop, named in Vietnamese'],
   ['Đại lý Phương Nam', 'an example customer of the Engage page, a rice dealer, named in Vietnamese'],
+  ['Tiện ích Ludy, Chrome trên Windows', 'the privacy page: the device name the Ludy extension really sends and Ludy shows under connected devices, which stays Vietnamese in both languages'],
+  ['NĐ-CP', 'the privacy page: the official designation of the decree it cites (Decree 356/2025/NĐ-CP), a proper name'],
 ];
 
 // A letter with a Vietnamese mark: a base letter followed by a combining diacritic once decomposed, or đ.

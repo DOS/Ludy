@@ -25,3 +25,18 @@ export type AppPageKey = keyof typeof APP_PAGES;
 // folded into Ludy Engage on 2026-11-03 (owner decision, #2435, #2440): /crm is now /engage.
 export const RETIRED_PAGES: Readonly<Record<string, string>> = { '/crm': '/engage' };
 export const appPagePath = (key: AppPageKey) => APP_PAGES[key].path;
+
+// Pages that are not an app: legal text. Same rule as the app pages (one public path for both languages, the English tree
+// at `enRoute` behind the proxy). /privacy is the address the Chrome Web Store listing of the Ludy extension links
+// (ludy.vn and ludy.so both serve this app); it is in the footer and the sitemap but is not an app card.
+export const LEGAL_PAGES = {
+  privacy: { path: '/privacy', enRoute: '/en/privacy' },
+} as const;
+export type LegalPageKey = keyof typeof LEGAL_PAGES;
+// The version of the privacy page and the day it took effect (ISO date). The copy of both languages shows them, and
+// privacy-page.test.ts checks that they do. Change them in the same commit as any change to what the page says.
+export const PRIVACY_VERSION = '1.0';
+export const PRIVACY_UPDATED = '2026-11-13';
+// Where a privacy request goes by email. There is none yet (the owner has not named one), so the page sends requests
+// through the organization's owner in Ludy; set this to an address and the page shows it. Never invent one.
+export const PRIVACY_CONTACT_EMAIL: string | null = null;

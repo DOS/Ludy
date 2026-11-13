@@ -618,6 +618,7 @@ export const vi = {
     github: 'GitHub',
     docs: 'Tài liệu',
     security: 'Bảo mật',
+    privacy: 'Quyền riêng tư',
     copyright: '© 2026 Ludy',
   },
 };

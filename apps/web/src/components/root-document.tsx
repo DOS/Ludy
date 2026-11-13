@@ -42,6 +42,18 @@ export function appPageMetadata(copy: AppPageCopy, lang: 'vi' | 'en', path: stri
   };
 }
 
+// The metadata of a legal page (/privacy): the same shape as an app page's, from a title and a description alone.
+export function legalPageMetadata(meta: { title: string; description: string }, lang: 'vi' | 'en', path: string): Metadata {
+  return {
+    metadataBase: new URL(SITE_URL),
+    title: meta.title,
+    description: meta.description,
+    alternates: { canonical: path },
+    icons: ICONS,
+    openGraph: { title: meta.title, description: meta.description, type: 'website', url: path, locale: lang === 'vi' ? 'vi_VN' : 'en_US' },
+  };
+}
+
 export const landingViewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
