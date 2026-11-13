@@ -1057,7 +1057,7 @@ export type MeetingsTranscriptSegmentTable = Refine<
 // The summary and the action items of a meeting (#2580): a row is a draft, the recorder's own, until the recorder publishes it.
 export const MEETING_RESULT_STAGES = ['draft', 'published'] as const;
 export type MeetingResultStage = (typeof MEETING_RESULT_STAGES)[number];
-export const MEETING_RESULT_FEATURES = ['manual', 'meetings.summary'] as const;
+export const MEETING_RESULT_FEATURES = ['manual', 'meetings.summary', 'meetings.live_notes'] as const;
 export type MeetingResultFeature = (typeof MEETING_RESULT_FEATURES)[number];
 export const ACTION_ITEM_STATUSES = ['suggested', 'accepted'] as const;
 export type ActionItemStatus = (typeof ACTION_ITEM_STATUSES)[number];

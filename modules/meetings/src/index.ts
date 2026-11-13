@@ -2,6 +2,8 @@
 export * from './manifest.ts';
 export * from './meetings.ts';
 export * from './retention.ts';
+export * from './live-notes.ts';
+export * from './live-run.ts';
 export * from './transcribe.ts';
 export * from './transcribe-run.ts';
 export { itemFlags, itemIsClean } from './results.ts';

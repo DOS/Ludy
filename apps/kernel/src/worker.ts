@@ -40,6 +40,7 @@ import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
 import { runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
+import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
@@ -1124,6 +1125,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     };
     await boss.work<MeetingsTranscribeJob>(QUEUES.meetingsTranscribe, { batchSize: 1 }, async ([job]) => {
       if (job) await runMeetingsTranscribe(transcribeDeps, job.data);
+    });
+    // Live notes (#3110, L4a-2): one job per window the recorder's tick started, on the same provider and never retried for the same reason.
+    const liveDeps: MeetingsLiveNotesDeps = { ...transcribeDeps };
+    await boss.work<MeetingsLiveNotesJob>(QUEUES.meetingsLiveNotes, { batchSize: 1 }, async ([job]) => {
+      if (job) await runMeetingsLiveNotes(liveDeps, job.data);
     });
   }
 
@@ -2292,6 +2298,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.transcript.requested') {
                 const transcribeJob: MeetingsTranscribeJob = { orgId: row.org_id, meetingId: String(row.payload.meetingId), runId: String(row.payload.runId), agentId: String(row.payload.agentId) };
                 await boss.send(QUEUES.meetingsTranscribe, transcribeJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranscribe, transcribeJob.runId), retryLimit: 0, expireInSeconds: 4 * 3600 });
+              }
+              // A window of the live notes the recorder's tick asked for (#3110): ids and the window's bounds only.
+              if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.live_notes.requested') {
+                const liveJob: MeetingsLiveNotesJob = {
+                  orgId: row.org_id,
+                  meetingId: String(row.payload.meetingId),
+                  runId: String(row.payload.runId),
+                  agentId: String(row.payload.agentId),
+                  afterSeq: Number(row.payload.afterSeq),
+                  pieces: Number(row.payload.pieces),
+                };
+                await boss.send(QUEUES.meetingsLiveNotes, liveJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsLiveNotes, liveJob.runId), retryLimit: 0, expireInSeconds: 1800 });
               }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);

@@ -33,6 +33,9 @@ export const MEMBER_VY_FEATURES = {
   'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
   // The recorder's Vy summarizing one meeting in the foreground (#2580, M6): one model call over the transcript, the member waiting for it.
   'meetings.summary': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy taking live notes of one meeting being recorded (#3110, L4a-2): one run per window of about five minutes, so a window that
+  // fails or is abandoned never holds the next one; its own key, so it never cuts off a transcription or a summary (#3029).
+  'meetings.live_notes': { module: 'meetings', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
@@ -720,6 +723,72 @@ export const memberVyMeetingAudioOpen = defineCommand({
   },
 });
 
+// The pieces of the recorder's own recording that are going on now, for the recorder's own live notes run (ADR-0052 L4a, #3110). The same shape and the same
+// rules as meeting_audio.open above, for the live window: the database function crove_meetings.live_for_member_vy is the gate (this run's own context, the
+// meeting its result row names, the run's member the recorder and active, the meeting opted into live notes and inside its audio period), each piece carries its
+// own wrapped key (media_key kind live:<seq>, #3109) and never plaintext, and the file rows are then read by exactly the ids it returned. `afterSeq` is the piece
+// the preview has reached, `limit` the window. An empty answer is not an error: the window simply has nothing new yet.
+export const memberVyLiveChunksOpen = defineCommand({
+  name: 'kernel.member_vy.live_chunks.open',
+  input: z.object({ meetingId: zId, afterSeq: z.number().int().min(-1).max(100_000), limit: z.number().int().min(1).max(100) }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin', 'member'],
+  writes: [],
+  memberVy: { taint: 'propagate' },
+  handler: async (ctx, input) => {
+    if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới đọc được bản ghi này', { rule: 'member_vy_context' });
+    type Row = { seq: number; length_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
+    let rows: Row[];
+    try {
+      rows = (
+        await sql<Row>`SELECT * FROM crove_meetings.live_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.afterSeq}::int, ${input.limit}::int)`.execute(ctx.trx)
+      ).rows;
+    } catch (error: unknown) {
+      const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
+      if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
+      if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
+      throw error;
+    }
+    const files = rows.length
+      ? await ctx.trx
+          .selectFrom('crove_kernel.file')
+          .select(['id', 'storage_key', 'generation', 'size_bytes', 'sha256', 'content_type'])
+          .where('org_id', '=', ctx.orgId)
+          .where(
+            'id',
+            'in',
+            rows.map((r) => r.file_id),
+          )
+          .execute()
+      : [];
+    const byId = new Map(files.map((f) => [f.id, f]));
+    ctx.audit({ runId: ctx.memberVy.runId, subjectId: input.meetingId, count: rows.length });
+    return {
+      language: rows[0]?.is_english ? 'en' : 'vi',
+      pieces: rows.flatMap((r) => {
+        const file = byId.get(r.file_id);
+        // A piece whose file row is gone (the final recording landed and the sweep took it) is left out: the window goes on with what is still there.
+        if (!file) return [];
+        return [
+          {
+            seq: r.seq,
+            lengthSeconds: r.length_seconds,
+            keyId: r.key_id,
+            wrappedKey: r.wrapped_key,
+            fileId: r.file_id,
+            storageKey: file.storage_key,
+            generation: file.generation,
+            sizeBytes: Number(file.size_bytes),
+            sha256: file.sha256,
+            contentType: file.content_type,
+          },
+        ];
+      }),
+    };
+  },
+});
+
 // The sweeps of a member's private Vy data (ADR-0049 decision 3, #2822), the system commands of the worker's daily member-vy-sweep job: results past
 // their expires_at, and a former member's results and memory. Both reach the rows only through definers that answer a count, never text; the audit
 // carries counts and ids. The worker finds the orgs and the users to ask about through crove_kernel.member_vy_results_due and member_vy_former_members_due.
@@ -767,5 +836,5 @@ export const memberVyMemberDataPurge = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
+export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyLiveChunksOpen, memberVyResultsExpire, memberVyMemberDataPurge];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

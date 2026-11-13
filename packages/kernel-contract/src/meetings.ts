@@ -520,6 +520,66 @@ export const zSummaryStatus = z.strictObject({ meetingId: zId, enabled: z.boolea
 export const zSummarized = z.strictObject({ meetingId: zId, runId: zId, state: z.enum(SUMMARY_STATES), errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable() });
 export type Summarized = z.infer<typeof zSummarized>;
 
+// Live notes (L4a-2, #3110, ADR-0052 decision 2): the preview of a meeting being recorded. The pieces of #3109 are transcribed by the recorder's own Vy, one run
+// per window, and the recorder's own tick copies each finished window into the preview lines and the running notes. The lines are the recorder's alone and are
+// replaced by the batch transcript; the notes are ordinary draft rows (feature meetings.live_notes), so a task still needs the recorder's click.
+export const LIVE_LINE_TEXT_MAX = 4000;
+export const LIVE_LINES_MAX = 100_000;
+// The pieces one window takes: 20 pieces of about 15 seconds is about 5 minutes, the window the notes are refreshed on.
+export const LIVE_WINDOW_PIECES = 20;
+// How often the running notes are refreshed, unless the recorder asks for them sooner.
+export const LIVE_NOTES_EVERY_SECONDS = 5 * 60;
+// What one window's run stores in its result row, read back strictly by the tick, as a transcript result is.
+export const zLiveResult = z.strictObject({
+  v: z.literal(1),
+  // [piece order, start seconds, end seconds, text] of each line this window produced.
+  lines: z.array(z.tuple([z.number().int().min(0).max(LIVE_LINES_MAX), z.number().int().min(0).max(86_400), z.number().int().min(0).max(86_400), z.string().min(1).max(LIVE_LINE_TEXT_MAX)])).max(200),
+  // The running notes, when this window refreshed them; the same shape a summary run stores.
+  notes: zSummaryResult.nullable(),
+});
+export type LiveResult = z.infer<typeof zLiveResult>;
+
+export const zLiveRef = z.strictObject({ meetingId: zId });
+export const zLiveStart = z.strictObject({ meetingId: zId });
+export const zLiveStarted = z.strictObject({ meetingId: zId, runId: zId });
+// `notesNow`: the recorder asked for the notes sooner than the five minutes.
+export const zLiveTick = z.strictObject({ meetingId: zId, notesNow: z.boolean().default(false) });
+export const zLiveTicked = z.strictObject({
+  meetingId: zId,
+  // The window that was copied, when one was ready.
+  copiedRunId: zId.nullable(),
+  lines: z.number().int().min(0),
+  notesRefreshed: z.boolean(),
+  // The window started by this tick, when one was.
+  runId: zId.nullable(),
+  state: z.enum(['off', 'waiting', 'running', 'stopped']),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+});
+export type LiveTicked = z.infer<typeof zLiveTicked>;
+export const zLiveStopped = z.strictObject({ meetingId: zId, stopped: z.boolean() });
+export const zLiveLine = z.strictObject({
+  id: zId,
+  seq: z.number().int().min(0),
+  startSeconds: z.number().int().min(0),
+  endSeconds: z.number().int().min(0),
+  text: z.string(),
+});
+export type LiveLine = z.infer<typeof zLiveLine>;
+// What the live pane shows. `enabled` is the deployment's transcription switch and the meeting's own opt-in; `reason` says why the pane is empty when it is.
+export const zLiveStatus = z.strictObject({
+  meetingId: zId,
+  // The meeting was opted into live notes at its consent step (#3109).
+  optedIn: z.boolean(),
+  // This deployment transcribes and holds a credential key, and AI is not off.
+  enabled: z.boolean(),
+  state: z.enum(['off', 'waiting', 'running', 'stopped']),
+  runId: zId.nullable(),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  lines: z.array(zLiveLine),
+  notesUpdatedAt: z.string().nullable(),
+});
+export type LiveStatus = z.infer<typeof zLiveStatus>;
+
 // Links of a meeting (L1, #2587, ADR-0024): to a party, to at most one deal, and to the calendar event it came from. Set and removed by the meeting's
 // recorder; read only by the readers of the meeting.
 export const MEETING_LINK_KINDS = ['party', 'deal', 'calendar_event'] as const;

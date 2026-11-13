@@ -67,6 +67,8 @@ export const AI_FEATURES = {
   'meetings.transcribe': 'meetings',
   // The recorder's Vy summarizing one meeting (#2580, M6 part B2): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.summary': 'meetings',
+  // The live notes of a meeting being recorded (#3110, L4a-2): the pieces of one window transcribed, and one call that refreshes the running notes from the new text and the previous notes only.
+  'meetings.live_notes': 'meetings',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

@@ -10,4 +10,7 @@ export const MEMBER_VY_FEATURE_TABLE = {
   'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
   // The recorder's Vy summarizing one meeting in the foreground (#2580, M6): one model call over the transcript, the member waiting for it.
   'meetings.summary': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy taking live notes of one meeting being recorded (#3110, L4a-2): one run per window of about five minutes, so a window that
+  // fails or is abandoned never holds the next one; its own key, so it never cuts off a transcription or a summary (#3029).
+  'meetings.live_notes': { module: 'meetings', expiryMinutes: 30 },
 } as const;

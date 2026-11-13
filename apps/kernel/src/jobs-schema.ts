@@ -76,6 +76,7 @@ export const QUEUES = {
   mcpWakeSweep: 'kernel-mcp-wake-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
   meetingsTranscribe: 'meetings-transcribe',
+  meetingsLiveNotes: 'meetings-live-notes',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
   bankFeedSync: 'finance-bank-feed-sync',
   // Created by the e-invoice job migration (crove_finance_einvoice_job): one draft's issue, status question or evidence step (#2502).
