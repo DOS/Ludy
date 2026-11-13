@@ -17,6 +17,25 @@ function clock(start = 1_000_000) {
 }
 
 describe('RateLimiter', () => {
+  it('gives back a token a take spent, never past a full bucket, and does nothing for a key it does not know (#2965)', () => {
+    const time = clock();
+    const limiter = new RateLimiter({ perMinute: 2, now: time.now });
+    expect(limiter.take('a').allowed).toBe(true);
+    expect(limiter.take('a').allowed).toBe(true);
+    expect(limiter.take('a').allowed).toBe(false);
+    limiter.refund('a');
+    expect(limiter.take('a').allowed).toBe(true);
+    expect(limiter.take('a').allowed).toBe(false);
+    // A refund never lifts a bucket above its size.
+    time.advance(120_000);
+    limiter.refund('a');
+    limiter.refund('a');
+    limiter.refund('a');
+    expect([1, 2, 3].map(() => limiter.take('a').allowed)).toEqual([true, true, false]);
+    limiter.refund('never-seen');
+    expect(limiter.size).toBe(1);
+  });
+
   it('allows perMinute requests at once, then refuses with the seconds until the next one', () => {
     const time = clock();
     const limiter = new RateLimiter({ perMinute: 3, now: time.now });

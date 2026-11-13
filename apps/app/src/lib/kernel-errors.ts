@@ -26,6 +26,11 @@ export const KERNEL_ERROR_CODES = [
   'EXTENSION_CODE_INVALID',
   'EXTENSION_TOKEN_INVALID',
   'EXTENSION_TOKEN_NOT_FOUND',
+  'MCP_GRANT_NOT_FOUND',
+  'MCP_GRANT_TOO_MANY',
+  'MCP_WAKE_GRANT_NOT_FOUND',
+  'MCP_WAKE_NOT_FOUND',
+  'MCP_WAKE_TOO_SOON',
   'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',
@@ -140,6 +145,10 @@ export const KERNEL_ERROR_CODES = [
   'IMPORT_NOT_STAGED',
   // Deals and the pipeline of the crm module (#2225); quotes (#2693) follow the deal codes below.
   'DEAL_NOT_FOUND',
+  // The follow-up draft of a next step (#3101).
+  'NEXT_STEP_NOT_FOUND',
+  'NEXT_STEP_NOT_OPEN',
+  'QUOTE_NOT_WAITING',
   'DEAL_OWNER_INVALID',
   'DEAL_STAGE_CLOSED',
   'DEAL_LOST_REASON_INVALID',
@@ -211,6 +220,9 @@ export const KERNEL_ERROR_CODES = [
   'BOOKING_NOT_FOUND',
   'BOOKING_HOST_FORBIDDEN',
   'BOOKING_NOT_CHANGEABLE',
+  // Dy's meeting brief (#3115).
+  'BOOKING_NO_DEAL',
+  'BOOKING_NOT_UPCOMING',
   'BOOKING_TIME_TAKEN',
   'BOOKING_TIME_UNAVAILABLE',
   // The HR module's people (#2530).
@@ -283,10 +295,28 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_TARGET_NOT_FOUND',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
+  // Links of a meeting (L1, #2587).
+  'MEETING_HAS_DEAL',
+  'LINK_NOT_FOUND',
+  'LINK_TARGET_NOT_FOUND',
+  'DEAL_LINK_UNAVAILABLE',
   'TRANSCRIPT_SEGMENT_NOT_FOUND',
+  // The follow-up email of a meeting (L3, #2590).
+  'NO_PUBLISHED_SUMMARY',
+  'STALE_FOLLOWUP',
+  'FOLLOWUP_TEXT_INVALID',
+  'FOLLOWUP_NOT_REVIEWED',
+  'RECIPIENT_INVALID',
+  'TOO_MANY_RECIPIENTS',
+  'RECIPIENT_NOT_CONFIRMED',
+  'FOLLOWUP_LIMIT',
+  'ALREADY_SENT',
+  'FOLLOWUP_TOO_LARGE',
   // Transcription as the recorder's own Vy (#2578, M4b).
   'TRANSCRIBE_OFF',
+  'TRANSCRIBE_NO_BROKER',
   'TRANSCRIBE_RUNNING',
+  'TRANSCRIBE_OTHER_RUNNING',
   'MEETING_NO_AUDIO',
   'TRANSCRIPT_EMPTY',
   'TRANSCRIPT_TOO_LONG',
@@ -312,6 +342,13 @@ export const KERNEL_ERROR_CODES = [
   'INVALID_READER',
   'INVALID_MEDIA_CONTAINER',
   'VIDEO_NOT_ENABLED',
+  'MEDIA_KEY_SHREDDED',
+  'MEDIA_KEY_UNAVAILABLE',
+  // The video player's ticket (#2703): one neutral wording for a ticket the stream refuses, and one for a ticket the app could not get.
+  'VIDEO_TICKET_INVALID',
+  'VIDEO_TICKET_UNAVAILABLE',
+  'AUDIO_NOT_FOUND',
+  'INVALID_PURPOSE',
   // Retention (#2579).
   'MEDIA_RETENTION_PASSED',
   'MEETING_SETTINGS_INVALID',
@@ -344,6 +381,7 @@ export const KERNEL_ERROR_CODES = [
   'RESULT_NOT_FOUND',
   'VY_NOT_ALLOWED',
   'VY_RUN_NOT_LIVE',
+  'VY_RUN_BUSY',
   // The approval rule preset (#1402).
   'UNKNOWN_PRESET',
   'NO_CHIEF_ACCOUNTANT',
@@ -617,6 +655,14 @@ export const KERNEL_ERROR_CODES = [
   'STOCK_COUNT_ENTRY',
   'STOCK_COUNT_ITEM_INACTIVE',
   'STOCK_COUNT_ITEM_ENTITY',
+  // The connection to a marketplace (#2519).
+  'MARKETPLACE_DISABLED',
+  'MARKETPLACE_PLATFORM',
+  'MARKETPLACE_FIELDS',
+  'MARKETPLACE_CONNECTION_EXISTS',
+  'MARKETPLACE_CONNECTION_NOT_FOUND',
+  'MARKETPLACE_CONNECTION_LIVE',
+  'MARKETPLACE_PROVIDER_NOT_READY',
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',
   'MARKETPLACE_BUSY',
@@ -746,6 +792,7 @@ export const KERNEL_ERROR_CODES = [
   'SAVED_REPLY_LIMIT',
   'MESSAGE_NOT_SETTLEABLE',
   'REPLY_NOT_SUPPORTED',
+  'REPLY_PLACEHOLDER',
   'REPLY_TOO_LONG',
   'REPLY_WINDOW_CLOSED',
   'LABEL_NOT_FOUND',
@@ -1006,8 +1053,9 @@ export const KERNEL_ERROR_RULES = {
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;
 
-// Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale.
-const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR']);
+// Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale. The English media answers of the meeting player (its retention and key
+// refusals, #2703) are among them, so a Vietnamese screen shows the Vietnamese message, not the kernel's English one.
+const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'AUDIO_NOT_FOUND']);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
   return (KERNEL_ERROR_CODES as readonly string[]).includes(code);

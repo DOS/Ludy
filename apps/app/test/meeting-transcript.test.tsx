@@ -103,3 +103,35 @@ describe('MeetingTranscript', () => {
     expect(html).toContain('Chỉ bạn thấy bản nháp này');
   });
 });
+
+describe('the recorder\'s transcription card (#3033)', () => {
+  const none: Transcript = { meetingId: 'm1', isRecorder: true, stage: 'none', segments: [] };
+  const withStatus = (status: { state: string; runId: string | null; errorCode: string | null }, locale: 'en' | 'vi' = 'en') => {
+    client.current.setQueryData(['meetings', 'transcript', 'status'], { meetingId: 'm1', enabled: true, ...status });
+    try {
+      return render(none, locale);
+    } finally {
+      client.current.removeQueries({ queryKey: ['meetings', 'transcript', 'status'] });
+    }
+  };
+
+  it('offers a way to stop a run that is going, with its hint, in both languages, and no start button meanwhile', () => {
+    const html = withStatus({ state: 'running', runId: 'r1', errorCode: null });
+    expect(html).toContain(en.meetings.transcript.vy.running);
+    expect(html).toContain(en.meetings.transcript.vy.stop);
+    expect(html).toContain(en.meetings.transcript.vy.stopHint);
+    expect(html).not.toContain(en.meetings.transcript.vy.start);
+    const vn = withStatus({ state: 'running', runId: 'r1', errorCode: null }, 'vi');
+    expect(vn).toContain(viMessages.meetings.transcript.vy.stop);
+    expect(vn).toContain(viMessages.meetings.transcript.vy.stopHint);
+  });
+
+  it('shows no stop button when nothing is running, and says in words that the recorder stopped a run', () => {
+    expect(withStatus({ state: 'none', runId: null, errorCode: null })).not.toContain(en.meetings.transcript.vy.stop);
+    expect(withStatus({ state: 'ready', runId: 'r1', errorCode: null })).not.toContain(en.meetings.transcript.vy.stop);
+    const stopped = withStatus({ state: 'failed', runId: 'r1', errorCode: 'RUN_CANCELLED' });
+    expect(stopped).toContain(en.meetings.transcript.vy.codes.RUN_CANCELLED);
+    expect(stopped).not.toContain(en.meetings.transcript.vy.stopHint);
+    expect(withStatus({ state: 'failed', runId: 'r1', errorCode: 'RUN_CANCELLED' }, 'vi')).toContain(viMessages.meetings.transcript.vy.codes.RUN_CANCELLED);
+  });
+});

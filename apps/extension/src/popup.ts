@@ -31,7 +31,7 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...
 }
 
 let notice = '';
-let draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false };
+let draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
 let ticker: ReturnType<typeof setInterval> | undefined;
 
 async function render(): Promise<void> {
@@ -182,6 +182,9 @@ async function meetingsView(state: State): Promise<Node[]> {
   // Off by default, and off again for each new recording unless ticked.
   const video = h('input', { type: 'checkbox', id: 'video', checked: draft.keepVideo });
   video.addEventListener('change', () => void (draft.keepVideo = video.checked));
+  // Off by default and never remembered: ticked for one recording only.
+  const liveNotes = h('input', { type: 'checkbox', id: 'live', checked: draft.liveNotes });
+  liveNotes.addEventListener('change', () => void (draft.liveNotes = liveNotes.checked));
   out.push(
     h('label', { class: 'block', for: 'title' }, T.meetingTitle),
     title,
@@ -194,6 +197,8 @@ async function meetingsView(state: State): Promise<Node[]> {
       h('div', { class: 'row' }, agreed, h('label', { for: 'agreed' }, T.consentConfirm)),
     ),
     h('div', { class: 'row' }, video, h('label', { for: 'video' }, T.withVideo)),
+    h('div', { class: 'row' }, liveNotes, h('label', { for: 'live' }, T.liveNotes)),
+    h('p', { class: 'note' }, T.liveNotesHint),
     h('button', { class: 'primary', id: 'start', onclick: () => void startRecording() }, T.start),
     h('button', { onclick: () => void turnOff(state) }, T.meetingsOff),
   );
@@ -235,7 +240,7 @@ async function startRecording(): Promise<void> {
     // Only after the member's click here, and only for the tab they are on.
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
     const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId })) as StartReply;
-    if (reply.ok) draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false };
+    if (reply.ok) draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
     else notice = T.blockers[reply.reason];
   } catch {
     notice = T.blockers.device;

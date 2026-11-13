@@ -17,7 +17,7 @@ The app secret goes from the Meta app's settings page into the `.env` file of th
 
 ## Where the check runs
 
-**Default: a throwaway stack from `docker compose up` on the machine of whoever runs the check, at `http://localhost:8080`, with its own database and no customer data.** The sandbox ad platform stays on in that stack (`ADS_SANDBOX` defaults to true under compose), next to the real one, so the screen can be compared.
+**Default: a throwaway stack from `docker compose up` on the machine of whoever runs the check, at `http://localhost:8080`, with its own database and no customer data.** The sandbox ad platform stays on in that stack (`ADS_SANDBOX` is on under compose for a local address), next to the real one, so the screen can be compared.
 
 **Alternative, pending the owner's decision: the deployment's own `PUBLIC_URL`** (for example the pilot instance on its public address). Read "the deployment's `PUBLIC_URL`" wherever the steps below say `http://localhost:8080`. It needs more:
 

@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@crove/extract": "workspace:*",
-    "@crove/extract-contract": "workspace:*"
+    "@crove/extract-contract": "workspace:*",
+    "@crove/media": "workspace:*"
   }
 }

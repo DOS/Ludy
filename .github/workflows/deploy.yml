@@ -150,6 +150,7 @@ jobs:
     outputs:
       image: ${{ steps.push.outputs.image }}
       extract: ${{ steps.push.outputs.extract }}
+      media: ${{ steps.push.outputs.media }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,14 +175,18 @@ jobs:
           test -n "$built_at"
           docker build "${labels[@]}" --build-arg "CROVE_BUILD=$SHA" --build-arg "CROVE_BUILD_TIME=$built_at" -t "$repo:$RELEASE" .
           docker build "${labels[@]}" -f apps/extract/Dockerfile -t "$repo-extract:$RELEASE" .
+          docker build "${labels[@]}" -f apps/media/Dockerfile -t "$repo-media:$RELEASE" .
           docker push --quiet "$repo:$RELEASE"
           docker push --quiet "$repo-extract:$RELEASE"
+          docker push --quiet "$repo-media:$RELEASE"
           image="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repo:$RELEASE")"
           extract="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repo-extract:$RELEASE")"
+          media="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repo-media:$RELEASE")"
           docker logout ghcr.io
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "extract=$extract" >> "$GITHUB_OUTPUT"
-          printf -- '- image: `%s`\n- extract: `%s`\n' "$image" "$extract" >> "$GITHUB_STEP_SUMMARY"
+          echo "media=$media" >> "$GITHUB_OUTPUT"
+          printf -- '- image: `%s`\n- extract: `%s`\n- media: `%s`\n' "$image" "$extract" "$media" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to ${{ needs.target.outputs.environment }}
@@ -201,6 +206,7 @@ jobs:
       RELEASE: ${{ needs.target.outputs.release }}
       IMAGE: ${{ needs.build.outputs.image }}
       EXTRACT: ${{ needs.build.outputs.extract }}
+      MEDIA: ${{ needs.build.outputs.media }}
       # The commit the image was built from; GET /version reports it (#892).
       BUILD: ${{ needs.target.outputs.sha }}
       PUBLIC_URL: ${{ vars.DEPLOY_PUBLIC_URL }}
@@ -308,10 +314,10 @@ jobs:
           if [ "$ACTION" = rollback ]; then
             printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target "bash '$REMOTE/deploy.sh' rollback $registry"
           else
-            [[ "$IMAGE" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$EXTRACT" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ ]] || { echo '::error::image digests missing'; exit 1; }
+            [[ "$IMAGE" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$EXTRACT" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$MEDIA" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ ]] || { echo '::error::image digests missing'; exit 1; }
             [[ "$BUILD" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::the release commit is missing'; exit 1; }
             printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target \
-              "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'"
+              "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'"
           fi
 
       # The same checks through the public URL: DNS, TLS and the reverse proxy. Optional (DEPLOY_PUBLIC_URL). With the

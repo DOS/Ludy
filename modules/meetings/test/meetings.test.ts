@@ -15,6 +15,7 @@ import {
   meetingGet,
   meetingList,
   meetingMediaMeta,
+  mediaExtension,
   meetingMediaRecord,
   meetingVideoRead,
   meetingsCommands,
@@ -68,6 +69,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.media.record',
       'meetings.meeting.delete',
       'meetings.meeting.owner_delete',
+      'meetings.meeting.owner_list',
       'meetings.reader.add',
       'meetings.reader.remove',
       'meetings.media_key.reseal',
@@ -78,6 +80,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.transcript.draft_store',
       'meetings.transcript.correct',
       'meetings.transcript.start',
+      'meetings.transcript.cancel',
       'meetings.transcript.copy_result',
       'meetings.summary.save',
       'meetings.action_item.create',
@@ -89,6 +92,15 @@ describe('meetings commands and queries construction', () => {
       'meetings.summary.copy_result',
       'meetings.draft.review',
       'meetings.summary.start',
+      'meetings.link.add',
+      'meetings.link.remove',
+      'meetings.followup.send',
+      'meetings.live.chunk',
+      'meetings.live.start',
+      'meetings.live.stop',
+      'meetings.live.notes_start',
+      'meetings.live.tick',
+      'meetings.live.notes_copy',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -109,10 +121,17 @@ describe('meetings commands and queries construction', () => {
       'meetings.settings.get',
       'meetings.media.orphan_keys',
       'meetings.transcript.get',
+      'meetings.search',
       'meetings.transcript.status',
       'meetings.result.get',
       'meetings.action_item.source',
       'meetings.summary.status',
+      'meetings.link.list',
+      'meetings.link.by_target',
+      'meetings.link.suggest',
+      'meetings.followup.draft',
+      'meetings.live.status',
+      'meetings.live.notes_input',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');
@@ -120,5 +139,22 @@ describe('meetings commands and queries construction', () => {
     expect(meetingAudioRead.name).toBe('meetings.meeting.audio_read');
     expect(meetingVideoRead.name).toBe('meetings.meeting.video_read');
     expect(meetingMediaMeta.name).toBe('meetings.meeting.media_meta');
+  });
+});
+
+describe('mediaExtension (#2703)', () => {
+  it('names the stored file by the sniffed container', () => {
+    expect(mediaExtension('audio/ogg', 'audio')).toBe('ogg');
+    expect(mediaExtension('audio/webm', 'audio')).toBe('webm');
+    expect(mediaExtension('audio/mp4', 'audio')).toBe('m4a');
+    expect(mediaExtension('audio/mpeg', 'audio')).toBe('mp3');
+    expect(mediaExtension('audio/wav', 'audio')).toBe('wav');
+    expect(mediaExtension('video/webm', 'video')).toBe('webm');
+    expect(mediaExtension('video/mp4', 'video')).toBe('mp4');
+  });
+
+  it('falls back for an unknown type', () => {
+    expect(mediaExtension('application/x-unknown', 'audio')).toBe('bin');
+    expect(mediaExtension('application/x-unknown', 'video')).toBe('mp4');
   });
 });

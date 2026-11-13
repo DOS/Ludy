@@ -2,7 +2,7 @@
 // Which language a request gets (#2360, DESIGN.md 6.4 and 8). Every page has one public address; the language comes
 // from the visitor's choice (a cookie the header toggle sets) or, on a first visit, from the browser's language.
 // The proxy (src/proxy.ts) turns that into a rewrite to the page's English route, which stays under /en inside the app.
-import { APP_PAGES, RETIRED_PAGES } from '../content/site';
+import { APP_PAGES, LEGAL_PAGES, RETIRED_PAGES } from '../content/site';
 
 export type Lang = 'vi' | 'en';
 
@@ -39,10 +39,14 @@ export function chooseLanguage(cookie: string | undefined, acceptLanguage: strin
   return isLang(cookie) ? cookie : languageFromAcceptHeader(acceptLanguage);
 }
 
-// The home page and each app page: its public address (the same in both languages) and the route of its English tree.
+// The home page, each app page and each legal page: its public address (the same in both languages) and the route of its English tree.
 const EN_ROUTES: Record<string, string> = { '/': '/en' };
 const PUBLIC_PATHS: Record<string, string> = { '/en': '/' };
 for (const page of Object.values(APP_PAGES)) {
+  EN_ROUTES[page.path] = page.enRoute;
+  PUBLIC_PATHS[page.enRoute] = page.path;
+}
+for (const page of Object.values(LEGAL_PAGES)) {
   EN_ROUTES[page.path] = page.enRoute;
   PUBLIC_PATHS[page.enRoute] = page.path;
 }

@@ -7,8 +7,11 @@ import {
   assembleRecording,
   beginRecording,
   createClock,
+  createBrowserLiveRecorder,
   createIndexedDbChunkStore,
   prepareCapture,
+  startLiveCapture,
+  uploadAfterLive,
   type ChunkStore,
   type RecordingMeta,
 } from '@crove/meeting-recorder';
@@ -25,6 +28,8 @@ export interface CaptureParams {
   consentMethod: ConsentMethod;
   consentAgreed: boolean;
   keepVideo: boolean;
+  // Live notes (ADR-0052 L4a): a second, audio-only recorder sends pieces while recording; the final upload stays as it is.
+  liveNotes: boolean;
   streamId: string;
 }
 
@@ -87,7 +92,7 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       // A video track exists only when the plan asked the tab for one.
       return new MediaStream([...mix.stream.getAudioTracks(), ...(plan.kind === 'video' ? tab.getVideoTracks() : [])]);
     },
-    createMeeting: async () => (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod })).meetingId,
+    createMeeting: async () => (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, liveNotes: params.liveNotes })).meetingId,
     makeRecorder: (stream) => new MediaRecorder(stream, plan.mimeType ? { mimeType: plan.mimeType } : undefined),
     async begin(meetingId, recorder) {
       return beginRecording(deps.store, {
@@ -114,6 +119,13 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   recorder.ondataavailable = (event) => void writer.addChunk(event.data, clock.elapsedMs(deps.now())).catch(() => undefined);
   const stopped = new Promise<void>((resolve) => recorder.addEventListener('stop', () => resolve(), { once: true }));
   recorder.start(5000);
+  // Live notes: never fails the recording; null when not ticked or when the live recorder cannot start.
+  const live = startLiveCapture({
+    enabled: params.liveNotes,
+    makeRecorder: () => createBrowserLiveRecorder(stream),
+    send: (piece) => client.sendLiveChunk({ meetingId, ...piece }),
+    now: () => deps.now(),
+  });
   return {
     ok: true,
     running: {
@@ -123,13 +135,16 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       elapsedMs: () => clock.elapsedMs(deps.now()),
       async stop() {
         clock.pause(deps.now());
+        // The live recorder stops first and its last piece is taken before the devices are released.
+        await live?.halt();
         if (recorder.state !== 'inactive') recorder.stop();
         await stopped;
         for (const track of stream.getTracks()) track.stop();
         for (const cleanup of cleanups) cleanup();
         // The last chunk fires before `stop`; the writer queue is drained by touching it.
         await writer.touch(clock.elapsedMs(deps.now()));
-        const uploaded = await uploadSaved(deps, client, params.uploads, writer.meta());
+        // The live pieces are refused once the final recording is stored, so they finish (or give up) first.
+        const uploaded = await uploadAfterLive(live, () => uploadSaved(deps, client, params.uploads, writer.meta()));
         return { uploaded: uploaded.ok, meetingId, ...(uploaded.ok ? {} : { message: uploaded.message }) };
       },
     },

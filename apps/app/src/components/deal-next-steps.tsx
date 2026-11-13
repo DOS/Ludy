@@ -15,6 +15,7 @@ import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { formatMoney } from '../lib/format.ts';
 import { refreshDeals } from './deal-form.tsx';
+import { FollowupDraftAction } from './followup-draft.tsx';
 import { Empty, ErrorText } from './ui.tsx';
 
 type Scope = 'mine' | 'all';
@@ -58,6 +59,7 @@ function Row({ step, canEdit, picked, busy, onPick, onDone, onSnooze }: { step: 
           ))}
         </div>
       )}
+      {canEdit && <FollowupDraftAction stepId={step.id} dealTitle={step.dealTitle} />}
     </li>
   );
 }

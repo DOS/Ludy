@@ -11,6 +11,9 @@ import { DomainError, type Runtime } from '@crove/kernel-runtime';
 // After the nightly retention purge (02:30) and the notes trash (02:45), on the same clock.
 export const MEMBER_VY_SWEEP_CRON = '15 3 * * *';
 export const MEMBER_VY_SWEEP_TZ = 'Asia/Ho_Chi_Minh';
+// A pass that hangs is expired after an hour, so the next night's run is not held behind it (pg-boss would otherwise wait its default 15 minutes and then retry,
+// which cuts a long pass of many orgs short). A pass handles at most ORGS_PER_PASS orgs and FORMER_MEMBERS_PER_PASS members, each in its own transaction.
+export const MEMBER_VY_SWEEP_EXPIRE_SECONDS = 3600;
 // Orgs and former members one pass handles at most; the rest wait for the next night.
 const ORGS_PER_PASS = 500;
 const FORMER_MEMBERS_PER_PASS = 500;
@@ -41,7 +44,12 @@ export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: D
 // One pass of the former members, after the expiry: the users who hold Vy results or memory in an org they left more than 30 days ago, each purged in
 // the org's system context. A user whose membership ended with no removal in the audit trail has no date to count the 30 days from: their data is
 // kept and logged, never purged here (the rule of the Notes sweep).
-export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
+// The orgs (id prefixes) whose unrecorded former members this process has already logged: the same orgs stay in that state every night, so a line is written for an org
+// the first time this process sees it and not again (a restart logs once more). Tests pass their own set.
+const reportedUnrecorded = new Set<string>();
+
+export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; workerDb: Db; reported?: Set<string> }): Promise<number> {
+  const reported = deps.reported ?? reportedUnrecorded;
   const { rows } = await sql<{ org_id: string; user_id: string; recorded: boolean }>`
     SELECT org_id, user_id, recorded FROM crove_kernel.member_vy_former_members_due(${FORMER_MEMBERS_PER_PASS}::int)`.execute(deps.workerDb);
   let removed = 0;
@@ -57,7 +65,9 @@ export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; worke
       console.warn(`[member-vy-sweep] former member, org ${row.org_id.slice(0, 8)}`, codeOf(error));
     }
   }
-  // One line a night, not one per member: how many were kept and in which orgs (prefixes only).
-  if (unrecorded.size > 0) console.warn(`[member-vy-sweep] former members with no recorded removal, data kept, in ${unrecorded.size} org(s): ${[...unrecorded].slice(0, 20).join(', ')}`);
+  // One line for the orgs not seen before, not one per member and not one every night: which orgs (prefixes only) hold data whose latest exit is not recorded.
+  const fresh = [...unrecorded].filter((org) => !reported.has(org));
+  for (const org of fresh) reported.add(org);
+  if (fresh.length > 0) console.warn(`[member-vy-sweep] former members whose latest exit is not recorded, data kept, in ${fresh.length} new org(s): ${fresh.slice(0, 20).join(', ')}`);
   return removed;
 }

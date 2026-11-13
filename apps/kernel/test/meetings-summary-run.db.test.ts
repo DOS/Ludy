@@ -208,10 +208,21 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId }))).toBe('SUMMARY_RESULT_NOT_FOUND');
   });
 
-  it('does not supersede a transcription of the recorder that is still running, and starts once it has finished', async () => {
+  it('does not cancel a transcription of the recorder that is still running, and summarizes another meeting meanwhile (one live Vy run per feature, #3029)', async () => {
     const meetingId = await seedMeeting('recorder');
     const other = await seedMeeting('recorder');
     const live = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', { feature: 'meetings.transcribe', subjectType: 'meeting', subjectId: other });
+    const before = modelCalls;
+    // The summary of another meeting runs and finishes; the transcription is not touched.
+    expect((await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
+    expect(modelCalls).toBe(before + 1);
+    const state = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
+    expect(state.rows[0]).toEqual({ status: 'running', error: null });
+  });
+
+  it('refuses a summary of a meeting whose own transcription is still running, and starts once it has finished', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const live = await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', { feature: 'meetings.transcribe', subjectType: 'meeting', subjectId: meetingId });
     const before = modelCalls;
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId))).toBe('TRANSCRIBE_RUNNING');
     expect(modelCalls).toBe(before);

@@ -1,36 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Client for calling the crove-media HTTP service.
-// Used by worker tasks (AI Meeting Notes M4, #2578) and test harnesses.
+// Used by worker tasks (AI Meeting Notes M4, #2578) and test harnesses. The kernel's upload and transcription paths use the narrow
+// client of @crove/media-contract (measure.ts) instead and ship none of the normalize, split or repackage calls (#2985).
 import {
   MEDIA_LIMITS,
-  MEDIA_TIMING,
   zMediaErrorResponse,
   zMediaNormalizeResult,
   zMediaProbeResult,
   zMediaProcessResult,
   zMediaSplitResult,
-  type MediaErrorCode,
   type MediaNormalizeResult,
   type MediaProbeResult,
   type MediaProcessResult,
   type MediaSplitResult,
-} from './types.ts';
+} from '@crove/media-contract/types';
+import { createTransport, MediaClientError } from '@crove/media-contract/transport';
 
-export class MediaClientError extends Error {
-  readonly code: MediaErrorCode;
-  readonly status: number;
-
-  constructor(code: MediaErrorCode, status: number, message: string) {
-    const cleanMessage = String(message || 'Unknown error').slice(0, 500);
-    super(cleanMessage);
-    this.name = 'MediaClientError';
-    this.code = code;
-    this.status = status;
-  }
-}
+export { MediaClientError };
 
 export interface MediaClient {
   probe(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult>;
+  // The same probe with the media sent as it is produced (a decrypting reader), so the caller never holds the file whole.
+  probeStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult>;
+  // The probe with the length read from the stream itself (the end of what it holds), not from what the container declares: the only length
+  // a meter may charge (#2985). `measure` takes the bytes, `measureStream` the pieces as they are produced.
+  measure(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult>;
+  measureStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult>;
   normalize(bytes: Uint8Array, options?: { bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaNormalizeResult>;
   split(bytes: Uint8Array, options?: { maxSegmentSeconds?: number; bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaSplitResult>;
   repackageVideo(bytes: Uint8Array, options?: { dropAudio?: boolean }, signal?: AbortSignal): Promise<Uint8Array>;
@@ -41,99 +36,24 @@ export interface MediaClient {
   ): Promise<MediaProcessResult>;
 }
 
-export function createMediaClient(baseUrl: string): MediaClient {
-  let base = baseUrl;
-  while (base.endsWith('/')) {
-    base = base.slice(0, -1);
-  }
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(base);
-  } catch {
-    throw new Error(`Invalid crove-media base URL: ${base}`);
-  }
-
-  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-    throw new Error(`crove-media base URL must use http or https protocol: ${base}`);
-  }
-  if (parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
-    throw new Error(`crove-media base URL must not contain credentials, query, or hash: ${base}`);
-  }
-
-  async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
-    const reader = response.body?.getReader();
-    if (!reader) return '';
-    let total = 0;
-    const chunks: Uint8Array[] = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new MediaClientError('too_large', response.status, `Response exceeded maximum of ${maxBytes} bytes`);
-      }
-      chunks.push(value);
-    }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return new TextDecoder().decode(bytes);
-  }
-
-  async function call<T>(
-    endpoint: string,
-    bytes: Uint8Array,
-    schema: { parse: (val: unknown) => T },
-    signal?: AbortSignal,
-  ): Promise<T> {
-    const url = `${base}${endpoint}`;
-    const init: RequestInit = {
-      method: 'POST',
-      body: bytes as unknown as BodyInit,
-      headers: {
-        'content-type': 'application/octet-stream',
-      },
-      redirect: 'error',
-    };
-    init.signal = signal ?? AbortSignal.timeout(MEDIA_TIMING.processTimeoutMs + 15_000);
-    const response = await fetch(url, init);
-
-    const text = await readBoundedText(response, 192 * 1024 * 1024);
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new MediaClientError(
-        'internal_error',
-        response.status,
-        `crove-media request to ${endpoint} returned non-JSON response (HTTP ${response.status})`,
-      );
-    }
-
-    if (!response.ok) {
-      const errorParsed = zMediaErrorResponse.safeParse(json);
-      if (errorParsed.success) {
-        throw new MediaClientError(errorParsed.data.code, response.status, errorParsed.data.error);
-      }
-      throw new MediaClientError('internal_error', response.status, 'crove-media request failed');
-    }
-
-    const payload = json as { ok: boolean; result: unknown };
-    if (payload.ok !== true) {
-      throw new MediaClientError('internal_error', response.status, 'Invalid response payload from crove-media');
-    }
-    return schema.parse(payload.result);
-  }
+export function createMediaClient(baseUrl: string, options: { timeoutMs?: number } = {}): MediaClient {
+  const { base, callTimeoutMs, readBoundedText, call } = createTransport(baseUrl, options);
 
   return {
     async probe(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult> {
       return call('/probe', bytes, zMediaProbeResult, signal);
+    },
+
+    async probeStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult> {
+      return call('/probe', chunks, zMediaProbeResult, signal);
+    },
+
+    async measure(bytes: Uint8Array, signal?: AbortSignal): Promise<MediaProbeResult> {
+      return call('/measure', bytes, zMediaProbeResult, signal);
+    },
+
+    async measureStream(chunks: AsyncIterable<Uint8Array>, signal?: AbortSignal): Promise<MediaProbeResult> {
+      return call('/measure', chunks, zMediaProbeResult, signal);
     },
 
     async normalize(bytes: Uint8Array, options?: { bitrateKbps?: number }, signal?: AbortSignal): Promise<MediaNormalizeResult> {
@@ -162,13 +82,13 @@ export function createMediaClient(baseUrl: string): MediaClient {
       const url = `${base}/repackage-video${q}`;
       const init: RequestInit = {
         method: 'POST',
-        body: bytes as unknown as BodyInit,
+        body: bytes as unknown as NonNullable<RequestInit['body']>,
         headers: {
           'content-type': 'application/octet-stream',
         },
         redirect: 'error',
       };
-      init.signal = signal ?? AbortSignal.timeout(MEDIA_TIMING.processTimeoutMs + 15_000);
+      init.signal = signal ?? AbortSignal.timeout(callTimeoutMs);
       const response = await fetch(url, init);
 
       if (!response.ok) {

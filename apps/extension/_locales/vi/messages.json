@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Ludy",
+    "description": "The extension name (the store listing name and the toolbar tooltip base)."
+  },
+  "extDescription": {
+    "message": "Ghi lại cuộc họp trên trình duyệt vào Ludy: ghi âm tab họp cùng micro, tải lên khi dừng.",
+    "description": "The store short description, at most 132 characters."
+  },
+  "extActionTitle": {
+    "message": "Ludy",
+    "description": "The toolbar button tooltip."
+  }
+}

@@ -40,6 +40,9 @@ const REACHABLE = [
   'meetings.meeting.extension_status:meetings',
 ];
 
+// Reachable only once L4a-1 (#3109, ADR-0052) is on main: the test accepts the command either present or absent, so it holds before and after that change.
+const REACHABLE_WITH_L4A = ['meetings.live.chunk:meetings'];
+
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
 
 suite('the extension token past the HTTP edge: scope, standing and meetings (#2582, ADR-0047)', () => {
@@ -139,7 +142,8 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       extension?: { scope: string };
     }>;
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    expect(reachable.sort()).toEqual([...REACHABLE].sort());
+    expect(reachable.filter((name) => !REACHABLE_WITH_L4A.includes(name)).sort()).toEqual([...REACHABLE].sort());
+    expect(reachable.filter((name) => REACHABLE_WITH_L4A.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WITH_L4A.length);
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 
@@ -163,7 +167,10 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     expect(audit[0]?.detail.extensionToken).toBe(tokens.member);
     // The status query reads it, audited as a sensitive read that names the token too.
     const status = await runtime.query<Record<string, unknown>>('meetings.meeting.extension_status', { meetingId }, { actor: ext(users.member, tokens.member), orgId: orgA });
-    expect(status).toEqual({ meetingId, status: 'ready', keepVideo: false, hasAudio: false, hasVideo: false, lengthSeconds: null });
+    // liveNotes (L4a-1, #3109) is absent before that change and false after it: the meeting did not opt in.
+    const { liveNotes, ...statusFields } = status;
+    expect([undefined, false]).toContain(liveNotes);
+    expect(statusFields).toEqual({ meetingId, status: 'ready', keepVideo: false, hasAudio: false, hasVideo: false, lengthSeconds: null });
     const reads = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.meeting.extension_status' AND org_id = $1`, [orgA])).rows);
     expect(reads.length).toBeGreaterThan(0);
     expect(reads.every((r) => r.detail.extensionToken === tokens.member)).toBe(true);

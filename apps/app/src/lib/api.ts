@@ -120,6 +120,13 @@ export async function fetchStreamTicket(slug: string): Promise<string> {
   return ((await response.json()) as { ticket: string }).ticket;
 }
 
+// A ticket for the video of a meeting (#2703): a <video> cannot send the Authorization header, so it streams
+// /api/meetings/:id/video/stream with this ticket (at most ten minutes, bound to this session and the meeting).
+export async function fetchVideoTicket(meetingId: string): Promise<{ ticket: string; expiresInSeconds: number }> {
+  const response = await apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/video/ticket`, { method: 'POST' });
+  return (await response.json()) as { ticket: string; expiresInSeconds: number };
+}
+
 // A stored file's bytes. With presigned transfers the kernel hands out a short-lived URL for the exact version it
 // recorded (after the same authorization), fetched without Crove's headers; otherwise the kernel streams it.
 export async function fetchFile(fileId: string): Promise<Blob> {
@@ -211,6 +218,20 @@ export async function uploadMeetingMedia(
     }),
   );
   return (await response.json()) as { fileId: string };
+}
+
+// One piece of the audio of a live-notes meeting (ADR-0052 L4a, #3109): the raw bytes as the body, the seq and the length in
+// the query. Not retried here (the live sender retries by the error's status, which an ApiError carries) and no busy wait: a
+// failed piece may be dropped, the recording uploaded at the end is the one that counts.
+export async function sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void> {
+  const query = new URLSearchParams({ seq: String(input.seq), lengthSeconds: String(input.lengthSeconds) });
+  // The recorder's type carries codecs ("audio/webm;codecs=opus"): the route wants the plain audio type.
+  const base = (input.blob.type.split(';')[0] ?? '').trim();
+  await apiFetch(`/api/meetings/${encodeURIComponent(input.meetingId)}/live-chunk?${query.toString()}`, {
+    method: 'POST',
+    headers: { 'content-type': /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream' },
+    body: input.blob,
+  });
 }
 
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to

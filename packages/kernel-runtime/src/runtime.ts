@@ -51,6 +51,30 @@ export interface ExtensionAccess {
   scope: ExtensionScope;
 }
 
+// The scopes an MCP grant may hold (ADR-0051 decision 2, issue #2975). Only a QUERY can declare one (QueryDef.mcp): no command type
+// carries `mcp`, so a grant reaches no write. crove_kernel.agent_grant's CHECK lists the same scopes; a new one is a migration and an entry here.
+export const MCP_SCOPES = Object.freeze(['ludy.read'] as const);
+export type McpScope = (typeof MCP_SCOPES)[number];
+
+// What an MCP access token proved at the HTTP edge: the grant it belongs to, the client it was issued to (id and the name the client
+// declared, which is self-declared) and the scopes the grant holds. It lives only on a user actor made from a token; the database
+// re-checks the grant in every transaction (checkSession), so a revoke, a lost role or a stopped org applies to the next statement.
+export interface McpGrant {
+  grantId: string;
+  clientId: string;
+  clientName: string;
+  scopes: readonly string[];
+  // 'member' for a grant one member made for themself (ADR-0051 decision 2, slice 3b): it enters the sealed member-bound context
+  // (crove_kernel.enter_mcp_member_context) instead of the consenting user's own, reads in a read-only transaction and is re-entered on every request.
+  // Absent or 'company': the consenting owner or admin's grant. The database holds the kind; the edge only copies it.
+  kind?: 'company' | 'member';
+}
+
+// The declaration that opens a query to an MCP grant holding `scope` (and to no other scope).
+export interface McpAccess {
+  scope: McpScope;
+}
+
 export interface UserActor {
   type: 'user';
   userId: string;
@@ -68,6 +92,11 @@ export interface UserActor {
   // actor reaches only the commands and queries that declare one of its scopes. The user is the token's member, so it
   // can never do more than that member can.
   extension?: ExtensionGrant;
+  // Set when the request carried an MCP access token (ADR-0051, issue #2975): the user is the consenting owner or admin, whose role the
+  // database reads live for the grant, so the grant never exceeds it. There is no Supabase session. The actor reaches only the queries that
+  // declare a scope the grant holds and no command at all; it is never an agent and never the person's own click (every audit and log
+  // line names the grant and the client).
+  mcp?: McpGrant;
 }
 
 // A position-holding agent acting in one of its runs (ADR-0029). It enters only in the worker, through
@@ -225,6 +254,8 @@ export interface CommandDef<I = unknown, O = unknown> {
   // Opens the command to a Ludy extension token that holds this scope (issue #2582, ADR-0047 point 10). Absent: an
   // extension token never runs it. Only a command run by users with a role list, below R3.
   extension?: ExtensionAccess;
+  // An MCP grant never runs a command (ADR-0051 decision 2, #2975): the field exists only to be refused, by type and at register().
+  mcp?: never;
   // Org-less commands (creating an org) start without an org. `bootstrap` calls a definer that creates the
   // org with the actor as a member, or returns the org an earlier request with the same idempotency key
   // created. executeOrgless() then enters that org as the actor, so membership is checked as on every other
@@ -350,6 +381,9 @@ export interface QueryDef<I = unknown, O = unknown> {
   // Opens the query to a Ludy extension token that holds this scope (absent: an extension token never reads it).
   // Only a query with a role list.
   extension?: ExtensionAccess;
+  // Opens the query to an MCP grant that holds this scope (ADR-0051, #2975; absent: an MCP grant never reads it). Only a query with a role
+  // list that is not sensitive and not streamed, and that holds no data private to one member until the member-bound grant exists.
+  mcp?: McpAccess;
   // A streamed read (the org export, #212): it runs only through Runtime.stream(), which hands the handler a sink for
   // its batches and opens one REPEATABLE READ, READ ONLY transaction, so every batch comes from the same snapshot.
   // Runtime.query() and ctx.query refuse it (STREAM_ONLY) after the usual context and access checks.
@@ -563,6 +597,12 @@ export function isPreMembershipRefusal(refusal: DomainError): boolean {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// The code a security event notes for a refusal: the specific reason an MCP member grant could not enter (kept out of the client's answer), else the code.
+function specificRefusal(refusal: DomainError): string {
+  const reason = refusal.audit?.mcpRefusal;
+  return typeof reason === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(reason) ? reason : refusal.code;
+}
+
 export function isSecurityRefusal(refusal: DomainError): boolean {
   return refusal.status === 404 || SECURITY_REFUSAL_CODES.has(refusal.code);
 }
@@ -581,6 +621,10 @@ export function validateRefusalAuditLimits(limits: RefusalAuditLimits): Required
 }
 
 export interface RuntimeOptions {
+  // Which database entry a company MCP grant's sealed context goes through (ADR-0051, steps S5): 'api' (default) is the API login's entry; 'worker' is the worker login's wake entry
+  // (enter_mcp_wake_company_context), which only the worker's own runtime sets. It is a property of the runtime, never of an actor, so a request cannot choose it; the database
+  // grants each entry to its own login alone.
+  mcpEntry?: 'api' | 'worker';
   // null: no session check (tests and tools). The server always passes one (apps/kernel main.ts).
   sessions?: SessionStatusSource | null;
   // R3 commands run by a user need aal2 and a second factor in the last 5 minutes (policy P11). Default required.
@@ -648,7 +692,22 @@ function sessionDetail(actor: UserActor): Record<string, unknown> {
   const detail: Record<string, unknown> = { aal: actor.aal, sessionId: actor.sessionId ?? null, mfaAt: actor.mfaAt ?? null };
   // Every audit row of a request made with an extension token names the token, so a device's acts can be listed.
   if (actor.extension) detail.extensionToken = actor.extension.tokenId;
+  // An MCP call is the client's, not the person's own click: the row names the grant and the client, and says it came over MCP.
+  if (actor.mcp) Object.assign(detail, mcpDetail(actor.mcp));
   return detail;
+}
+
+function mcpDetail(mcp: McpGrant): Record<string, unknown> {
+  return { mcpCall: true, mcpGrant: mcp.grantId, mcpClient: mcp.clientId, mcpClientName: mcp.clientName };
+}
+
+// A user actor made from an MCP grant reaches a query only when it declares a scope the grant holds. A command is closed to it whatever it
+// declares. Any other actor is not restricted here.
+function authorizeMcp(access: McpAccess | undefined, actor: Actor): void {
+  if (actor.type !== 'user' || !actor.mcp) return;
+  if (!access || !actor.mcp.scopes.includes(access.scope)) {
+    throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+  }
 }
 
 // A user actor made from an extension token reaches a command or query only when it declares a scope the token holds.
@@ -664,7 +723,7 @@ function authorizeExtension(access: ExtensionAccess | undefined, actor: Actor): 
 // session and, for a refusal caught by ctx.tryRun, the command that ran it. A command's own facts (DomainError audit)
 // never set them, also when the error names no rule, the actor is a system actor, which has no session, or the
 // refusal was not caught by ctx.tryRun.
-const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'extensionToken', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
+const RESERVED_REFUSAL_KEYS = ['code', 'rule', 'aal', 'sessionId', 'mfaAt', 'component', 'agentRun', 'extensionToken', 'mcpCall', 'mcpGrant', 'mcpClient', 'mcpClientName', 'parentCommand', 'parentCommandId', 'workerInstance'] as const;
 
 // The statuses a refused command is audited for once its org was entered (executeIn, ctx.tryRun).
 const AUDITED_REFUSAL_STATUSES: ReadonlySet<number> = new Set([403, 404, 409, 422]);
@@ -695,7 +754,7 @@ export function isNeverRecovered(code: string): boolean {
 
 // Keys of an audit row only the runtime writes (a ctx.tryRun refusal's parent command, a proposal's link from a
 // command run under it, #1706), so ctx.audit never sets them.
-const RESERVED_OK_KEYS = ['extensionToken', 'parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
+const RESERVED_OK_KEYS = ['extensionToken', 'mcpCall', 'mcpGrant', 'mcpClient', 'mcpClientName', 'parentCommand', 'parentCommandId', 'under_proposal', 'workerInstance'] as const;
 
 // A JSON copy of an error's details or audit facts, frozen all the way down (what the audit row stores is JSON), or
 // null when the value has no JSON form (a cycle, a BigInt).
@@ -761,6 +820,11 @@ export function refusalAuditDetail(refusal: DomainError, actor: Actor): Record<s
   if (typeof refusal.details?.rule === 'string') detail.rule = refusal.details.rule;
   if (actor.type === 'user') Object.assign(detail, sessionDetail(actor));
   if (actor.type === 'agent') detail.agentRun = actor.runId;
+  // Vy in member mode: the write guard takes a refusal row with the keys code, rule and agentRun and no other (ADR-0049 decision 4, #2822), so a key
+  // a refusal adds on its own is dropped here, never audited.
+  if (actor.type === 'agent' && actor.memberVy === true) {
+    for (const key of Object.keys(detail)) if (key !== 'code' && key !== 'rule' && key !== 'agentRun') delete detail[key];
+  }
   return detail;
 }
 
@@ -792,6 +856,7 @@ function actorDetail(actor: Actor): Record<string, unknown> {
   if (actor.type === 'system') return { component: actor.component };
   if (actor.type === 'agent') return { agentRun: actor.runId };
   if (actor.extension) return { extensionToken: actor.extension.tokenId };
+  if (actor.mcp) return mcpDetail(actor.mcp);
   return {};
 }
 
@@ -1198,6 +1263,16 @@ function snapshotMemberVy(value: unknown, what: string): unknown {
   return Object.freeze(copy);
 }
 
+// What register() keeps of an MCP access declaration: a frozen copy, its scope checked to be a known one.
+function snapshotMcp(value: unknown, what: string): unknown {
+  if (value === undefined) return undefined;
+  const copy = plainCopy(value, what);
+  if (typeof copy.scope !== 'string' || !(MCP_SCOPES as readonly string[]).includes(copy.scope)) {
+    throw new Error(`${what}: the scope is one of ${MCP_SCOPES.join(', ')}`);
+  }
+  return Object.freeze(copy);
+}
+
 // What register() keeps of an extension access declaration: a frozen copy, its scope checked to be a known one.
 function snapshotExtension(value: unknown, what: string): unknown {
   if (value === undefined) return undefined;
@@ -1245,6 +1320,7 @@ function snapshotQuery(def: QueryDef<any, any>): QueryDef<unknown, unknown> {
   if (Object.hasOwn(copy, 'agent')) copy.agent = snapshotAgent(copy.agent, `${label}: agent`);
   if (Object.hasOwn(copy, 'memberVy')) copy.memberVy = snapshotMemberVy(copy.memberVy, `${label}: memberVy`);
   if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
+  if (Object.hasOwn(copy, 'mcp')) copy.mcp = snapshotMcp(copy.mcp, `${label}: mcp`);
   return Object.freeze(copy) as unknown as QueryDef<unknown, unknown>;
 }
 
@@ -1505,6 +1581,8 @@ export class Runtime {
   #savepointSeq = 0;
 
   // A plain Db is one cell that also holds the control plane (singleCell).
+  readonly #mcpEntry: 'api' | 'worker';
+
   constructor(cells: CellResolver | Db, options: RuntimeOptions) {
     // Read once: the check and the copy below see the same list.
     const manifests: unknown = typeof options === 'object' && options !== null ? options.manifests : undefined;
@@ -1519,6 +1597,7 @@ export class Runtime {
     this.#sessions =
       sessions === null ? null : Object.freeze({ mode: sessions.mode, liveCheckForR3: sessions.liveCheckForR3 === true, check: sessions.check.bind(sessions) });
     this.stepUp = options.stepUp ?? 'required';
+    this.#mcpEntry = options.mcpEntry === 'worker' ? 'worker' : 'api';
     const refusalAudit = options.refusalAudit ?? DEFAULT_REFUSAL_AUDIT_LIMITS;
     this.refusalAudit = refusalAudit === 'unbounded' ? 'unbounded' : Object.freeze(validateRefusalAuditLimits(refusalAudit));
     this.#absentModules = options.absentModules ? new Set(options.absentModules) : null;
@@ -1633,6 +1712,10 @@ export class Runtime {
           throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so Vy in member mode may not run it (P04: it asks for a proposal instead)`);
         }
       }
+      // An MCP grant runs no command (ADR-0051 decision 2): a definition that declares `mcp` is a mistake, whatever the type says.
+      if ((c as { mcp?: unknown }).mcp !== undefined) {
+        throw new Error(`command ${c.name}: an MCP grant runs no command, so a command cannot declare mcp (ADR-0051 decision 2)`);
+      }
       if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
         throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
       }
@@ -1680,6 +1763,9 @@ export class Runtime {
       }
       if (q.memberVy !== undefined && (!Array.isArray(q.access) || !q.name.startsWith('kernel.member_vy.'))) {
         throw new Error(`query ${q.name}: Vy in member mode reads only a kernel.member_vy.* query with a role list as access (the member's role must be in it)`);
+      }
+      if (q.mcp !== undefined && (!Array.isArray(q.access) || q.stream === true || q.sensitive === true || q.memberVy !== undefined || q.extension !== undefined)) {
+        throw new Error(`query ${q.name}: an MCP grant reaches only a query with a role list as access that is neither streamed, sensitive, nor open to member mode or an extension token (ADR-0051 decision 2)`);
       }
       if (q.extension !== undefined && (!Array.isArray(q.access) || q.stream === true)) {
         throw new Error(`query ${q.name}: an extension token reaches only a query with a role list as access, and no streamed one (ADR-0047 point 10)`);
@@ -1762,6 +1848,7 @@ export class Runtime {
 
   private authorizeQuery(def: QueryDef<unknown, unknown>, actor: Actor, entered: Entered): void {
     authorizeExtension(def.extension, actor);
+    authorizeMcp(def.mcp, actor);
     const { role, agent, memberVy } = entered;
     if (actor.type === 'agent' && actor.memberVy === true) {
       // Vy in member mode reads only what a query declares for it, and only what the member's own base role may read (ADR-0049 decision 1).
@@ -1826,6 +1913,17 @@ export class Runtime {
   // The session status check, in the caller's transaction. Fails closed: a user actor without a session id is
   // refused whenever the runtime checks sessions.
   private async checkSession(trx: Transaction<Database>, actor: Actor, orgId: string | null): Promise<void> {
+    if (actor.type === 'user' && actor.mcp) {
+      // An MCP grant has no Supabase session. Its standing (not revoked, not expired, the consenting user still an owner or admin of
+      // the org, the org active and not stopped, the user enabled, the deployment's AI switch off) is read here, in the request's own
+      // transaction and before the context is entered, so a revoke, a lost role or a stop applies at once. It names one org.
+      if (orgId === null) throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP chỉ dùng được trong tổ chức đã cấp', { rule: 'mcp_org' });
+      // A member-bound grant is checked by its own entry (enterContext), which reads the same standing plus the org's switch in this transaction.
+      // The worker's wake entry (mcpEntry 'worker') does the same: the worker login has no mcp_grant_check, and the core the entry calls re-reads the same standing in this transaction.
+      if (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker') return;
+      await sql`SELECT crove_kernel.mcp_grant_check(${actor.mcp.grantId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
+      return;
+    }
     if (actor.type === 'user' && actor.extension) {
       // An extension token has no Supabase session. Its standing (not revoked, not expired, the member still in this
       // org, the org active, the user enabled) is read here, in the request's own transaction and before the context
@@ -1887,6 +1985,36 @@ export class Runtime {
         memberVy: null,
       };
     }
+    if (actor.mcp?.kind === 'member') {
+      // A member-bound MCP grant (ADR-0051 decision 2): the sealed context is the grant's, not the person's (no user in the seal, tainted, R0), and
+      // it is entered afresh in every request, so a revoke, a demotion or a switch turned off applies to the next call. Queries only: the transaction
+      // is already read-only here (query() sets it first) and no command reaches a grant.
+      const { rows } = await sql<{ entered: { role: string; member: string; maxRisk: string; tainted: boolean } }>`
+        SELECT crove_kernel.enter_mcp_member_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      // The member of the seal is the consenting user the edge named; anything else is a bug or tampering, never answered as a role.
+      if (!got || got.member !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin' && role !== 'member' && role !== 'viewer')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role, agent: null, memberVy: null };
+    }
+    if (actor.mcp) {
+      // A company MCP grant (ADR-0051 decision 2, slice 3e): the same sealed shape, with no user in the seal, so a policy bound to a user (a private note, a Vy-catalog table) answers nothing to
+      // it whatever the grantor holds. The role is the consenting owner's or admin's, read live in this transaction; the grantor named in the seal is the user the edge named, else a bug.
+      const { rows } =
+        this.#mcpEntry === 'worker'
+          ? await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+              SELECT crove_kernel.enter_mcp_wake_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx)
+          : await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+              SELECT crove_kernel.enter_mcp_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role, agent: null, memberVy: null };
+    }
     if (this.#contextTokenKey !== null) {
       // Signed right before it is used, as a bind parameter (never in a statement's text).
       const token = mintContextToken(this.#contextTokenKey, { userId: actor.userId, sessionId: actor.sessionId ?? null, orgId, aal: actor.aal, mfaAt: actor.mfaAt ?? null });
@@ -1922,6 +2050,8 @@ export class Runtime {
   private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): Promise<readonly string[] | null> {
     // First of all: an extension token reaches a command only through the scope the command declares (ADR-0047 point 10).
     authorizeExtension(def.extension, actor);
+    // An MCP grant runs no command, whatever the command declares (no command type carries `mcp`).
+    authorizeMcp(undefined, actor);
     try {
       this.authorizeRole(def, actor, entered, viaProposal);
       return null;
@@ -2753,6 +2883,7 @@ export class Runtime {
   ): Promise<void> {
     const commandId = uuidv7();
     const outcome = refusal.status === 403 ? 'denied' : 'failed';
+    const memberDenied = outcome === 'denied' && actor.type === 'agent' && actor.memberVy === true;
     try {
       const db = await this.#cells.resolveTenant(orgId);
       await db.transaction().execute(async (trx) => {
@@ -2765,7 +2896,8 @@ export class Runtime {
           commandId,
           outcome,
           input: canonical,
-          target: safeTarget(def, input),
+          // The model's input names the target of a refused command: a member-mode denied row carries none (the guard refuses one).
+          target: memberDenied ? null : safeTarget(def, input),
           proposalId: null,
           detail: refusalAuditDetail(refusal, actor),
         });
@@ -2787,8 +2919,10 @@ export class Runtime {
       });
       if (contextTaint(auditError)) logInternal(`execute ${name} refusal audit`, auditError, { orgId, actor });
       // An actor removed from the org in between: the org's audit no longer takes the row, security_event does.
-      if (lost.code === 'NOT_A_MEMBER') await this.noteSecurityEvent(name, actor, orgId, refusal.code);
+      if (lost.code === 'NOT_A_MEMBER' && !memberDenied) await this.noteSecurityEvent(name, actor, orgId, refusal.code);
     }
+    // Vy in member mode reaching for a command it may not run is worth a note whether or not its row fit the guard's bound (security_event samples per caller).
+    if (memberDenied) await this.noteSecurityEvent(name, actor, orgId, refusal.code);
   }
 
   // Notes a refusal made before membership was established in crove_kernel.security_event (sampled per caller,
@@ -3021,7 +3155,7 @@ export class Runtime {
       });
     } catch (error) {
       const domain = toDomainError(error);
-      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, specificRefusal(domain));
       else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`query ${name}`, error, options);
       throw domain;
@@ -3066,7 +3200,7 @@ export class Runtime {
         });
     } catch (error) {
       const domain = toDomainError(error);
-      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, specificRefusal(domain));
       else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`stream ${name}`, error, options);
       throw domain;

@@ -13,6 +13,8 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { DealBookings } from '../components/booking-deal.tsx';
+import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
@@ -39,6 +41,8 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
   const { locale } = useLocaleSetting();
   const [editing, setEditing] = useState(false);
   const [quoting, setQuoting] = useState(false);
+  const [meetingsOpen, setMeetingsOpen] = useState(false);
+  const [bookingsOpen, setBookingsOpen] = useState(false);
   // A move into a lost stage asks for an optional reason first.
   const [losing, setLosing] = useState<PipelineStage | null>(null);
   const [reason, setReason] = useState('');
@@ -79,6 +83,17 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
           <Button size="sm" variant="ghost" className="-ml-2 mt-1" onClick={() => setQuoting((q) => !q)} aria-expanded={quoting} data-testid="deal-quotes-toggle">
             {t('quotes')}
           </Button>
+          {meetingsInstalled() && (
+            <Button size="sm" variant="ghost" className="mt-1" onClick={() => setMeetingsOpen((o) => !o)} aria-expanded={meetingsOpen} data-testid="deal-meetings-toggle">
+              {t('meetings')}
+            </Button>
+          )}
+          {/* The deal's bookings and "Đặt lịch" (#3103); a viewer reads no booking, so has no button. */}
+          {canEdit && (
+            <Button size="sm" variant="ghost" className="mt-1" onClick={() => setBookingsOpen((o) => !o)} aria-expanded={bookingsOpen} data-testid="deal-bookings-toggle">
+              {t('bookings')}
+            </Button>
+          )}
         </TableCell>
         <TableCell className="px-4 text-sm">{deal.partyName}</TableCell>
         <TableCell className="px-4 text-sm">
@@ -146,6 +161,20 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
               </form>
             )}
             {(move.error || remove.error) && <ErrorText>{errorMessage(move.error ?? remove.error)}</ErrorText>}
+          </TableCell>
+        </TableRow>
+      )}
+      {meetingsOpen && (
+        <TableRow>
+          <TableCell colSpan={columns} className="px-4 py-3">
+            <LinkedMeetings kind="deal" targetId={deal.id} />
+          </TableCell>
+        </TableRow>
+      )}
+      {bookingsOpen && (
+        <TableRow>
+          <TableCell colSpan={columns} className="px-4 py-3">
+            <DealBookings deal={deal} canEdit={canEdit} />
           </TableCell>
         </TableRow>
       )}

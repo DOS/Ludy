@@ -13,6 +13,10 @@ import { createOrg, kernelCommands, upsertIdentity } from "@crove/kernel";
 import { Runtime } from "@crove/kernel-runtime";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
+import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+
+// The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
+let FEAT: AiRunFeature = { cols: "", vals: "" };
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(
@@ -77,7 +81,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
       c.query("SELECT crove_kernel.enter_system_context($1::uuid)", [org]);
   const finish = (
     run: string,
-    status: string,
+    status: string | null,
     code: string | null,
     enter: (c: pg.Client) => Promise<unknown> = systemEnter(),
     url = () => workerUrl,
@@ -107,7 +111,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
       );
       await c.query("SET session_replication_role = replica");
       await c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes')`,
+        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at${FEAT.cols}) VALUES ($1, $2, $3, 'notes', 'running', true, now(), now() + interval '30 minutes'${FEAT.vals})`,
         [orgId, runId, agentId],
       );
       await c.query("SET session_replication_role = DEFAULT");
@@ -149,6 +153,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    FEAT = await admin((c) => aiRunFeature(c));
     await setRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",
@@ -205,7 +210,7 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
             `SELECT to_regprocedure('${FN}') IS NOT NULL AS ok`,
           )
         ).rows[0]?.ok === true;
-      if (!has) return;
+      if (!has) throw new Error(`${FN} is missing: the presence pin below names it`);
       agentId = randomUUID();
       // The binding triggers need the member's own context; this fixture sets them aside for the agent row alone.
       await c.query("SET session_replication_role = replica");
@@ -226,6 +231,12 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     await root.end();
   });
 
+
+  // The presence pin (#2822): the function the cases below call is there, so none of them can pass by finding nothing to check (they once skipped when it was missing).
+  it("finds the function the cases below rest on", () => {
+    expect(has, `${FN} exists`).toBe(true);
+  });
+
   it("is pinned: a definer with a fixed search_path that only the worker login may execute", async () => {
     const { rows } = await admin((c) =>
       c.query<{ definer: boolean; config: string[]; callers: string[] }>(
@@ -234,7 +245,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
          FROM pg_proc p WHERE p.oid = to_regprocedure('${FN}')`,
       ),
     );
-    if (!has) return expect(rows).toEqual([]);
     expect(rows[0]).toEqual({
       definer: true,
       config: ["search_path=pg_catalog, pg_temp"],
@@ -243,7 +253,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   });
 
   it("closes a run as the worker in the system context: succeeded with a ready result, failed or cancelled with a fixed code", async () => {
-    if (!has) return;
     const ok = await runWith("ready");
     expect((await finish(ok, "succeeded", null)).ok, "a ready result").toBe(
       true,
@@ -278,7 +287,6 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
   });
 
   it("refuses every other caller: the API login, a user, an agent and a member-mode context, another org, and no context", async () => {
-    if (!has) return;
     const run = await runWith("ready");
     const forbidden = { ok: false, code: "42501" };
     expect(
@@ -340,8 +348,31 @@ suite("closing the run of a member's Vy (ADR-0049, #2756)", () => {
     expect(await runRow(run)).toMatchObject({ status: "running" });
   });
 
+  it("derives the status from the result when none is given, and takes only a code from the list (#2822 part 3)", async () => {
+    // A ready result closes the run as succeeded, a failed one as failed with the code, whatever the caller would have said.
+    const ready = await runWith("ready");
+    expect((await finish(ready, null, null)).ok, "derived succeeded").toBe(true);
+    expect(await runRow(ready)).toMatchObject({ status: "succeeded", error: null });
+    const failed = await runWith("failed");
+    expect((await finish(failed, null, "AI_STOPPED")).ok, "derived failed").toBe(true);
+    expect(await runRow(failed)).toMatchObject({ status: "failed", error: "AI_STOPPED" });
+    // A result still running is failed with the code, and the run beside it.
+    const waiting = await runWith("running");
+    expect((await finish(waiting, null, "TRANSCRIBE_FAILED")).ok, "derived failed over a running result").toBe(true);
+    expect(await runRow(waiting)).toMatchObject({ status: "failed", error: "TRANSCRIBE_FAILED" });
+    // Refused: derived succeeded with a code, derived failed with none, and a code shaped like one but not on the list. Each run is checked right after its
+    // refusals: making the next run cancels the agent's other running runs (runWith), so a run is never checked after another is made.
+    const shown = await runWith("ready");
+    expect(await finish(shown, null, "AI_STOPPED"), "a ready result with a code").toMatchObject({ ok: false, code: "22023" });
+    expect(await runRow(shown)).toMatchObject({ status: "running" });
+    const open = await runWith("running");
+    expect(await finish(open, null, null), "failed with no code").toMatchObject({ ok: false, code: "22023" });
+    expect(await finish(open, "failed", "SOMETHING_ELSE_ENTIRELY"), "a well-formed code that is not listed").toMatchObject({ ok: false, code: "22023" });
+    expect(await finish(open, null, "SOMETHING_ELSE_ENTIRELY"), "a derived status with a code that is not listed").toMatchObject({ ok: false, code: "22023" });
+    expect(await runRow(open)).toMatchObject({ status: "running" });
+  });
+
   it("refuses a status that disagrees with the result, a code with text, and answers false for a run that is no longer running", async () => {
-    if (!has) return;
     const waiting = await runWith("running");
     expect(
       (await finish(waiting, "succeeded", null)).ok,
