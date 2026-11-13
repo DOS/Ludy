@@ -43,6 +43,8 @@ export interface MeetingCreate {
   title: string;
   keepVideo: boolean;
   consentMethod: ConsentMethod;
+  // Live notes (ADR-0052 L4a): the server defaults to off.
+  liveNotes: boolean;
 }
 
 export interface Client {
@@ -50,6 +52,8 @@ export interface Client {
   exchangeCode(code: string, codeVerifier: string): Promise<{ token: string; orgId: string; scopes: string[]; expiresAt: string }>;
   me(): Promise<Me>;
   createMeeting(input: MeetingCreate): Promise<{ meetingId: string }>;
+  // One piece of the audio of a live-notes meeting; throws LudyError with the HTTP status (the live sender retries or gives up by it).
+  sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
   uploadMedia(input: { meetingId: string; kind: 'audio' | 'video'; file: File; lengthSeconds: number; uploads: 'presigned' | 'direct' }): Promise<Uploaded>;
 }
 
@@ -91,10 +95,17 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     },
     async createMeeting(input) {
       // oRPC's wire format: the input in `json`. Language and visibility take the server's defaults of the app's recorder.
-      const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod } };
+      const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod, liveNotes: input.liveNotes } };
       const out = (await (await call('/api/rpc/meetings/create', json(body))).json()) as { json?: { meetingId?: unknown } };
       if (typeof out.json?.meetingId !== 'string') throw new LudyError('BAD_RESPONSE', 502, 'Máy chủ trả lời không đúng dạng');
       return { meetingId: out.json.meetingId };
+    },
+    async sendLiveChunk({ meetingId, seq, lengthSeconds, blob }) {
+      const query = new URLSearchParams({ seq: String(seq), lengthSeconds: String(lengthSeconds) });
+      // The recorder's type carries codecs ("audio/webm;codecs=opus"): the route wants the plain audio type.
+      const base = blob.type.split(';')[0]!.trim();
+      const type = /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream';
+      await call(`/api/meetings/${encodeURIComponent(meetingId)}/live-chunk?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: blob });
     },
     async uploadMedia({ meetingId, kind, file, lengthSeconds, uploads }) {
       const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';

@@ -11,6 +11,7 @@ import { resultCommands, resultQueries } from './results.ts';
 import { summaryCommands } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { liveCommands } from './live.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -132,6 +133,7 @@ interface MeetingRow {
   ended_at: Date | string | null;
   length_seconds: number | null;
   keep_video: boolean;
+  live_notes: boolean;
   consent_method: ConsentMethod;
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
@@ -154,6 +156,7 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
+    liveNotes: r.live_notes,
     audioRetentionDate: dayText(r.audio_retention_date),
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
@@ -194,6 +197,7 @@ export const meetingCreate = defineCommand({
         ended_at: null,
         length_seconds: input.lengthSeconds ?? null,
         keep_video: input.keepVideo,
+        live_notes: input.liveNotes,
         consent_method: input.consentMethod,
         consent_confirmed_by: userId,
         consent_confirmed_at: startedAt,
@@ -237,6 +241,7 @@ export const meetingCreate = defineCommand({
       title: auditValue(MEETING, 'title', input.title),
       visibility: input.visibility,
       consentMethod: input.consentMethod,
+      liveNotes: input.liveNotes,
     });
 
     return { meetingId };
@@ -282,6 +287,12 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
+    // The recording is complete, whatever its kind (a video holds the same audio): the live pieces (ADR-0052 L4a) are not kept beside it. The meeting's live lock
+    // is taken first, so a piece being recorded at this moment either commits before this and is deleted here, or waits and finds the recording ended. Their keys go
+    // first, so they are unreadable from this commit, and their file rows are left for the worker's orphan sweep. A meeting with no live pieces has nothing to delete.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
+    const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
+    const liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
     const wrappedKey = Buffer.from(input.wrappedKeyHex, 'hex');
     await sql`SELECT crove_meetings.media_key_seal(
       ${ctx.orgId}::uuid,
@@ -339,7 +350,7 @@ export const meetingMediaRecord = defineCommand({
         .execute();
     }
 
-    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId });
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
     return { fileId };
   },
 });
@@ -696,7 +707,7 @@ export const meetingExtensionStatus = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id', 'recorder_user_id', 'status', 'keep_video', 'length_seconds', 'extension_token_id', sql<string | null>`text_retention_date::text`.as('text_day')])
+      .select(['id', 'recorder_user_id', 'status', 'keep_video', 'live_notes', 'length_seconds', 'extension_token_id', sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
@@ -725,6 +736,7 @@ export const meetingExtensionStatus = defineQuery({
       meetingId: input.meetingId,
       status: meeting.status,
       keepVideo: meeting.keep_video,
+      liveNotes: meeting.live_notes,
       hasAudio: audio !== undefined,
       hasVideo: video !== undefined,
       lengthSeconds: meeting.length_seconds,
@@ -969,6 +981,7 @@ export const meetingsCommands = [
   ...summaryRunCommands,
   ...linkCommands,
   ...followupCommands,
+  ...liveCommands,
 ];
 
 export const meetingsQueries = [

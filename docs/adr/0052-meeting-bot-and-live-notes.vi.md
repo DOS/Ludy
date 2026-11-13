@@ -1,6 +1,6 @@
 # Bot họp và ghi chú trực tiếp (L4): tóm tắt cho JOY
 
-> Bản tóm tắt tiếng Việt của [ADR-0052](https://github.com/DOS/Ludy/blob/main/docs/adr/0052-meeting-bot-and-live-notes.md), ngày 2026-11-13. Bản tiếng Anh là bản chính. Trạng thái: **đề xuất, chưa quyết, chưa làm gì**. Cần bạn trả lời tám câu ở cuối. Việc này là issue [#2592](https://github.com/DOS/Ludy/issues/2592) (L4), đang nằm ở Icebox (kho tạm, chưa làm).
+> Bản tóm tắt tiếng Việt của [ADR-0052](https://github.com/DOS/Ludy/blob/main/docs/adr/0052-meeting-bot-and-live-notes.md), ngày 2026-11-13. Bản tiếng Anh là bản chính. Trạng thái: **L4a (ghi chú trực tiếp, không bot) đã được bạn đồng ý ngày 2026-11-13** (câu 1 và câu 5, trả lời trong cuộc trò chuyện với Meetings PO), đang làm theo từng phần: phần ghi và gửi âm thanh lên máy chủ là #3109, phần chép lời và ghi chú trực tiếp là #3110. **L4b (các bot) vẫn chỉ là đề xuất, chưa quyết, chưa làm gì**: còn năm câu chưa trả lời (2, 3, 4, 6, 7, 8). Việc này là issue [#2592](https://github.com/DOS/Ludy/issues/2592) (L4), đang nằm ở Icebox (kho tạm, chưa làm).
 
 ## Vấn đề
 
@@ -30,13 +30,20 @@ Lưu ý: phiên làm việc này bị chặn không mở được trang của Go
 
 Trả lời từng câu một. Mỗi câu có đề xuất của tôi trước.
 
-1. **Làm ghi chú trực tiếp không cần bot (L4a) tiếp theo không?** Đề xuất: **có.** Lý do: không cần hãng nào duyệt, không tốn tiền cho hãng, dùng được cho cả Meet. Nếu không trả lời: L4 vẫn nằm ở Icebox.
+1. **Làm ghi chú trực tiếp không cần bot (L4a) tiếp theo không?** Đề xuất: **có.** Lý do: không cần hãng nào duyệt, không tốn tiền cho hãng, dùng được cho cả Meet. Nếu không trả lời: L4 vẫn nằm ở Icebox. **Bạn đã trả lời: có (2026-11-13).** L4a được làm, bắt đầu từ #3109.
 2. **Bot Zoom (L4b): làm ngay hay chờ khách thí điểm đòi?** Đề xuất: **chờ khách đòi**; nếu làm thì Zoom trước, vì là đường chính thức duy nhất và lấp được chỗ trống của app Zoom trên máy tính.
 3. **Bot Meet và bot Teams: xác nhận "không lên kế hoạch"?** Đề xuất: **có.** Meet sắp hết đường chính thức, Teams quá nặng với công ty nhỏ.
 4. **Có dùng dịch vụ bot của bên thứ ba (tùy chọn cho Ludy Cloud) không?** Đề xuất: **chưa.** Âm thanh đi qua công ty khác (có thể ra nước ngoài) và Ludy phải phụ thuộc một khoản phí.
-5. **Chấp nhận ghi chú trực tiếp tốn tới gấp đôi phút âm thanh, mặc định tắt, bật riêng từng cuộc họp?** Đề xuất: **có.** Nếu không trả lời: không làm L4a.
+5. **Chấp nhận ghi chú trực tiếp tốn tới gấp đôi phút âm thanh, mặc định tắt, bật riêng từng cuộc họp?** Đề xuất: **có.** Nếu không trả lời: không làm L4a. **Bạn đã trả lời: có (2026-11-13):** mặc định tắt, bật riêng từng cuộc họp, chấp nhận tốn tới gấp đôi phút âm thanh.
 6. **Ai được cho bot vào họp: chỉ người ghi, từng cuộc một, không tự vào theo lịch?** Đề xuất: **đúng như vậy.**
 7. **Chi tiêu và tài khoản Zoom cho Ludy Cloud (chỉ khi câu 2 là làm):** ai mở tài khoản nhà phát triển Zoom, đăng ký app, qua vòng duyệt, và trả credit. Việc này là của bạn (tiền mới). Đề xuất: chờ câu 2.
 8. **Hỏi luật sư (#62)** xem thông báo hiện trong cuộc gọi có đủ cho bot không, hay từng người phải đồng ý. Đề xuất: **có**, thêm vào danh sách câu hỏi cho luật sư (mục 7 của kế hoạch) trước khi làm bot.
 
-**Ai làm gì tiếp:** Bạn trả lời; Meetings PO mở issue L4a nếu bạn đồng ý câu 1, 5 và 6; luật sư nhận câu 8; Platform PO duyệt bảo mật nếu sau này làm bot.
+**Ai làm gì tiếp:** Bạn đã trả lời câu 1 và 5, nên L4a được làm (Meetings PO đã mở #3109 và #3110); các câu 2, 3, 4, 6, 7 và 8 (các bot) vẫn chờ bạn, nên L4b nằm ở Icebox; luật sư nhận câu 8; Platform PO duyệt bảo mật mọi phần chạm vào cổng HTTP, quyền của tiện ích và cơ sở dữ liệu.
+
+## Phần đã làm đầu tiên (#3109): ghi và gửi âm thanh khi đang họp
+
+- Ô tick **"Ghi chú trực tiếp"** nằm ở bước xác nhận trước khi ghi (tiện ích và app), **mặc định tắt**, chọn riêng từng cuộc họp và không đổi được sau khi cuộc họp đã tạo. Cuộc họp không tick thì chạy y như cũ: máy chủ không nhận đoạn âm thanh nào.
+- Khi tick, trong lúc ghi, cứ khoảng 15 giây tiện ích hoặc app gửi lên một đoạn âm thanh. Máy chủ **mã hóa ngay từng đoạn bằng khóa riêng của đoạn đó** rồi mới lưu, nên không có byte âm thanh nào nằm ở dạng đọc được. Khóa của mọi đoạn bị xóa cùng lúc với âm thanh của cuộc họp (đến ngày hết hạn, hoặc khi xóa cuộc họp).
+- **Bản ghi đầy đủ gửi lúc dừng vẫn y như cũ và là bản chính.** Khi nó đã lên máy chủ thì các đoạn gửi trực tiếp bị xóa, nên âm thanh chỉ giữ một lần. Một đoạn gửi lỗi không bao giờ làm mất bản ghi. Đổi lại, âm thanh được gửi hai lần (khoảng 11 MB một giờ).
+- Chưa có AI trong phần này: chép lời và ghi chú trực tiếp là #3110. Tiện ích **không xin thêm quyền nào** của trình duyệt; quyền của mã tiện ích chỉ thêm đúng một lệnh (`meetings.live.chunk`).

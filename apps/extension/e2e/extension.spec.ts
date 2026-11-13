@@ -204,7 +204,7 @@ async function record(keepVideo: boolean): Promise<{ ok: boolean; uploaded?: boo
         }
         return new MediaStream(tracks);
       };
-      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp thử', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: video, streamId: 'fake' } as const;
+      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp thử', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: video, liveNotes: false, streamId: 'fake' } as const;
       const started = await run.startCapture(params, deps);
       if (!started.ok) return { ok: false, left: 0 };
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -222,7 +222,7 @@ test('video off: the meeting is created with its consent and only audio arrives'
   fake.uploads.length = 0;
   const result = await record(false);
   expect(result).toEqual({ ok: true, uploaded: true, left: 0 });
-  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' }]);
+  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start', liveNotes: false }]);
   expect(fake.uploads).toHaveLength(1);
   expect(fake.uploads[0]).toMatchObject({ kind: 'audio', fileType: expect.stringMatching(/^audio\/webm/) });
   expect(fake.uploads[0]!.bytes).toBeGreaterThan(1000);
@@ -347,8 +347,8 @@ test('the worker refuses a start request whose flags are not booleans, and creat
   const replies = await page.evaluate(async () => {
     const base = { type: 'start', title: 'Họp', consentMethod: 'told_at_start', streamId: 'x' };
     return [
-      await chrome.runtime.sendMessage({ ...base, consentAgreed: 'true', keepVideo: false }),
-      await chrome.runtime.sendMessage({ ...base, consentAgreed: true, keepVideo: 'false' }),
+      await chrome.runtime.sendMessage({ ...base, consentAgreed: 'true', keepVideo: false, liveNotes: false }),
+      await chrome.runtime.sendMessage({ ...base, consentAgreed: true, keepVideo: 'false', liveNotes: false }),
     ];
   });
   await page.close();

@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { isOwnSender, parseCaptureStart, parseStartRequest, parseTick } from '../src/messages.ts';
 
-const request = { title: 'Họp', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: false, streamId: 'abc' };
+const request = { title: 'Họp', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: false, liveNotes: false, streamId: 'abc' };
 const command = { target: 'offscreen', type: 'capture-start', address: 'https://app.ludy.vn', token: 'crx_t', orgId: 'o1', uploads: 'direct', ...request };
 
 describe('sender check', () => {
@@ -30,6 +30,9 @@ describe('start request', () => {
     ['a number as keepVideo', { ...request, keepVideo: 1 }],
     ['a string as keepVideo', { ...request, keepVideo: 'false' }],
     ['a missing keepVideo', { ...request, keepVideo: undefined }],
+    ['a string "false" as liveNotes', { ...request, liveNotes: 'false' }],
+    ['a number as liveNotes', { ...request, liveNotes: 1 }],
+    ['a missing liveNotes', { ...request, liveNotes: undefined }],
     ['an empty stream id', { ...request, streamId: '' }],
     ['a non-string title', { ...request, title: 5 }],
     ['not an object', 'start'],
@@ -38,10 +41,18 @@ describe('start request', () => {
     expect(parseStartRequest(raw)).toBeNull();
   });
 
+  it('keeps liveNotes as the boolean it was sent as', () => {
+    expect(parseStartRequest({ ...request, liveNotes: true })?.liveNotes).toBe(true);
+    expect(parseStartRequest({ ...request, liveNotes: false })?.liveNotes).toBe(false);
+    expect(parseCaptureStart({ ...command, liveNotes: true })?.liveNotes).toBe(true);
+  });
+
   it('is what the offscreen document also checks, with its own fields and a known consent method', () => {
     expect(parseCaptureStart(command)).toEqual(command);
     expect(parseCaptureStart({ ...command, consentAgreed: 'true' })).toBeNull();
     expect(parseCaptureStart({ ...command, keepVideo: 'false' })).toBeNull();
+    expect(parseCaptureStart({ ...command, liveNotes: 'false' })).toBeNull();
+    expect(parseCaptureStart({ ...command, liveNotes: undefined })).toBeNull();
     expect(parseCaptureStart({ ...command, uploads: 'ftp' })).toBeNull();
     expect(parseCaptureStart({ ...command, consentMethod: 'verbally' })).toBeNull();
     expect(parseCaptureStart({ ...command, token: undefined })).toBeNull();

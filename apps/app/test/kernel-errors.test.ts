@@ -12,6 +12,11 @@ const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 // Codes the SPA never receives, so it keeps the kernel's message for them.
 const NOT_SHOWN: Record<string, string> = {
+  // Live notes pieces (#3109, ADR-0052 L4a): sent by the recorder's sender in the background, which stops quietly on any of them; the recording and its upload go on and no screen shows them.
+  CONSENT_MISSING: 'meetings live notes',
+  LIVE_CLOSED: 'meetings live notes',
+  LIVE_FIRST_PIECE_MISSING: 'meetings live notes',
+  LIVE_NOTES_NOT_ENABLED: 'meetings live notes',
   // AI agents: codes only the worker and agent runs get; the agents screens (issue #258) word the others.
   AGENT_PROGRAM_MISSING: 'agents',
   AGENT_RUN_NOT_LIVE: 'agents',
