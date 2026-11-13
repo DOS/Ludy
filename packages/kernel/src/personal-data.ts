@@ -16,7 +16,7 @@
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { NOTE_BODY_MAX, NOTE_TITLE_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, NOTE_BODY_MAX, NOTE_TITLE_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -91,7 +91,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_kernel.mail_message.to_address': {
     kind: 'email',
     handling: 'erase',
-    reason: 'The recipient of a mail Crove sent; the keyed hash stays so a suppression still holds',
+    reason: 'The recipient of a mail Crove sent; the keyed hash stays so a suppression still holds. A mail already delivered cannot be recalled: the erasure drops the copy Crove holds (and, for a meeting follow-up mail, the copy of its text), not the copies in the recipients\' mailboxes',
   },
   'crove_kernel.mail_message.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash of the recipient (crove_kernel.mail_address_hash), not the address' },
   'crove_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
@@ -298,11 +298,21 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "What was said in a meeting, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner, or the retention job)",
   },
+  // The live preview of a meeting being recorded (ADR-0052 L4a-2, issue #3110): the recorder's own Vy's transcription of the pieces sent so far. Only the recorder reads it (no
+  // finder, owner or admin can), the batch transcript replaces it, and it goes with the meeting, so a request is answered the way it is for the transcript: by deleting the meeting.
+  'crove_meetings.live_line.text': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting and deleted with the meeting (its recorder, an owner, or the retention job)",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The name a transcript line is attributed to (the recorder may set it to a real name): found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
+  // The folded words of a line's text (search across meetings, L2 #2589): a generated column rebuilt from the text by every UPDATE of it, so the erasure of a mention in a line
+  // takes it out of the words in the same statement, and it goes with its row. Not searched itself.
+  'crove_meetings.transcript_segment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a transcript line's text, rebuilt from it by the database (a generated column): an erasure of a mention in the text takes it out of the words in the same statement, and they go with the line" },
   // The summary, the decisions and the action items (issue #2580): what was said, drafted by the recorder or copied from the result of their own Vy.
   'crove_meetings.meeting_result.summary': {
     kind: 'free_text',
@@ -473,7 +483,7 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
     await sql`ROLLBACK TO SAVEPOINT meeting_text_scan`.execute(trx);
     await sql`RELEASE SAVEPOINT meeting_text_scan`.execute(trx);
     // A deadlock with a recorder's edit of the same meeting (the database chose this transaction to end): nothing was changed, and the owner can simply ask again.
-    if (code === '40P01') throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa cùng lúc; hãy thử lại sau ít phút');
+    if (code === '40P01') throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa hoặc đang gửi thư cùng lúc; hãy thử lại sau ít phút');
     return null;
   }
 }
@@ -583,6 +593,20 @@ export const personalDataFind = defineCommand({
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
+// The statuses of a mail that has left Crove or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
+// delivered, bounced, complained). Its copies in the recipients' mailboxes cannot be taken back; a queued, failed or suppressed mail never reached one.
+const DELIVERED_MAIL_STATUSES: readonly string[] = ['sending', 'ambiguous', 'sent', 'delivered', 'bounced', 'complained'];
+export const FOLLOWUP_MAIL_HIDDEN_REASON =
+  'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read: the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. When the recorder or an owner deletes the meeting its mails lose their payload and subject at once; otherwise the payload expires 30 days after the mail\'s final status and the subject after 13 months';
+export const FOLLOWUP_MAIL_SHORT_NUMBER_REASON =
+  'Follow-up mails whose text holds a number of fewer than 10 digits: such a number may as well be an amount, a date or a figure of the meeting, and dropping a mail cannot be undone, so the erasure leaves these mails as they are (the meeting text is left too, see the crove_meetings entries); check them and tell the person, or ask for a longer value';
+// A number of fewer than 10 digits may as well be a date or a figure in meeting text (#3064), and a redaction cannot be undone: the meeting text is left as it is, counted, and the finder still lists it.
+export const MEETING_TEXT_SHORT_NUMBER_REASON =
+  'A number of fewer than 10 digits may also be a date, an amount or a figure in meeting text (a transcript line, a summary, a decision, an action item or a title), so the erasure does not redact it there; check these rows and tell the person, or ask for a longer value, or have the recorder or an owner delete the meeting';
+export const FOLLOWUP_MAIL_SKIPPED_REASON =
+  'The follow-up mails of this organization were too many to search in time, so their own text was not searched (the mails of meetings whose rows changed were still handled): erase again, or ask support, before relying on this erasure for follow-up mails';
+export const FOLLOWUP_MAIL_DELIVERED_REASON =
+  'Follow-up mails of a meeting that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
@@ -606,6 +630,17 @@ export const ACTIVITY_REDACT_MIN_DIGITS = 10;
 // What a quoted value becomes in free text the erasure changes, as crove_kernel.personal_data_redact_activity writes it.
 export const REDACTED_MARK = '[đã xóa]';
 const SHORT_NUMBER_COLUMNS = new Set(['crove_kernel.activity.summary', 'crove_kernel.task.title', 'crove_kernel.task.description']);
+// The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
+const SHORT_NUMBER_MEETING_COLUMNS = new Set([
+  'crove_meetings.meeting.title',
+  'crove_meetings.transcript_segment.text',
+  'crove_meetings.transcript_segment.speaker_label',
+  'crove_meetings.meeting_result.summary',
+  'crove_meetings.meeting_result.decisions',
+  'crove_meetings.action_item.title',
+  'crove_meetings.action_item.who_drafted',
+  'crove_meetings.action_item.when_drafted',
+]);
 export const ACTIVITY_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';
 
@@ -911,13 +946,27 @@ export const personalDataErase = defineCommand({
     // published row of a meeting they are a reader of) at once: the owner's own erasure is the authority, as for a shared note. In a row the owner cannot read, only when an earlier
     // notice named its meeting at the text it has now and its recorder was told at least 24 hours ago (crove_meetings.personal_erase): the rest stays, counted. Nothing but the text
     // changes: the taint of a draft, the audio, the video, the files and the Vy results stay as they are. A scan the statement timeout stopped redacts nothing and is said so.
-    const redaction = await meetingScan(ctx.trx, async () =>
-      (
-        await sql<{ meeting_id: string; lines: string; results: string; items: string; titles: string; kept: string; audio_until: string | null; video_until: string | null }>`
-          SELECT meeting_id, lines, results, items, titles, kept, audio_until::text AS audio_until, video_until::text AS video_until
-            FROM crove_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
-      ).rows,
-    );
+    // A number of fewer than 10 digits may as well be a date or a figure in the text (#3064), and a redaction cannot be undone: the definer is not called, nothing of the meeting text (nor its
+    // follow-up mails, nor the retention dates it would have reported) changes, and the rows are counted below, as the activity lines and tasks are (ACTIVITY_REDACT_MIN_DIGITS).
+    const shortNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
+    const redaction = shortNumber
+      ? []
+      : await meetingScan(ctx.trx, async () =>
+          (
+            await sql<{ meeting_id: string; lines: string; results: string; items: string; titles: string; kept: string; audio_until: string | null; video_until: string | null }>`
+              SELECT meeting_id, lines, results, items, titles, kept, audio_until::text AS audio_until, video_until::text AS video_until
+                FROM crove_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
+          ).rows,
+        );
+    // The rows the owner cannot read, counted for the answer (the finder below lists the ones they read): read only, by the same matcher, under the same timeout.
+    const shortMeetingCounts = shortNumber
+      ? await meetingScan(ctx.trx, async () =>
+          (
+            await sql<{ lines: string; results: string; items: string; titles: string }>`
+              SELECT lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
+          ).rows,
+        )
+      : [];
     const meetingsKept = { rows: 0, meetings: 0 };
     const mediaOf: { id: string; audio: string | null; video: string | null }[] = [];
     for (const r of redaction ?? []) {
@@ -930,6 +979,72 @@ export const personalDataErase = defineCommand({
         meetingsKept.meetings += 1;
       }
       if (r.audio_until || r.video_until) mediaOf.push({ id: r.meeting_id, audio: r.audio_until, video: r.video_until });
+    }
+    // The copy of a meeting's text in its follow-up mails (#3020, ADR-0047 point 7): meetings.followup.send stores the shared summary, decisions and owners as the mail's payload, and the
+    // recorder may type meeting content into its subject. When the redaction changed rows of a meeting, those two columns of that meeting's follow-up mails are dropped in the same
+    // transaction (the mail guard lets them only be dropped; the tenant role holds UPDATE on exactly them). A meeting where nothing changed keeps its mails. The lock is the one of
+    // modules/meetings/src/followup-erase.ts, so a send running at the same moment either finishes first (its mail is dropped too) or is refused its retry. The definer above already holds the
+    // meeting rows, while the meeting delete commands take this lock first and the row after: waiting for the lock here could deadlock with them, so it is only tried, and a busy meeting
+    // answers the same retryable PERSONAL_DATA_BUSY as a deadlock in the scan (the whole erasure rolls back, nothing is half done). Only the count reaches the audit row.
+    let followupMails = 0;
+    let followupDelivered = 0;
+    for (const r of redaction ?? []) {
+      if (Number(r.lines) + Number(r.results) + Number(r.items) + Number(r.titles) === 0) continue;
+      const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${r.meeting_id}`}, 0)) AS ok`.execute(ctx.trx);
+      if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa hoặc đang gửi thư cùng lúc; hãy thử lại sau ít phút');
+      const dropped = await ctx.trx
+        .updateTable('crove_kernel.mail_message')
+        .set({ payload: null, subject: null })
+        .where('org_id', '=', ctx.orgId)
+        .where('source', '=', FOLLOWUP_MAIL_SOURCE)
+        .where('source_id', '=', r.meeting_id)
+        .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
+        .returning('status')
+        .execute();
+      followupMails += dropped.length;
+      followupDelivered += dropped.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
+    }
+    // The follow-up mails whose OWN text mentions the value (#3025), whether or not the meeting's rows changed: the recorder may have edited the value out of the summary after the send
+    // (the meeting then has no hit), or typed it only into the subject. The same matcher (text_mentions) reads the subject and the payload; the rows of the first pass are already dropped
+    // in this transaction, so none is counted twice. Only mails of a meeting the owner reads (row security shows its row) are dropped, as the meeting rows follow the notice rule: a mail of a
+    // meeting the owner cannot read, or of one that no longer exists, stays and is counted. A meeting's mails are dropped under the same try-lock as above (busy: the same retryable refusal).
+    const scanned = await meetingScan(
+      ctx.trx,
+      async () =>
+        (
+          await sql<{ source_id: string; readable: boolean; text_kept: boolean }>`
+            SELECT m.source_id,
+                   EXISTS (SELECT 1 FROM crove_meetings.meeting g WHERE g.org_id = m.org_id AND g.id = m.source_id) AS readable,
+                   m.payload IS NOT NULL AS text_kept
+              FROM crove_kernel.mail_message m
+             WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+               AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})`.execute(ctx.trx)
+        ).rows,
+    );
+    // A scan the statement timeout stopped drops nothing and is said so (the per-meeting pass above is not affected). A number of fewer than 10 digits may as well be a date or a figure in
+    // the text, and a dropped mail cannot be undone: the mails are counted and left, as the activity redaction leaves its lines.
+    const followupSkipped = scanned === null;
+    const shortFollowupNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
+    const followupShort = shortFollowupNumber ? (scanned ?? []).length : 0;
+    const leftovers = shortFollowupNumber ? [] : (scanned ?? []);
+    // A mail whose payload is already gone (its meeting was deleted or its text purged) fails to render when it is still queued, so dropping what is left of its subject destroys no pending
+    // send: it is dropped whatever its meeting's readability. Every other mail of a meeting the owner cannot read, or that no longer exists, stays and is counted.
+    const followupHidden = leftovers.filter((m) => !m.readable && m.text_kept).length;
+    const leftoverMeetings = new Map<string, boolean>();
+    for (const m of leftovers) if (m.readable || !m.text_kept) leftoverMeetings.set(m.source_id, (leftoverMeetings.get(m.source_id) ?? false) || m.readable);
+    for (const [meetingId, readable] of leftoverMeetings) {
+      const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${meetingId}`}, 0)) AS ok`.execute(ctx.trx);
+      if (lock[0]?.ok !== true) throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một cuộc họp đang được sửa hoặc đang gửi thư cùng lúc; hãy thử lại sau ít phút');
+      // Selected again by the meeting once the lock is held, so a send that committed after the scan above is dropped too.
+      const dropped = await sql<{ status: string }>`
+        UPDATE crove_kernel.mail_message m SET payload = NULL, subject = NULL
+         WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND m.source_id = ${meetingId}::uuid
+           AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+           AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
+           AND (${readable} OR m.payload IS NULL)
+        RETURNING m.status`.execute(ctx.trx);
+      followupMails += dropped.rows.length;
+      followupDelivered += dropped.rows.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
     }
     // The retention dates of the meetings the owner reads (row security shows only those); the others are counted, their dates never shown.
     const readable = new Set(
@@ -948,7 +1063,6 @@ export const personalDataErase = defineCommand({
     // A number of 8 or 9 digits may as well be an amount or a voucher number in a line, and a redaction cannot be
     // undone: those lines are left as they are and listed with ACTIVITY_SHORT_NUMBER_REASON (the definer refuses them
     // too).
-    const shortNumber = probe.kind === 'digits' && probe.digits.length < ACTIVITY_REDACT_MIN_DIGITS;
     if (!shortNumber) {
       const { rows: redacted } = await sql<{ rows: number }>`
         SELECT crove_kernel.personal_data_redact_activity(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
@@ -978,7 +1092,13 @@ export const personalDataErase = defineCommand({
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
     for (const m of after.matches) {
-      const reason = shortNumber && SHORT_NUMBER_COLUMNS.has(m.column) ? ACTIVITY_SHORT_NUMBER_REASON : m.reason;
+      const reason = !shortNumber
+        ? m.reason
+        : SHORT_NUMBER_COLUMNS.has(m.column)
+          ? ACTIVITY_SHORT_NUMBER_REASON
+          : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
+            ? MEETING_TEXT_SHORT_NUMBER_REASON
+            : m.reason;
       const group = `${m.column}\n${reason}`;
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
@@ -1000,8 +1120,16 @@ export const personalDataErase = defineCommand({
       if (files > 0) kept.set('crove_kernel.file', { column: 'crove_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }
     // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
-    if (redaction === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
-    else if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    if (redaction === null || shortMeetingCounts === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    // A short number: the rows of meetings the owner cannot read are counted under the short-number reason (the ones they read are listed above by column, with the same reason).
+    const shortMeetingRows = (shortMeetingCounts ?? []).reduce((n, c) => n + Number(c.lines) + Number(c.results) + Number(c.items) + Number(c.titles), 0);
+    if (shortMeetingRows > 0) kept.set('crove_meetings.text.short', { column: 'crove_meetings.text', rows: shortMeetingRows, reason: MEETING_TEXT_SHORT_NUMBER_REASON });
+    if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    // Follow-up mail copies (#3025): the ones of a meeting the owner cannot read stay, counted; and the copies that already reached their recipients cannot be taken back.
+    if (followupSkipped) kept.set('crove_meetings.followup_mail.skipped', { column: 'crove_meetings.followup_mail', rows: 0, reason: FOLLOWUP_MAIL_SKIPPED_REASON });
+    if (followupShort > 0) kept.set('crove_meetings.followup_mail.short', { column: 'crove_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
+    if (followupHidden > 0) kept.set('crove_meetings.followup_mail', { column: 'crove_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
+    if (followupDelivered > 0) kept.set('crove_kernel.mail_message.payload', { column: 'crove_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
     // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
     if (mediaOf.some((m) => m.audio)) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
     if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
@@ -1022,7 +1150,7 @@ export const personalDataErase = defineCommand({
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
     // Counts and ids only: the value and the text never reach the audit log.
-    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
+    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
     return result;
   },
 });

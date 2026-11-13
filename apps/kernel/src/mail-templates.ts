@@ -4,6 +4,7 @@ import type { MailTemplates } from './mail-queue.ts';
 import { bookingMailTemplate } from './booking-mail.ts';
 import { conversationReplyMailTemplate } from './conversation-reply-mail.ts';
 import { digestMailTemplate } from './digest-mail.ts';
+import { FOLLOWUP_MAIL_TEMPLATE, followupMailTemplate } from './followup-mail.ts';
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
 import { PAYMENT_REMINDER_TEMPLATE, paymentReminderMailTemplate } from './payment-reminder-mail.ts';
@@ -36,4 +37,6 @@ export const MAIL_TEMPLATES: MailTemplates = {
   'crm.booking': bookingMailTemplate,
   // A sent quote's mail with the link to its page (#2694).
   [QUOTE_MAIL_TEMPLATE]: quoteMailTemplate,
+  // The follow-up of a meeting, sent by the recorder's click with the published summary (L3, #2590).
+  [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
 };

@@ -11,8 +11,9 @@ import {
   type PayrollSettlement,
 } from '@crove/kernel-contract';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
-import { latestRevision } from './source-entry.ts';
+import { reversedSource } from './source-entry.ts';
 
 type Posting = PayrollSettlement['posting'];
 
@@ -32,25 +33,18 @@ async function openProposals(ctx: QueryContext, command: string, runId: string):
 }
 
 async function postingOf(ctx: QueryContext, runId: string): Promise<Posting> {
-  const vouchers = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', runId).execute();
-  if (vouchers.length > 0) {
-    const entries = await ctx.trx
-      .selectFrom('crove_finance.journal_entry as e')
-      .select(['e.id', 'e.reverses_entry_id'])
-      .where('e.org_id', '=', ctx.orgId)
-      .where('e.source_type', '=', JOURNAL_VOUCHER_SOURCE)
-      .where('e.source_id', 'in', vouchers.map((v) => v.id))
-      .where(latestRevision('e'))
-      .execute();
-    const ids = entries.filter((e) => e.reverses_entry_id === null).map((e) => e.id);
-    if (ids.length > 0) {
-      const reversals = await ctx.trx.selectFrom('crove_finance.journal_entry').select('reverses_entry_id').where('org_id', '=', ctx.orgId).where('reverses_entry_id', 'in', ids).execute();
-      const reversed = new Set(reversals.map((r) => r.reverses_entry_id));
-      return { status: ids.every((id) => reversed.has(id)) ? 'reversed' : 'posted', proposalId: null };
-    }
-  }
+  // A reversed posting frees the run (#2931): the run is `posted` while any of its posting vouchers stands, `reversed` when all were reversed and nothing new waits, `pending` when a new proposal
+  // waits in the Inbox (also after a reversal), `none` when the run was never posted.
+  const vouchers = await ctx.trx
+    .selectFrom('crove_finance.journal_voucher as j')
+    .select(reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed'))
+    .where('j.org_id', '=', ctx.orgId)
+    .where('j.payroll_run_id', '=', runId)
+    .execute();
+  if (vouchers.some((v) => !v.reversed)) return { status: 'posted', proposalId: null };
   const open = await openProposals(ctx, PAYROLL_POSTING_COMMAND, runId);
-  return open[0] ? { status: 'pending', proposalId: open[0].id } : { status: 'none', proposalId: null };
+  if (open[0]) return { status: 'pending', proposalId: open[0].id };
+  return { status: vouchers.length > 0 ? 'reversed' : 'none', proposalId: null };
 }
 
 export const payrollSettlement = defineQuery({
@@ -59,11 +53,13 @@ export const payrollSettlement = defineQuery({
   access: ['owner', 'admin'] as const,
   handler: async (ctx, { runId }): Promise<PayrollSettlement> => {
     const posting = await postingOf(ctx, runId);
+    // A payment voucher that was reversed no longer counts as recorded: its kind is free again and the card offers the step (#2854).
     const recorded = await ctx.trx
-      .selectFrom('crove_finance.cash_voucher')
-      .select('payroll_payment_kind')
-      .where('org_id', '=', ctx.orgId)
-      .where('payroll_run_id', '=', runId)
+      .selectFrom('crove_finance.cash_voucher as v')
+      .select('v.payroll_payment_kind')
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.payroll_run_id', '=', runId)
+      .where(sql<boolean>`NOT ${reversedSource('v', VOUCHER_SOURCE)}`)
       .execute();
     const done = new Set(recorded.map((v) => v.payroll_payment_kind));
     const open = await openProposals(ctx, PAYROLL_PAYMENT_COMMAND, runId);

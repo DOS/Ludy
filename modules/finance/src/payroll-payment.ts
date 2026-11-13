@@ -2,12 +2,14 @@
 // The payment vouchers of an approved pay run (issue #2532; payroll plan docs/plan/payroll.md section 6.4, ADR-0046): a phiếu chi or a giấy báo Nợ for the net pay or for one remittance (insurance,
 // union fee, tax). The HR module's own command builds the request from the frozen run (hr.payroll.payment.prepare: the finance proposal path asks it, in the requester's context, so the lines
 // and the amount come from the run and never from the requester); the two commands here are what finance adds, and the voucher is the ordinary cash voucher (cash-voucher.ts):
-// - finance.payroll_payment.prepare: checks that the run has been posted (its voucher names it) and that this kind of payment is not already recorded, then builds the proposal as any voucher
+// - finance.payroll_payment.prepare: checks that the run has been posted (its voucher names it) and that posting stands (not reversed, #2854), and that this kind of payment is not already recorded
+//   (a reversed payment voucher does not count: it can be recorded again), then builds the proposal as any voucher
 //   (its accounts in the entity's chart, the bank line it settles) and raises the flag of a cash payment at the 5 million limit. It writes nothing. Owners and admins only, like the proposal it serves.
 // - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context, owners and admins) and
-//   refuses a stored proposal that differs from it (the entity, the month, the chart, the lines, the total); then it records the voucher with the run and the kind on it (one per run and kind: a
-//   unique index holds it) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   refuses a stored proposal that differs from it (the entity, the month, the chart, the lines, the total); then it records the voucher with the run and the kind on it (one live voucher per run and kind: a
+//   trigger holds it, 20261212114500) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
 // No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { PAYROLL_PAYMENT_COMMAND, PAYROLL_PAYMENT_KINDS, PAYROLL_REGIMES, VOUCHER_KIND, zCashVoucherRequest, zId, zPayrollPaymentProposal } from '@crove/kernel-contract';
 import { money } from '@crove/l10n-vn';
@@ -15,22 +17,33 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 import { buildVoucherProposal, recordVoucherPayload } from './cash-voucher.ts';
 import { payrollCashCheck } from './domain/anomaly.ts';
-import { voucherTitle } from './domain/cash-voucher.ts';
+import { VOUCHER_SOURCE, voucherTitle } from './domain/cash-voucher.ts';
+import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
+import { reversedSource } from './source-entry.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
 
-// The run's entry has been posted (its voucher names the run) and this kind of payment has not been recorded yet. Read under the HR module's lock on the run when a proposal is asked for, and again
-// when it is approved.
+// The run's entry has been posted (its voucher names the run) and that posting stands, and this kind of payment has not been recorded yet. A posting that was reversed (finance.journal.reverse) is
+// no posting any more, so nothing is paid against it (#2854); a payment voucher that was reversed no longer holds its kind, so it can be recorded again. Read under the HR module's lock on the
+// run when a proposal is asked for, and again when it is approved.
 async function checkPayable(ctx: QueryContext, runId: string, kind: string): Promise<void> {
-  const posted = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('payroll_run_id', '=', runId).executeTakeFirst();
-  if (!posted) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
+  // A run can be posted again after a reversal (#2931), so it may hold several posting vouchers: it is payable against the one that stands.
+  const postings = await ctx.trx
+    .selectFrom('crove_finance.journal_voucher as j')
+    .select(['j.id', reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed')])
+    .where('j.org_id', '=', ctx.orgId)
+    .where('j.payroll_run_id', '=', runId)
+    .execute();
+  if (postings.length === 0) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
+  if (postings.every((p) => p.reversed)) throw new DomainError('HR_PAYMENT_POSTING_REVERSED', 409, 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được');
   const paid = await ctx.trx
-    .selectFrom('crove_finance.cash_voucher')
-    .select('id')
-    .where('org_id', '=', ctx.orgId)
-    .where('payroll_run_id', '=', runId)
-    .where('payroll_payment_kind', '=', kind)
+    .selectFrom('crove_finance.cash_voucher as v')
+    .select('v.id')
+    .where('v.org_id', '=', ctx.orgId)
+    .where('v.payroll_run_id', '=', runId)
+    .where('v.payroll_payment_kind', '=', kind)
+    .where(sql<boolean>`NOT ${reversedSource('v', VOUCHER_SOURCE)}`)
     .executeTakeFirst();
   if (paid) throw new DomainError('HR_PAYMENT_DONE', 409, 'Khoản này của bảng lương đã được chi');
 }

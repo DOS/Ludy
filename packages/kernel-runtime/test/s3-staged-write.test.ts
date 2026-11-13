@@ -29,10 +29,11 @@ const s3Error = (name: string, status: number) => Object.assign(new Error(name),
 const PART = 8 * 1024 * 1024;
 
 // An S3 that keeps objects and multipart uploads in memory, and records every command.
-function fakeS3(options: { versionId?: string; shortBy?: number } = {}) {
+function fakeS3(options: { versionId?: string; shortBy?: number; store?: ConstructorParameters<typeof S3BlobStore>[2] } = {}) {
   const objects = new Map<string, Buffer>();
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer>; aborted: boolean }>();
   const sent: string[] = [];
+  const copies: unknown[] = [];
   const client = {
     send: async (command: Cmd) => {
       sent.push(command.constructor.name);
@@ -64,6 +65,7 @@ function fakeS3(options: { versionId?: string; shortBy?: number } = {}) {
         return { ContentLength: object.length, VersionId: options.versionId ?? 'v1' };
       }
       if (command instanceof CopyObjectCommand) {
+        copies.push(command.input);
         const source = objects.get(command.input.CopySource!.split('/').slice(1).join('/'));
         if (!source) throw s3Error('NoSuchKey', 404);
         objects.set(command.input.Key!, Buffer.from(source));
@@ -93,7 +95,7 @@ function fakeS3(options: { versionId?: string; shortBy?: number } = {}) {
       throw new Error(`unexpected command ${(command as object).constructor.name}`);
     },
   } as unknown as S3Sender;
-  return { store: new S3BlobStore(client, 'crove-files', { presigner: {} as never }), objects, uploads, sent };
+  return { store: new S3BlobStore(client, 'crove-files', { presigner: {} as never, ...options.store }), objects, uploads, sent, copies };
 }
 
 const orgId = randomUUID();
@@ -114,6 +116,27 @@ describe('S3BlobStore streamed write', () => {
     expect(sent.at(-1)).toBe('DeleteObjectCommand');
     expect(sent).not.toContain('AbortMultipartUploadCommand');
     await write.abort();
+  });
+
+  it('copies to the content address without the tags of the staging object, so an upload cannot carry the retention tag (#2789)', async () => {
+    const { store, copies } = fakeS3();
+    const write = await store.beginStagedWrite(directory);
+    await write.write(randomBytes(5000));
+    await write.commit(place, 'video/webm');
+    expect(copies).toHaveLength(1);
+    expect(copies[0]).toMatchObject({ MetadataDirective: 'REPLACE', TaggingDirective: 'REPLACE' });
+    expect(copies[0]).not.toHaveProperty('Tagging');
+  });
+
+  it('sends no tagging header where the store has no tagging (versioning off as on R2, or GCS interoperability)', async () => {
+    for (const store of [{ versioning: 'off' as const }, { flavor: 'gcs' as const }]) {
+      const { store: blobs, copies } = fakeS3({ store });
+      const write = await blobs.beginStagedWrite(directory);
+      await write.write(randomBytes(5000));
+      await write.commit(place, 'video/webm');
+      expect(copies[0]).toMatchObject({ MetadataDirective: 'REPLACE' });
+      expect(copies[0]).not.toHaveProperty('TaggingDirective');
+    }
   });
 
   it('refuses an object whose stored size is not what was written, and cleans up', async () => {

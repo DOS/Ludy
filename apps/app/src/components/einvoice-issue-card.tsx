@@ -1,15 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Inbox card of a request to issue a sales e-invoice (ADR-0044 point 3, #2502): the invoice the approval would send to the provider, read from the draft as it stands now,
 // and a warning when it is no longer the one the request was made for. Approving issues a legal document that only an adjustment or a replacement corrects, so the card says so.
-import type { UseQueryResult } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import type { EInvoiceIssueView } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage } from '../lib/api.ts';
+import { errorMessage, orpc } from '../lib/api.ts';
 import { CardSkeleton, ErrorText } from './ui.tsx';
+
+// A cancelled order the draft was made from (#2849, ADR-0050 point 2): asks Engage for the order and says so, so the approver does not issue an invoice for it. Advisory only: no answer (the CRM
+// is not installed here, the caller may not read the order, the request failed) shows nothing, and the approval never waits for it.
+function CancelledOrderNote({ orderId }: { orderId: string }) {
+  const t = useTranslations('inboxDetail');
+  const order = useQuery({ ...orpc.crm.salesOrders.get.queryOptions({ input: { orderId } }), retry: false });
+  if (order.data?.status !== 'cancelled') return null;
+  return (
+    <Alert data-testid="einvoice-issue-order-cancelled">
+      <AlertDescription>{t('issueOrderCancelled', { number: order.data.number })}</AlertDescription>
+    </Alert>
+  );
+}
 
 // The query is the route's, which also holds the approve button until the invoice has loaded: an approval is never given for an invoice that was not shown.
 export function EInvoiceIssueCard({ view, title, slug, pending }: { view: UseQueryResult<EInvoiceIssueView>; title: string; slug: string; pending: boolean }) {
@@ -56,6 +69,8 @@ export function EInvoiceIssueCard({ view, title, slug, pending }: { view: UseQue
           <AlertDescription>{t('issueStale')}</AlertDescription>
         </Alert>
       )}
+      {/* Only a request still waiting has an approval to think twice about; a draft made from more than five orders is rare, so only the first five are checked and the rest are not. */}
+      {pending && draft?.sourceOrderIds.slice(0, 5).map((orderId) => <CancelledOrderNote key={orderId} orderId={orderId} />)}
       <Link to="/o/$slug/sales-invoices" params={{ slug }} className="inline-block text-sm text-link hover:underline">
         {t('issueOpenScreen')}
       </Link>

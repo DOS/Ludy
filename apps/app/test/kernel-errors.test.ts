@@ -12,6 +12,19 @@ const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 // Codes the SPA never receives, so it keeps the kernel's message for them.
 const NOT_SHOWN: Record<string, string> = {
+  // Live notes pieces (#3109, ADR-0052 L4a): sent by the recorder's sender in the background, which stops quietly on any of them; the recording and its upload go on and no screen shows them.
+  CONSENT_MISSING: 'meetings live notes',
+  LIVE_CLOSED: 'meetings live notes',
+  LIVE_FIRST_PIECE_MISSING: 'meetings live notes',
+  LIVE_NOTES_NOT_ENABLED: 'meetings live notes',
+  // The live pane (#3110) words what it needs itself (its states and the budget and kill switch lines), so the codes of its commands stay the kernel's own text.
+  LIVE_NO_AUDIO: 'meetings live notes',
+  LIVE_NOTES_ALREADY_COPIED: 'meetings live notes',
+  LIVE_NOTES_NOT_FOUND: 'meetings live notes',
+  LIVE_NOTES_NOT_READY: 'meetings live notes',
+  LIVE_OTHER_RUNNING: 'meetings live notes',
+  LIVE_RESULT_INVALID: 'meetings live notes',
+  LIVE_RUNNING: 'meetings live notes',
   // AI agents: codes only the worker and agent runs get; the agents screens (issue #258) word the others.
   AGENT_PROGRAM_MISSING: 'agents',
   AGENT_RUN_NOT_LIVE: 'agents',
@@ -47,6 +60,10 @@ const NOT_SHOWN: Record<string, string> = {
   BANK_FEED_CURSOR_MOVED: 'worker',
   // The tax portal sync (#325): a download already made for the synced list; fetchXml skips it, the SPA never gets it.
   PORTAL_CALL_DONE: 'portal sync',
+  // Home's cross-app rules (Vy plan C4, kernel.today): a line's signals read answered outside its contract. kernel.today catches it and counts it in `failed`; the SPA never gets it.
+  SIGNAL_CONTRACT_BROKEN: 'home signals',
+  // The MCP endpoint (ADR-0051, #2975) answers programs: a grant no longer in good standing is a 401 to the client, never a message in the app.
+  MCP_GRANT_INVALID: 'mcp endpoint',
   // The inbound mail endpoint answers the mail relay, not a browser.
   EMPTY_MESSAGE: 'inbound mail',
   UNKNOWN_RECIPIENT: 'inbound mail',
@@ -76,12 +93,8 @@ const NOT_SHOWN: Record<string, string> = {
   EXPORT_RECORD_STALE: 'bug',
   // Bulk intake (#314): only the worker records an opened archive.
   NOT_ARCHIVE: 'bug',
-  // AI Meeting Notes (#2576): media playback, shredding and upload internals.
-  AUDIO_NOT_FOUND: 'meetings',
+  // AI Meeting Notes (#2576): the video of a meeting that has none (the page asks only when the meeting says it has one). The other media codes now have messages (#2703).
   VIDEO_NOT_FOUND: 'meetings',
-  MEDIA_KEY_SHREDDED: 'meetings',
-  MEDIA_KEY_UNAVAILABLE: 'meetings',
-  INVALID_PURPOSE: 'meetings',
   STAGED_UPLOAD_REQUIRED: 'meetings',
   // A playback stream whose file changed under it (#2579): the player's request fails and the page reloads the meeting.
   MEDIA_REPLACED: 'meetings',

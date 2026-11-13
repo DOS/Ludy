@@ -1,10 +1,107 @@
-# Ludy
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/ludy-wordmark-dark.svg">
+    <img src="docs/assets/readme/ludy-wordmark-light.svg" alt="Ludy" height="56">
+  </picture>
+</h1>
 
-**The open-source, AI-native Business OS for OPC, solo founders and SMEs.**
+<p align="center"><b>The open-source, AI-native Business OS for one-person companies, solo founders and small businesses.</b><br>
+Your books, customers, bookings and meetings in one place. AI coworkers do the work. You approve.</p>
+
+<p align="center"><a href="#quick-start">Quick start</a> · <a href="#how-it-works">How it works</a> · <a href="#in-numbers">In numbers</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/self-host/README.md">Self-host</a> · <a href="docs/runbooks/mcp-connect-claude-chatgpt.md">Connect Claude or ChatGPT</a></p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/team-dark.svg">
+    <img src="docs/assets/readme/team-light.svg" alt="You approve. Vy, the general manager, coordinates three AI coworkers: Ly for accounting, Dy for sales and customers, Uy for marketing. The AI proposes, you decide." width="880">
+  </picture>
+</p>
+
+## How it works
 
 Forward or upload your purchase invoices. Ludy reads them (Vietnamese e-invoice XML deterministically, PDFs and photos with any OpenAI-compatible model), checks every number, and puts a proposed TT133 journal entry in your AI Inbox. You review, adjust accounts if needed, and approve. Approved invoices become vendors, purchase documents and balanced journal entries you can export to Excel for your accountant.
 
-Ludy was called Crove until October 2026. The code keeps that name as its code name `crove`: the `@crove/*` packages, the `crove_*` database schemas and roles, the `CROVE_*` settings, the compose services and images (`crove`, `crove-extract`) and the `[Crove]` prefix of logs and alerts. Renaming them would break every existing deployment's database, settings and scripts for no change users can see. The repository is still `DOS/Ludy` for now.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/flow-dark.svg">
+    <img src="docs/assets/readme/flow-light.svg" alt="Five steps: drop the invoice in, the AI reads it, fixed rules check every number, you approve, the books are done." width="880">
+  </picture>
+</p>
+
+Three rules hold everywhere, and tests enforce them:
+
+- **The AI proposes, a person decides.** Money, messages and spend are never approved by a model.
+- **One write path.** Every change is a command through one runtime, so every change is checked, audited and can be replayed.
+- **Your data is yours.** Open source (AGPL), one command to run it yourself, and row-level isolation between organizations.
+
+## In numbers
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/numbers-dark.svg">
+    <img src="docs/assets/readme/numbers-light.svg" alt="Ludy in numbers, counted from the repository: modules, commands and queries, migrations, test cases, invariant suites, decisions, languages, AI coworkers, MCP tools, lines of TypeScript." width="880">
+  </picture>
+</p>
+
+<details>
+<summary>How these numbers are counted</summary>
+
+Every number comes from the repository, not from a slide. `node tools/readme-assets.mjs` counts them and redraws the pictures; `node tools/readme-assets.mjs --check` fails when a picture is out of date. Counted on 2026-11-12:
+
+| Number | How it is counted |
+|---|---|
+| 7 modules | The directories under `modules/` (ads, crm, finance, hr, meetings, notes, social), on top of the always-on `kernel`. |
+| 931 commands and queries | The lengths of the command and query lists the kernel and each module register with the runtime: 602 commands and 329 queries. |
+| 535 database migrations | The tracked `supabase/migrations/*.sql` files. |
+| 10,000+ test cases | Lines that open an `it(` or `test(` case in tracked `*.test.ts(x)` files (10,057). A table-driven case counts once, so the number of runs is higher. |
+| 136 invariant test suites | Test files in `test/invariant/` directories, plus the pgTAP gate files `supabase/tests/database/_*.test.sql` ([what they guard](docs/security/invariant-suite.md)). |
+| 36 design decisions | The tracked `docs/adr/NNNN-*.md` files. |
+| 2 app languages | The message files in `apps/app/src/i18n/messages/` (Vietnamese and English). |
+| 4 AI coworkers | The coworkers on the landing page's roster that have shipped work (Vy, Ly, Dy, Uy; a coworker with none is not listed). |
+| 3 read-only MCP tools | The `ludy_*` tools in `apps/kernel/src/mcp-endpoint.ts`. An AI app such as Claude or ChatGPT can read customers and invoices only after an owner or admin allows it. The [connection guide](docs/runbooks/mcp-connect-claude-chatgpt.md) marks which steps were checked with the official MCP client and which are not yet checked against the real apps. |
+| 580k+ lines of TypeScript | `git ls-files '*.ts' '*.tsx' \| xargs cat \| wc -l` (582,939), tests and generated code included. |
+
+</details>
+
+## What it does
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/features-dark.svg">
+    <img src="docs/assets/readme/features-light.svg" alt="AI Inbox, accounting, tax and reports, Engage, bookings, meetings, notes and to-dos, Vy and the team, private by design, yours to run." width="880">
+  </picture>
+</p>
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  subgraph You
+    B["Browser app<br/>(Vietnamese and English)"]
+    A["AI apps<br/>(Claude, ChatGPT)"]
+  end
+  subgraph Ludy["Your Ludy (one docker compose)"]
+    API["api<br/>web app, /api, /mcp"]
+    W["worker<br/>outbox, jobs, archive"]
+    R["one runtime<br/>every change is a command"]
+    X["crove-extract<br/>parses files in a sandbox"]
+    M["crove-media<br/>measures recordings"]
+    PG[("PostgreSQL<br/>row-level isolation<br/>append-only audit log")]
+    F[("Files<br/>disk or S3")]
+    AU["Supabase Auth<br/>sign-in and two-factor"]
+  end
+  AI["Any OpenAI-compatible model<br/>(you choose, can be off)"]
+  B --> API
+  A -- "read-only, you allow it" --> API
+  API --> R --> PG
+  W --> R
+  W --> X
+  API --> M
+  API --> AU
+  API --> F
+  W --> F
+  W -. "proposals only" .-> AI
+```
 
 ## Quick start
 
@@ -28,13 +125,17 @@ The defaults are for local use. Before anyone else can reach your instance, copy
 - Tenant isolation with PostgreSQL row-level security, an append-only audit log anchored in a tamper-evident archive, idempotent commands
 - Notes and personal to-do lists, in-app notifications, organization export and offboarding
 
-**Accounting** (module `finance`)
+<details>
+<summary><b>Accounting</b> (module <code>finance</code>): the full list</summary>
+
 - E-invoice XML (the tax authority's format under Decree 254/2026 and Circular 91/2026, as before under Decree 123/2020), PDF and photos, uploaded or sent to the organization's inbound address
 - Deterministic checks: line totals, VAT, tax-code check digit, tax-authority code, duplicates
 - Purchase and sales documents, cash and bank vouchers, journal vouchers, fixed assets, bank statement matching
 - TT133 ledger: journal entries that always balance, gapless voucher numbers, trial balance, receivables and payables per party, period locks and year-end closing
 - VAT return working (01/GTGT) and its XML; B01-DNN and B02-DNN statements and their HTKK XML
 - Exports to Excel and to the MISA SME import templates; tax portal sync
+
+</details>
 
 Not yet checked on a real company's books by an accountant, nor filed through HTKK or eTax: that is the pilot's job (see the roadmap).
 
@@ -59,12 +160,15 @@ Later, not scheduled: two-way external calendars and meeting links for bookings,
 
 ## Configuration
 
+<details>
+<summary>Every setting, by feature</summary>
+
 | Feature | Variables |
 |---|---|
 | Modules | `CROVE_MODULES`: comma-separated modules to run, such as `finance` (default: every module; `kernel` is always on). A module left out registers no commands, routes, jobs or menus; migrations still apply to every schema. Give the `api` and `worker` roles and the prober the same value (ADR-0031; the prober counts those modules' queued jobs, #1894) |
 | AI for PDFs and photos | `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` (any OpenAI-compatible endpoint: OpenAI, Ollama, vLLM, ...) |
 | Product name users see | `BRAND_NAME`: the name the app, the browser tab title, the installed app (the PWA manifest, #1691), mails (sender name and texts), the authenticator app entry, the status and bio pages, the calendar feed, chat alerts, Zalo articles without an author, exported files and their names show, 1 to 40 characters of letters, digits, spaces and `. , & ' + _ ! ( ) -`. Unset keeps "Ludy"; any other character stops the boot. Code, schemas, logs and the AGPL source notice keep "Crove". Browsers read it from `/api/config` |
-| Browser extension ids | `EXTENSION_IDS`: the Ludy extension ids (32 letters a to p each, separated by commas or spaces) that may sign in, checked by the app and by `/api/extension/authorize`. Unset keeps the store's id (none until the store listing exists, so no extension can sign in); list your own unpacked extension's id to connect it to a self-hosted install. Browsers read the list from `/api/config` |
+| Browser extension ids | `EXTENSION_IDS`: the Ludy extension ids (32 letters a to p each, separated by commas or spaces) that may sign in, checked by the app and by `/api/extension/authorize`. Unset keeps the Chrome Web Store build's id (any other extension is refused); a server that sets it uses only that list, so list your own unpacked extension's id (and the store id, to keep the store build) to connect it to a self-hosted install. Browsers read the list from `/api/config` |
 | Feedback and support link | `SUPPORT_URL`: where the app's "Góp ý / Hỗ trợ" link goes, an `https:` page (a chat group, a help desk) or a `mailto:` address. Unset hides the link; any other scheme stops the boot. Browsers read it from `/api/config` |
 | Terms and privacy notice | `TERMS_URL`, `PRIVACY_URL`: `https:` pages the sign-up and invite screens link to ("Khi tiếp tục, bạn đồng ý với..."). Unset hides each link; any other scheme stops the boot. Drafts to adapt, not yet reviewed by a lawyer: [docs/legal/](docs/legal/README.md) |
 | Onboarding by tax code | `TAX_CODE_LOOKUP_URL`: an https URL template with `{taxCode}` (for example `https://api.vietqr.io/v2/business/{taxCode}`, which answers in the shape the kernel reads). With it, the new-organization form looks up a client's tax code and fills in the name and address; unset hides the button, since the lookup sends the tax codes users type to that provider. Answers are cached in the process for a day |
@@ -75,7 +179,7 @@ Later, not scheduled: two-way external calendars and meeting links for bookings,
 | Email delivery | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `AUTH_AUTOCONFIRM=false`. Supabase Auth and Ludy's member invites use the same server; port 465 is implicit TLS, other ports with credentials require STARTTLS. Without `SMTP_HOST` Ludy sends no invite mail and the inviter passes the one-time link on |
 | Email rate limits | `AUTH_RATE_LIMIT_EMAIL_SENT` (default 100): the emails Supabase Auth may send per hour for the whole deployment; size it to your SMTP provider's quota. `AUTH_EMAIL_CLIENT_LIMIT_PER_HOUR` (default 5, IPv6 counted per /64) and `AUTH_EMAIL_ADDRESS_INTERVAL_SECONDS` (default 60): the per-client and per-recipient caps the `/auth/v1` proxy applies first, so one client cannot use up the budget for everyone; on a public URL Ludy refuses to start unless it takes at least 10 client addresses to use it up. `AUTH_RATE_LIMIT_OTP` (default 30): Supabase Auth's requests per 5 minutes per client address on sign-up, recovery and OTP. Behind a reverse proxy set `TRUSTED_PROXY_HOPS`, or every client shares the proxy's address |
 | Who may sign up | `AUTH_SIGNUP_POLICY`: `open` (default; `AUTH_DISABLE_SIGNUP=true` closes sign-up for everyone), `invite_only` (an email with a valid member invite, signing up from the invite's accept link) or `allowlist` (an email at one of `AUTH_SIGNUP_ALLOWED_DOMAINS`, or with a valid invite; an invited address always signs up from its link). Enforced by Ludy's `/auth/v1` proxy in front of the bundled Supabase Auth; while restricted, OAuth, ID-token and Web3 sign-in are refused, and under `allowlist` an account may change its email only to an allowed domain. `AUTH_SIGNUP_REFUSAL_LIMIT_PER_HOUR` (default 5, per IPv4 address or IPv6 /48) and `AUTH_SIGNUP_REFUSAL_GLOBAL_LIMIT_PER_HOUR` (per deployment, default `0`: off) cap the `allowlist` refusals that would tell who holds an invite. See [pilot-readiness.md](docs/runbooks/pilot-readiness.md), section 5 |
-| File storage | `STORAGE=local` (default, the `files` volume; needs a filesystem with hard links, otherwise writes fall back to a non-atomic create and the store logs a warning) or `STORAGE=s3` with `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE` (AWS S3, MinIO, Cloudflare R2, GCS with HMAC keys). With S3 the `api` and `worker` roles need no shared volume. The credentials need `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject` and `s3:ListBucket` (without ListBucket a missing file reads as 403, not 404). `S3_VERSIONING` (default `required`: the bucket needs versioning; `off` for stores without it). `S3_PRESIGNED_URLS` (default `true`: browsers upload and download directly, which needs a CORS rule and, on a public URL, an `https` endpoint for browsers, `S3_PUBLIC_ENDPOINT`); **Cloudflare R2 needs `S3_PRESIGNED_URLS=false` and `S3_VERSIONING=off`** (R2 accepts no presigned POST uploads, and Ludy refuses to start on an R2 endpoint with presigned URLs on; it has no versioning, so with `required` the first upload fails). `UPLOAD_COMPLETE_CONCURRENCY` (default 4) and `UPLOAD_BEGIN_LIMIT_PER_MINUTE` (default 20) bound presigned uploads. Give the bucket a lifecycle rule expiring `staging/` objects and their noncurrent versions after a day; the worker also deletes `staging/` objects older than an hour once a day, but on a versioned bucket (the default) that only adds delete markers, so the lifecycle rule is still what frees the space (ADR-0013) |
+| File storage | `STORAGE=local` (default, the `files` volume; needs a filesystem with hard links, otherwise writes fall back to a non-atomic create and the store logs a warning) or `STORAGE=s3` with `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE` (AWS S3, MinIO, Cloudflare R2, GCS with HMAC keys). With S3 the `api` and `worker` roles need no shared volume. The credentials need `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:PutObjectTagging` (a retention delete tags the object first, or deletes nothing and retries) and `s3:ListBucket` (without ListBucket a missing file reads as 403, not 404). `S3_VERSIONING` (default `required`: the bucket needs versioning; `off` for stores without it). `S3_PRESIGNED_URLS` (default `true`: browsers upload and download directly, which needs a CORS rule and, on a public URL, an `https` endpoint for browsers, `S3_PUBLIC_ENDPOINT`); **Cloudflare R2 needs `S3_PRESIGNED_URLS=false` and `S3_VERSIONING=off`** (R2 accepts no presigned POST uploads, and Ludy refuses to start on an R2 endpoint with presigned URLs on; it has no versioning, so with `required` the first upload fails). `UPLOAD_COMPLETE_CONCURRENCY` (default 4) and `UPLOAD_BEGIN_LIMIT_PER_MINUTE` (default 20) bound presigned uploads. Give the bucket a lifecycle rule expiring `staging/` objects and their noncurrent versions after a day; the worker also deletes `staging/` objects older than an hour once a day, but on a versioned bucket (the default) that only adds delete markers, so the lifecycle rule is still what frees the space (ADR-0013) |
 | File parsing sandbox | `EXTRACT_URL` on the kernel (Compose sets it). `crove-extract` takes no secrets: its image refuses to start with any variable outside its allowlist (its `EXTRACT_*` settings, `HOST`, `PORT`, `NODE_ENV` and what the container runtime sets), whatever `NODE_ENV` says. On Kubernetes set `enableServiceLinks: false` on its pod, or the injected `*_SERVICE_HOST` and `*_PORT` variables refuse the start |
 | Realtime updates | `GET /api/stream` (SSE) tells the app which records changed, so screens refresh without polling. Each API process keeps one `LISTEN` connection to `DATABASE_LISTEN_URL` (default `DATABASE_URL`), which must be direct or session mode, never a transaction-mode pooler. `STREAM_MAX_CONNECTIONS` (default 500 per process, `0` turns streams off and the app polls), `STREAM_MAX_PER_USER` (default 5), `STREAM_RECHECK_SECONDS` (default 30: how often an open stream re-checks the session and membership), `STREAM_RECHECK_CONCURRENCY` (default 3: re-checks running at once per process; the others wait). The listener sends itself a `NOTIFY` every 30 s and reconnects when it does not come back within 10 s, so a URL that cannot deliver notifications never opens streams. Failed ticket redeems are capped per client address (20 a minute, then 429), so set `TRUSTED_PROXY_HOPS` behind a reverse proxy. A reverse proxy in front must not buffer `text/event-stream` responses (Ludy sends `X-Accel-Buffering: no`) and must allow idle reads of at least 30 s (a heartbeat goes out every 25 s) |
 | Database pooling | `DB_RESET_ON_RELEASE` (default `true`: each pooled connection's session is reset before reuse); set `false` only behind a transaction-mode pooler such as PgBouncer or Supavisor, whose own reset then governs (plan §3.3) |
@@ -83,7 +187,12 @@ Later, not scheduled: two-way external calendars and meeting links for bookings,
 
 See [`.env.example`](./.env.example) for the full list.
 
+</details>
+
 ## Monitoring and alerts
+
+<details>
+<summary>The prober, its checks and how alerts reach your phone</summary>
 
 The image's `prober` role checks that background work is moving and alerts you when it is not. It connects as `crove_prober`, a login that can only call `crove_kernel.health()` (aggregate ages and counts, no tenant data), `crove_kernel.archive_health()` (the WORM archive's two ages, #1997), `crove_kernel.prober_alert_gate()` (the alert state below) and core functions such as `pg_notification_queue_usage()`, and alerts when:
 
@@ -145,7 +254,12 @@ Without Compose, run `node apps/kernel/src/main.ts prober` from any scheduler wi
 
 **Status page.** Set `STATUS_FILE=/data/status/status.json` and the prober writes each result to the shared `status` volume, the API serves `PUBLIC_URL/status` from it (a plain page with no script and no account, in Vietnamese), and the app links to it next to "Góp ý / Hỗ trợ". The page says, for the database, uploaded documents, mail, live updates and signing in, whether each works; it shows no count, message or anything about an org. A result older than 15 minutes (the prober stopped) reads "no recent result". The volume is mounted in the all-in-one `crove` service and the prober; in the split layout, mount it into `api` too. What to do when a line turns red: [docs/runbooks/incidents.md](./docs/runbooks/incidents.md).
 
+</details>
+
 ## Weekly usage report
+
+<details>
+<summary>The weekly numbers that measure the pilot</summary>
 
 The image's `usage-report` role prints the counts that measure the MVP goal ([backlog review](./docs/plan/backlog-review-2026-10-17.md), section 3), per ISO week from Monday 00:00 in `--time-zone` (default `Asia/Ho_Chi_Minh`). It is for the operator of the deployment, not a tenant screen: it connects as `crove_reporter`, a login that can only call `crove_kernel.usage_weekly()`, which returns counts and no tenant content (no file names, titles, amounts, emails or user ids). With `--by-org` it adds one row per org that was active that week, by org id and name.
 
@@ -170,6 +284,8 @@ docker compose run --rm usage usage-report --post               # also post last
 Options: `--weeks <1-104>` (default 8, the current week included), `--by-org`, `--csv` (RFC 4180; an org name a spreadsheet would read as a formula gets a leading `'`), `--time-zone <name>`, `--post`. Exit codes: 0 printed (and posted), 2 the report could not run, 3 printed but the summary could not be posted. Without Compose, run `node apps/kernel/src/main.ts usage-report` with `REPORTER_DATABASE_URL=postgres://crove_reporter:<password>@<host>:5432/<db>`; it refuses a superuser or BYPASSRLS login.
 
 `--post` sends a summary of the last complete week, with the week before for comparison, to the prober's alert webhook (`ALERT_WEBHOOK_URL`, in the same format, see "Monitoring and alerts"): deployment totals only, never an org id or name, whatever `--by-org` says. The report still connects as `crove_reporter`; the prober's login reads no usage. Without `ALERT_WEBHOOK_URL`, or with invalid webhook settings, it fails with exit 2 before reading anything. It logs the webhook by host only, and prints the report to stdout as usual, so `--csv --post > usage.csv` still writes a clean file. It needs `--weeks 3` or more. A Monday cron job for it: [docs/runbooks/alerts.md](./docs/runbooks/alerts.md), "Weekly usage summary".
+
+</details>
 
 ## Pilot readiness
 
@@ -230,6 +346,10 @@ pnpm ai:eval:documents  # XML, PDF and photos through their production paths: ac
 ```
 
 Fixtures live in `packages/agent/test/fixtures/extraction` (`<id>.txt` document text plus `<id>.json` expected fields) and `packages/agent/test/fixtures/documents` (one XML, PDF and PNG, each with its `.json`). They are synthetic: use invented names and checksum-invalid tax codes only (a unit test rejects checksum-valid tax codes and 12-digit IDs). 429 and 5xx mapping is tested against a local fake server in `pnpm test`.
+
+## About the name
+
+Ludy was called Crove until October 2026. The code keeps that name as its code name `crove`: the `@crove/*` packages, the `crove_*` database schemas and roles, the `CROVE_*` settings, the compose services and images (`crove`, `crove-extract`) and the `[Crove]` prefix of logs and alerts. Renaming them would break every existing deployment's database, settings and scripts for no change users can see. The repository is still `DOS/Ludy` for now.
 
 ## License
 

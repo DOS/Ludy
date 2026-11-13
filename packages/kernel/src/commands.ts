@@ -34,6 +34,7 @@ import {
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
 import { extensionCommands } from './extension.ts';
+import { mcpCommands } from './mcp.ts';
 import { conversationCommands } from './conversations.ts';
 import {
   actorRef,
@@ -1212,6 +1213,7 @@ const otherKernelCommands = [
   ...agentCommands,
   ...channelCommands,
   ...extensionCommands,
+  ...mcpCommands,
   ...conversationCommands,
   setTaxCode,
   setVatFilingPeriod,

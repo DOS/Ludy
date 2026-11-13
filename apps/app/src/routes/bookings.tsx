@@ -3,15 +3,18 @@
 // and admins may see the whole org's. A host (or an owner or admin) cancels a booking, or moves it to another free slot
 // of its type; the visitor is mailed with a new link. Times show in the viewer's own zone; each row names its hosts.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { BookingItem } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { BookingDeal } from '../components/booking-deal.tsx';
 import { BookingFeedCard } from '../components/booking-feed.tsx';
+import { useMe } from '../components/conversation-inbox.tsx';
+import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { BookingSuggestCard } from '../components/booking-suggest.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -100,6 +103,7 @@ function BookingRow({
   const t = useTranslations('bookings');
   const tn = useTranslations('notes');
   const [notesOpen, setNotesOpen] = useState(false);
+  const { userId } = useMe();
   const when = whenOf({ start: b.startsAt, end: b.endsAt }, zone, locale);
   const name = `${b.eventType.title}, ${when}`;
   return (
@@ -121,6 +125,8 @@ function BookingRow({
             </a>
           )}
           {b.status === 'confirmed' && b.meeting.state === 'pending' && <p className="text-xs text-muted-foreground">{t('meet.pending')}</p>}
+          {/* The deal of the booking, or Dy's suggestion of one (#3103): a person links it with a click. */}
+          <BookingDeal booking={b} />
           {b.status === 'confirmed' && b.meeting.state === 'failed' && (
             <Badge variant="warning" data-testid="booking-meet-failed">
               {t('meet.failed')}
@@ -139,6 +145,19 @@ function BookingRow({
         <TableCell className="px-4">
           <div className="flex flex-wrap items-start gap-1">
             {b.status === 'confirmed' && Date.parse(b.startsAt) > now && <Actions booking={b} slug={slug} zone={zone} />}
+            {/* "Ghi lại cuộc họp này" (L1, #2587): opens the new-meeting screen prefilled and linked to this booking's contact and calendar event. It creates nothing
+                by itself: the recorder still confirms the recording notice there. Offered to the host whose calendar holds the booking (a link only takes the caller's own event). */}
+            {meetingsInstalled() && b.status === 'confirmed' && b.hostUserId === userId && (
+              <Link
+                to="/o/$slug/meetings/record"
+                params={{ slug }}
+                search={{ title: [b.eventType.title, b.visitor.name].filter(Boolean).join(' - '), calendarEventId: b.calendarEventId, ...(b.partyId ? { partyId: b.partyId } : {}) }}
+                className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                data-testid="booking-record-meeting"
+              >
+                {t('recordMeeting')}
+              </Link>
+            )}
             {notesInstalled() && (
               <Button size="sm" variant="ghost" onClick={() => setNotesOpen((o) => !o)} aria-expanded={notesOpen} aria-label={tn('panel.toggleOf', { name })}>
                 {tn('panel.title')}
@@ -174,7 +193,7 @@ export function BookingsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const manager = org.data?.role === 'owner' || org.data?.role === 'admin';
   const bookings = useQuery({
-    ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }),
+    ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period, withSuggestions: true } }),
     enabled: org.data !== undefined,
     // A Google Meet that is still being made (C7, #1375) settles within minutes and sends no stream hint: while a listed booking waits for it, the list is read again.
     // A cancelled booking never settles, so only confirmed ones keep the poll going.

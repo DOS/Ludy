@@ -26,7 +26,7 @@ const KERNEL_SCREENS = {
   ],
   // Signing in and the screens before an org: the landing redirect, the home of several orgs, sign-in, the second
   // factor, a password reset, an invite to accept and a new org.
-  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
+  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/oauth/interaction/$uid' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
   nav: [
     { app: 'home', group: 'work', path: 'overview', label: 'overview' },
     { app: 'home', group: 'work', path: 'inbox', label: 'inbox' },
@@ -54,6 +54,8 @@ const FINANCE_SCREENS = {
     { path: 'stock' },
     // The books of a household business (#2517): reached from Settings (Pháp nhân) for an entity of kind household, so it has no menu item of its own.
     { path: 'household' },
+    // Where each platform's money stands in the books: the Sàn screen (#2516). Reached from the stock screen, not the menu: each app's menu fits a 1366x768 window without scrolling (e2e layout).
+    { path: 'marketplace' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },

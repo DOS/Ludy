@@ -71,12 +71,18 @@ export const QUEUES = {
   notesRemind: 'notes-reminders',
   // Created by the member Vy sweeps migration (20261212100000): the daily expiry of results and purge of a former member's Vy data (#2822).
   memberVySweep: 'kernel-member-vy-sweep',
+  // Created by the wake-up delivery migration (20261224000000): one delivery of an MCP grant's wake-up webhook, and the sweep that hands deliveries over (ADR-0051 decision 4, #3024).
+  mcpWake: 'kernel-mcp-wake',
+  mcpWakeSweep: 'kernel-mcp-wake-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
   meetingsTranscribe: 'meetings-transcribe',
+  meetingsLiveNotes: 'meetings-live-notes',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
   bankFeedSync: 'finance-bank-feed-sync',
   // Created by the e-invoice job migration (crove_finance_einvoice_job): one draft's issue, status question or evidence step (#2502).
   einvoiceIssue: 'finance-einvoice-issue',
+  // Created by the marketplace poll migration (crove_finance_marketplace_poll): one marketplace connection's pull of orders (#2519).
+  marketplacePoll: 'finance-marketplace-poll',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
   // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
@@ -174,14 +180,21 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
   [QUEUES.memberVySweep]: 'none',
+  // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
+  [QUEUES.mcpWake]: ['tenant_url'],
+  [QUEUES.mcpWakeSweep]: 'none',
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
+  [QUEUES.meetingsLiveNotes]: ['provider:ai'],
   // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
   // provider here, and to DEPS_REACH first.
   [QUEUES.bankFeedSync]: 'none',
   // The e-invoice provider adapters (channels.einvoiceProviders, @crove/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
   // own host-bound fetch. The signed XML then goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
   [QUEUES.einvoiceIssue]: ['provider:einvoice'],
+  // The marketplace provider adapters (channels.marketplaceProviders, modules/finance marketplace-provider.ts): the offline sandbox reaches nothing, a real adapter the hosts it declares, each
+  // through guardedRequest. What they list goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
+  [QUEUES.marketplacePoll]: ['provider:marketplace'],
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
   // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
   [QUEUES.adsSync]: ['provider:ad_platform'],
@@ -222,7 +235,7 @@ export function queueEgress(queue: string): JobEgress {
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
 // agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately' };
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately' };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

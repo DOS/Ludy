@@ -478,6 +478,7 @@ export function SocialChannelsPage() {
   // The provider's dialog runs in this tab; it comes back to the callback screen, which finishes the attempt.
   const [fbComments, setFbComments] = useState(false);
   const [igComments, setIgComments] = useState(false);
+  const [thComments, setThComments] = useState(false);
   const start = useMutation({
     mutationFn: ({ provider, comments }: { provider: OAuthProvider; comments?: boolean }) =>
       client.channels.oauthStart({ provider, ...(comments ? { comments: true } : {}) }),
@@ -523,7 +524,8 @@ export function SocialChannelsPage() {
     if (oauth.includes(c.provider as OAuthProvider)) {
       const comments =
         (c.provider === 'facebook_page' && (c.scopes.includes('pages_read_user_content') || c.scopes.includes('pages_messaging')) && c.scopes.includes('pages_manage_metadata')) ||
-        (c.provider === 'instagram' && (c.scopes.includes('instagram_manage_comments') || c.scopes.includes('instagram_manage_messages')) && c.scopes.includes('pages_manage_metadata'));
+        (c.provider === 'instagram' && (c.scopes.includes('instagram_manage_comments') || c.scopes.includes('instagram_manage_messages')) && c.scopes.includes('pages_manage_metadata')) ||
+        (c.provider === 'threads' && c.scopes.includes('threads_read_replies'));
       start.mutate({ provider: c.provider as OAuthProvider, ...(comments ? { comments: true } : {}) });
     }
   };
@@ -644,6 +646,15 @@ export function SocialChannelsPage() {
                         </Button>
                       ) : null
                     )}
+                    {c.provider === 'threads' && c.status === 'active' && (
+                      c.scopes.includes('threads_read_replies') ? (
+                        <p className="mt-1 text-xs text-subtle-foreground">{t('threadsCommentsEnabled')}</p>
+                      ) : canReconnect(c) ? (
+                        <Button variant="outline" size="sm" className="mt-2" disabled={start.isPending} onClick={() => start.mutate({ provider: 'threads', comments: true })}>
+                          {t('enableThreadsComments')}
+                        </Button>
+                      ) : null
+                    )}
                   </div>
                   {isAdmin &&
                     (confirming === c.id ? (
@@ -713,7 +724,7 @@ export function SocialChannelsPage() {
                         variant="outline"
                         size="sm"
                         disabled={start.isPending}
-                        onClick={() => start.mutate({ provider: p as OAuthProvider, ...((p === 'facebook_page' && fbComments) || (p === 'instagram' && igComments) ? { comments: true } : {}) })}
+                        onClick={() => start.mutate({ provider: p as OAuthProvider, ...((p === 'facebook_page' && fbComments) || (p === 'instagram' && igComments) || (p === 'threads' && thComments) ? { comments: true } : {}) })}
                       >
                         {t('connectWith', { provider: providerName(p) })}
                       </Button>
@@ -732,6 +743,12 @@ export function SocialChannelsPage() {
                   <label className="flex items-center gap-2 text-xs text-subtle-foreground">
                     <Checkbox checked={igComments} onCheckedChange={(v) => setIgComments(v === true)} />
                     <span>{t('instagramCommentsOptIn')}</span>
+                  </label>
+                )}
+                {p === 'threads' && oauth.includes(p) && isAdmin && (
+                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+                    <Checkbox checked={thComments} onCheckedChange={(v) => setThComments(v === true)} />
+                    <span>{t('threadsCommentsOptIn')}</span>
                   </label>
                 )}
               </div>

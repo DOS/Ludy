@@ -10,10 +10,14 @@ export const CIPHER_CHUNK_FULL_SIZE = BLOB_CHUNK_SIZE + CHUNK_OVERHEAD; // 65564
 const VERSION = 0x01;
 const HEADER_LENGTH = 5; // 1 byte version + 4 bytes chunkSize
 
+// What a media data key and its ciphertext are bound to: the meeting's audio or video, or one live chunk of it (ADR-0052 L4a), which has its own key and
+// names its place in the recording (`live:<seq>`), so a chunk cannot be passed off as another one or as the audio.
+export type MediaKind = 'audio' | 'video' | `live:${number}`;
+
 export interface MediaKeyBinding {
   orgId: string;
   meetingId: string;
-  kind: 'audio' | 'video';
+  kind: MediaKind;
   keyId: string;
 }
 

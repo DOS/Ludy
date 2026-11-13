@@ -113,13 +113,16 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   startWorker: { command: 'ads.account.link' },
   // The sweep queues the marketplace connections of active orgs, each connected by an owner or admin through finance.marketplace_connection.connect (#2519).
   'finance-marketplace-poll handler': { command: 'finance.marketplace_connection.connect' },
+  // The sweep (every minute) hands the wake-up deliveries it stored to the delivery queue; each exists only for a receiver an owner or admin set through kernel.mcp.wake.set, which
+  // declares the external effect (the webhook of ADR-0051 decision 4, #3024).
+  'kernel-mcp-wake-sweep handler': { command: 'kernel.mcp.wake.set' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
 // the site. While the site is absent from the code the entry is not required to be found and its command is not required to exist; once the site is found it is reviewed like
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
-  'finance-marketplace-poll handler': '#2519',
+  'kernel-mcp-wake-sweep handler': '#3024',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

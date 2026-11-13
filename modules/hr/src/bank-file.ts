@@ -13,9 +13,14 @@
 // any file is made; the file's own total is its bank's part, and the answer says how many people are in other banks' files (a count). A code not in the list is refused. More people in one file than the
 // cap is refused too.
 //
+// A saved template (#2893, `crove_hr.payroll_bank_template`, the screen "Mẫu file lương") of the run's legal entity may be chosen: the file then follows its columns in its order (`sequence` of a
+// template is the file's `seq`), its headers and its remark text (`{month}` becomes MM/YYYY). The bank cell stays the list's short name. The headers and the remark are text a person typed: they go
+// through the same control-character clean-up as a name and are written as string cells with the Text format (./bank-file-xlsx.ts), so a leading `=`, `+`, `-` or `@` stays inert. A template that is not
+// found, or belongs to another legal entity than the run, is refused as not found.
+//
 // `hr.payroll.bank_file.export` is the audit row of a downloaded file: the run and a count, never a name, an account number or an amount. The route writes it before it answers, so no row, no download.
 import type { MemberRole } from '@crove/db';
-import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_MAX_PEOPLE, zHrBankFileExport, zHrBankFileQuery, type HrBankFile, type HrBankFileExport } from '@crove/kernel-contract';
+import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, HR_BANK_FILE_MAX_PEOPLE, zHrBankFileExport, zHrBankFileQuery, zHrBankLayout, type HrBankFile, type HrBankFileColumn, type HrBankFileExport } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
 import { Decimal, bankByCode, money } from '@crove/l10n-vn';
 import { ACCOUNT_PLACE, subjectOf } from './employees.ts';
@@ -46,9 +51,22 @@ export const bankFileGet = defineQuery({
     // The bank is a bank of the list, never free text: a code that is not in it is refused before anything is read.
     const bank = bankByCode(input.bankName);
     if (!bank) throw new DomainError('HR_BANK_UNKNOWN', 422, 'Ngân hàng này không có trong danh sách ngân hàng của Ludy');
-    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
+    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
     if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
     if (!(APPROVED as readonly string[]).includes(run.status)) throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới xuất được file chuyển lương');
+    // The saved template, if one is chosen: of this run's legal entity, found by the caller's own row policies (another org's or another entity's is not found), and a valid layout.
+    let template: { columns: HrBankFileColumn[]; headers: string[]; content: string } | null = null;
+    if (input.templateId !== undefined) {
+      const row = await ctx.trx.selectFrom('crove_hr.payroll_bank_template').select(['legal_entity_id', 'layout']).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).executeTakeFirst();
+      const layout = row && row.legal_entity_id === run.legal_entity_id ? zHrBankLayout.safeParse(row.layout) : null;
+      if (!layout?.success) throw new DomainError('HR_BANK_TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu file này');
+      template = {
+        columns: layout.data.columns.map((c) => (c.key === 'sequence' ? 'seq' : c.key)),
+        // A header that is nothing but control characters shows the generic header of its column instead.
+        headers: layout.data.columns.map((c) => clean(c.header) || HR_BANK_FILE_HEADERS[c.key === 'sequence' ? 'seq' : c.key]),
+        content: clean(layout.data.content.replaceAll('{month}', monthText(run.month))),
+      };
+    }
     const lines = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
       .select(['employee_id', 'net', 'status'])
@@ -101,15 +119,16 @@ export const bankFileGet = defineQuery({
     // (an account that is nothing but spaces or control characters is no account)
     const gone = opened.filter((v) => typeof v !== 'string' || clean(v.replace(/\s+/g, '')) === '').length;
     if (gone > 0) throw new DomainError('HR_BANK_ACCOUNT_MISSING', 422, `${gone} người trong bảng lương chưa có số tài khoản ngân hàng; hãy bổ sung rồi xuất lại`, { missing: gone });
-    const content = `Luong thang ${monthText(run.month)}`;
+    const content = template !== null && template.content !== '' ? template.content : `Luong thang ${monthText(run.month)}`;
     const rows = mine
       .map((l, i) => ({ name: clean((byId.get(l.employee_id) as { display_name: string }).display_name), account: clean(String(opened[i]).replace(/\s+/g, '')), amount: money(l.net as string).toFixed() }))
       .sort((a, b) => a.name.localeCompare(b.name, 'vi') || a.account.localeCompare(b.account))
       // The bank cell is the list's short name, never text a person typed.
       .map((r, i) => ({ seq: String(i + 1), name: r.name, account: r.account, bank: bank.shortName, amount: r.amount, content }));
     const total = rows.reduce((acc, r) => acc.plus(r.amount), new Decimal(0));
-    const columns = input.columns ?? [...HR_BANK_FILE_COLUMNS];
-    return { runId: run.id, month: run.month, bankCode: bank.code, columns, rows, total: total.toFixed(), otherPeople: paid.length - mine.length };
+    const columns = template?.columns ?? input.columns ?? [...HR_BANK_FILE_COLUMNS];
+    const headers = template?.headers ?? columns.map((c) => HR_BANK_FILE_HEADERS[c]);
+    return { runId: run.id, month: run.month, bankCode: bank.code, columns, headers, rows, total: total.toFixed(), otherPeople: paid.length - mine.length };
   },
 });
 

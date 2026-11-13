@@ -8,7 +8,7 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 - **Fit:** it serves a task a small business does at least monthly. Enterprise models (several entities, SSO, agency consoles and the like) go to the Icebox. When fit is unclear, the owner decides.
 - **Smallest slice:** one person can use it with the defaults and no setup.
 - **AI part named:** the acceptance says what the AI coworker does in that screen. Model calls go through the AI budget meter, the core works with AI off, and a person approves money, messages and spend.
-- **AI is a coworker, never an "assistant":** Vy leads across the apps, and each app has its own coworker (DESIGN.md 1.1).
+- **AI is a coworker; Vy is also an assistant:** Vy leads across the apps and is both a coworker and an assistant (trợ lý); each app has its own coworker, never called an assistant (DESIGN.md 1.1, owner 2026-11-10).
 
 ## Rules
 
@@ -69,7 +69,8 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 - Writing to the owner:
   - Vietnamese with full diacritics, plain words, in every message the owner reads (replies, status lines, updates, recaps, questions); never English (owner, 2026-10-28: "nói với tao bằng tiếng Việt"). Explain technical terms on first use; give each issue or PR number with its short name.
   - First line: complete, still running (what) or stopped (on what).
-  - Each question: what is decided, why it matters, the options, your recommendation, what happens without an answer. One decision at a time, recommendation first.
+  - Each question: what is decided, why it matters, the options, your recommendation (first), what happens without an answer.
+  - Ask the owner only through the `AskUserQuestion` popup (owner, 2026-11-13), once, with every open question together in that one popup (the tool takes four at most; a fifth waits for the answers), never as inline text in a message.
   - Name who acts on each open item: the owner, the accountant (#61, the pilot partner's), a lawyer or another agent.
   - Links open in a browser: GitHub URLs (`https://github.com/DOS/Ludy/blob/main/<path>`, `https://github.com/DOS/Ludy/issues/<n>`), never a local path or bare file name. GitHub shows `.html` as source: publish an owner page (`*.vi.html`) as a private claude.ai artifact when possible, or summarize it.
   - After each merge, unasked, one or two lines: what merged, what is next. Report what happened, keep opened, merged and deployed distinct, and say what was and was not verified.

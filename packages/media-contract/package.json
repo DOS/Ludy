@@ -1,0 +1,20 @@
+{
+  "name": "@crove/media-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Wire contract of the crove-media sandbox: limits, zod schemas of its JSON results and the HTTP client. No ffmpeg.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./transport": "./src/transport.ts",
+    "./measure": "./src/measure.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  }
+}

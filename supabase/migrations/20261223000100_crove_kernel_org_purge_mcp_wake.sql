@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Crove kernel (issue #2517): the org purge deletes the org's household profiles too, before the legal entities they name. Idempotent; applied files stay untouched.
--- This is the body of 20261205111600 (the newest) with one change: crove_finance.household_profile in the first list. Its signature, owner, grants and every other list and step are as they were.
+-- Crove kernel (issue #3024): the org purge deletes the org's MCP wake-ups (crove_kernel.agent_grant_wake) with the org, before the grants they reference. Idempotent; applied files stay untouched.
+-- This is the body of 20261219000100 (the newest) with one change: crove_kernel.agent_grant_wake joins the list of tables deleted whole, ahead of crove_kernel.agent_grant. Its signature, owner, grants and
+-- every other list and step are as they were.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -39,11 +40,11 @@ DECLARE
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
     'crove_kernel.mail_event', 'crove_kernel.mail_suppression', 'crove_kernel.mail_message',
     'crove_kernel.member_invite', 'crove_kernel.auth_session_org', 'crove_kernel.inbound_drop',
-    'crove_kernel.idempotency_key', 'crove_kernel.extension_token', 'crove_kernel.extension_auth_code', 'crove_kernel.oauth_state', 'crove_kernel.outbox_pending',
+    'crove_kernel.idempotency_key', 'crove_kernel.extension_token', 'crove_kernel.extension_auth_code', 'crove_kernel.agent_grant_wake', 'crove_kernel.agent_grant', 'crove_kernel.oauth_state', 'crove_kernel.outbox_pending',
     'crove_kernel.proposal_policy', 'crove_kernel.refusal_tally', 'crove_kernel.tax_obligation_done',
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.subject_key', 'crove_kernel.calendar_credential',
-    'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.household_profile', 'crove_finance.einvoice_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
+    'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.einvoice_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
     'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.sales_order_delivery', 'crove_crm.sales_order_line', 'crove_crm.sales_order', 'crove_crm.quote_link', 'crove_crm.quote_line', 'crove_crm.quote', 'crove_crm.quote_setting', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
