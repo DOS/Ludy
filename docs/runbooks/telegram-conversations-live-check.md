@@ -1,0 +1,72 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+# Telegram bot chats in Hộp thư: live check
+
+Settles, on one real bot, the Telegram facts the conversation core's Telegram channel (issue [#3132](https://github.com/DOS/Ludy/issues/3132), [plan](../plan/conversations-channels.md) section 4.2, ADR-0041) was built on without ever seeing a live update. **Telegram's official pages (`core.telegram.org/bots/api` and the Bots FAQ) could not be read when this was built** (the build session's network policy denied the host), so no fact below is tagged [docs]: each is **[M]** (recalled from earlier knowledge of the Bot API, not seen in a source of that pass), **[O]** (an official page was among the search results, not opened) or **[S]** (secondary sources only). The code never treats one as truth: each is read in one place, listed here with the file to change if the live answer differs. Whoever can read the official pages first upgrades the tags in the plan.
+
+**Scope.** Only the owner's own bot and test accounts (the owner's own Telegram accounts that open the bot). **No real customer's messages** go through the live channel until row 1 to 12 below are settled. Business mode (a bot connected to a Telegram Premium account) is not built yet: it is the second slice of the same issue (section 3).
+
+Markers: **[PERSON]** only a person can do it (the owner: @BotFather, the Telegram app, Ludy's screens). **[AGENT]** a Ludy session can do it with the owner's go-ahead. Never paste a bot token, a webhook secret, a hook id, a file path from `getFile` or a customer's message into chat, an issue or a commit: write what each step showed ("matched", "no match", the error code), not its content.
+
+## 0. What the owner sets up
+
+1. **[PERSON]** make a bot in @BotFather (`/newbot`) and keep its token to yourself. A bot already used to post to a channel in Ludy works too.
+2. **[PERSON]** the deployment must be reachable on **https** at `PUBLIC_URL` (the API's own origin, where webhooks are answered; with a split deployment it is the API's address, not `APP_URL`; a port Telegram allows: 443, 80, 88 or 8443 [M]) and `CHANNEL_TELEGRAM=true` with a credential key (`CREDENTIAL_KEY`) set. Without https the screen says "Telegram only sends to an https address" and nothing is set. A deployment whose `PUBLIC_URL` is not the origin the internet reaches the API on (a split deployment set up wrongly) sets a webhook Telegram can call but the API never answers: row 2 catches it.
+3. **[PERSON]** connect the bot in Ludy (Social, Channels, Telegram: the bot token and the channel the bot posts to). Then, on the connection's card, **Receive customers' messages** (Bật nhận tin nhắn của khách). The screen shows "turning on" for a few seconds, then "on".
+4. A second bot (another @BotFather bot) connected to a second org, or a second connection, for rows 3 and 12.
+
+### What turning chats on does at Telegram
+
+The worker calls `setWebhook` with the url `<PUBLIC_URL>/api/channels/telegram/webhook/<hook>`, a `secret_token` and `allowed_updates: ["message"]`. `<hook>` is a 43-character id the connection holds; the `secret_token` is derived from it under a key of the deployment (HKDF of `CREDENTIAL_KEY`) and stored nowhere. **Turning chats off** calls `deleteWebhook` and forgets the hook; **reconnecting** the connection with a token gives it a new hook and a new secret and sets the webhook again (the old hook stays valid until the new webhook is set, so no message in between is lost). Disconnecting a connection that still receives chats is refused until chats are turned off, except one whose token Telegram refused (it cannot be asked; remove its webhook in @BotFather). A switch whose job was lost (the card shows "turning on" for more than a minute and a half) offers its button again.
+
+### The hook and the secret: where they live, and a key rotation
+
+- **Variable:** none. The route `POST /api/channels/telegram/webhook/:hook` exists where `CHANNEL_TELEGRAM=true` and the credential key can derive keys; the secret is derived from `CREDENTIAL_KEY` (and `CREDENTIAL_KEY_PREVIOUS` while a rotation is under way, so webhooks keep working).
+- **After `CREDENTIAL_KEY` is replaced** and the old key removed from `CREDENTIAL_KEY_PREVIOUS`, every webhook's secret changes and Telegram's requests are refused (401): turn chats off and on again on each Telegram connection (or reconnect it), which sets the webhook with the new key. Keep the old key in `CREDENTIAL_KEY_PREVIOUS` until that is done.
+- **A leaked hook** (a proxy log, say) is not enough to post anything: the secret header is also needed and cannot be computed without the deployment's key. Turn chats off and on to rotate both anyway.
+- **Never to appear:** the hook, the secret and the bot token in chat, issues, pull requests or runbook results. Write "chats on" and "rotated on <date>".
+
+## 1. Results table
+
+Fill one row per fact as it is settled; commit the table with the fixes it caused.
+
+| # | Fact | Tag | Where the code reads it | Result (matched or the live answer) |
+|---|---|---|---|---|
+| 1 | `setWebhook` takes `url`, `secret_token` (1 to 256 characters of `A-Z a-z 0-9 _ -`; Ludy sends 43) and `allowed_updates`, answers `{ok:true,result:true}` | [O], [M] | `setTelegramWebhook` in `packages/channel/src/telegram-conversation.ts` | |
+| 2 | Telegram sends `X-Telegram-Bot-Api-Secret-Token` with the same value on every request, and a request with a wrong or missing value is refused by Ludy with 401 and nothing is parked (check by `curl` with a made-up header against the route: only the status, never the url) | [O] | `telegramHookSecretOk`, `acceptTelegramWebhook` (`apps/kernel/src/telegram-webhook.ts`) | |
+| 3 | **Two bots on one deployment** reach their own connections: a message to bot A appears in A's org only, a message to bot B in B's | design | the hook in the path, `crove_kernel.conversation_chat_hook_connections` | |
+| 4 | A private message arrives as an update `{update_id, message:{message_id, from:{id,is_bot,first_name,last_name,username}, chat:{id,type:"private"}, date, text}}`; `from.id` equals `chat.id`; `date` is seconds | [M] | `telegramChatEvents` | |
+| 5 | The customer's name in Hộp thư is `first_name last_name` (or the username when both are empty); the thread is the chat id | [M] | `nameOf`, `telegramChatEvents` | |
+| 6 | A photo arrives as `message.photo` (a list of sizes, each with a `file_id`) with an optional `caption`; Ludy stores the placeholder "[Khách gửi ảnh]" plus the caption. Other kinds (sticker, voice, video, document, location, contact) keep a placeholder line each | [M] | `PLACEHOLDERS` | |
+| 7 | A reply from Ludy is delivered through `sendMessage` (`chat_id`, `text`), the answer carries `message_id`, and the message ends `sent`. Plain text: a message with `*`, `_` or `<` shows as typed | [M] | `TelegramConversations.reply` | |
+| 8 | **A blocked bot:** the customer blocks the bot, then Ludy replies: Telegram answers 403 "bot was blocked by the user", the message ends `failed` with the code `TELEGRAM_BOT_BLOCKED`, shown as a refused reply, and nothing is sent again by itself | [M], [live] | `replyFailure` | |
+| 9 | Text up to 4096 characters; a longer reply is refused by Ludy before any call | [M], [S] | `TELEGRAM_TEXT_MAX`, `telegram.replyMax` in `packages/kernel-contract/src/conversations.ts` | |
+| 10 | A bot may answer a customer who wrote first at any time (no window): reply to a chat whose last customer message is over a day old | [M], [live] | `telegram.windowHours` (null) | |
+| 11 | About one message a second to one chat and about 30 a second across chats; beyond that Telegram answers 429 with `parameters.retry_after`, which Ludy maps to a rate-limited reply with the time (reply twice at once in one chat and record whether the second waited a second) | [O] | `CHAT_GAP_MS`, `replyFailure` | |
+| 12 | One bot has one webhook: enabling chats on a second connection that holds the same bot is refused in Ludy with `BOT_IN_USE`, and the first connection keeps receiving | design, [M] | `channelTelegramChatWork`, `TelegramConversations.chatHook` | |
+| 13 | After a failure of Ludy (two minutes stopped), Telegram resends the undelivered updates; each message is in the thread once. How long Telegram holds an undelivered update and how often it retries is not confirmed | [U] | the route's answers, ingest idempotent on the message id, `TELEGRAM_REPLAY_WINDOW_MS` | |
+| 14 | **A file's download address contains the bot token and never appears in a log, an event, an audit row or a job** (photo download is not built in this slice: the check below applies once it is) | [M] | `apps/kernel/test/telegram-webhook.db.test.ts` (logs), the media fetch when built | |
+| 15 | `deleteWebhook` takes the webhook off; afterwards nothing arrives, and turning chats on again gives a new hook | [M] | `deleteTelegramWebhook` | |
+| 16 | Group chats, channels, edits and bots' own messages are answered 200 by the route and stored nowhere (add the bot to a test group and write in it) | design | `telegramChatEvents` | |
+| 17 | The first message of a customer is "/start" (a button in the app); it appears in Hộp thư as a message with that text | [M] | `telegramChatEvents` | |
+
+## 2. Steps
+
+All with the bot connected in Ludy and chats on (section 0).
+
+1. **Secret (rows 1, 2).** **[AGENT]** with the owner's go-ahead, post a made-up update to `<PUBLIC_URL>/api/channels/telegram/webhook/<any 43-character id>` with no header, then with a wrong header: both answer 401 with the same body and the inbox is unchanged. **[PERSON]** open the bot from a test Telegram account, press Start and write "kiểm tra 1": the message appears in Hộp thư within a few seconds. A 401 in the API's log on a real message means the secret or the path did not match: turn chats off and on and try again; if it still fails, the `secret_token` Telegram echoes differs from the derivation (row 1).
+2. **Two bots (rows 3, 12).** With the second bot on a second org, write to each bot from the test account: each message lands in its own org. Enable chats on a second connection of the first bot: refused with the "this bot already receives messages" text.
+3. **Inbound (rows 4, 5, 6, 17).** Write text, a photo with a caption, a sticker and a location. Record the kinds' names Telegram used and the exact fields of `from` (never the values).
+4. **Reply (rows 7, 9, 10).** Reply from Ludy with a person's click; the test account receives it as the bot's message; the message ends `sent`. Reply to a thread whose last customer message is more than a day old (age it by waiting, or by choosing an old test thread): it is accepted.
+5. **Blocked bot (row 8).** The test account blocks the bot, the owner replies from Ludy: the message ends `failed` with the blocked code, and the screen words it. Unblock and reply again by a person's click: it is delivered.
+6. **Pace and limits (row 11).** Send two replies in a row to one chat and record the gap; record any 429 and its `retry_after`.
+7. **Redelivery (row 13).** Stop the API for two minutes, send two messages, start it: the messages arrive (in the original order or not) and each is in the thread once.
+8. **Off and on (rows 15, 2).** Turn chats off: a message to the bot no longer appears and `getWebhookInfo` (asked by the owner in the Bot API with the token, never pasted here) shows no url. Turn chats on again: it works, with a new hook.
+9. **Groups and edits (row 16).** Add the bot to a test group and write there; edit a message in the private chat: nothing appears in Hộp thư.
+10. **No leak (row 14).** **[AGENT]** read the API's and worker's logs for the whole check and search them for the token, the hook, the secret and the customers' texts: none appears.
+11. **Clean up.** **[PERSON]** delete the test conversations (ask a session to delete the rows of the test threads by id, or use the erase button of the contact), turn chats off and, if the bot is only for the test, revoke its token in @BotFather.
+
+## 3. What is not built yet
+
+- **Telegram Business mode** (a bot connected to a Premium account answering the owner's own chats: `business_connection`, `business_message`, replies with `business_connection_id`): the second PR of #3132.
+- **Photos as images**: the update's `file_id` needs the media contract change of #3131 (a provider reference instead of an address, fetched with the sealed token inside the job); until it lands a photo is a placeholder line with its caption.
+- **Groups, supergroups and channels' comments**, paid broadcasts (never enabled), and replies other than plain text.

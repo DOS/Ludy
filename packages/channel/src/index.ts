@@ -23,6 +23,7 @@ export * from './youtube-conversation.ts';
 export * from './linkedin.ts';
 export * from './google-business.ts';
 export * from './telegram.ts';
+export * from './telegram-conversation.ts';
 export * from './mastodon.ts';
 export * from './youtube.ts';
 export * from './tiktok.ts';

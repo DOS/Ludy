@@ -115,6 +115,24 @@ export type ConversationHistoryResult =
   // `quotaUntil`: the platform refused for its quota, which resets at that time; nothing is asked before it.
   | { kind: 'failed'; retry: boolean; code?: string; units?: number; quotaUntil?: Date };
 
+// Turning a provider's chats on or off at the platform (Telegram bot chats, #3132): the webhook is pointed at the deployment or taken away. The
+// adapter builds the webhook's address and secret from the connection's hook, the deployment's public address and the key the broker derives for
+// the purpose, and logs and returns none of them; the worker only hands them over.
+export interface ConversationChatHookInput {
+  // The opened credential (the provider's own JSON).
+  secret: string;
+  on: boolean;
+  hook: string;
+  baseUrl: string;
+  key: Buffer | null;
+  // The bots the org's other connections already answer chats with (one bot has one webhook).
+  takenBotIds: readonly string[];
+}
+export type ConversationChatHookResult =
+  // `botId`: the bot's public number, kept on the connection so a second connection of the same bot is refused.
+  | { kind: 'done'; botId: string | null }
+  | { kind: 'failed'; retry: boolean; code: string };
+
 // What a provider can do with a conversation. Hide is idempotent on the platforms that have it, so it may be repeated.
 export interface ConversationAdapter {
   readonly provider: string;
@@ -122,6 +140,7 @@ export interface ConversationAdapter {
   hide?(input: ConversationHideInput): Promise<ConversationHideResult>;
   profile?(input: ConversationProfileInput): Promise<ConversationProfileResult>;
   history?(input: ConversationHistoryInput): Promise<ConversationHistoryResult>;
+  chatHook?(input: ConversationChatHookInput): Promise<ConversationChatHookResult>;
 }
 
 const MAX_NOTICE_BYTES = 262_144;

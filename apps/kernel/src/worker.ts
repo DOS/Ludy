@@ -69,7 +69,7 @@ import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -1437,8 +1437,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const conversationPublishers = deps.channels?.publishers;
   const conversationBroker = deps.channels?.broker;
   if (conversationPublishers && conversationBroker) {
-    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
+      // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job. The
+      // webhook's address is the API's own origin (PUBLIC_URL, where webhooks are answered), not the web app's.
+      if (job.data.action === 'chat') {
+        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.publicUrl ?? '' }, job.data);
+        console.log(`[conversations] chat ${job.data.on ? 'enable' : 'disable'} ${job.data.connectionId}: ${outcome}`);
+        return;
+      }
       // A customer's image (CV5c): fetched through the egress guard from the platform's media hosts; the log names the image by id only.
       if (job.data.action === 'attachment') {
         const outcome = await runConversationAttachment({ runtime: deps.runtime, store: deps.store, hosts: deps.channels?.conversationMediaHosts }, job.data);
@@ -2454,6 +2461,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (row.type === 'kernel.conversation.attachment_queued' && deps.channels?.publishers && deps.channels.broker) {
                 const attachmentJob: ConversationAttachmentJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'attachment', attachmentId: String(row.payload.attachmentId) };
                 await boss.send(QUEUES.conversationsReply, attachmentJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `attachment:${attachmentJob.attachmentId}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
+              }
+              // Telegram bot chats switched on or off (#3132): the job sets or deletes the webhook; ids only (never the hook), and no retry: a failure is
+              // recorded for the screen and a person turns it on again. With no channel here the attempt is recorded as failed at once.
+              if (row.type === 'kernel.channel.chat_queued') {
+                const chatJob: ConversationChatJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'chat', on: row.payload.action !== 'disable' };
+                if (deps.channels?.publishers && deps.channels.broker) {
+                  await boss.send(QUEUES.conversationsReply, chatJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `chat:${chatJob.on ? 'on' : 'off'}:${row.event_id}`), retryLimit: 0 });
+                } else {
+                  await failChatHook(deps.runtime, chatJob);
+                }
               }
               // Vy's draft of a reply (CV8): ids only in the job; with no model here the draft is settled as none at once.
               if (row.type === 'kernel.conversation.draft_queued') {

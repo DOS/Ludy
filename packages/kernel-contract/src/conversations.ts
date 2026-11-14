@@ -74,6 +74,9 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
+  // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
+  telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
   // YouTube comments on the business's own channel (#3134, plan docs/plan/conversations-channels.md section 4.5): public comment threads, one per
   // top-level comment, no reply window. YouTube's own comment limit is 10,000 characters [U] and the core's reply is at most CONVERSATION_REPLY_MAX,
   // so that is the rule here. `canHide` is false in v1: hiding is `comments.setModerationStatus` and acts on someone else's words, so it waits
