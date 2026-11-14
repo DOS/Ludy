@@ -6261,7 +6261,7 @@ export const vi = {
     allow: 'Cho phép “{client}” đọc dữ liệu của tổ chức {org}',
     approve: 'Cho phép',
     deny: 'Không cho phép',
-    scope: { read: 'Chỉ đọc: ứng dụng không ghi, sửa, gửi tin hay chi tiền được. Nhưng nó xem được chi tiết khách hàng, nhà cung cấp và các liên hệ khác (kể cả người đã điền biểu mẫu đặt lịch công khai), gồm tên, email, số điện thoại, địa chỉ và mã số thuế, cùng chi tiết hóa đơn (bên mua hoặc bán, số tiền, mô tả từng dòng, lý do hủy). Những thông tin này rời khỏi Ludy và do nhà cung cấp ứng dụng AI đó lưu giữ, xử lý theo điều khoản của họ: chỉ cho phép ứng dụng bạn tin cậy.' },
+    scope: { read: 'Chỉ đọc: ứng dụng không ghi, sửa, gửi tin hay chi tiền được. Nhưng nó xem được chi tiết khách hàng, nhà cung cấp và các liên hệ khác (kể cả người đã điền biểu mẫu đặt lịch công khai), gồm tên, email, số điện thoại, địa chỉ và mã số thuế, cùng chi tiết hóa đơn (bên mua hoặc bán, số tiền, mô tả từng dòng, lý do hủy), cùng các bài đăng Social của tổ chức (nội dung, tiêu đề, liên kết, tên kênh, trạng thái, giờ đăng và những bài đang chờ duyệt). Những thông tin này rời khỏi Ludy và do nhà cung cấp ứng dụng AI đó lưu giữ, xử lý theo điều khoản của họ: chỉ cho phép ứng dụng bạn tin cậy.' },
     limits: 'Ứng dụng làm việc với quyền của bạn trong tổ chức này và chỉ đọc. Chủ sở hữu hay quản trị viên có thể ngắt ngay ở Cài đặt.',
     actsAs: 'Không nằm trong quyền này: lương, dữ liệu tài khoản ngân hàng ghi riêng và dữ liệu riêng của từng người (ghi chú cá nhân, kết quả riêng). Lưu ý: nếu ai đó gõ số tài khoản vào mô tả dòng hoặc lý do hủy của một hóa đơn thì ứng dụng vẫn đọc được số đó, vì đó là văn bản tự do.',
     revokeHint: 'Quyền có hiệu lực tối đa {days, number} ngày. Bạn ngắt bất cứ lúc nào ở Cài đặt, mục ứng dụng AI đã kết nối; nút Dừng AI của tổ chức cũng cắt quyền ngay.',
@@ -11764,6 +11764,10 @@ export const vi = {
       },
       links: {
         revoke_for_member: 'Thu hồi liên kết của thành viên đã mất quyền',
+      },
+      mcp: {
+        posts: 'Cho ứng dụng AI xem danh sách bài đăng Social',
+        review_queue: 'Cho ứng dụng AI xem hàng chờ duyệt của Social',
       },
       media: {
         archive: 'Lưu trữ tệp trong thư viện',
