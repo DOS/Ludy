@@ -146,8 +146,6 @@ export interface StoredImage {
   sizeBytes: number;
 }
 
-// A member limited to some channels (#1081) may not have AI write for another one (#1099): refused before the paid model
-// call and before that channel's brand voice is read, as social.post.create would refuse the channel afterwards.
 // Deletes the member's cached meetings of a calendar connection (B1, #3165), as the member: row security lets them delete their own rows only. Best effort by design: a deployment without
 // the meetings module has no such command, and a failure leaves rows the list already hides (the connection is not active, or its switch is off) and a disconnect's cascade removes.
 async function clearAgenda(runtime: Runtime, as: { actor: UserActor; orgId: string }, connectionId: string): Promise<void> {
@@ -158,6 +156,8 @@ async function clearAgenda(runtime: Runtime, as: { actor: UserActor; orgId: stri
   }
 }
 
+// A member limited to some channels (#1081) may not have AI write for another one (#1099): refused before the paid model
+// call and before that channel's brand voice is read, as social.post.create would refuse the channel afterwards.
 async function refuseChannelsOutside(runtime: Runtime, actor: UserActor, orgId: string, connectionIds: readonly string[]): Promise<void> {
   if (connectionIds.length === 0) return;
   const mine = await runtime.query<{ limited: boolean; connectionIds: string[] }>('social.channel_access.mine', {}, { actor, orgId });

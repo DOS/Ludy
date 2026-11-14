@@ -89,6 +89,10 @@ BEGIN
   IF p_from IS NULL OR p_rows IS NULL OR pg_catalog.jsonb_typeof(p_rows) IS DISTINCT FROM 'array' OR pg_catalog.jsonb_array_length(p_rows) > 300 THEN
     RAISE EXCEPTION 'AGENDA_INVALID' USING ERRCODE = '22023';
   END IF;
+  -- An event without an id cannot be told from another on the next sweep: refuse the list rather than fail on a NOT NULL half way.
+  IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(p_rows) AS e(value) WHERE COALESCE(pg_catalog.jsonb_typeof(e.value -> 'id'), '') <> 'string' OR COALESCE(e.value ->> 'id', '') = '') THEN
+    RAISE EXCEPTION 'AGENDA_INVALID' USING ERRCODE = '22023';
+  END IF;
   SELECT c.user_id INTO v_user FROM crove_kernel.calendar_connection c
   WHERE c.org_id = v_org AND c.id = p_connection AND c.status = 'active' AND c.read_events
   FOR SHARE;

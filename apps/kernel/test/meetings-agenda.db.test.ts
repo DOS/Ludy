@@ -333,7 +333,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   it('can be written only by the worker login in the org\'s system context: not by the API login, a user context or another login', async () => {
     const c = await connection('lan');
     await on('lan', c);
-    const call = async (user: string, password: string, context: 'system' | 'user' | 'none') => {
+    const call = async (user: string, password: string, context: 'system' | 'user' | 'none', rows: unknown[] = [event('hand', 30)]) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
@@ -343,7 +343,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         await client.query('BEGIN');
         if (context === 'system') await client.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
         if (context === 'user') await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [users.lan, 'aal1']).catch(() => undefined);
-        await client.query('SELECT crove_meetings.agenda_replace($1::uuid, now(), $2::jsonb)', [c, JSON.stringify([event('hand', 30)])]);
+        await client.query('SELECT crove_meetings.agenda_replace($1::uuid, now(), $2::jsonb)', [c, JSON.stringify(rows)]);
         await client.query('COMMIT');
         return 'ok';
       } catch (error: unknown) {
@@ -354,6 +354,11 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     };
     expect(await call('crove_app', 'test-app-pw', 'system')).toMatch(/permission denied/);
     expect(await call('crove_worker', 'test-worker-pw', 'none')).toMatch(/MEETINGS_SYSTEM_CONTEXT|NO_CONTEXT|permission denied/);
+    // A list with an event that has no usable id is refused whole, before anything is written.
+    for (const bad of [{ ...event('x', 30), id: undefined }, { ...event('x', 30), id: '' }, { ...event('x', 30), id: 7 }]) {
+      expect(await call('crove_worker', 'test-worker-pw', 'system', [event('keep', 30), bad])).toMatch(/AGENDA_INVALID/);
+    }
+    expect(await cached(c)).toEqual([]);
     expect(await call('crove_worker', 'test-worker-pw', 'system')).toBe('ok');
     expect((await cached(c)).map((r) => r.external_id)).toEqual(['hand']);
   });
