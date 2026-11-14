@@ -32,6 +32,8 @@ export const PROPOSAL_PREPARERS = {
   'finance.payroll_payment.record': 'hr.payroll.payment.prepare',
   // The posting of a stored marketplace settlement (#2516), built from its lines by finance's own command: a member asks, an owner or an admin approves.
   'finance.marketplace_settlement.record': 'finance.marketplace_settlement.prepare',
+  // The posting of a platform's payout (#2516), built from the settlement's lines by finance's own command: a member asks, an owner or an admin approves.
+  'finance.marketplace_payout.record': 'finance.marketplace_payout.prepare',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',

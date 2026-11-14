@@ -12,8 +12,10 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  MARKETPLACE_PAYOUT_COMMAND,
   PAYROLL_PAYMENT_COMMAND,
   VOUCHER_COMMAND,
+  journalVoucherCode,
   defaultCounterAccount,
   voucherCode,
   zAccountCode,
@@ -38,6 +40,7 @@ import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
+import { payoutVouchersOfLines } from './marketplace-payout-line.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 import { payrollPaymentMention } from './domain/bank-payroll.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -101,9 +104,10 @@ export async function findBankLine(ctx: QueryContext, id: string): Promise<Store
   return (await findBankLines(ctx, [id]))[0] ?? null;
 }
 
-// The same transaction lock the database's check takes when a voucher of the line is posted (20261020130000).
+// The same transaction lock the database's check takes when a voucher of the line is posted (20261020130000). The database builds the key from the uuid's own text (lower case), and the contract's
+// zId keeps the letter case it is given, so the id is lowered here: an upper case id in a stored proposal and the lower case one of the table take the same lock (#2516).
 export const lockBankLine = (ctx: QueryContext, id: string) =>
-  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.bank_line:${ctx.orgId}:${id}`}, 0))`.execute(ctx.trx);
+  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.bank_line:${ctx.orgId}:${id.toLowerCase()}`}, 0))`.execute(ctx.trx);
 
 // The state of each of the lines: the posted voucher whose entry is not reversed, else a pending voucher proposal,
 // else open.
@@ -126,7 +130,7 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
     .select(['id', sql<string>`payload->>'bankLineId'`.as('line_id')])
     .where('org_id', '=', ctx.orgId)
     // A payment voucher of a pay run (#2532) settles a bank line too, so its pending proposal counts as proposed.
-    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND])
+    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, MARKETPLACE_PAYOUT_COMMAND])
     .where('status', '=', 'pending')
     .where(sql<string>`payload->>'bankLineId'`, 'in', ids)
     .orderBy('created_at')
@@ -135,6 +139,8 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
   for (const v of settled) {
     if (v.bank_line_id) states.set(v.bank_line_id, { status: 'matched', voucherId: v.id, code: voucherCode(v.voucher_type as VoucherType, v.number) });
   }
+  // A platform's payout (#2516) settles a line too: the general voucher that names it, shown as matched with its own code (NVK).
+  for (const v of await payoutVouchersOfLines(ctx, ids)) states.set(v.bankLineId, { status: 'matched', voucherId: v.id, code: journalVoucherCode(v.number) });
   return states;
 }
 
