@@ -47,7 +47,7 @@ const documentId = '00000000-0000-4000-8000-0000000000c1';
 const EMPTY: MarketplaceWorklist = { postingConfirmed: true, settlements: [], payouts: [], invoices: [] };
 const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => ({
   postingConfirmed: true,
-  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', net: '335000' }],
+  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', net: '335000', proposalId: null }],
   payouts: [
     {
       settlementId,
@@ -57,13 +57,14 @@ const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => (
       periodFrom: '2026-10-01',
       periodTo: '2026-10-15',
       received: '304000',
+      proposalId: null,
       candidates: [
         { id: lineA, date: '2026-10-20', amount: '304000', reference: 'FT2610200001' },
         { id: lineB, date: '2026-10-22', amount: '304000', reference: null },
       ],
     },
   ],
-  invoices: [{ documentId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', invoice: '1C26TPF00000007', date: '2026-10-25', clearable: '28000' }],
+  invoices: [{ documentId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', invoice: '1C26TPF00000007', date: '2026-10-25', clearable: '28000', proposalId: null }],
   ...over,
 });
 
@@ -146,6 +147,20 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(html).toContain('marketplace-actions-settlements');
     expect(html).not.toContain('marketplace-actions-payouts');
     expect(html).not.toContain('marketplace-actions-invoices');
+  });
+
+  it('links to the proposal already waiting in the Inbox instead of offering a second request', () => {
+    const waiting = '00000000-0000-4000-8000-0000000000d1';
+    const base = FULL();
+    const html = render({ ...base, settlements: [{ ...base.settlements[0]!, proposalId: waiting }], payouts: [{ ...base.payouts[0]!, proposalId: waiting }], invoices: [{ ...base.invoices[0]!, proposalId: waiting }] });
+    for (const id of ['marketplace-post', 'marketplace-record', 'marketplace-clear']) {
+      expect(html).toContain(`data-testid="${id}-pending"`);
+      expect(html).not.toContain(`data-testid="${id}"`);
+    }
+    expect(html).toContain('Waiting for approval.');
+    expect(html).toContain(`href="/o/acme/inbox/${waiting}"`);
+    // The payout row offers no choice of bank line while its proposal waits.
+    expect(html).not.toContain('marketplace-line-select');
   });
 
   it('reads in Vietnamese', () => {

@@ -63,6 +63,8 @@ export const zMarketplaceSettlementToPost = z.object({
   periodFrom: zLocalDate,
   periodTo: zLocalDate,
   net: zMoney,
+  // A proposal for it already waits in the Inbox: the screen links to it instead of offering a second request.
+  proposalId: zId.nullable(),
 });
 export type MarketplaceSettlementToPost = z.infer<typeof zMarketplaceSettlementToPost>;
 // A bank line the platform's transfer may be: the entity's, money in, equal to the net, not before the period, and free. Shown by its date, amount and statement reference.
@@ -78,6 +80,7 @@ export const zMarketplacePayoutToMatch = z.object({
   periodTo: zLocalDate,
   received: zMoney,
   candidates: z.array(zMarketplacePayoutCandidate),
+  proposalId: zId.nullable(),
 });
 export type MarketplacePayoutToMatch = z.infer<typeof zMarketplacePayoutToMatch>;
 // A platform's fee invoice that can clear fees waiting on 1388: `clearable` is what a clearing would take now (the smaller of what the invoice still has to clear and the platform's 1388 balance).
@@ -89,6 +92,7 @@ export const zMarketplaceInvoiceToClear = z.object({
   invoice: z.string(),
   date: zLocalDate,
   clearable: zMoney,
+  proposalId: zId.nullable(),
 });
 export type MarketplaceInvoiceToClear = z.infer<typeof zMarketplaceInvoiceToClear>;
 export const zMarketplaceWorklist = z.object({

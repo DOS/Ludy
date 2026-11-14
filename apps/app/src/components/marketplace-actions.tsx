@@ -19,11 +19,22 @@ import { DataTable } from './ui.tsx';
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
 // One request: the key is kept for the life of the row, so a retry returns the same proposal. After it, the row says so and links to the proposal.
-function AskButton({ label, disabled, ask, testId }: { label: string; disabled: boolean; ask: (idempotencyKey: string) => Promise<{ proposalId: string }>; testId: string }) {
+function AskButton({ label, disabled, ask, testId, pending }: { label: string; disabled: boolean; ask: (idempotencyKey: string) => Promise<{ proposalId: string }>; testId: string; pending: string | null }) {
   const t = useTranslations('marketplaceActions');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const request = useMutation({ mutationFn: () => ask(idempotencyKey) });
+  // A proposal for this item already waits in the Inbox (asked earlier, perhaps by someone else): link to it, never a second request.
+  if (pending !== null && !request.data) {
+    return (
+      <span data-testid={`${testId}-pending`}>
+        {t('pending')}{' '}
+        <Link to="/o/$slug/inbox/$id" params={{ slug, id: pending }} className="text-link underline">
+          {t('view')}
+        </Link>
+      </span>
+    );
+  }
   if (request.data) {
     return (
       <span data-testid={`${testId}-done`}>
@@ -59,7 +70,7 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
       <TableCell className="px-4 py-3">{period(s.periodFrom, s.periodTo)}</TableCell>
       <TableCell className={NUM}>{f.money(s.net)}</TableCell>
       <TableCell className="px-4 py-3 text-right">
-        <AskButton label={t('post')} disabled={!open} testId="marketplace-post" ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_settlement.record', idempotencyKey, input: { settlementId: s.id } })} />
+        <AskButton label={t('post')} disabled={!open} testId="marketplace-post" pending={s.proposalId} ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_settlement.record', idempotencyKey, input: { settlementId: s.id } })} />
       </TableCell>
     </TableRow>
   );
@@ -76,7 +87,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
       <TableCell className="px-4 py-3">{period(p.periodFrom, p.periodTo)}</TableCell>
       <TableCell className={NUM}>{f.money(p.received)}</TableCell>
       <TableCell className="px-4 py-3">
-        {p.candidates.length === 0 ? (
+        {p.proposalId !== null ? null : p.candidates.length === 0 ? (
           <span className="text-subtle-foreground" data-testid="marketplace-no-candidates">
             {t('noCandidates')}
           </span>
@@ -95,6 +106,7 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
           label={t('record')}
           disabled={!open || bankLineId === ''}
           testId="marketplace-record"
+          pending={p.proposalId}
           ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_payout.record', idempotencyKey, input: { settlementId: p.settlementId, bankLineId } })}
         />
       </TableCell>
@@ -113,7 +125,7 @@ function InvoiceRow({ i, open }: { i: MarketplaceInvoiceToClear; open: boolean }
       </TableCell>
       <TableCell className={NUM}>{f.money(i.clearable)}</TableCell>
       <TableCell className="px-4 py-3 text-right">
-        <AskButton label={t('clear')} disabled={!open} testId="marketplace-clear" ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_fee_clearing.record', idempotencyKey, input: { purchaseDocumentId: i.documentId } })} />
+        <AskButton label={t('clear')} disabled={!open} testId="marketplace-clear" pending={i.proposalId} ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_fee_clearing.record', idempotencyKey, input: { purchaseDocumentId: i.documentId } })} />
       </TableCell>
     </TableRow>
   );

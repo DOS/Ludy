@@ -1050,6 +1050,7 @@ export const en = {
     invoicesHint: 'Moves what the invoice covers from fees awaiting an invoice (1388) to what you owe the platform (331). It is only proposed here.',
     clear: 'Clear the fees',
     asked: 'Proposal sent.',
+    pending: 'Waiting for approval.',
     view: 'View the proposal',
   },
   marketplaceBalance: {

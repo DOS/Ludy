@@ -1048,6 +1048,7 @@ export const vi = {
     invoicesHint: 'Chuyển phần hóa đơn bao phủ từ phí chờ hóa đơn (1388) sang khoản bạn nợ sàn (331). Ở đây chỉ lập đề xuất.',
     clear: 'Cấn trừ phí',
     asked: 'Đã gửi đề xuất.',
+    pending: 'Đang chờ duyệt.',
     view: 'Xem đề xuất',
   },
   marketplaceBalance: {

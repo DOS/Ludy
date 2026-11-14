@@ -174,9 +174,9 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const worklist = (o: Org, runtime = rt, legalEntityId?: string) =>
     runtime.query<{
       postingConfirmed: boolean;
-      settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; net: string }[];
-      payouts: { settlementId: string; received: string; candidates: { id: string; date: string; amount: string; reference: string | null }[] }[];
-      invoices: { documentId: string; clearable: string; invoice: string }[];
+      settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; net: string; proposalId: string | null }[];
+      payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[] }[];
+      invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
     }>('finance.marketplace.worklist', legalEntityId === undefined ? {} : { legalEntityId }, { actor: asUser(o.owner), orgId: o.orgId });
   const facts = (o: Org) => rt.query<{ settlementsToPost: number; payoutsToMatch: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId });
 
@@ -233,7 +233,15 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
       [[a, 'Shopee', '2026-10-01', '2026-10-15', '335000'], [b, 'TikTok Shop', '2026-10-01', '2026-10-15', '75000']].sort(),
     );
     expect((await facts(o)).settlementsToPost).toBe(2);
+    // A pending proposal for a settlement is carried on its row, so the screen links to it; the other has none.
+    expect(list.settlements.every((s) => s.proposalId === null)).toBe(true);
+    const asked = await askSettlement(o, b);
+    expect((await worklist(o)).settlements.find((s) => s.id === b)?.proposalId).toBe(asked.proposalId);
+    expect((await worklist(o)).settlements.find((s) => s.id === a)?.proposalId).toBeNull();
     await post(o, a);
+    expect((await worklist(o)).settlements.map((s) => s.id)).toEqual([b]);
+    // A zero net posts nothing and is not offered.
+    await seed(o, 'lazada', '2026-10-01', '2026-10-15', [{ sales: '5000', discount: '5000' }]);
     expect((await worklist(o)).settlements.map((s) => s.id)).toEqual([b]);
     // Another org sees none of it.
     expect((await worklist(await org())).settlements).toEqual([]);
@@ -261,6 +269,23 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     await approve(o, (await ask(o, settlement, right)).proposalId);
     expect((await worklist(o)).payouts).toEqual([]);
     expect((await facts(o)).payoutsToMatch).toBe(0);
+  });
+
+  it('carries the pending proposal of a payout and of a clearing on its row', async () => {
+    const { o, settlement, line, party } = await (async () => {
+      const base = await posted();
+      return { ...base, party: (await partyOf(base.o, 'shopee')) as string };
+    })();
+    const pendingPayout = await ask(o, settlement, line);
+    const [item] = (await worklist(o)).payouts;
+    expect(item?.proposalId).toBe(pendingPayout.proposalId);
+    // The line its proposal holds is not offered to another.
+    expect(item?.candidates.map((c) => c.id)).not.toContain(line);
+    await approve(o, pendingPayout.proposalId);
+    const doc = await invoice(o, party);
+    expect((await worklist(o)).invoices.map((i) => [i.documentId, i.proposalId])).toEqual([[doc, null]]);
+    const pendingClearing = await askFee(o, doc);
+    expect((await worklist(o)).invoices.map((i) => [i.documentId, i.proposalId])).toEqual([[doc, pendingClearing.proposalId]]);
   });
 
   it('does not offer a payout the command would refuse: an unexplained adjustment, nothing to collect', async () => {
