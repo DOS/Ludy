@@ -5,7 +5,7 @@
 // verifies like any other (ADR-0028); Ludy holds no provider credential. The list only decides which buttons show:
 // the identity provider refuses a provider it has not enabled, and AUTH_ALLOWED_EMAILS still decides who may use the
 // deployment.
-const PROVIDER_ID = /^[a-z][a-z0-9_]{1,31}$/;
+const PROVIDER_ID = /^[a-z][a-z0-9_]{0,31}$/;
 export const MAX_OAUTH_PROVIDERS = 12;
 
 export function parseOauthProviders(raw: string): { providers: string[]; invalid: string[] } {

@@ -6,7 +6,7 @@ describe('sign-in provider buttons', () => {
   it('offers well-formed ids once each and nothing from an older server', () => {
     expect(offeredProviders(undefined)).toEqual([]);
     expect(offeredProviders(['google', 'github', 'google'])).toEqual(['google', 'github']);
-    expect(offeredProviders(['Google', 'a', 'bad id', '../x', 'ok_1'])).toEqual(['ok_1']);
+    expect(offeredProviders(['Google', 'x', '1a', 'bad id', '../x', 'ok_1'])).toEqual(['x', 'ok_1']);
     expect(offeredProviders(Array.from({ length: 20 }, (_, i) => `p${i}x`))).toHaveLength(12);
   });
 

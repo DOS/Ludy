@@ -153,7 +153,8 @@ describe('AUTH_OAUTH_PROVIDERS (the sign-in buttons, issue #2704)', () => {
     expect(loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: 'Google, github  google' }).AUTH_OAUTH_PROVIDERS).toEqual(['google', 'github']);
     expect(loadConfig(BASE_ENV).AUTH_OAUTH_PROVIDERS).toEqual([]);
     expect(loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: ' ' }).AUTH_OAUTH_PROVIDERS).toEqual([]);
-    for (const bad of ['go ogle!', 'g', 'https://evil.example', 'a1,../b', 'ünï']) {
+    expect(loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: 'x' }).AUTH_OAUTH_PROVIDERS).toEqual(['x']);
+    for (const bad of ['go ogle!', '1abc', 'https://evil.example', 'a1,../b', 'ünï']) {
       expect(() => loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: bad }), bad).toThrow(/AUTH_OAUTH_PROVIDERS/);
     }
     // Behind the bundled Supabase Auth the proxy refuses provider sign-in under a restricted policy: the buttons would be dead.

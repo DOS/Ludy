@@ -22,7 +22,7 @@ const NAMES: Record<string, string> = {
   zoom: 'Zoom',
 };
 
-const PROVIDER_ID = /^[a-z][a-z0-9_]{1,31}$/;
+const PROVIDER_ID = /^[a-z][a-z0-9_]{0,31}$/;
 
 // The ids a screen may offer: well-formed, once each, at most 12 (the kernel enforces the same; a server of another
 // version, or a hand-edited config, never makes the screen build a button from anything else).
