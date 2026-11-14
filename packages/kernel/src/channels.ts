@@ -83,6 +83,8 @@ export const channelConnect = defineCommand({
       granted_by_hash: isAdProviderId(input.provider) ? null : (input.grantedByHash ?? null),
       // A reconnect is read again at once for what the webhook missed (CV5b, #2329).
       history_synced_at: null,
+      // ... also a YouTube channel, whose due time is its own interval (#3134): a reconnect after a refused token must not wait out the hold.
+      history_next_at: null,
       updated_at: ctx.now,
     };
     // Two connects of one account at once serialize here, so the second finds the first's row and reconnects
