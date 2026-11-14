@@ -7,6 +7,7 @@ import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { RecordingChip } from '../components/recording-chip.tsx';
+import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { Toaster } from '../components/toaster.tsx';
 import { Logo, OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
@@ -47,7 +48,7 @@ export function OrgLayout() {
   const { pathname } = useLocation();
   const screenApp = appOfPath(pathname);
   // State set during render (not a ref), so a render React discards cannot leave a menu whose route never committed.
-  const [lastApp, setLastApp] = useState<AppId>('home');
+  const [lastApp, setLastApp] = useState<AppId>('teamwork');
   if (screenApp && screenApp !== lastApp) setLastApp(screenApp);
   const [menuOpen, setMenuOpen] = useState(false);
   // The phone's header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575).
@@ -172,7 +173,7 @@ export function OrgLayout() {
           id: `org:${o.slug}`,
           group: 'orgs' as const,
           label: tp('switchOrg', { name: o.name }),
-          run: () => void navigate({ to: '/o/$slug/inbox', params: { slug: o.slug } }),
+          run: () => void navigate({ to: '/o/$slug/overview', params: { slug: o.slug } }),
         })),
       ...LOCALES.filter((l) => l !== locale).map((l) => ({
         id: `locale:${l}`,
@@ -244,13 +245,17 @@ export function OrgLayout() {
     ];
   }, [found.data, notesFound.data, financeOn, notesOn, typed, term, slug, tp, f, navigate]);
 
+  // The counts on the menu's items and on the tabs of one: the pending proposals on Chứng từ's first tab, the unread social updates on a tab of Engage's posts.
+  const tabBadges = { inbox: menuBadges.inbox, socialNotifications: unread };
+
   const shellNav = (onNavigate?: () => void) => (
     <ShellNav
       slug={slug}
       apps={apps}
       app={screenApp ?? lastApp}
       inApp={screenApp !== null}
-      badges={{ ...menuBadges, alerts: workUnread, notifications: unread }}
+      // The pending count sits on the Documents item, whose first tab is "Chờ duyệt" (#3225).
+      badges={{ documents: menuBadges.inbox, social: menuBadges.social, alerts: workUnread, socialNotifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       onOpenPalette={() => {
@@ -303,6 +308,7 @@ export function OrgLayout() {
         {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
         <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8">
           <OrgLeftNotice />
+          <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>
         <RecordingChip />

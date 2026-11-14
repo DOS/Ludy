@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
-import { ADMIN_ITEMS, isHeadedGroup, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
+import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, isHeadedGroup, tabGroupOfPath, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { StatusLink } from './status-link.tsx';
 import { SupportLink } from './support-link.tsx';
@@ -13,21 +13,16 @@ import { EntitySwitcher } from './entity-switcher.tsx';
 import { ThemeSwitcher } from './theme-switcher.tsx';
 import { Logo } from './ui.tsx';
 
-// Shorter or clearer names inside the menu: the work notifications fit the column next to their count, and Social's
-// items say what they hold, since the app itself is named "Engage" in the switcher. None may contain another
-// item's name: a link is found by its name (e2e), and a name inside another matches both.
-const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotifications' | 'socialPosts'>> = {
-  alerts: 'alertsShort',
-  notifications: 'socialNotifications',
-  social: 'socialPosts',
-};
+// Clearer names inside the menu: Engage's posts item says what it holds, since the app itself is named "Engage" in the
+// switcher. None may contain another item's name: a link is found by its name (e2e), and a name inside another matches both.
+const IN_MENU_LABEL: Partial<Record<NavLabel, 'socialPosts'>> = { social: 'socialPosts' };
 
-const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', hr: 'appHr' };
+const APP_ICON: Record<AppId, NavIconName> = { teamwork: 'appTeamwork', finance: 'appAccounting', engage: 'appSocial', hr: 'appHr', ai: 'appAi' };
 
-// A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Ads has none of its own yet, so it takes
-// the banknote of the vouchers, money spent, the accounting overview takes the dashboard of the Home overview, and the reports take the spreadsheet of the VAT return; the type fails to
-// compile for a label that has neither.
-const OWN_ICON = { accountingOverview: 'overview', ads: 'vouchers', adsCampaigns: 'vouchers', socialInbox: 'inbox', reports: 'vat', paymentReminders: 'customers', salesInvoices: 'documents', stock: 'fixedAssets', declarations: 'documents', bankTemplates: 'documents' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
+// A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Items without an icon of their own take
+// the closest: Ads and the AI budgets the banknote of the vouchers (money spent), the Tài chính overview the dashboard of the
+// overview, the reports and the tax the spreadsheet of the VAT return; the type fails to compile for a label that has neither.
+const OWN_ICON = { accountingOverview: 'overview', ads: 'vouchers', aiUsage: 'vouchers', aiConnections: 'settings', socialInbox: 'inbox', reports: 'vat', tax: 'vat', salesInvoices: 'documents', stock: 'fixedAssets', declarations: 'documents', meetings: 'comments' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
 const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
 
 export interface ShellNavProps {
@@ -39,7 +34,7 @@ export interface ShellNavProps {
   // Whether the screen belongs to an app; on the org's own screens no app is marked current.
   inApp: boolean;
   // The count shown on an item (pending proposals on the inbox, unread notifications); an app with a count gets a dot.
-  badges: Partial<Record<NavLabel, string | number | null | undefined>>;
+  badges: Partial<Record<string, string | number | null | undefined>>;
   orgs: readonly { orgId: string; slug: string; name: string }[];
   email: string | undefined;
   onOpenPalette: () => void;
@@ -58,11 +53,31 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
   const orgSelectId = useId();
   const current = apps.find((a) => a.id === app) ?? apps[0];
   const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]));
+  // A screen that is a tab of a menu item (#3225) keeps that item marked current.
+  const { pathname } = useLocation();
+  const tabMenu = tabGroupOfPath(pathname)?.menu;
+  // The shell's own places in the switcher: the overview on top, the bell and Settings at the foot.
+  const railLink = (item: NavItem, name: string, badge?: string | number | null) => (
+    <li key={item.to}>
+      <Link
+        to={item.to}
+        params={{ slug }}
+        onClick={onNavigate}
+        className="relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+        activeProps={{ className: 'bg-primary/15 !text-foreground' }}
+      >
+        <NavIcon name={menuIcon(item.label)} className="size-5" />
+        <span>{name}</span>
+        {badge ? <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary" aria-hidden="true" /> : null}
+      </Link>
+    </li>
+  );
   return (
     // One landmark for the whole menu, the switcher included, so "the menu" is one place for a screen reader.
     <nav aria-label={t('menu')} className="flex min-h-0 min-w-0 flex-1">
       <div className="flex w-16 shrink-0 flex-col border-r py-3 md:py-4">
         <ul aria-label={t('appsLabel')} className="flex flex-col items-center gap-1">
+          {TOP_ITEMS.map((item) => railLink(item, t(item.label)))}
           {apps.map((a) => {
             const selected = inApp && a.id === current?.id;
             return (
@@ -83,20 +98,8 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
           })}
         </ul>
         <ul className="mt-auto flex flex-col items-center gap-1 pt-3">
-          {ADMIN_ITEMS.map((item) => (
-            <li key={item.to}>
-              <Link
-                to={item.to}
-                params={{ slug }}
-                onClick={onNavigate}
-                className="flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                activeProps={{ className: 'bg-primary/15 !text-foreground' }}
-              >
-                <NavIcon name={menuIcon(item.label)} className="size-5" />
-                <span>{t(item.label)}</span>
-              </Link>
-            </li>
-          ))}
+          {BELL_ITEM && railLink(BELL_ITEM, t('bell'), badges[BELL_ITEM.label] as string | number | null | undefined)}
+          {ADMIN_ITEMS.map((item) => railLink(item, t(item.label)))}
         </ul>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
@@ -118,7 +121,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
             value={slug}
             onChange={(e) => {
               onNavigate?.();
-              void navigate({ to: '/o/$slug/inbox', params: { slug: e.target.value } });
+              void navigate({ to: '/o/$slug/overview', params: { slug: e.target.value } });
             }}
           >
             {orgs.map((o) => (
@@ -166,13 +169,15 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                 <ul className="flex flex-col gap-0.5">
                   {group.items.map((item) => {
                     const badge = badges[item.label];
+                    const viaTab = tabMenu !== undefined && item.to === `/o/$slug/${tabMenu}`;
                     return (
                       <li key={item.to}>
                         <Link
                           to={item.to}
                           params={{ slug }}
                           onClick={onNavigate}
-                          className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-1"
+                          className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-1 ${viaTab ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                          {...(viaTab ? { 'aria-current': 'page' as const } : {})}
                           activeProps={{ className: 'bg-primary/15 !text-foreground' }}
                         >
                           <NavIcon name={menuIcon(item.label)} />

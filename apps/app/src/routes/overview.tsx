@@ -39,14 +39,16 @@ const TARGET = {
   bankLines: { icon: 'bank' },
 } as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
+// The cards that open a fixed screen; the others (Cộng tác, Ludy AI) open where their switcher entry goes.
 const APP_CARD = {
-  // The Kế toán app opens on its Tổng quan (#2631).
-  accounting: { to: '/o/$slug/accounting', icon: 'appAccounting' },
+  // Tài chính opens on its Tổng quan (#2631).
+  finance: { to: '/o/$slug/accounting', icon: 'appAccounting' },
   // Engage holds the CRM's screens too (#2435), so its card shows the posts' figure and the bookings' one.
-  social: { to: '/o/$slug/social', icon: 'appSocial' },
+  engage: { to: '/o/$slug/social', icon: 'appSocial' },
   // The HR app opens on its staff list (#2530); its card has no figure, since a count of employees is a payroll read.
   hr: { to: '/o/$slug/hr/employees', icon: 'appHr' },
-} as const satisfies Record<Exclude<AppId, 'home'>, { to: string; icon: NavIconName }>;
+} as const satisfies Partial<Record<AppId, { to: string; icon: NavIconName }>>;
+const OTHER_CARD_ICON = { teamwork: 'appTeamwork', ai: 'appAi' } as const satisfies Partial<Record<AppId, NavIconName>>;
 
 const HOUR_MS = 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * HOUR_MS;
@@ -54,7 +56,7 @@ const WEEK_MS = 7 * 24 * HOUR_MS;
 const LIST_CAP = 200;
 const counted = (n: number, page: number) => (page >= LIST_CAP ? `${n}+` : String(n));
 
-// One card per installed app (#1528): its key figure and a way in. Home is this screen, so it has none.
+// One card per installed app (#1528, #3225): its key figure and a way in.
 function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { period: string; daysLeft: number } | null; vatLoaded: boolean; manager: boolean }) {
   const t = useTranslations('overview.apps');
   const tn = useTranslations('nav');
@@ -62,7 +64,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
   const modules = getConfig().modules;
   // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
   // bookings, which need them, so it shows only where one of the two runs.
-  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || manager));
+  const apps = installedApps(modules).filter((a) => (a.id !== 'engage' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || manager));
   const has = (module: string) => modules.includes(module);
   // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
   // tab left open does not count last week's posts.
@@ -88,8 +90,9 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
     return { key: 'bookings', value: counted(upcoming, bookings.data.length), label: t('crm.upcoming', { count: upcoming }) };
   };
   // The key figures of an app's card: one for the accounting, and for Engage one for each of its modules that runs.
-  const figures = (id: Exclude<AppId, 'home'>): Figure[] => {
-    if (id === 'accounting') {
+  const figures = (id: AppId): Figure[] => {
+    if (id === 'teamwork' || id === 'ai' || id === 'hr') return [];
+    if (id === 'finance') {
       if (!vatLoaded) return [{ key: 'vat', value: null, label: '' }];
       if (!vat) return [{ key: 'vat', value: '-', label: t('accounting.noPeriod') }];
       return [
@@ -108,14 +111,16 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
       </h2>
       <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {apps.map((app) => {
-          const id = app.id as Exclude<AppId, 'home'>;
+          const id = app.id;
+          const card = id in APP_CARD ? APP_CARD[id as keyof typeof APP_CARD] : null;
           // Engage opens on its posts; with the social module off its card shows the bookings, so that is where it opens.
-          const to = id === 'social' && !has('social') ? '/o/$slug/bookings' : APP_CARD[id].to;
+          const to = id === 'engage' && !has('social') ? '/o/$slug/bookings' : (card?.to ?? app.home);
+          const icon: NavIconName = card?.icon ?? OTHER_CARD_ICON[id as keyof typeof OTHER_CARD_ICON];
           return (
             <li key={id}>
               <Card className="flex h-full flex-col gap-2 p-4">
                 <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <NavIcon name={APP_CARD[id].icon} className="text-muted-foreground" />
+                  <NavIcon name={icon} className="text-muted-foreground" />
                   {tn(`appNames.${id}`)}
                 </span>
                 {figures(id).map(({ key, value, label, retry }) =>

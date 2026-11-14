@@ -1,13 +1,13 @@
 // The modules' screens against the app's router (plan §5.2 `routes` and `nav`, ADR-0031 §3, #1652): every route under
 // /o/$slug belongs to exactly one module's manifest and every declared screen is a route, every menu item is a screen
 // of its own module with its label in Vietnamese and English, and a screen of a module the deployment leaves out
-// redirects to the inbox, whichever module it is.
+// redirects to the overview, whichever module it is.
 import { MODULE_SCREENS, type ModuleScreens } from '@crove/kernel-contract';
 import { createMemoryHistory, createRouter, isNotFound } from '@tanstack/react-router';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { ADMIN_ITEMS, ALL_NAV, APPS, GROUP_ORDER, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, ALL_NAV, APPS, BELL_ITEM, GROUP_ORDER, TOP_ITEMS, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
 import { moduleOfOutsideRoute, moduleOfPath, outsideInstalled, screenInstalled } from '../src/lib/modules.ts';
 
 // What the org route's guard reads: a signed-in session and the modules of /api/config, set per test.
@@ -171,54 +171,42 @@ describe('module screens against the router (#1652)', () => {
     }
   });
 
+  // The five apps of the switcher (#3225, owner decision 2026-11-14): Cộng tác, Tài chính, Engage, Nhân sự, Ludy AI. Chờ duyệt is the first tab of the Chứng từ item
+  // (path `inbox`); the other tabs (Tất cả chứng từ, Nhắc thu nợ, Sàn, Tờ khai hộ, Mẫu ngân hàng, Thông báo bài đăng, Chiến dịch) are no menu item.
   it('keeps the menus users know, in their order', () => {
-    expect(APPS.map((a) => [a.id, a.groups.map((g) => [g.id, g.items.map((i) => i.to)])])).toEqual([
-      ['home', [['work', ['/o/$slug/overview', '/o/$slug/inbox', '/o/$slug/notifications', '/o/$slug/tasks', '/o/$slug/notes', '/o/$slug/my-work']]]],
+    expect(APPS.map((a) => [a.id, a.groups.map((g) => [g.id, g.items.map((i) => i.to.slice('/o/$slug/'.length))])])).toEqual([
+      ['teamwork', [['work', ['my-work', 'tasks', 'notes', 'meetings']]]],
       [
-        'accounting',
+        'finance',
         [
-          [
-            'books',
-            [
-              '/o/$slug/accounting',
-              '/o/$slug/documents',
-              '/o/$slug/journal',
-              '/o/$slug/vouchers',
-              '/o/$slug/sales-invoices',
-              '/o/$slug/stock',
-              '/o/$slug/bank',
-              '/o/$slug/fixed-assets',
-              '/o/$slug/ledger',
-              '/o/$slug/vat',
-              '/o/$slug/portal-invoices',
-              '/o/$slug/customers',
-              '/o/$slug/payment-reminders',
-              '/o/$slug/vendors',
-            ],
-          ],
+          ['books', ['accounting', 'inbox', 'vouchers', 'bank']],
+          ['sell', ['sales-invoices', 'customers', 'stock']],
+          ['buy', ['vendors']],
+          ['ledger', ['journal', 'ledger', 'fixed-assets', 'vat']],
+        ],
+      ],
+      // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),
+      // CRM (the crm module's screens), Marketing (the posts and, from the ads module, Ads, ads plan section 2) and one Báo cáo item.
+      // The rail has no CRM app of its own.
+      [
+        'engage',
+        [
+          ['inbox', ['social/inbox']],
+          ['crm', ['contacts', 'companies', 'deals', 'bookings']],
+          ['marketing', ['social', 'ads']],
+          ['reports', ['reports']],
         ],
       ],
       // The HR app (#2530): the staff list, for owners and admins.
-      ['hr', [['people', ['/o/$slug/hr/employees', '/o/$slug/hr/payroll', '/o/$slug/hr/declarations', '/o/$slug/hr/bank-templates']]]],
-      // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),
-      // Khách hàng & Bán hàng (the crm module's screens), Marketing (the posts and, from the ads module, Ads, ads plan section 2) and one Báo cáo item.
-      // The rail has no CRM app of its own.
-      [
-        'social',
-        [
-          ['inbox', ['/o/$slug/social/inbox']],
-          ['sales', ['/o/$slug/contacts', '/o/$slug/companies', '/o/$slug/deals', '/o/$slug/bookings']],
-          ['marketing', ['/o/$slug/social', '/o/$slug/social/notifications', '/o/$slug/ads', '/o/$slug/ads/campaigns']],
-          ['reports', ['/o/$slug/reports']],
-        ],
-      ],
+      ['hr', [['people', ['hr/employees', 'hr/payroll', 'hr/declarations']]]],
+      // Ludy AI (#3225): the team's settings, the AI use and budgets (moved from the AI team screen) and the AI connections (moved from Settings).
+      ['ai', [['ai', ['agents', 'ai/usage', 'ai/connections']]]],
     ]);
-    expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([
-      ['/o/$slug/agents', 'agents'],
-      ['/o/$slug/settings', 'settings'],
-    ]);
+    expect(TOP_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/overview', 'overview']]);
+    expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);
+    expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/settings', 'settings']]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'accountingOverview', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'employees', 'payroll', 'declarations', 'bankTemplates', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
+      'overview', 'myWork', 'tasks', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'ads', 'reports', 'employees', 'payroll', 'declarations', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'socialNotifications', 'adsCampaigns',
     ]);
   });
 });
@@ -242,40 +230,40 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
 
   it('hides the menus of crm and social and keeps the rest', () => {
     const apps = installedApps(['kernel', 'finance']);
-    expect(apps.map((a) => a.id)).toEqual(['home', 'accounting']);
-    expect(installedApps(['kernel']).map((a) => a.id)).toEqual(['home']);
-    expect(installedApps(['kernel', 'social']).map((a) => a.id)).toEqual(['home', 'social']);
-    expect(appOfPath('/o/acme/guide')).toBe('accounting');
+    expect(apps.map((a) => a.id)).toEqual(['teamwork', 'finance', 'ai']);
+    expect(installedApps(['kernel']).map((a) => a.id)).toEqual(['teamwork', 'ai']);
+    expect(installedApps(['kernel', 'social']).map((a) => a.id)).toEqual(['teamwork', 'engage', 'ai']);
+    expect(appOfPath('/o/acme/guide')).toBe('finance');
   });
 
   it('shows Ads as an item of the Marketing group of the Engage app, alone in it where Social is off, and not at all where Ads is off', () => {
-    const groupsOf = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => g.id);
+    const groupsOf = (modules: string[]) => installedApps(modules).find((a) => a.id === 'engage')?.groups.map((g) => g.id);
     expect(groupsOf(['kernel', 'social', 'ads'])).toEqual(['inbox', 'marketing', 'reports']);
     expect(groupsOf(['kernel', 'ads'])).toEqual(['marketing', 'reports']);
     expect(groupsOf(['kernel', 'social'])).toEqual(['inbox', 'marketing', 'reports']);
     expect(groupsOf(['kernel'])).toBeUndefined();
-    expect(appOfPath('/o/acme/ads')).toBe('social');
+    expect(appOfPath('/o/acme/ads')).toBe('engage');
   });
 
   // The Engage app (#2435): each group and item shows only where its module runs, the reports item where any of the three modules does.
   it('shows the groups and items of the modules that run in the Engage app, and the reports item where any of its modules does', () => {
-    const menu = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => [g.id, g.items.map((i) => i.label)]);
+    const menu = (modules: string[]) => installedApps(modules).find((a) => a.id === 'engage')?.groups.map((g) => [g.id, g.items.map((i) => i.label)]);
     const SALES = ['contacts', 'companies', 'deals', 'bookings'];
     expect(menu(['kernel', 'social', 'crm', 'ads'])).toEqual([
       ['inbox', ['socialInbox']],
-      ['sales', SALES],
-      ['marketing', ['social', 'notifications', 'ads', 'adsCampaigns']],
+      ['crm', SALES],
+      ['marketing', ['social', 'ads']],
       ['reports', ['reports']],
     ]);
-    // Only crm: the sales group and the reports item (its sales tab alone, tabs.test in reports.test.ts).
-    expect(menu(['kernel', 'crm'])).toEqual([['sales', SALES], ['reports', ['reports']]]);
+    // Only crm: the CRM group and the reports item (its sales tab alone, tabs.test in reports.test.ts).
+    expect(menu(['kernel', 'crm'])).toEqual([['crm', SALES], ['reports', ['reports']]]);
     // Only social: the inbox, the posts and the reports item.
-    expect(menu(['kernel', 'social'])).toEqual([['inbox', ['socialInbox']], ['marketing', ['social', 'notifications']], ['reports', ['reports']]]);
+    expect(menu(['kernel', 'social'])).toEqual([['inbox', ['socialInbox']], ['marketing', ['social']], ['reports', ['reports']]]);
     // Only ads: Ads alone under Marketing.
-    expect(menu(['kernel', 'ads'])).toEqual([['marketing', ['ads', 'adsCampaigns']], ['reports', ['reports']]]);
+    expect(menu(['kernel', 'ads'])).toEqual([['marketing', ['ads']], ['reports', ['reports']]]);
     // None of the three: no Engage app at all, whatever else runs, and the reports screen is not opened.
     expect(menu(['kernel', 'finance', 'notes'])).toBeUndefined();
-    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'notes', 'ads']).map((a) => a.id)).toEqual(['home', 'accounting', 'social']);
+    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'notes', 'ads']).map((a) => a.id)).toEqual(['teamwork', 'finance', 'engage', 'ai']);
     expect(screenInstalled(['kernel', 'crm'], '/o/acme/reports')).toBe(true);
     expect(screenInstalled(['kernel', 'ads'], '/o/acme/reports')).toBe(true);
     expect(screenInstalled(['kernel', 'finance', 'notes'], '/o/acme/reports')).toBe(false);
@@ -305,17 +293,17 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     ['/o/acme/crm/contacts/import', '/o/acme/contacts/import'],
   ]);
 
-  it('sends every screen of crm, social, notes, ads, hr and meetings to the inbox through the router, and opens the others', async () => {
+  it('sends every screen of crm, social, notes, ads, hr and meetings to the overview through the router, and opens the others', async () => {
     session.modules = ['kernel', 'finance'];
     for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes'), ...addresses('ads'), ...addresses('hr'), ...addresses('meetings')]) {
       expect(screenInstalled(session.modules, path), path).toBe(false);
-      expect(await landing(path), path).toBe('/o/acme/inbox');
+      expect(await landing(path), path).toBe('/o/acme/overview');
     }
     for (const path of [...addresses('kernel'), ...addresses('finance')]) expect(await landing(path), path).toBe(path);
     // The router matches without regard to case, and so does the guard.
-    for (const path of ['/o/acme/Bookings', '/o/acme/SOCIAL/new', '/o/acme/Print/Social-Plan']) expect(await landing(path), path).toBe('/o/acme/inbox');
+    for (const path of ['/o/acme/Bookings', '/o/acme/SOCIAL/new', '/o/acme/Print/Social-Plan']) expect(await landing(path), path).toBe('/o/acme/overview');
     session.modules = ['kernel'];
-    for (const path of [...addresses('finance'), '/o/acme/JOURNAL']) expect(await landing(path), path).toBe('/o/acme/inbox');
+    for (const path of [...addresses('finance'), '/o/acme/JOURNAL']) expect(await landing(path), path).toBe('/o/acme/overview');
     session.modules = ['kernel', 'finance', 'social', 'crm', 'notes', 'ads', 'hr', 'meetings'];
     for (const [module] of MODULES) {
       for (const path of addresses(module as keyof typeof MODULE_SCREENS)) {
@@ -335,25 +323,25 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     expect([...CRM_ALIASES.keys()].sort()).toEqual(['/o/acme/crm', '/o/acme/crm/bookings', '/o/acme/crm/contacts', '/o/acme/crm/contacts/import', '/o/acme/crm/deals']);
     for (const [from, to] of CRM_ALIASES) {
       expect(await landing(from), from).toBe(to);
-      expect(appOfPath(to), to).toBe('social');
+      expect(appOfPath(to), to).toBe('engage');
       expect(await landingWithSearch(`${from}?tab=next`), from).toBe(`${to}?tab=next`);
     }
     // The screens themselves, and the links that name them (Home's, a notification's), are where they were.
     for (const path of ['/o/acme/bookings', '/o/acme/deals', '/o/acme/contacts', '/o/acme/contacts/import']) {
       expect(await landing(path), path).toBe(path);
-      expect(appOfPath(path), path).toBe('social');
+      expect(appOfPath(path), path).toBe('engage');
     }
     expect(await landingWithSearch('/o/acme/deals?tab=next')).toBe('/o/acme/deals?tab=next');
-    // With the crm module off the old addresses go to the inbox, as the screens do.
+    // With the crm module off the old addresses go to the overview, as the screens do.
     session.modules = ['kernel', 'social'];
-    for (const from of CRM_ALIASES.keys()) expect(await landing(from), from).toBe('/o/acme/inbox');
+    for (const from of CRM_ALIASES.keys()) expect(await landing(from), from).toBe('/o/acme/overview');
     // The reports screen opens where any of its modules runs, and nowhere else.
     for (const modules of [['kernel', 'crm'], ['kernel', 'social'], ['kernel', 'ads']]) {
       session.modules = modules;
       expect(await landing('/o/acme/reports'), modules.join()).toBe('/o/acme/reports');
     }
     session.modules = ['kernel', 'finance', 'notes'];
-    expect(await landing('/o/acme/reports')).toBe('/o/acme/inbox');
+    expect(await landing('/o/acme/reports')).toBe('/o/acme/overview');
   });
 });
 
