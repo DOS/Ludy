@@ -407,6 +407,10 @@ export const transcriptTranslateStart = defineCommand({
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger).
     await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    // One start for the member at a time, and the live check and the state read both after the lock: a start that waited for another sees what it kept, not what was left before it.
+    await lockTranslation(ctx.trx, ctx.orgId, userId);
+    const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: TRANSLATE_FEATURE });
+    if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSLATE_RUNNING', 409, 'A translation of yours is still running; wait for it to finish or stop it');
     const read = await readTranscriptLines(ctx.trx, ctx.orgId, input.meetingId);
     if (!read) throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no transcript to translate');
     const state = await transcriptState(ctx, userId, input.meetingId, read);
@@ -416,9 +420,6 @@ export const transcriptTranslateStart = defineCommand({
     // The next batch: the first chunks of what is left, whole (the request cuts the lines it is given by the same rule, so it sends exactly these chunks and no chunk is split between two
     // requests), at most the chunks one request takes.
     const batch: TranscriptLine[] = chunkLines(state.remaining).slice(0, TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN).flat();
-    await lockTranslation(ctx.trx, ctx.orgId, userId);
-    const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: TRANSLATE_FEATURE });
-    if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSLATE_RUNNING', 409, 'A translation of yours is still running; wait for it to finish or stop it');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: TRANSLATE_FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
     ctx.audit({ meetingId: input.meetingId, runId: started.runId, stage: read.stage, lines: batch.length });
     return zTranscriptStarted.parse({ meetingId: input.meetingId, runId: started.runId, stage: read.stage, from: read.from, to: read.to, remaining: state.remaining.length, lineIds: batch.map((l) => l.id) });

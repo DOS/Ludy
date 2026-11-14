@@ -4,7 +4,7 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
+import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
 import { zTranscriptTranslationResult, type LiveNotesDone, type LiveNotesInput, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -399,6 +399,13 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
           );
           parts.push(...done.parts);
         } catch (error: unknown) {
+          // An answer that cannot be used at all (not the JSON asked for, no line that survived the checks, a line too long) is final for these lines, as a line the checks refused is: they are
+          // kept as lines that could not be translated, so one odd line cannot hold the rest of the transcript back by being asked again for ever. A failure of the call itself (a timeout,
+          // the provider, the budget) keeps nothing and is retried by the next click.
+          if (error instanceof TranslationError) {
+            parts.push(...lines.map((l) => ({ k: l.id, h: lineHash(l.text), t: '', s: 'refused' as const, c: ['EMPTY' as const] })));
+            break;
+          }
           if (parts.length === 0) throw error;
           console.log(`[meetings-translate-transcript] stopped after ${parts.length} lines: ${codeOf(error)}`);
           break;

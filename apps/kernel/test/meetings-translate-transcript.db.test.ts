@@ -360,6 +360,30 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect((await rawStatus('attendee', meetingId)).remaining).toBe(1);
   });
 
+  it('an answer that cannot be used at all is final for its lines, so one odd chunk does not hold the rest of the transcript back; a failed call keeps nothing and is asked again', async () => {
+    const meetingId = await seedMeeting();
+    const ids = await seedLines(meetingId, 'published', Array.from({ length: 40 }, (_, i) => speech(5000 + i)));
+    const total = (await rawStatus('attendee', meetingId)).chunksTotal;
+    expect(total).toBeGreaterThanOrEqual(3);
+    const garbage: ModelPort = { generate: async () => ({ text: 'I cannot help with that.', usage: { inputTokens: 10, outputTokens: 5 } }) };
+    const first = await batch('attendee', meetingId, garbage);
+    expect(first).toMatchObject({ state: 'ready', errorCode: null });
+    const mine = await parts('attendee', meetingId);
+    expect(mine.parts.length).toBeGreaterThan(0);
+    expect(mine.parts.every((p) => p.state === 'refused' && p.codes[0] === 'EMPTY' && p.text === '')).toBe(true);
+    expect(mine.parts.map((p) => p.lineId)).toEqual(ids.slice(0, mine.parts.length));
+    // The next request starts at the next chunk, not at the same one.
+    seen = [];
+    await batch('attendee', meetingId);
+    expect(seen.some((t) => t === speech(5000))).toBe(false);
+    expect((await rawStatus('attendee', meetingId)).chunksDone).toBe(2);
+    // A call that fails (the provider, a timeout) keeps nothing: the same chunk is asked again.
+    const before = (await rawStatus('attendee', meetingId)).translated;
+    const failing: ModelPort = { generate: async () => Promise.reject(new Error('provider down')) };
+    expect(await batch('attendee', meetingId, failing)).toMatchObject({ state: 'failed', translated: 0 });
+    expect((await rawStatus('attendee', meetingId)).translated).toBe(before);
+  }, 120_000);
+
   it('a corrected line makes its part stale and the next request translates only that line; a replaced draft and a deleted meeting take the parts with them', async () => {
     const meetingId = await seedMeeting();
     const ids = await seedLines(meetingId, 'draft', ['Dòng một: giá 100.000.', 'Dòng hai: giá 200.000.', 'Dòng ba: giá 300.000.']);

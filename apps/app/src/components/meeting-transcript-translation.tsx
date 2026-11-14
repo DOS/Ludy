@@ -20,7 +20,8 @@ const KNOWN_CODES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'TRANSLATE_TIMEOUT', '
 type KnownCode = (typeof KNOWN_CODES)[number];
 const knownCode = (code: unknown): KnownCode | 'default' => ((KNOWN_CODES as readonly string[]).includes(code as string) ? (code as KnownCode) : 'default');
 
-const refresh = () => queryClient.refetchQueries({ queryKey: orpc.meetings.translation.key() });
+// Only what the panel shows: the status and the member's parts (not the summary's own reads, which are audited).
+const refresh = () => Promise.all([queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptStatus.key() }), queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptGet.key() })]);
 
 /** The member's own translated parts of the transcript, by the line they translate; empty until they asked. The read is audited, so it is not refetched on focus. */
 export function useTranscriptParts(meetingId: string): { parts: ReadonlyMap<string, Part>; to: string } {
@@ -65,9 +66,10 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
     mutationFn: () => orpc.meetings.translation.transcriptTranslate.call({ meetingId }),
     // The mutation stays pending until the status is read again, so the screen never shows the state before the batch that just ended.
     onSuccess: refresh,
-    // A second request that races the first (a double click, another tab) is refused because a run is live: the loop goes on with the run that is.
-    onError: (error) => {
-      if ((error as { code?: unknown } | null)?.code !== 'TRANSLATE_RUNNING') setAuto(false);
+    // A refusal ends the loop and the status is read again (a run of the member's that is live shows as running there, and the panel waits for it through the status).
+    onError: () => {
+      setAuto(false);
+      void refresh();
     },
   });
   const stop = useMutation({
