@@ -15,13 +15,13 @@ export interface ClientRow {
   overview: { vatDeadline: ClientDeadline | null } | null;
 }
 
-// A user with several orgs lands on the home screen; with one, in its Inbox; with none, on onboarding.
-export type Landing = { to: 'clients' } | { to: 'inbox'; slug: string } | { to: 'onboarding' };
+// A user with several orgs lands on the clients screen; with one, on its overview; with none, on onboarding.
+export type Landing = { to: 'clients' } | { to: 'overview'; slug: string } | { to: 'onboarding' };
 
 export function landingFor(orgs: ReadonlyArray<{ slug: string }>): Landing {
   const [first] = orgs;
   if (!first) return { to: 'onboarding' };
-  return orgs.length > 1 ? { to: 'clients' } : { to: 'inbox', slug: first.slug };
+  return orgs.length > 1 ? { to: 'clients' } : { to: 'overview', slug: first.slug };
 }
 
 // The nearest deadline first, orgs with no filing period chosen last, then by name.

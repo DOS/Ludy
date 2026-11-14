@@ -216,7 +216,7 @@ const indexRoute = createRoute({
     // Several orgs (an accountant's clients): the home screen (issue #318); one: its Inbox; none: onboarding.
     const landing = landingFor(me.orgs);
     if (landing.to === 'clients') throw redirect({ to: '/clients' });
-    if (landing.to === 'inbox') throw redirect({ to: '/o/$slug/overview', params: { slug: landing.slug } });
+    if (landing.to === 'overview') throw redirect({ to: '/o/$slug/overview', params: { slug: landing.slug } });
     throw redirect({ to: '/onboarding' });
   },
 });
@@ -550,8 +550,8 @@ const personalDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'p
 const notificationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notifications', component: NotificationsPage });
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'agents', component: AgentsPage });
 // The AI use and budgets and the AI apps connected over MCP: screens of the Ludy AI app (#3225), moved off the org chart screen and Settings.
-const aiUsageRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai/usage', component: AiUsagePage });
-const aiConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai/connections', component: AiConnectionsPage });
+const aiUsageRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-usage', component: AiUsagePage });
+const aiConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-connections', component: AiConnectionsPage });
 // ?filter= keeps the tab of the tasks list (#1513).
 const tasksRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks', validateSearch: parseTasksSearch, component: TasksPage });
 // The bookings of the public booking page (#1320), with the crm module.

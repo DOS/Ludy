@@ -13,10 +13,10 @@ test('the Kế toán app opens on Tổng quan, with every card at 0 for a new or
   const nav = page.getByRole('navigation');
 
   await test.step('opening the app lands on Tổng quan, the first item of its menu', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/accounting$`));
     await expect(page.getByRole('heading', { name: 'Tổng quan', exact: true })).toBeVisible();
-    await expect(nav.getByRole('link', { name: 'Tổng quan', exact: true })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Tổng quan tài chính', exact: true })).toBeVisible();
     await expect(nav.getByRole('link', { name: 'Chứng từ', exact: true })).toBeVisible();
   });
 

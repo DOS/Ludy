@@ -34,7 +34,7 @@ test('asks to issue a draft, sees it issued by the worker with its original stor
   });
 
   await test.step('a draft for a business buyer is saved', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Hóa đơn bán ra' }).click();
     await page.getByTestId('invoice-new').click();
     const form = page.getByTestId('invoice-form');
@@ -70,8 +70,8 @@ test('asks to issue a draft, sees it issued by the worker with its original stor
   });
 
   await test.step('the signed XML is read into a sale of the org in the Inbox', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 120_000 });
     await expect(proposal.getByText('Bán ra')).toBeVisible();
@@ -83,8 +83,9 @@ test('asks to issue a draft, sees it issued by the worker with its original stor
     await confirmUnverifiedSignature(page);
     await page.getByRole('button', { name: 'Duyệt và ghi sổ' }).click();
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: BUYER });
     await expect(document).toContainText('Bán ra');
     await expect(document).toContainText('Đã ghi sổ');

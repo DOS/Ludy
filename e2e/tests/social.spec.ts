@@ -86,8 +86,8 @@ test('attaches images to a post, shows them in the preview and keeps them out of
   await expect(page.getByRole('textbox', { name: 'Mô tả ảnh 1' })).toHaveValue('Mặt tiền cửa hàng');
 
   // An image for a post is not a document: the Inbox stays empty.
-  await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
   await expect(page.getByText('mat-tien.png')).toHaveCount(0);
 });
 

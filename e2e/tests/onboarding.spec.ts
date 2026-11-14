@@ -71,6 +71,6 @@ test('a firm adds a client company by tax code, then opens the form again for th
     await expect(page).toHaveURL(/\/onboarding$/);
     await expect(page.getByRole('heading', { name: 'Thêm tổ chức' })).toBeVisible();
     await page.getByRole('link', { name: 'Quay lại' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   });
 });

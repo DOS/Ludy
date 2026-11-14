@@ -24,8 +24,8 @@ const invoice = (number: number, month: string) => ({
 });
 
 async function goToInbox(page: Page) {
-  await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
 }
 
 test('a vendor group of clean invoices is approved in one action, and a rule shows how often it was corrected', async ({ page }) => {
@@ -49,7 +49,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     usedStep = first.step;
     await page.getByLabel('Mã xác thực').fill(first.code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${created}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${created}/overview$`));
     return created;
   });
 

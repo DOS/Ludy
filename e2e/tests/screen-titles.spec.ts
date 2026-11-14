@@ -109,7 +109,7 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
 
     // Back keeps the focus where the browser puts it: not on the screen's heading.
     await page.goBack();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     await expect(page.locator('main h1').first()).toBeVisible();
     expect(await where(page)).not.toMatch(/^(heading|main)$/);
 

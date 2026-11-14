@@ -138,7 +138,7 @@ export const vi = {
     ads: 'Quảng cáo',
     adsCampaigns: 'Chiến dịch',
     // The tabs of a menu item and the screens Ctrl K finds that are no item (#3225).
-    aiUsage: 'Ngân sách & mức dùng AI',
+    aiUsage: 'Ngân sách AI',
     aiConnections: 'Kết nối AI',
     documentsAll: 'Tất cả chứng từ',
     household: 'Hộ kinh doanh',

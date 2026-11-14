@@ -200,7 +200,7 @@ describe('module screens against the router (#1652)', () => {
       // The HR app (#2530): the staff list, for owners and admins.
       ['hr', [['people', ['hr/employees', 'hr/payroll', 'hr/declarations']]]],
       // Ludy AI (#3225): the team's settings, the AI use and budgets (moved from the AI team screen) and the AI connections (moved from Settings).
-      ['ai', [['ai', ['agents', 'ai/usage', 'ai/connections']]]],
+      ['ai', [['ai', ['agents', 'ai-usage', 'ai-connections']]]],
     ]);
     expect(TOP_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/overview', 'overview']]);
     expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);

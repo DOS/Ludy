@@ -38,8 +38,8 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
   });
 
   await test.step('upload the e-invoice the org issued and open the sale proposal', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });
@@ -59,17 +59,18 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
   });
 
   await test.step('the sale in Documents and the journal', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Bán ra', BUYER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(page.getByText(MEMO)).toBeVisible();
     const line = (account: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: new RegExp(`^${account} `) }) });
@@ -101,8 +102,8 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
   });
 
   await test.step('the output side of the VAT working for September 2026', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Tờ khai GTGT' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Thuế', exact: true }).click();
     await page.getByLabel('Kỳ khai', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');

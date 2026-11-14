@@ -32,8 +32,8 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
   });
 
   await test.step('upload it in the branch, chosen beside the upload button', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     // The sidebar's choice carries over; the Inbox shows it where documents are uploaded.
     await expect(page.getByRole('main').getByLabel('Ghi sổ vào').locator('option:checked')).toHaveText(BRANCH);
     await page.locator('input[type=file]').setInputFiles(INVOICE);
@@ -56,7 +56,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   });
 
   await test.step('the entry is in the branch books only', async () => {
@@ -69,7 +69,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
       { slug },
     );
     expect(rows).toEqual([{ entity: BRANCH }]);
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(switcher.locator('option:checked')).toHaveText(BRANCH);
     await expect(page.getByText(SELLER).first()).toBeVisible();

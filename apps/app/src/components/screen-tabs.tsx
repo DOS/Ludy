@@ -15,8 +15,9 @@ export function ScreenTabs({ slug, installed, badges }: { slug: string; installe
   if (tabs.length < 2) return null;
   const here = pathname.split('/').slice(3).join('/').replace(/\/$/, '');
   return (
-    <nav aria-label={t('tabsLabel')} className="mb-5 border-b">
-      <ul className="-mb-px flex flex-wrap gap-x-5">
+    <div className="mb-5 border-b">
+      {/* Not a navigation landmark: the menu stays the one place a screen reader and a test finds "the menu". */}
+      <ul aria-label={t('tabsLabel')} className="-mb-px flex flex-wrap gap-x-5">
         {tabs.map((tab) => {
           const current = tab.path === here;
           const badge = badges[tab.label];
@@ -35,6 +36,6 @@ export function ScreenTabs({ slug, installed, badges }: { slug: string; installe
           );
         })}
       </ul>
-    </nav>
+    </div>
   );
 }

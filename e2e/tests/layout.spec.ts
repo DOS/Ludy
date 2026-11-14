@@ -35,9 +35,9 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   // A deep link opens with its app selected, and only that app's menu shows.
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   await page.goto(`/o/${slug}/journal`);
-  await expect(apps.getByRole('link', { name: 'Kế toán', exact: true })).toHaveAttribute('aria-current', 'true');
+  await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toHaveAttribute('aria-current', 'true');
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Chứng từ chờ duyệt' })).toHaveCount(0);
+  await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
 
   // On a 1366x768 laptop no app's menu scrolls.
   await page.setViewportSize({ width: 1366, height: 768 });
@@ -164,7 +164,7 @@ test('every sidebar screen and the detail pages pass the 360px and axe walk on a
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
     // Its buyer is now a customer.
     await page.goto(`/o/${slug}/customers`);
@@ -252,10 +252,10 @@ test.describe('at phone width', () => {
     const open = page.getByRole('button', { name: 'Mở menu' });
     await open.click();
     const drawer = page.getByRole('dialog', { name: 'Menu chính' });
-    await expect(drawer.getByRole('region', { name: 'Trang chủ' }).getByRole('link', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
-    await drawer.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await expect(drawer.getByRole('region', { name: 'Ludy Cộng tác' }).getByRole('link', { name: 'Việc nhóm' })).toBeVisible();
+    await drawer.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await expect(page).toHaveURL(/\/accounting$/);
-    await expect(drawer.getByRole('region', { name: 'Kế toán' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
+    await expect(drawer.getByRole('region', { name: 'Sổ sách & Thuế' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Đăng xuất', exact: true })).toBeVisible();
     await drawer.getByRole('link', { name: 'Sổ sách' }).click();
     await expect(page).toHaveURL(/\/ledger$/);

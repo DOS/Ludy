@@ -52,7 +52,7 @@ export const GROUP_ORDER: Partial<Record<AppId, readonly AppGroupId[]>> = { enga
 export const ITEM_ORDER: Partial<Record<AppId, readonly string[]>> = {
   teamwork: ['my-work', 'tasks', 'notes', 'meetings'],
   finance: ['accounting', 'inbox', 'vouchers', 'bank', 'sales-invoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixed-assets', 'vat'],
-  ai: ['agents', 'ai/usage', 'ai/connections'],
+  ai: ['agents', 'ai-usage', 'ai-connections'],
 };
 
 // Every app with its groups, each in the order its first item appears in the manifests, unless GROUP_ORDER fixes it.

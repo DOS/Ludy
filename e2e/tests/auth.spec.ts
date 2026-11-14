@@ -84,7 +84,7 @@ test('a user enrolls TOTP; sign-in and password recovery then ask for the code (
   const login = await nextTotp(secret, enrolled.step);
   await page.getByLabel('Mã xác thực').fill(login.code);
   await page.getByRole('button', { name: 'Xác nhận' }).click();
-  await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   const verified = await storedSession(page);
   expect(verified && claims(verified.access_token).aal).toBe('aal2');
 
@@ -104,7 +104,7 @@ test('a user enrolls TOTP; sign-in and password recovery then ask for the code (
   await page.getByLabel('Mật khẩu mới', { exact: true }).fill('e2e-mfa-new-password-89');
   await page.getByLabel('Nhập lại mật khẩu mới').fill('e2e-mfa-new-password-89');
   await page.getByRole('button', { name: 'Lưu mật khẩu' }).click();
-  await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
 });
 
 test('an expired access token is refreshed, and sign-out revokes the refresh token', async ({ page, request }) => {
@@ -165,7 +165,7 @@ test('managing members asks for two-factor first, then works once it is on', asy
   await signUp(memberPage, member);
   await memberPage.goto(link);
   await memberPage.getByRole('button', { name: 'Chấp nhận lời mời' }).click();
-  await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/overview$`));
 
   // Changing a role is R3 as well; the owner's code is still fresh. Promotion to owner is confirmed inline (#119).
   await page.reload();

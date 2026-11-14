@@ -140,7 +140,7 @@ export const en = {
     ads: 'Ads',
     adsCampaigns: 'Campaigns',
     // The tabs of a menu item and the screens Ctrl K finds that are no item (#3225).
-    aiUsage: 'AI use and budgets',
+    aiUsage: 'AI budgets',
     aiConnections: 'AI connections',
     documentsAll: 'All documents',
     household: 'Household business',
@@ -148,7 +148,7 @@ export const en = {
     stockLevels: 'Stock levels',
     adsFigures: 'Figures',
     tabsLabel: 'Tabs of this screen',
-    bell: 'Notifications',
+    bell: 'Alerts',
     // The app switcher (#1528): a short name under each icon, the full one above the app's menu.
     apps: {
       teamwork: 'Teamwork',

@@ -22,8 +22,8 @@ const invoice = (number: number, month: string) => ({
 const internetRow = (page: Page) => page.getByRole('row').filter({ hasText: 'Cước dịch vụ internet' });
 
 async function openProposal(page: Page, file: ReturnType<typeof invoice>) {
-  await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles(file);
   await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
   await page.getByRole('link', { name: SELLER }).click();
@@ -48,7 +48,7 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
   });
 

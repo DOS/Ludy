@@ -45,8 +45,8 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
   });
 
   await test.step('upload the e-invoice, put its first line on 156 and approve it', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();
@@ -61,11 +61,11 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   });
 
   await test.step('the goods file holds the stock line with the codes; the services file the other lines', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     let download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Xuất chứng từ mua hàng nhập kho cho MISA' }).click();

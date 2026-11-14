@@ -18,7 +18,7 @@ describe('apps of the shell (#1528, #3225)', () => {
     // The screens Ctrl K finds that are no menu item still open in their app.
     for (const path of ['marketplace', 'household', 'payment-reminders']) expect(appOfPath(`/o/acme/${path}`), path).toBe('finance');
     for (const path of ['tasks', 'tasks/0190-abc', 'my-work', 'notes', 'meetings']) expect(appOfPath(`/o/acme/${path}`), path).toBe('teamwork');
-    for (const path of ['agents', 'ai/usage', 'ai/connections']) expect(appOfPath(`/o/acme/${path}`), path).toBe('ai');
+    for (const path of ['agents', 'ai-usage', 'ai-connections']) expect(appOfPath(`/o/acme/${path}`), path).toBe('ai');
     expect(appOfPath('/o/acme/hr/employees')).toBe('hr');
     expect(appOfPath('/o/acme/social')).toBe('engage');
     expect(appOfPath('/o/acme/social/channels')).toBe('engage');

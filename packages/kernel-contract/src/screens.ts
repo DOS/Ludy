@@ -20,8 +20,8 @@ const KERNEL_SCREENS = {
     { path: 'tasks' },
     { path: 'tasks/$id', app: 'teamwork' },
     { path: 'agents' },
-    { path: 'ai/usage' },
-    { path: 'ai/connections' },
+    { path: 'ai-usage' },
+    { path: 'ai-connections' },
     { path: 'settings' },
     // The audit log (#672): owners and admins only, which the page checks and the server enforces.
     { path: 'audit' },
@@ -37,8 +37,8 @@ const KERNEL_SCREENS = {
     // The Inbox is Finance's "Chứng từ" (its first tab is "Chờ duyệt"): shown where finance runs.
     { app: 'finance', group: 'books', path: 'inbox', label: 'documents', modules: ['finance'] },
     { app: 'ai', group: 'ai', path: 'agents', label: 'agents' },
-    { app: 'ai', group: 'ai', path: 'ai/usage', label: 'aiUsage' },
-    { app: 'ai', group: 'ai', path: 'ai/connections', label: 'aiConnections' },
+    { app: 'ai', group: 'ai', path: 'ai-usage', label: 'aiUsage' },
+    { app: 'ai', group: 'ai', path: 'ai-connections', label: 'aiConnections' },
     // The org's own screens, under every app.
     { app: null, rail: 'foot', path: 'settings', label: 'settings' },
   ],

@@ -39,7 +39,7 @@ test('post an invoice of a locked month in the first open month, keeping its inv
   const nav = page.getByRole('navigation');
 
   await test.step('lock the month before last', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
     await page.getByLabel('Tháng khóa sổ').fill(LOCKED);
     await page.getByRole('button', { name: `Khóa sổ tháng ${my(LOCKED)}` }).click();
@@ -47,8 +47,8 @@ test('post an invoice of a locked month in the first open month, keeping its inv
   });
 
   await test.step('the Inbox says the invoice month is locked and offers the first open day', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();
@@ -75,7 +75,7 @@ test('post an invoice of a locked month in the first open month, keeping its inv
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     await page.getByRole('tab', { name: 'Đã ghi sổ' }).click();
     await page.getByRole('link', { name: SELLER }).click();
     await expect(page.getByTestId('late-posted')).toHaveText(

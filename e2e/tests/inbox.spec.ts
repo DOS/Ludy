@@ -84,7 +84,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     // The Inbox says what the approval did, in its button's verb (#1384).
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
@@ -112,7 +112,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('vendor, document and entry lists', async () => {
     const nav = page.getByRole('navigation');
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Nhà cung cấp' }).click();
     const vendor = page.getByRole('row').filter({ hasText: SELLER });
     await expect(vendor).toHaveCount(1);
@@ -131,13 +131,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(form).toHaveCount(0);
     await expect(vendor.getByRole('cell').first()).toHaveText(`${SELLER}024 3826 0000 · hoadon@example.com`);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document).toHaveCount(1);
     await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Mua vào', SELLER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(page.getByText(MEMO)).toBeVisible();
     const line = (account: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: new RegExp(`^${account} `) }) });
@@ -172,8 +173,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('VAT working for September 2026 and its Excel export (#316)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Tờ khai GTGT' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Thuế', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Tờ khai thuế GTGT' })).toBeVisible();
     await page.getByLabel('Kỳ khai', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
@@ -201,7 +202,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('ledger reports for September 2026 and their Excel export (#321)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Sổ sách' }).click();
     await expect(page.getByRole('heading', { name: 'Sổ sách kế toán' })).toBeVisible();
     await page.getByLabel('Kỳ báo cáo', { exact: true }).selectOption('month');
@@ -251,7 +252,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await add.getByRole('button', { name: 'Thêm' }).click();
     await expect(page.getByText('6422.VP', { exact: true })).toBeVisible();
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Nhà cung cấp' }).click();
     const picker = page.getByRole('combobox', { name: `Tài khoản mặc định của ${SELLER}` });
     await picker.selectOption('6422.VP');

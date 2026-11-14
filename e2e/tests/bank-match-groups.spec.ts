@@ -53,7 +53,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     const dir = mkdtempSync(join(tmpdir(), 'crove-match-'));
     const path = join(dir, 'thang-11.csv');
     writeFileSync(path, `﻿${HEADER}\n${LINES.join('\n')}\nTổng cộng;;;1.991.000;;\n`);
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Ngân hàng' }).click();
     await expect(page.getByRole('heading', { name: 'Sao kê ngân hàng' })).toBeVisible();
     await page.getByLabel('Tháng').fill('2026-11');

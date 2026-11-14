@@ -54,15 +54,16 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
   });
 
   await test.step('nothing is overdue before a sale is booked', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Nhắc thu nợ' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Khách hàng', exact: true }).click();
+    await page.getByRole('link', { name: 'Nhắc thu nợ' }).click();
     await expect(page.getByRole('heading', { name: 'Nhắc thu nợ' })).toBeVisible();
     await expect(page.getByText('Không có khách hàng nào quá hạn thanh toán.')).toBeVisible();
   });
 
   await test.step('book the sale (dated 15/09/2026) with a second factor', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });
@@ -73,12 +74,13 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   });
 
   await test.step('the customer has no email yet: the reminder cannot be sent', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Nhắc thu nợ' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Khách hàng', exact: true }).click();
+    await page.getByRole('link', { name: 'Nhắc thu nợ' }).click();
     const row = page.getByTestId('reminder-row').filter({ hasText: BUYER });
     await expect(row).toBeVisible();
     await expect(row).toContainText('Chưa có email');
@@ -101,7 +103,8 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
   });
 
   await test.step('review the draft, edit the opening words and send', async () => {
-    await nav.getByRole('link', { name: 'Nhắc thu nợ' }).click();
+    await nav.getByRole('link', { name: 'Khách hàng', exact: true }).click();
+    await page.getByRole('link', { name: 'Nhắc thu nợ' }).click();
     const row = page.getByTestId('reminder-row').filter({ hasText: BUYER });
     await row.getByRole('button', { name: `Soạn thư nhắc cho ${BUYER}` }).click();
     const draft = page.getByTestId('reminder-draft');

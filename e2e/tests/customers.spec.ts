@@ -29,15 +29,15 @@ test('lists the customer of an approved sale with its receivable, edits it, and 
   await expect(page.getByRole('definition').getByText(SELLER_TAX_CODE, { exact: true })).toBeVisible();
 
   await test.step('no customers yet', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Khách hàng' }).click();
     await expect(page.getByRole('heading', { name: 'Khách hàng' })).toBeVisible();
     await expect(page.getByText('Chưa có khách hàng')).toBeVisible();
   });
 
   await test.step('the sale proposal links its customer to the customers screen', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });
@@ -53,14 +53,14 @@ test('lists the customer of an approved sale with its receivable, edits it, and 
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
   });
 
   const row = page.getByRole('row').filter({ hasText: BUYER });
 
   await test.step('the customer with its tax code, invoices, last invoice date and receivable', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Khách hàng' }).click();
     for (const header of ['Tên', 'Mã số thuế', 'Hóa đơn', 'Hóa đơn gần nhất', 'Công nợ phải thu']) {
       await expect(page.getByRole('columnheader', { name: header, exact: true })).toBeVisible();
@@ -95,7 +95,7 @@ test('lists the customer of an approved sale with its receivable, edits it, and 
   });
 
   await test.step('the receivables report links the customer back to the customers screen', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
     await page.getByLabel('Kỳ báo cáo', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
