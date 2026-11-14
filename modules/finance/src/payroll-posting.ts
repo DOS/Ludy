@@ -25,7 +25,7 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 // The chart an entity keeps its books under on a date: its books row in force (the newest that starts on or before the date), TT133 2026.1 when there is none (the only regime before the
 // books rows existed). The database's own check of every journal line follows the same rule (crove_finance.check_account_ref).
-async function booksOn(ctx: QueryContext, legalEntityId: string, date: string): Promise<{ regime: string; version: string }> {
+export async function booksOn(ctx: QueryContext, legalEntityId: string, date: string): Promise<{ regime: string; version: string }> {
   const row = await ctx.trx
     .selectFrom('crove_finance.legal_entity_books')
     .select(['regime', 'chart_version'])

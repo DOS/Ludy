@@ -7,7 +7,7 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -55,10 +55,11 @@ import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { runLiveNotes, runMeetingSummary, runMeetingTranslation, runTranscriptTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { runLiveNotes, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runTranscriptTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -364,6 +365,7 @@ export function createRpcHandler(
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
@@ -921,6 +923,7 @@ export function createRpcHandler(
       extensionStatus: os.meetings.extensionStatus.handler(meetingsQuery('meetings.meeting.extension_status')),
       recordingNow: os.meetings.recordingNow.handler(meetingsQuery('meetings.meeting.recording_now')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
+      setTemplate: os.meetings.setTemplate.handler(meetingsCommand('meetings.minutes.set_template')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
@@ -959,6 +962,10 @@ export function createRpcHandler(
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      consentPolicy: {
+        get: os.meetings.consentPolicy.get.handler(meetingsQuery('meetings.consent_policy.get')),
+        set: os.meetings.consentPolicy.set.handler(meetingsCommand('meetings.consent_policy.set')),
+      },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
@@ -980,6 +987,13 @@ export function createRpcHandler(
         summarize: os.meetings.results.summarize.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runMeetingSummary({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
+        // The recorder's rough notes and Vy's expansion of them (A5, #3163): the same run family, budget and checks as the summary; see member-vy-ports.ts.
+        notesGet: os.meetings.results.notesGet.handler(meetingsQuery('meetings.notes.get')),
+        notesSave: os.meetings.results.notesSave.handler(meetingsCommand('meetings.notes.save')),
+        enhance: os.meetings.results.enhance.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+        enhancePreview: os.meetings.results.enhancePreview.handler(meetingsQuery('meetings.notes.preview')),
       },
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {
@@ -1787,6 +1801,8 @@ export function createRpcHandler(
           return runtime.execute<{ chatState: 'off' | 'enabling' | 'on' | 'disabling' }>('kernel.channel.telegram_chat_set', input, { actor, orgId });
         }),
       ),
+      // Allows a Telegram Business account's chats in, or stops them (#3191): the org's owner or admin chooses, nothing of an account is stored before.
+      setTelegramBusiness: os.channels.setTelegramBusiness.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute<{ approved: boolean }>('kernel.channel.telegram_business_allow', input, { actor, orgId }))),
       // An app password is checked once by opening a session, then sealed with the account's DID and dropped; it never
       // reaches a log, an audit row or an answer.
       connectBluesky: os.channels.connectBluesky.handler(({ context, input }) =>
@@ -2606,6 +2622,7 @@ export function createRpcHandler(
       profile: os.household.profile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.profile_get', input, { actor, orgId }))),
       profileSet: os.household.profileSet.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.household.profile_set', input, { actor, orgId }))),
       rules: os.household.rules.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.rules', input ?? {}, { actor, orgId }))),
+      s1a: os.household.s1a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s1a', input, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
@@ -2826,6 +2843,15 @@ export function createRpcHandler(
       },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
+      facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),
+      // The facts are read again here in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and posts nothing.
+      line: os.marketplace.line.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, legalEntityId } = input;
+          const facts = await runtime.query<MarketplaceFacts>('finance.marketplace.facts', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
+          return explainMarketplaceLine(financeMarketplaceLineAi, orgId, actor.userId, facts, lang ?? 'vi');
+        }),
+      ),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {

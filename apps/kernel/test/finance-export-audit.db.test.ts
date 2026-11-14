@@ -25,7 +25,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-export-audit-0123456789';
 const ISSUER = 'crove-auth';
-const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export', 'finance.stock.export'];
+const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export', 'finance.stock.export', 'finance.household.export'];
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 class MemoryStore implements BlobStore {
@@ -65,6 +65,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
   let app: ReturnType<typeof createHttpApp>;
   let slug = '';
   let orgId = '';
+  let household = '';
   const owner = { subject: randomUUID(), email: 'owner@export-audit.test', session: randomUUID() };
 
   const token = () =>
@@ -115,6 +116,17 @@ suite('finance exports: no audit row, no download (#365)', () => {
     const body = (await created.json()) as { json: { slug: string; orgId: string } };
     slug = body.json.slug;
     orgId = body.json.orgId;
+    // The household sales book needs an entity of kind household whose profile requires S1a (#2517); without it the route refuses before the export command runs.
+    household = randomUUID();
+    const admin = new pg.Client({ connectionString: adminUrl });
+    await admin.connect();
+    try {
+      const owner = (await admin.query<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
+      await admin.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Xuất file', 'household', $3)", [orgId, household, owner]);
+      await admin.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [orgId, household]);
+    } finally {
+      await admin.end();
+    }
     // The HTKK XML needs the org's tax code; without it the route refuses before the export command runs.
     const taxCode = await app.request('/api/rpc/org/setTaxCode', {
       method: 'POST',
@@ -152,6 +164,16 @@ suite('finance exports: no audit row, no download (#365)', () => {
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
     expect(response.headers.get('content-type') ?? '').not.toMatch(/^application\/xml/);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
+  it('answers an error, not a file, for the household sales book', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-s1a.xlsx?legalEntityId=${household}&period=2026-09`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
     expect(response.headers.get('content-disposition')).toBeNull();
     expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
   });

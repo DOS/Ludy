@@ -164,6 +164,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
+  ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
@@ -242,6 +243,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
+  // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_note', 'false'],
   ['crove_meetings.meeting_reader', 'false'],
   // Meeting results (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_result', 'false'],
@@ -2417,6 +2420,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           deal_id: randomUUID(),
           created_by: o.owner,
         },
+      };
+    },
+  },
+  // #3163 (meetings integrations A5): the recorder's own rough notes of a meeting (the org's owner is the recorder of the factory's meeting); read, written and deleted by the recorder
+  // alone, so the system context reads none.
+  'crove_meetings.meeting_note': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, body: 'RLS matrix rough notes' },
       };
     },
   },

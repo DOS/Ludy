@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
+import { parseAllowedEmails } from './auth-access.ts';
+import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
 import { parseAllowedOrigins } from './cors.ts';
@@ -215,7 +217,36 @@ const schema = z.object({
   // (Crove Cloud, or any remote Supabase Auth) trusts the verified token until its exp, plus Crove's own session
   // records, and confirms every R3 command live with Supabase Auth; off checks only Crove's own records and never
   // calls Auth (local URLs only). Unset: db when AUTH_UPSTREAM_URL is set (bundled Supabase Auth), jwt otherwise.
-  AUTH_SESSION_CHECK: z.enum(['db', 'jwt', 'off']).optional(),
+  // Empty counts as unset (compose passes the line through empty), so the derived default below applies.
+  AUTH_SESSION_CHECK: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['db', 'jwt', 'off']).optional()),
+  // Who may use this deployment (issue #2704, auth-access.ts): exact addresses and `@domain` entries, comma or space
+  // separated. Unset: every holder of a valid token. Set it when AUTH_ISSUER and AUTH_JWKS_URL name an identity provider
+  // that serves other people too; a token for any other address is refused with 403 ACCOUNT_NOT_ALLOWED.
+  AUTH_ALLOWED_EMAILS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { entries, invalid } = parseAllowedEmails(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not an email address or @domain: ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    // Set but listing nobody (`,` or an empty variable in a template) would read as no limit: fail closed instead.
+    if (entries.length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'lists no address or @domain; unset it to allow every account' });
+      return z.NEVER;
+    }
+    return entries;
+  }),
+  // The sign-in buttons the app shows besides email and password (issue #2704, auth-oauth-providers.ts): provider ids the
+  // identity provider has enabled, at most 12. They reach the app through /api/config; Ludy holds no credential for them.
+  AUTH_OAUTH_PROVIDERS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { providers, invalid } = parseOauthProviders(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not a provider id (lower-case letters, digits and _, at most ${MAX_OAUTH_PROVIDERS} of them): ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    return providers;
+  }),
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),
   // Mirrors GOTRUE_MAILER_AUTOCONFIRM so the kernel can refuse unsafe public deployments.
@@ -749,6 +780,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (config.AUTH_SIGNUP_POLICY !== 'allowlist' && config.AUTH_SIGNUP_ALLOWED_DOMAINS.length > 0) {
     throw new Error(`AUTH_SIGNUP_ALLOWED_DOMAINS applies to AUTH_SIGNUP_POLICY=allowlist only (it is ${config.AUTH_SIGNUP_POLICY}); set the policy or remove the domains`);
+  }
+  // The /auth/v1 proxy refuses /authorize and /callback under a restricted policy, so a provider button there would land on its 403.
+  if (config.AUTH_OAUTH_PROVIDERS.length > 0 && config.AUTH_UPSTREAM_URL && config.AUTH_SIGNUP_POLICY !== 'open') {
+    throw new Error(
+      `AUTH_OAUTH_PROVIDERS needs AUTH_SIGNUP_POLICY=open (it is ${config.AUTH_SIGNUP_POLICY}) behind the bundled Supabase Auth: the /auth/v1 proxy refuses provider sign-in under a restricted policy; use a remote identity provider (AUTH_UPSTREAM_URL empty) or leave AUTH_OAUTH_PROVIDERS unset`,
+    );
   }
   if (config.AUTH_SIGNUP_POLICY !== 'open' && !config.AUTH_UPSTREAM_URL) {
     throw new Error(

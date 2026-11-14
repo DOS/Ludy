@@ -41,25 +41,26 @@ export const en: Dictionary = {
     replay: 'Replay',
   },
   shell: {
-    label: 'Example Ludy screen: AI Inbox, invoice detail and command palette',
+    label: 'Example Ludy screen: Finance (Documents pending approval), invoice detail and command palette',
     org: 'Gạo Sạch Mekong',
     search: 'Search',
-    inbox: 'AI Inbox',
+    inbox: 'Documents',
     groups: [
-      { label: 'Finance', items: ['Documents', 'Journal', 'Ledger', 'Vendors', 'VAT'] },
-      { label: 'Operations', items: ['Tasks', 'Agents', 'Engage'] },
+      { label: 'Sales', items: ['Sales invoices', 'Customers', 'Items'] },
+      { label: 'Purchases', items: ['Vendors'] },
+      { label: 'Books & Tax', items: ['Journal', 'Ledgers', 'Assets', 'Tax'] },
     ],
     user: { name: 'Lan', role: 'Chief accountant' },
     metaWait: '4 to review',
     metaDone: '3 to review, 1 approved',
-    tabs: ['To approve', 'Warnings', 'Approved'],
+    tabs: ['Pending approval', 'Warnings', 'Approved'],
     rows: [
       { party: 'Công ty CP Bao Bì Phú Thịnh', sub: 'Invoice 00001284, 14/10/2026', amount: '₫32,832,000', account: 'Acc 152', flag: '' },
       { party: 'EVN', sub: 'Electricity, September', amount: '₫1,946,780', account: 'Acc 6422', flag: '' },
       { party: 'Viettel', sub: 'Telecom, September', amount: '₫880,000', account: 'Acc 6422', flag: '' },
       { party: 'Hợp tác xã Tân Hồng', sub: 'Rice purchase slip', amount: '₫148,500,000', account: 'Acc 152', flag: 'No tax code' },
     ],
-    waiting: 'To approve',
+    waiting: 'Pending approval',
     approved: 'Approved',
     move: 'move',
     approve: 'approve',
@@ -120,7 +121,7 @@ export const en: Dictionary = {
   },
   keys: {
     items: [
-      { keys: ['J', 'K'], label: 'Move', body: 'Step through the rows of the AI Inbox.' },
+      { keys: ['J', 'K'], label: 'Move', body: 'Step through the rows of Documents pending approval.' },
       { keys: ['A'], label: 'Approve', body: 'Asks for a two-factor code, then posts.' },
       { keys: ['E'], label: 'Change account', body: 'Pick another account; Ludy remembers it for that vendor.' },
       { keys: ['⌘', 'K'], label: 'Command palette', body: 'Open a ledger, export to Excel, find a document.' },
@@ -181,7 +182,7 @@ export const en: Dictionary = {
       },
       {
         name: 'Propose',
-        body: 'A TT133 entry lands in the AI Inbox with the reason for each account. Accounts are learned per vendor.',
+        body: 'A TT133 entry lands in the Pending approval tab of Documents, with the reason for each account. Accounts are learned per vendor.',
         actor: `${N.finance}`,
         time: '14/10/2026 15:59',
         confirm: 'Proposed, not posted',
@@ -208,20 +209,49 @@ export const en: Dictionary = {
       { key: 'done', title: 'The books are done', body: 'Proper books, ready to export to Excel for your accountant.', who: 'Done' },
     ],
     note: 'The books follow Circular 133, the accounting regime for small and medium businesses.',
-    pageLink: 'See the Ludy Accounting page',
+    pageLink: 'See the Ludy Finance page',
   },
   appCards: {
-    title: 'One app for each job, one AI team for all',
-    lead: 'Use the app you need. They all share the same data and the same approve button.',
+    title: 'Five apps in one place, one AI team for all',
+    lead: 'Open the app you need. They all share the same data and the same approve button.',
     more: 'See details',
     agentLabel: 'AI coworker',
     items: [
-      { key: 'accounting', name: 'Ludy Accounting', body: 'Photograph an invoice, Ludy reads it and drafts the books. You only press approve.', agent: N.finance, page: 'accounting' },
-      { key: 'engage', name: 'Ludy Engage', body: 'Customer inbox, sales and social posts in one place.', agent: `${N.sales}, ${N.marketing}`, page: 'engage' },
-      { key: 'notes', name: 'Ludy Notes', body: 'Notes and to-do lists, private to you or shared with the team.', agent: '', page: 'notes' },
-      { key: 'bookings', name: 'Bookings', body: 'Customers pick their own time on your booking page. No more back and forth.', agent: '', page: '' },
-      { key: 'meetings', name: 'Meetings', body: 'Keep a recording of a meeting to review later. AI transcripts and summaries are optional.', agent: '', page: '' },
-      { key: 'vy', name: `${N.gm}, the AI general manager`, body: `Coordinates the team across every app. ${N.gm} suggests, you decide.`, agent: N.gm, page: '' },
+      {
+        key: 'teamwork',
+        name: 'Ludy Teamwork',
+        body: `My work, Team tasks, Notes and Meetings in one place. Notes stay private or shared with the team; meeting recordings can get an optional draft transcript and summary from ${N.gm} when AI is on.`,
+        agent: N.gm,
+        page: 'teamwork',
+      },
+      {
+        key: 'finance',
+        name: 'Ludy Finance',
+        body: 'Documents pending approval, vouchers, bank statements, Sales, Purchases and Books & Tax under Circular 133. Nothing posts until you approve.',
+        agent: N.finance,
+        page: 'finance',
+      },
+      {
+        key: 'engage',
+        name: 'Ludy Engage',
+        body: 'Customer Inbox, CRM (contacts, companies, deals, bookings), Marketing (posts, ads) and Reports in one app.',
+        agent: `${N.sales}, ${N.marketing}`,
+        page: 'engage',
+      },
+      {
+        key: 'hr',
+        name: 'Ludy HR',
+        body: `Employee records, salary file templates, draft payroll runs and declaration lists. ${N.finance} reviews payroll changes; approving a pay run waits until an accountant confirms the statutory rules.`,
+        agent: N.finance,
+        page: '',
+      },
+      {
+        key: 'ai',
+        name: 'Ludy AI',
+        body: `Settings for the AI team, not a coworker of its own: AI positions coordinated by ${N.gm}, monthly AI budgets with a stop switch, and external AI connections over MCP.`,
+        agent: '',
+        page: '',
+      },
     ],
   },
   numbers: {
@@ -257,7 +287,7 @@ export const en: Dictionary = {
       { id: 'lan', kind: 'person', name: 'Lan', role: 'Chief accountant', initials: 'L', avatar: '/avatars/lan.webp', chip: { tone: 'ok', label: 'Approved inv. 1284' }, budget: null },
       { id: 'minh', kind: 'person', name: 'Minh', role: 'Marketing', initials: 'M', avatar: '/avatars/minh.webp', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
       { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Lan', initials: '', avatar: null, chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
-      { id: 'tasks', kind: 'tasks', name: 'Tasks', role: '3 open, 1 taken by an agent', initials: '', avatar: null, chip: null, budget: null },
+      { id: 'tasks', kind: 'tasks', name: 'Team tasks', role: '3 open, 1 taken by an agent', initials: '', avatar: null, chip: null, budget: null },
       { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Reports to Minh', initials: '', avatar: null, chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
     ],
     panels: {
@@ -298,8 +328,8 @@ export const en: Dictionary = {
         ],
       },
       tasks: {
-        kicker: 'Tasks',
-        title: 'Tasks',
+        kicker: 'Team tasks',
+        title: 'Team tasks',
         sub: 'Work for people and agents, with a due date and an owner.',
         items: [
           { title: 'Reconcile payables with Phu Thinh Packaging', amount: '', sub: `Assigned to ${N.finance}, due 20/10/2026`, tone: 'accent', chip: `${N.finance} working`, note: '' },
@@ -350,7 +380,7 @@ export const en: Dictionary = {
     phone: {
       label: 'Ludy on a phone, example data',
       time: '14:21',
-      app: 'AI Inbox',
+      app: 'Pending approval',
       org: 'Gạo Sạch Mekong',
       steps: ['Upload photo', 'Checks', 'Approve'],
       cardTitle: 'Proposed entry',
@@ -370,8 +400,8 @@ export const en: Dictionary = {
     deptLabel: 'Department of',
     pageLink: 'See the product page',
     finance: {
-      name: 'Ludy Accounting',
-      body: 'AI Inbox for purchase and sales invoices, the general journal and ledgers, drafts of the B01 and B02 statements, receipts and payments, bank statements imported from Excel or CSV, fixed assets, an XML file of the VAT return, Excel in the MISA SME import layouts, books per legal entity and a monthly period lock.',
+      name: 'Ludy Finance',
+      body: 'Documents pending approval for purchase and sales invoices, the general journal and ledgers, drafts of the B01 and B02 statements, receipts and payments, bank statements imported from Excel or CSV, fixed assets, an XML file of the VAT return, Excel in the MISA SME import layouts, books per legal entity and a monthly period lock.',
       points: [
         'Sales invoices: numbers missing from the series are pointed out before you file the return',
         'Purchase invoices: email a client to ask for the invoices that are missing',
@@ -384,7 +414,7 @@ export const en: Dictionary = {
         { name: 'Lan', initials: 'L', agent: false },
         { name: `${N.finance}`, initials: '', agent: true },
       ],
-      inboxTitle: 'AI Inbox',
+      inboxTitle: 'Documents pending approval',
       inboxSub: '1 posted, 3 waiting for approval',
       inbox: [
         { title: 'Invoice 00001284, Bao Bì Phú Thịnh', amount: '₫32,832,000', account: 'Acc 152, 1331', tone: 'ok', label: 'Posted' },
@@ -426,8 +456,8 @@ export const en: Dictionary = {
       },
     },
     agents: {
-      name: 'Agents',
-      body: 'Add an agent the way you add a position: pick its manager, its budget and its risk limit.',
+      name: 'Ludy AI',
+      body: 'Add AI positions, set each manager, monthly budget and risk limit in the AI team settings.',
       budgetLabel: 'October budget',
       running: 'Running',
       roster: [
@@ -436,8 +466,8 @@ export const en: Dictionary = {
       ],
     },
     tasks: {
-      name: 'Tasks',
-      body: 'One task list for people and agents, with due dates and an assignee.',
+      name: 'Team tasks',
+      body: 'One team task list for people and AI positions, with due dates and an assignee.',
       doneLabel: 'Done',
       items: [
         { title: 'Reconcile payables with Bao Bì Phú Thịnh', who: `${N.finance}`, initials: '', agent: true, due: '20/10/2026', done: false },
@@ -447,8 +477,8 @@ export const en: Dictionary = {
       ],
     },
     notes: {
-      name: 'Ludy Notes',
-      body: 'Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the other members. Write in Markdown, add tags, pin, and search without typing the tone marks, also in Ctrl K. My work is your own to-do list with due dates, reminders and steps; when someone else must do it, hand it to a position.',
+      name: 'Ludy Teamwork',
+      body: 'My work, Team tasks, Notes and Meetings in one place. Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the other members; search without typing the tone marks, also in Ctrl K.',
       points: [
         'A private note is readable by you alone; a shared note is read by every member of the organization except viewers',
         'A note written from the screen of a vendor, a customer, a document, a journal entry or a booking shows right there',
@@ -487,10 +517,10 @@ export const en: Dictionary = {
     },
     social: {
       name: 'Ludy Engage',
-      body: 'One app for a shared inbox, customers and sales, bookings, posts and ads, with a report for each part. Each posting channel has its own approval steps, and photos and videos live in one shared library.',
+      body: 'One app for a shared Inbox, CRM (contacts, companies, deals, bookings), Marketing (posts, ads) and Reports for each part. Each posting channel has its own approval steps, and photos and videos live in one shared library.',
       points: [
         "A shared inbox for customers' private messages; the channel you can connect today is Zalo OA (built, not yet tried with a real OA)",
-        'A contact list shared with Ludy Accounting, sales deals on a board by stage, and a public booking page',
+        'A contact and company list shared with Ludy Finance, sales deals on a board by stage, and a public booking page',
         "Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more (built, not yet tried with a real account); for the large platforms, whoever installs Ludy sets up that platform's app first",
         'See your Facebook and Instagram ads (built, not yet tried with a real account), and a report for each part',
       ],
@@ -510,7 +540,7 @@ export const en: Dictionary = {
         { label: 'Thu 22/10', today: false, post: null },
       ],
     },
-    // The booking pieces the Ludy Engage page and the sales coworker's suggestion draw (the Customers & Sales group).
+    // The booking pieces the Ludy Engage page and the sales coworker's suggestion draw (the CRM group).
     sales: {
       calendar: {
         title: 'External calendar of Hoa',
@@ -591,15 +621,15 @@ export const en: Dictionary = {
       },
       {
         q: 'Do the AI coworkers post entries by themselves?',
-        a: `No. Ludy’s AI coworkers, such as ${N.finance} in accounting, only propose. Fixed checks decide whether the numbers are right, and an entry is posted only when someone with the right role approves it with a two-factor code.`,
+        a: `No. Ludy’s AI coworkers, such as ${N.finance} in Ludy Finance, only propose. Fixed checks decide whether the numbers are right, and an entry is posted only when someone with the right role approves it with a two-factor code.`,
       },
       {
         q: 'Which invoices can Ludy read?',
         a: 'XML e-invoices under Decree 254/2026 and Circular 91/2026 (and those issued under Decree 123/2020 before) are read exactly, without AI. PDFs and photos use an OpenAI-compatible model you configure, including models that run locally such as Ollama or vLLM.',
       },
       {
-        q: 'What do customers and sales in Ludy Engage, and Ludy Notes, do today?',
-        a: 'The Customers & Sales group of Ludy Engage keeps a contact list (the same parties as Ludy Accounting), sales deals on a board by stage, and bookings: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
+        q: 'What do CRM in Ludy Engage and Ludy Teamwork do today?',
+        a: 'The CRM group of Ludy Engage keeps contacts and companies (the same parties as Ludy Finance), sales deals on a board by stage, and bookings: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Finance. Ludy Teamwork brings together My work, Team tasks, Notes attached to a client, a document or a booking, and Meetings for keeping meeting recordings with optional transcripts and summaries.',
       },
       {
         q: 'Where is my data?',

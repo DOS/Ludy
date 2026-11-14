@@ -191,6 +191,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
+  'crove_meetings.meeting_note': MeetingsMeetingNoteTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
@@ -1259,6 +1260,7 @@ export interface FinanceJournalVoucherTable {
   stock_closing_month: ColumnType<string | null, string | null, NotGranted>;
   stock_count_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */
@@ -1942,6 +1944,7 @@ export interface KernelChannelConnectionTable {
   quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_idle_polls: Generated<number>;
+  chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.conversation_attachment */
@@ -2749,6 +2752,7 @@ export interface KernelTenantTable {
   meeting_video_retention_days: Generated<number>;
   meeting_text_retention_days: Generated<number>;
   mcp_member_grants: Generated<boolean>;
+  meeting_consent_policy: Generated<string>;
 }
 
 /** crove_kernel.today_mail */
@@ -2846,6 +2850,16 @@ export interface MeetingsMeetingLinkTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_meetings.meeting_note */
+export interface MeetingsMeetingNoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  body: string;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_meetings.meeting_reader */
 export interface MeetingsMeetingReaderTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2894,6 +2908,7 @@ export interface MeetingsMeetingTable {
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
+  summary_template: Generated<string>;
 }
 
 /** crove_meetings.meeting_video */

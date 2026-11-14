@@ -27,6 +27,8 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page).toHaveURL(/\/login$/);
     await signUp(page, email);
     await createOrg(page, 'Công ty Duyệt hàng loạt');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await page.locator('input[type=file]').setInputFiles(NUMBERS.map(invoice));
     // The worker reads each XML and raises its proposal; the Inbox polls every few seconds.
@@ -90,7 +92,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ledger$`));
     await page.keyboard.press('Control+k');
-    await palette.fill('chung tu cho');
+    await palette.fill('cho duyet');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });

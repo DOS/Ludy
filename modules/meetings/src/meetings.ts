@@ -7,8 +7,9 @@ import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
+import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
-import { summaryCommands } from './summary.ts';
+import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
@@ -25,8 +26,11 @@ import {
   meetingMediaDiscard,
   meetingMediaOrphanKeys,
   meetingRetentionShred,
+  meetingConsentPolicyGet,
+  meetingConsentPolicySet,
   meetingSettingsGet,
   meetingSettingsSet,
+  readConsentPolicy,
   meetingShredReplay,
   readRetentionSettings,
   retentionDates,
@@ -36,6 +40,7 @@ import {
   auditValue,
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
+  consentMethodAllowed,
   zMeetingExtensionStatus,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
@@ -54,6 +59,7 @@ import {
   type MeetingExtensionStatus,
   type RecordingStopReason,
   type MeetingLanguage,
+  type MeetingSummaryTemplate,
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
@@ -132,6 +138,7 @@ interface MeetingRow {
   length_seconds: number | null;
   keep_video: boolean;
   live_notes: boolean;
+  summary_template: MeetingSummaryTemplate;
   consent_method: ConsentMethod;
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
@@ -156,6 +163,7 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
     liveNotes: r.live_notes,
+    summaryTemplate: r.summary_template,
     audioRetentionDate: dayText(r.audio_retention_date),
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
@@ -177,6 +185,11 @@ export const meetingCreate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const extensionTokenId = ctx.actor.type === 'user' ? (ctx.actor.extension?.tokenId ?? null) : null;
+    // A strict org accepts only a written consent method (A2, #3160): the same refusal for an in-app recording, an extension recording and an
+    // upload, since all three make their meeting here. Nothing is created and no audio can follow. A policy changed later does not touch this one.
+    if (!consentMethodAllowed(await readConsentPolicy(ctx.trx, ctx.orgId), input.consentMethod)) {
+      throw new DomainError('CONSENT_METHOD_NOT_ALLOWED', 422, 'This organization accepts only a written consent method');
+    }
     const meetingId = randomUUID();
     const startedAt = ctx.now;
     // The periods the org's settings give today, stamped on the meeting so the period the participants were told stays true (plan section 9).
@@ -197,6 +210,7 @@ export const meetingCreate = defineCommand({
         length_seconds: input.lengthSeconds ?? null,
         keep_video: input.keepVideo,
         live_notes: input.liveNotes,
+        summary_template: input.summaryTemplate,
         consent_method: input.consentMethod,
         consent_confirmed_by: userId,
         consent_confirmed_at: startedAt,
@@ -242,6 +256,7 @@ export const meetingCreate = defineCommand({
       consentMethod: input.consentMethod,
       consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
     });
 
     return { meetingId };
@@ -953,6 +968,7 @@ export const meetingsCommands = [
   meetingReaderRemove,
   meetingMediaKeyReseal,
   meetingSettingsSet,
+  meetingConsentPolicySet,
   meetingRetentionShred,
   meetingShredReplay,
   meetingMediaDiscard,
@@ -961,6 +977,7 @@ export const meetingsCommands = [
   ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
+  ...notesCommands,
   ...summaryCommands,
   ...summaryRunCommands,
   ...translateCommands,
@@ -982,11 +999,14 @@ export const meetingsQueries = [
   meetingVideoRead,
   meetingMediaMeta,
   meetingSettingsGet,
+  meetingConsentPolicyGet,
   meetingMediaOrphanKeys,
   transcriptGet,
   meetingSearch,
   ...transcribeRunQueries,
   ...resultQueries,
+  ...notesQueries,
+  ...summaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
   ...linkQueries,

@@ -108,7 +108,7 @@ describe('auth errors', () => {
   });
 
   it('keeps the server message for other codes', () => {
-    const failure = authFailure({ code: 'unexpected_failure', message: 'Database error' });
+    const failure = authFailure({ code: 'some_unlisted_code', message: 'Database error' });
     expect(authErrorText(failure, translatorFor('en'))).toBe('Database error');
   });
 });

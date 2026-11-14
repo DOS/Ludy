@@ -172,7 +172,7 @@ export const channelDisconnect = defineCommand({
         .updateTable('crove_kernel.channel_connection')
         // A Telegram connection that answered chats gives its hook up too (#3132): the webhook at Telegram is left to be removed in BotFather, and a
         // notice that still comes in on it finds no connection and is dropped.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_business: '[]' })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -461,6 +461,9 @@ export interface ChannelConnectionView {
   chatError: string | null;
   // When the state last changed: a switch standing for minutes was lost, and the screen offers it again.
   chatChangedAt: string | null;
+  // The business accounts a Telegram bot is connected to (#3191), for the screen to name: `ref` is a short fingerprint a member of the org may name to
+  // allow or stop an account, never the platform's id.
+  chatBusiness: Array<{ ref: string; name: string | null; username: string | null; enabled: boolean; canReply: boolean; approved: boolean }>;
 }
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -473,7 +476,7 @@ export const channelsList = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at'])
+      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at', 'chat_business'])
       .where('org_id', '=', ctx.orgId)
       // Social and messaging channels only: a bank feed's connection (provider bank_..., ADR-0039) is the finance
       // module's, listed with its accounts by finance.bank_feed.accounts. Left out before the limit, so they never
@@ -508,6 +511,7 @@ export const channelsList = defineQuery({
       chatState: r.chat_state as ChannelConnectionView['chatState'],
       chatError: r.chat_error,
       chatChangedAt: iso(r.chat_changed_at),
+      chatBusiness: parseBusinessAccounts(r.chat_business).map((a) => ({ ref: businessRef(a.id), name: a.name, username: a.username, enabled: a.enabled, canReply: a.canReply, approved: a.approved })),
     }));
   },
 });
@@ -717,5 +721,146 @@ export const channelTelegramChatRecord = defineCommand({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord];
-export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork];
+// ---------------------------------------------------------------------------------------------------------------------
+// Telegram Business mode (#3191, plan section 4.2). An owner with Telegram Premium connects the bot to their own account in Telegram's settings; Telegram
+// then sends `business_connection` updates (connected, edited, disconnected), and the bot receives that account's customer chats. The connections a
+// bot has are kept on the connection as a small list, written only from such an update the webhook route verified; the core stores a business message
+// only while the list says its business connection is enabled.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const zBusinessAccount = z.strictObject({
+  // Telegram's business connection id: printable ASCII, no space.
+  id: z.string().regex(/^[!-~]{1,100}$/),
+  // The business account's own Telegram user id.
+  userId: z.string().regex(/^-?\d{1,20}$/),
+  name: z.string().max(200).nullable(),
+  // The account's @username, unique on Telegram: what lets an owner tell their own account from a stranger who wears the same name.
+  username: z.string().regex(/^[A-Za-z0-9_]{1,64}$/).nullable(),
+  canReply: z.boolean(),
+  enabled: z.boolean(),
+  // An owner or admin of the org allowed this account's chats in. Telegram lets any Premium user connect a bot that has Business Mode on, so an account
+  // Telegram reports is not yet one the org chose: nothing of it is stored until a person allows it, and only a person can.
+  approved: z.boolean(),
+});
+export type TelegramBusinessAccount = z.infer<typeof zBusinessAccount>;
+// What Telegram tells of an account; whether the org allowed it is the org's, never Telegram's.
+const zBusinessReport = zBusinessAccount.omit({ approved: true });
+// A short fingerprint of an account's id for the screen to name it by (the id itself stays on the server).
+export const businessRef = (id: string): string => createHash('sha256').update(`telegram.business:${id}`).digest('hex').slice(0, 12);
+export const TELEGRAM_BUSINESS_ACCOUNTS_MAX = 10;
+
+// The accounts a connection holds. An entry that is not a whole account is dropped, never half read.
+export function parseBusinessAccounts(value: unknown): TelegramBusinessAccount[] {
+  const list = typeof value === 'string' ? safeJson(value) : value;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry) => {
+    const parsed = zBusinessAccount.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+// Records what Telegram said about one business connection: a new account is added, a known one updated (also to disabled, which stops its messages
+// coming in). Only for a Telegram connection that is active and has chats on or being switched: anything else was sent to a hook that no longer
+// counts. At most TELEGRAM_BUSINESS_ACCOUNTS_MAX accounts: a new one when the list is full replaces the oldest disabled one, else is refused. The
+// audit row holds the state and the right, never an id or a name.
+export const channelTelegramBusinessRecord = defineCommand({
+  name: 'kernel.channel.telegram_business_record',
+  input: z.strictObject({ connectionId: zId, account: zBusinessReport }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ applied: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { applied: false };
+    const accounts = parseBusinessAccounts(row.chat_business);
+    const at = accounts.findIndex((a) => a.id === input.account.id);
+    // A new account is not allowed yet; one already known keeps what the org decided about it.
+    const account: TelegramBusinessAccount = { ...input.account, approved: at >= 0 ? (accounts[at] as TelegramBusinessAccount).approved : false };
+    let next: TelegramBusinessAccount[];
+    if (at >= 0) {
+      next = accounts.map((a, i) => (i === at ? account : a));
+    } else if (accounts.length < TELEGRAM_BUSINESS_ACCOUNTS_MAX) {
+      next = [...accounts, account];
+    } else {
+      // Full: a stranger's account must not keep the org's own out. The oldest account nobody allowed goes first, then the oldest allowed one that is off.
+      const gone = accounts.findIndex((a) => !a.approved) >= 0 ? accounts.findIndex((a) => !a.approved) : accounts.findIndex((a) => !a.enabled);
+      if (gone < 0) return { applied: false };
+      next = [...accounts.filter((_, i) => i !== gone), account];
+    }
+    await ctx.trx
+      .updateTable('crove_kernel.channel_connection')
+      .set({ chat_business: JSON.stringify(next) })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, action: 'business', enabled: account.enabled, can_reply: account.canReply, approved: account.approved });
+    return { applied: true };
+  },
+});
+
+// An owner or admin allows an account's chats in, or stops them (#3191). Telegram lets any Premium user connect a bot that has Business Mode on, and
+// the bot's name is public, so the accounts Telegram reports are not the org's own until a person says so: a new one stores nothing until then, and
+// stopping one ends its messages at once. The account is named by `ref`, a fingerprint the screen was given; the audit row holds the choice and the ref.
+export const channelTelegramBusinessAllow = defineCommand({
+  name: 'kernel.channel.telegram_business_allow',
+  input: z.strictObject({ connectionId: zId, ref: z.string().regex(/^[0-9a-f]{12}$/), allow: z.boolean() }),
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ approved: boolean }> => {
+    requireUser(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (row.provider !== 'telegram') throw new DomainError('CHAT_NOT_SUPPORTED', 409, 'Kênh này không nhận tin nhắn riêng của khách');
+    const accounts = parseBusinessAccounts(row.chat_business);
+    const at = accounts.findIndex((a) => businessRef(a.id) === input.ref);
+    if (at < 0) throw new DomainError('BUSINESS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản Telegram Business này');
+    const next = accounts.map((a, i) => (i === at ? { ...a, approved: input.allow } : a));
+    await ctx.trx.updateTable('crove_kernel.channel_connection').set({ chat_business: JSON.stringify(next) }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    ctx.audit({ connection_id: input.connectionId, action: input.allow ? 'business_allow' : 'business_stop', ref: input.ref });
+    return { approved: input.allow };
+  },
+});
+
+// Whether a business message that named a connection Ludy may not know is to be looked up at Telegram (#3224): true only for an active Telegram connection
+// whose chats are not off and whose list holds no account with that id. A listed one, whether enabled, off or not yet allowed, is known: what Telegram told
+// is kept, and a person's choice is never replaced by a second look. Names nothing of the account.
+export const channelTelegramBusinessKnown = defineQuery({
+  name: 'kernel.channel.telegram_business_known',
+  input: z.strictObject({ connectionId: zId, id: z.string().regex(/^[!-~]{1,100}$/) }),
+  access: 'system',
+  handler: async (ctx, input): Promise<{ lookup: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { lookup: false };
+    return { lookup: !parseBusinessAccounts(row.chat_business).some((a) => a.id === input.id) };
+  },
+});
+
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
+export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork, channelTelegramBusinessKnown];

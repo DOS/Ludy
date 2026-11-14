@@ -49,6 +49,8 @@ export const meetingsManifest = defineModule({
           'consent_notice_version',
           // A code (tab_closed, mic_lost, ...), never text or personal data (A1, #3159).
           'recording_stop_reason',
+          // A code (general, briefing, customer, supplier, one_on_one), never text (A4, #3162).
+          'summary_template',
           'audio_retention_date',
           'text_retention_date',
           'created_at',
@@ -58,6 +60,8 @@ export const meetingsManifest = defineModule({
       ),
       // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
       meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
+      // The recorder's own rough notes of a meeting (A5, #3163): read, written and deleted by the recorder alone. Free text, personal data.
+      meeting_note: columns(['org_id', 'id', 'meeting_id', 'created_at', 'updated_at'], { body: 'pii' }),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
       meeting_result: columns(['org_id', 'id', 'meeting_id', 'feature', 'stage', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { summary: 'pii', decisions: 'pii' }),
       meeting_video: columns([

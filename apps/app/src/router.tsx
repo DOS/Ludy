@@ -12,6 +12,8 @@ import { signOut } from './lib/session-actions.ts';
 import { AdsPage } from './routes/ads.tsx';
 import { AdsCampaignsPage } from './routes/ads-campaigns.tsx';
 import { AgentsPage } from './routes/agents.tsx';
+import { AiConnectionsPage } from './routes/ai-connections.tsx';
+import { AiUsagePage } from './routes/ai-usage.tsx';
 import { AuditPage } from './routes/audit.tsx';
 import { PersonalDataPage } from './routes/personal-data.tsx';
 import { AuthPage } from './routes/auth.tsx';
@@ -83,6 +85,7 @@ import { MyWorkPage } from './routes/my-work.tsx';
 import { MeetingsPage } from './routes/meetings.tsx';
 import { MeetingDetailPage } from './routes/meeting-detail.tsx';
 import { MeetingRecordPage } from './routes/meeting-record.tsx';
+import { MeetingMinutesPage } from './routes/meeting-minutes.tsx';
 import { VatPage } from './routes/vat.tsx';
 import { PortalListPage } from './routes/portal-list.tsx';
 import { VendorsPage } from './routes/vendors.tsx';
@@ -94,6 +97,7 @@ import { HrBankTemplatesPage } from './routes/hr-bank-templates.tsx';
 import { HrEmployeesPage } from './routes/hr-employees.tsx';
 import { HrDeclarationsPage } from './routes/hr-declarations.tsx';
 import { HrPayrollPage } from './routes/hr-payroll.tsx';
+import { HouseholdPage } from './routes/household.tsx';
 import { MarketplaceBalancePage } from './routes/marketplace-balance.tsx';
 import { StockPage } from './routes/stock.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
@@ -212,7 +216,7 @@ const indexRoute = createRoute({
     // Several orgs (an accountant's clients): the home screen (issue #318); one: its Inbox; none: onboarding.
     const landing = landingFor(me.orgs);
     if (landing.to === 'clients') throw redirect({ to: '/clients' });
-    if (landing.to === 'inbox') throw redirect({ to: '/o/$slug/inbox', params: { slug: landing.slug } });
+    if (landing.to === 'overview') throw redirect({ to: '/o/$slug/overview', params: { slug: landing.slug } });
     throw redirect({ to: '/onboarding' });
   },
 });
@@ -377,12 +381,12 @@ async function enterOrg(slug: string) {
   }
 }
 
-// A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the inbox (ADR-0031 §3). The module of
+// A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the overview (ADR-0031 §3, #3225). The module of
 // every screen comes from the manifests (#1652), so a new module's screens are guarded without a line here. The screen
 // is the matched route's own path ('/o/$slug/journal' for /o/acme/JOURNAL), not the address as typed.
 function requireInstalledScreen(slug: string, matches: readonly { fullPath: unknown }[]) {
   const screen = matches.at(-1)?.fullPath;
-  if (typeof screen === 'string' && !screenInstalled(getConfig().modules, screen)) throw redirect({ to: '/o/$slug/inbox', params: { slug } });
+  if (typeof screen === 'string' && !screenInstalled(getConfig().modules, screen)) throw redirect({ to: '/o/$slug/overview', params: { slug } });
 }
 
 export const orgRoute = createRoute({
@@ -400,11 +404,11 @@ const orgIndexRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/',
   beforeLoad: ({ params }) => {
-    throw redirect({ to: '/o/$slug/inbox', params: { slug: params.slug } });
+    throw redirect({ to: '/o/$slug/overview', params: { slug: params.slug } });
   },
 });
 
-// What waits for the user in this org today (#1249), first in the menu; opening an org still lands on its Inbox.
+// What waits for the user in this org today (#1249): first in the app switcher, and where opening an org lands (#3225).
 const overviewRoute = createRoute({ getParentRoute: () => orgRoute, path: 'overview', component: OverviewPage });
 // ?status= keeps the Inbox tab other than pending (#1513).
 export const inboxRoute = createRoute({ getParentRoute: () => orgRoute, path: 'inbox', validateSearch: parseInboxSearch, component: InboxPage });
@@ -427,6 +431,7 @@ const paymentRemindersRoute = createRoute({ getParentRoute: () => orgRoute, path
 // The drafts of the sales e-invoices (#2500).
 const salesInvoicesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sales-invoices', component: SalesInvoicesPage });
 const stockRoute = createRoute({ getParentRoute: () => orgRoute, path: 'stock', component: StockPage });
+const householdRoute = createRoute({ getParentRoute: () => orgRoute, path: 'household', component: HouseholdPage });
 const marketplaceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'marketplace', component: MarketplaceBalancePage });
 // The HR app's staff list (#2530), with the hr module: owners and admins only.
 const hrEmployeesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/employees', component: HrEmployeesPage });
@@ -544,6 +549,9 @@ const personalDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'p
 // In-app notifications of the kernel and finance (#671).
 const notificationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notifications', component: NotificationsPage });
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'agents', component: AgentsPage });
+// The AI use and budgets and the AI apps connected over MCP: screens of the Ludy AI app (#3225), moved off the org chart screen and Settings.
+const aiUsageRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-usage', component: AiUsagePage });
+const aiConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-connections', component: AiConnectionsPage });
 // ?filter= keeps the tab of the tasks list (#1513).
 const tasksRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks', validateSearch: parseTasksSearch, component: TasksPage });
 // The bookings of the public booking page (#1320), with the crm module.
@@ -578,6 +586,16 @@ const meetingDetailRoute = createRoute({
   component: MeetingDetailPage,
   // A search hit opens the transcript at its line (L2, #2589): ?seg= the transcript line to scroll to and mark. Only the shape is checked here; the transcript shows the line only to a reader.
   validateSearch: (search: Record<string, unknown>): { seg?: string } => (typeof search.seg === 'string' && /^[0-9a-f-]{36}$/i.test(search.seg) ? { seg: search.seg.toLowerCase() } : {}),
+});
+// The printable minutes of a meeting, "Xem biên bản" (Meetings A4, #3162), outside the org's frame so only the sheet reaches the paper: only what the recorder published, read by the meeting's readers.
+const meetingMinutesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/o/$slug/print/meeting-minutes/$id',
+  beforeLoad: async ({ params, matches }) => {
+    await enterOrg(params.slug);
+    requireInstalledScreen(params.slug, matches);
+  },
+  component: MeetingMinutesPage,
 });
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
@@ -614,6 +632,7 @@ const routeTree = rootRoute.addChildren([
   quoteDocumentRoute,
   shareRoute,
   socialPlanPrintRoute,
+  meetingMinutesRoute,
   inviteRoute,
   extensionConnectRoute,
   oauthConsentRoute,
@@ -623,7 +642,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

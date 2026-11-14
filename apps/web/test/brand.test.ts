@@ -135,8 +135,22 @@ describe('brand on the landing page (#1683)', () => {
     expect(en.modules.social.name).toBe('Ludy Engage');
   });
 
-  it('names the products Ludy Accounting and Ludy Engage', () => {
-    expect([vi.modules.finance.name, vi.modules.social.name]).toEqual(['Ludy Kế toán', 'Ludy Engage']);
-    expect([en.modules.finance.name, en.modules.social.name]).toEqual(['Ludy Accounting', 'Ludy Engage']);
+  it('names the products after the regrouped app shell (#3235)', () => {
+    expect([vi.modules.notes.name, vi.modules.finance.name, vi.modules.social.name]).toEqual(['Ludy Cộng tác', 'Ludy Tài chính', 'Ludy Engage']);
+    expect([en.modules.notes.name, en.modules.finance.name, en.modules.social.name]).toEqual(['Ludy Teamwork', 'Ludy Finance', 'Ludy Engage']);
+    expect(vi.appCards.items.map((item) => [item.name, item.agent])).toEqual([
+      ['Ludy Cộng tác', N.gm],
+      ['Ludy Tài chính', N.finance],
+      ['Ludy Engage', `${N.sales}, ${N.marketing}`],
+      ['Ludy Nhân sự', N.finance],
+      ['Ludy AI', ''],
+    ]);
+    expect(en.appCards.items.map((item) => [item.name, item.agent])).toEqual([
+      ['Ludy Teamwork', N.gm],
+      ['Ludy Finance', N.finance],
+      ['Ludy Engage', `${N.sales}, ${N.marketing}`],
+      ['Ludy HR', N.finance],
+      ['Ludy AI', ''],
+    ]);
   });
 });

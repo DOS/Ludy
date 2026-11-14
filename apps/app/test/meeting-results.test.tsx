@@ -47,14 +47,14 @@ const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView =>
 const view = (stage: 'draft' | 'published', summary: string) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions: ['Giữ giá cũ'], tainted: false });
 
 const READER = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
-function render(results: Results, summaryEnabled = false) {
+function render(results: Results, summaryEnabled = false, template: 'general' | 'briefing' | 'customer' = 'general') {
   client.current.setQueryData(['meetings', 'results', 'get'], results);
   client.current.setQueryData(['meetings', 'results', 'summaryStatus'], { meetingId: 'm1', enabled: summaryEnabled });
   client.current.setQueryData(['org', 'get'], { members: [{ userId: READER, email: 'lan@example.com', displayName: 'Chị Lan', role: 'member' }] });
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale="en" messages={catalog('en')}>
-        <MeetingResults meetingId="m1" readers={[READER, '0198a0b4-0000-7e6f-8a9b-0c1d2e3f4a5c']} />
+        <MeetingResults meetingId="m1" readers={[READER, '0198a0b4-0000-7e6f-8a9b-0c1d2e3f4a5c']} template={template} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -136,3 +136,54 @@ describe('MeetingResults', () => {
     expect(/<button[^>]*>(?:(?!<\/button>).)*Share with the attendees<\/button>/.exec(own)?.[0]).not.toMatch(/\sdisabled(=|\s|>)/);
   });
 });
+
+// Minutes templates (A4, #3162): the recorder picks the type, types section by section when Vy is off, and everyone reads a template's text under its headings.
+describe('MeetingResults with a minutes template', () => {
+  const briefing = 'Kết quả công việc kỳ trước\nĐã gửi hợp đồng.\n\nKế hoạch kỳ tới\nGửi báo giá thứ sáu.';
+  it('gives the recorder the five types, with the chosen one selected, and one box per section instead of the single summary box', () => {
+    const html = render({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] }, false, 'briefing');
+    expect(html).toContain('data-testid="template-picker"');
+    for (const name of Object.values(en.meetings.templates.names)) expect(html).toContain(name);
+    expect(/<option[^>]*value="briefing"[^>]*selected/.test(html) || /<option[^>]*selected[^>]*value="briefing"/.test(html)).toBe(true);
+    expect(html).toContain('data-testid="section-editor"');
+    for (const label of Object.values(en.meetings.templates.sections.briefing)) expect(html).toContain(label);
+    expect(html).not.toContain(`aria-label="${en.meetings.results.summary}"`);
+  });
+
+  it('keeps the single summary box on the general summary, and gives a reader no picker and no editor', () => {
+    const general = render({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] });
+    expect(general).toContain(`aria-label="${en.meetings.results.summary}"`);
+    expect(general).not.toContain('data-testid="section-editor"');
+    const reader = render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', briefing), items: [] }, false, 'briefing');
+    expect(reader).not.toContain('data-testid="template-picker"');
+    expect(reader).not.toContain('data-testid="section-editor"');
+  });
+
+  it('fills the editor from the draft by its headings, and shows a shared template text under its section names', () => {
+    const recorder = render({ meetingId: 'm1', isRecorder: true, draft: view('draft', briefing), published: null, items: [] }, false, 'briefing');
+    expect(recorder).toContain('Đã gửi hợp đồng.');
+    expect(recorder).toContain('Gửi báo giá thứ sáu.');
+    expect(recorder).not.toContain(en.meetings.templates.reflow);
+    const reader = render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', briefing), items: [] }, false, 'briefing');
+    expect(reader).toContain(en.meetings.templates.sections.briefing.progress);
+    expect(reader).toContain('Gửi báo giá thứ sáu.');
+    // The headings are not printed twice as text: the Vietnamese heading line is gone, the section name is the screen's own.
+    expect(reader).not.toContain('Kết quả công việc kỳ trước');
+  });
+
+  it('stops the recorder from saving a section longer than 1200 characters, as text reflowed from a long free summary can be, and says why', () => {
+    const long = 'a'.repeat(1300);
+    const html = render({ meetingId: 'm1', isRecorder: true, draft: view('draft', long), published: null, items: [] }, false, 'customer');
+    expect(html).toContain(en.meetings.templates.tooLong);
+    expect(/<button[^>]*>(?:(?!<\/button>).)*Save draft<\/button>/.exec(html)?.[0]).toMatch(/\sdisabled(=|\s|>)/);
+  });
+
+  it('puts text that is not in the template\'s form into the first section and says so, and shows a shared one whole', () => {
+    const recorder = render({ meetingId: 'm1', isRecorder: true, draft: view('draft', 'Một đoạn viết trước khi đổi loại'), published: null, items: [] }, false, 'customer');
+    expect(recorder).toContain('Một đoạn viết trước khi đổi loại');
+    expect(recorder).toContain(en.meetings.templates.reflow.replace(/'/g, '&#x27;'));
+    const reader = render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'Một đoạn viết trước khi đổi loại'), items: [] }, false, 'customer');
+    expect(reader).toContain('Một đoạn viết trước khi đổi loại');
+  });
+});
+

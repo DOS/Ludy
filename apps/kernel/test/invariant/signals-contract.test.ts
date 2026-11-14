@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
+  zConversationUnansweredSignal,
   zCrmOpenDealSignal,
   zCrmWonDealSignal,
   zFinanceOverdueReceivableSignal,
@@ -22,7 +23,8 @@ import { financeQueries } from '@crove/mod-finance';
 import { kernelQueries } from '@crove/kernel';
 
 // The only keys a signal row may have: ids, days, counts and amounts. Adding a key is a change to this protected file and needs a privacy review.
-const ROW_KEYS = ['amount', 'changedOn', 'count', 'dealId', 'lastSaleOn', 'oldestDueOn', 'partyId', 'wonOn'];
+// `conversationId` and `since` belong to the conversation read of the fourth rule (#3124): the id of the thread and the moment its oldest unanswered customer message arrived, never a word of it.
+const ROW_KEYS = ['amount', 'changedOn', 'conversationId', 'count', 'dealId', 'lastSaleOn', 'oldestDueOn', 'partyId', 'since', 'wonOn'];
 
 const ROWS = {
   'finance.signals.sales': zFinanceSalesSignal,
@@ -31,8 +33,9 @@ const ROWS = {
   'finance.signals.overdue_receivables': zFinanceOverdueReceivableSignal,
   'finance.signals.supplier_bank_changes': zFinanceSupplierBankChangeSignal,
   'finance.signals.supplier_payments_waiting': zFinanceSupplierPaymentsWaitingSignal,
+  // The inbox's side of the fourth rule (#3124): ids and an instant, never a word of a message.
+  'kernel.conversation.signals_unanswered': zConversationUnansweredSignal,
 } as const;
-
 // A value the schema refuses: it fails to parse or throws (a date check that throws on a malformed day still refuses the row; a follow-up makes it fail cleanly).
 const refuses = (run: () => { success: boolean }): boolean => {
   try {
@@ -52,7 +55,7 @@ describe('the signals contract carries ids, dates, counts and amounts only', () 
       // Each value is a uuid, a date, a count or a decimal string: parse a row of the right shape, then the same row with one more key.
       const sample: Record<string, unknown> = {};
       for (const key of keys) {
-        sample[key] = key.endsWith('Id') ? '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b' : key === 'count' ? 1 : key === 'amount' ? '100000' : '2026-11-10';
+        sample[key] = key.endsWith('Id') ? '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b' : key === 'count' ? 1 : key === 'amount' ? '100000' : key === 'since' ? '2026-11-10T09:00:00+07:00' : '2026-11-10';
       }
       const ok = schema.safeParse(sample);
       expect(ok.success, `${read}: ${JSON.stringify(ok.error?.issues)}`).toBe(true);
@@ -76,9 +79,9 @@ describe('a registered signals read is a plain, role-listed, scope-limited query
     extension?: unknown;
     mcp?: { scope: string };
   }>;
-  const signals = all.filter((q) => /^(finance|crm)\.signals\./.test(q.name));
+  const signals = all.filter((q) => /^((finance|crm)\.signals\.|kernel\.conversation\.signals_)/.test(q.name));
 
-  it('has no read outside the six names of the contract', () => {
+  it('has no read outside the names of the contract', () => {
     expect(signals.map((q) => q.name).filter((n) => !(n in ROWS))).toEqual([]);
   });
 

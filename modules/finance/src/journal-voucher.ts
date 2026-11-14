@@ -124,6 +124,7 @@ export async function postJournalVoucher(
   stockClosingMonth: string | null = null,
   stockCountId: string | null = null,
   payrollRunId: string | null = null,
+  settlementId: string | null = null,
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
@@ -144,6 +145,8 @@ export async function postJournalVoucher(
       ...(stockCountId === null ? {} : { stock_count_id: stockCountId }),
       // The column of a pay run's posting is written only for one, as the others.
       ...(payrollRunId === null ? {} : { payroll_run_id: payrollRunId }),
+      // The column of a marketplace settlement's posting is written only for one, as the others.
+      ...(settlementId === null ? {} : { settlement_id: settlementId }),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
@@ -165,7 +168,7 @@ export async function postJournalVoucher(
       memo: j.memo,
     })),
   });
-  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}) });
+  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}), ...(settlementId ? { settlementId } : {}) });
   await ctx.activity('finance.journal_voucher', voucher.id, 'journal_voucher.recorded', `Ghi sổ ${JOURNAL_VOUCHER_LABEL.toLowerCase()} ${code}`);
   await ctx.emit('finance.journal_voucher.recorded', { voucherId: voucher.id, journalEntryId, number: voucher.number });
   return { voucherId: voucher.id, journalEntryId, code };

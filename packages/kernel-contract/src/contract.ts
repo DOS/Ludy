@@ -190,8 +190,8 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput } from './marketplace-balance.ts';
-import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk } from './marketplace-balance.ts';
+import { zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -342,6 +342,8 @@ import {
   zLiveStopped,
   zLiveTick,
   zLiveTicked,
+  zMeetingConsentPolicy,
+  zMeetingConsentPolicyGet,
   zMeetingExtensionStatus,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
@@ -373,6 +375,13 @@ import {
   zActionItemSource,
   zActionItemsAccepted,
   zMeetingResultSave,
+  zMeetingTemplateSet,
+  zMeetingTemplateSetDone,
+  zNotes,
+  zNotesPreview,
+  zNotesPreviewInput,
+  zNotesSave,
+  zNotesSaved,
   zMeetingResultSaved,
   zMeetingResults,
   zResultPublish,
@@ -401,7 +410,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdProfileGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -648,6 +657,11 @@ export const contract = {
     setTelegramChats: oc
       .input(z.object({ connectionId: zId, on: z.boolean() }))
       .output(z.object({ chatState: z.enum(['off', 'enabling', 'on', 'disabling']) })),
+    // Allows a Telegram Business account's chats in, or stops them (#3191): any Premium user can connect a bot that has Business Mode on, so an owner or
+    // admin chooses which accounts count. The account is named by the `ref` the connection list gave.
+    setTelegramBusiness: oc
+      .input(z.object({ connectionId: zId, ref: z.string().regex(/^[0-9a-f]{12}$/), allow: z.boolean() }))
+      .output(z.object({ approved: z.boolean() })),
     // A Discord channel (#832): the URL of a webhook a server admin made in the channel's settings. The server checks the
     // webhook with Discord, then seals its token; the format is checked by the server, in words.
     connectDiscord: oc
@@ -889,6 +903,8 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The recorder picks the minutes template of their meeting (A4, #3162).
+    setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
@@ -926,6 +942,11 @@ export const contract = {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
     },
+    // "Cần xác nhận trước khi ghi" (A2, #3160): standard or strict; every member reads it, an owner or admin changes it.
+    consentPolicy: {
+      get: oc.input(zMeetingConsentPolicyGet).output(zMeetingConsentPolicy),
+      set: oc.input(zMeetingConsentPolicy).output(zMeetingConsentPolicy),
+    },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
@@ -949,6 +970,12 @@ export const contract = {
       review: oc.input(zDraftReview).output(zDraftReviewed),
       summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
       summarize: oc.input(zSummaryRef).output(zSummarized),
+      // "Ghi chú của tôi" (A5, #3163): the recorder's own rough notes, theirs alone; `enhance` is the recorder's Vy expanding them with the transcript (the same run family and budget
+      // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
+      notesGet: oc.input(zMeetingRef).output(zNotes),
+      notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      enhance: oc.input(zSummaryRef).output(zSummarized),
+      enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
     },
     // The machine translation of the summary (meetings integrations E1, #3184): the member's own Vy translates what they read; the result is theirs alone, beside the original.
     // `status` is the button (enabled or why not, the target language, the expected cost), `translate` is the click, `get` the member's own translations.
@@ -1737,6 +1764,9 @@ export const contract = {
           // The payment of a pay run's net pay or one remittance (#2532): the server builds the voucher from the frozen run; an owner or an admin approves. HR_RUN_NOT_FOUND (404),
           // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_POSTING_REVERSED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
           z.object({ command: z.literal('finance.payroll_payment.record'), input: zHrPaymentRequest, idempotencyKey: zId }),
+          // The posting of a stored marketplace settlement (#2516): the server builds one journal voucher from its lines; an owner or an admin approves. Refused until the accountant has confirmed
+          // the account map. MARKETPLACE_POSTING_MAP_UNCONFIRMED, MARKETPLACE_SETTLEMENT_POSTED, PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_POSTABLE (422), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
+          z.object({ command: z.literal('finance.marketplace_settlement.record'), input: zMarketplaceSettlementRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -1951,6 +1981,8 @@ export const contract = {
     profile: oc.input(zHouseholdProfileGet).output(zHouseholdProfileView),
     profileSet: oc.input(zHouseholdProfileSet).output(zHouseholdProfileView),
     rules: oc.input(zHouseholdRulesGet.optional()).output(zHouseholdRules),
+    // S1a-HKD, the sales listing of a household of group 1, from the ledger's account 511; refused for an entity whose profile does not require it.
+    s1a: oc.input(zHouseholdS1aGet).output(zHouseholdS1a),
   },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
@@ -2065,6 +2097,10 @@ export const contract = {
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
     balance: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceBalance),
+    // The facts the coworker's line is written from (#2516 slice E): stored settlements not yet posted, the platforms' balance and the fees awaiting an invoice. Every role reads; facts only.
+    facts: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceFacts),
+    // The finance coworker's one line on the Sàn screen: the facts always, and one checked sentence when a model is on, within the AI budget. Read only: it stores nothing and posts nothing.
+    line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

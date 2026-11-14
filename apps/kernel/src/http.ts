@@ -38,6 +38,7 @@ import {
   zHrBankFileQuery,
   zHrDeclarationDocument,
   type MisaGoodsCode,
+  type HouseholdS1a,
   type StockCard,
   type StockReportRow,
   type UploadPurpose,
@@ -85,6 +86,7 @@ import {
   buildStatementsHtkkXml,
   buildFixedAssetsWorkbook,
   buildStockWorkbook,
+  buildS1aWorkbook,
   buildMisaWorkbook,
   buildVat01Xml,
   buildVatWorkbook,
@@ -669,6 +671,8 @@ export function createHttpApp(deps: HttpDeps) {
     c.json({
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
+      // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704): provider ids of the identity provider.
+      authProviders: config.AUTH_OAUTH_PROVIDERS,
       aiEnabled: deps.aiEnabled,
       // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
       mcpEnabled: deps.oauth !== undefined,
@@ -3385,6 +3389,32 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'nhap-xuat-ton', month, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S1a-HKD, the sales listing of a household business (#2517), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period, the roles and that the
+    // entity's profile requires S1a (422 and 403 otherwise), so the file name only holds a valid period. The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s1a.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS1a>('finance.household.s1a', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS1aWorkbook(book, config.BRAND_NAME);
+        // The export's audit row (the entity, the book, the period and the number of rows). No row, no download.
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S1a', period, rows: book.rows.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s1a-hkd', period, ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });

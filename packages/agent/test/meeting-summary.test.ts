@@ -6,7 +6,10 @@ import { describe, expect, it } from 'vitest';
 import {
   SummaryError,
   bindPorts,
+  checkEnhanced,
   checkSummary,
+  enhanceNotes,
+  noteLines,
   hasContact,
   noKnowledge,
   numbersIn,
@@ -19,6 +22,7 @@ import {
   type ModelPort,
   type Ports,
   type SummarySegment,
+  type SummaryTemplate,
 } from '../src/member-vy/index.ts';
 
 const A: MemberRef = { orgId: 'org-1', memberUserId: 'alice' };
@@ -59,6 +63,8 @@ describe('checkSummary', () => {
       SEGMENTS,
     );
     expect(out).toEqual<MeetingSummaryBody>({
+      template: 'general',
+      sections: [],
       summary: 'Cuộc họp bàn báo giá cho khách A, tổng 120 triệu. Chốt giữ giá cũ.',
       decisions: ['Giữ giá cũ'],
       items: [{ title: 'Gửi báo giá cho khách A', who: 'Nam', when: 'trước thứ sáu', seconds: 25 }],
@@ -148,6 +154,88 @@ describe('checkSummary', () => {
   it('reads JSON the model wrapped in a code fence or in a sentence', () => {
     const wrapped = 'Đây là kết quả:\n```json\n' + body({ summary: 'Họp báo giá.', decisions: [], items: [] }) + '\n```';
     expect(checkSummary(wrapped, SEGMENTS).summary).toBe('Họp báo giá.');
+  });
+});
+
+// A4 (#3162): the same run fills the sections of a minutes template; the sections get the same checks as the summary.
+const BRIEFING: SummaryTemplate = {
+  code: 'briefing',
+  sections: [
+    { key: 'progress', title: 'Kết quả công việc kỳ trước', hint: 'done' },
+    { key: 'issues', title: 'Vướng mắc, tồn tại', hint: 'blockers' },
+    { key: 'plan', title: 'Kế hoạch kỳ tới', hint: 'next' },
+  ],
+};
+describe('checkSummary with a template', () => {
+  it('keeps the sections the template names, in its order, with the template code, and no summary', () => {
+    const out = checkSummary(
+      body({
+        summary: 'ignored on a template',
+        sections: [
+          { key: 'plan', text: 'Nam gửi báo giá trước thứ sáu.\nHọp lại lúc 9 giờ sáng thứ hai.' },
+          { key: 'progress', text: 'Báo giá cho khách A tổng 120 triệu.' },
+        ],
+        decisions: ['Giữ giá cũ'],
+        items: [],
+      }),
+      SEGMENTS,
+      BRIEFING,
+    );
+    expect(out.template).toBe('briefing');
+    expect(out.summary).toBe('');
+    expect(out.sections).toEqual([
+      { key: 'progress', text: 'Báo giá cho khách A tổng 120 triệu.' },
+      { key: 'plan', text: 'Nam gửi báo giá trước thứ sáu.\nHọp lại lúc 9 giờ sáng thứ hai.' },
+    ]);
+    expect(out.dropped).toBe(0);
+  });
+
+  it('removes a sentence of a section that writes a figure the transcript lacks or a way to reach someone, and drops a key the template does not have or repeats', () => {
+    const out = checkSummary(
+      body({
+        sections: [
+          { key: 'progress', text: 'Báo giá cho khách A. Tổng 999 triệu. Gọi 0912 345 678.' },
+          { key: 'progress', text: 'Lần hai của cùng một mục.' },
+          { key: 'secret', text: 'Không có trong mẫu.' },
+          { key: 'issues', text: 'Xem https://evil.example/x' },
+        ],
+        decisions: [],
+        items: [],
+      }),
+      SEGMENTS,
+      BRIEFING,
+    );
+    expect(out.sections).toEqual([{ key: 'progress', text: 'Báo giá cho khách A.' }]);
+    // 2 sentences, 1 repeated key, 1 foreign key, 1 link line.
+    expect(out.dropped).toBe(5);
+  });
+
+  it('caps a section by whole lines and refuses an answer whose sections, decisions and items are all empty', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `Dòng số ${i === 0 ? 'một' : 'tiếp'} ${'báo giá '.repeat(10)}`).join('\n');
+    const out = checkSummary(body({ sections: [{ key: 'progress', text: long }], decisions: [], items: [] }), SEGMENTS, BRIEFING);
+    expect((out.sections[0] as { text: string }).text.length).toBeLessThanOrEqual(1200);
+    expect(() => checkSummary(body({ sections: [{ key: 'plan', text: 'Giá 999 triệu.' }], decisions: [], items: [] }), SEGMENTS, BRIEFING)).toThrow(SummaryError);
+  });
+
+  it('counts an answer that gave a summary or an object instead of the list of sections', () => {
+    const summaryOnly = checkSummary(body({ summary: 'Họp báo giá.', decisions: ['Giữ giá cũ'], items: [] }), SEGMENTS, BRIEFING);
+    expect(summaryOnly.sections).toEqual([]);
+    expect(summaryOnly.summary).toBe('');
+    expect(summaryOnly.dropped).toBe(1);
+    const asObject = checkSummary(body({ sections: { plan: 'Họp lại.' }, decisions: ['Giữ giá cũ'], items: [] }), SEGMENTS, BRIEFING);
+    expect(asObject.dropped).toBe(1);
+  });
+
+  it('asks the model for the sections with their keys and hints, and leaves the general instruction alone', async () => {
+    const fake = fakeModel(body({ sections: [{ key: 'plan', text: 'Họp lại lúc 9 giờ sáng thứ hai.' }], decisions: [], items: [] }));
+    const out = await summarizeMeeting({ segments: SEGMENTS, language: 'vi', template: BRIEFING }, bindPorts(A, fake.ports));
+    expect(out.parsed.sections).toEqual([{ key: 'plan', text: 'Họp lại lúc 9 giờ sáng thứ hai.' }]);
+    const system = (fake.seen[0] as { system: string }).system;
+    expect(system).toContain('key "progress" (Kết quả công việc kỳ trước): done');
+    expect(system).toContain('"sections"');
+    const general = fakeModel(body({ summary: 'Họp báo giá.', decisions: [], items: [] }));
+    await summarizeMeeting({ segments: SEGMENTS, language: 'vi' }, bindPorts(A, general.ports));
+    expect((general.seen[0] as { system: string }).system).not.toContain('key "');
   });
 });
 
@@ -247,3 +335,132 @@ describe('helpers', () => {
     expect(performance.now() - started).toBeLessThan(1500);
   });
 });
+
+// A5 (#3163): "Viết lại đầy đủ". The recorder's own lines are named by number and come back verbatim (code inserts them); every line Vy adds rests on a real second of the transcript.
+describe('enhanced notes', () => {
+  const NOTES = ['báo giá khách A 120 triệu', 'Nam gửi trước thứ sáu', 'hỏi lại chiết khấu'];
+  const answer = (value: unknown) => JSON.stringify(value);
+
+  it('keeps the recorder\'s lines verbatim by number and marks the lines Vy added, each with its transcript second', () => {
+    const out = checkEnhanced(
+      answer({ sections: [{ key: 'all', lines: [{ note: 1 }, { text: 'Chốt giữ giá cũ.', seconds: 60 }, { note: 2 }, { note: 3 }] }] }),
+      SEGMENTS,
+      NOTES,
+    );
+    expect(out.enhanced.sections).toEqual([
+      {
+        key: null,
+        lines: [
+          { own: true, text: 'báo giá khách A 120 triệu', seconds: null },
+          { own: false, text: 'Chốt giữ giá cũ.', seconds: 60 },
+          { own: true, text: 'Nam gửi trước thứ sáu', seconds: null },
+          { own: true, text: 'hỏi lại chiết khấu', seconds: null },
+        ],
+      },
+    ]);
+    expect(out.dropped).toBe(0);
+    expect(out.summary).toBe('');
+    expect(out.template).toBe('general');
+  });
+
+  it('never rewords a note line: a line the model writes out instead of naming is an added line that needs a second, and the original is appended where it belongs', () => {
+    const out = checkEnhanced(answer({ sections: [{ key: 'all', lines: [{ note: 1 }, { text: 'Nam gửi báo giá trước thứ sáu.', seconds: 25 }, { text: 'báo giá khách A 120 triệu (sửa lại)' }] }] }), SEGMENTS, NOTES);
+    const lines = (out.enhanced.sections[0] as { lines: Array<{ own: boolean; text: string }> }).lines;
+    // The reworded copy has no second: dropped. Notes 2 and 3 were not named, so they follow, as typed.
+    expect(lines.map((l) => [l.own, l.text])).toEqual([
+      [true, 'báo giá khách A 120 triệu'],
+      [false, 'Nam gửi báo giá trước thứ sáu.'],
+      [true, 'Nam gửi trước thứ sáu'],
+      [true, 'hỏi lại chiết khấu'],
+    ]);
+    expect(out.dropped).toBe(1);
+  });
+
+  it('removes an added line that points at no moment of the meeting, carries a figure nobody said, or carries a way to reach someone; a figure from the notes is fine', () => {
+    const out = checkEnhanced(
+      answer({
+        sections: [
+          {
+            key: 'all',
+            lines: [
+              { note: 1 },
+              { text: 'Giá vẫn là 120 triệu như đã ghi.', seconds: 5 },
+              { text: 'Giảm thêm 30%.', seconds: 25 },
+              { text: 'Họp lúc 9 giờ sáng thứ hai.', seconds: 9999 },
+              { text: 'Xem https://evil.example/x', seconds: 25 },
+              { text: 'Gọi 0912 345 678', seconds: 25 },
+              { text: 'Không có giây', seconds: null },
+            ],
+          },
+        ],
+      }),
+      SEGMENTS,
+      NOTES,
+    );
+    const lines = (out.enhanced.sections[0] as { lines: Array<{ own: boolean; text: string }> }).lines.filter((l) => !l.own);
+    expect(lines.map((l) => l.text)).toEqual(['Giá vẫn là 120 triệu như đã ghi.']);
+    expect(out.dropped).toBe(5);
+  });
+
+  it('uses each note line once, drops a number that is not a note and an answer shaped wrongly, and refuses an expansion that added nothing', () => {
+    const out = checkEnhanced(answer({ sections: [{ key: 'all', lines: [{ note: 1 }, { note: 1 }, { note: 9 }, { note: 0 }, 'x', { text: 'Chốt giữ giá cũ.', seconds: 60 }] }, 'y'] }), SEGMENTS, NOTES);
+    expect(out.dropped).toBe(5);
+    expect((out.enhanced.sections[0] as { lines: unknown[] }).lines).toHaveLength(4);
+    expect(() => checkEnhanced(answer({ sections: [{ key: 'all', lines: [{ note: 1 }, { note: 2 }, { note: 3 }] }] }), SEGMENTS, NOTES)).toThrow(SummaryError);
+    expect(() => checkEnhanced('not json', SEGMENTS, NOTES)).toThrow(SummaryError);
+  });
+
+  it('refuses notes with more lines than one run takes, before any call, and caps the lines Vy adds', async () => {
+    const many = Array.from({ length: 301 }, (_, i) => `dòng ${i}`).join('\n');
+    const fake = fakeModel('{}');
+    const refused = await enhanceNotes({ segments: SEGMENTS, language: 'vi', notes: many }, bindPorts(A, fake.ports)).then(() => null, (e: unknown) => (e as { code?: string }).code);
+    expect(refused).toBe('NOTES_TOO_LONG');
+    expect(fake.seen).toHaveLength(0);
+    // No digits: a figure nobody said would remove the line for another reason.
+    const lines = Array.from({ length: 130 }, (_, i) => ({ text: `Dòng thêm ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}.`, seconds: 25 }));
+    const out = checkEnhanced(answer({ sections: [{ key: 'all', lines: [{ note: 1 }, ...lines] }] }), SEGMENTS, NOTES);
+    expect((out.enhanced.sections[0] as { lines: Array<{ own: boolean }> }).lines.filter((l) => !l.own)).toHaveLength(100);
+    expect(out.dropped).toBe(30);
+  });
+
+  it('places lines in the template\'s sections in its order, drops a key the template lacks, and appends an unnamed note line to the last section that has lines', () => {
+    const template: SummaryTemplate = {
+      code: 'briefing',
+      sections: [
+        { key: 'progress', title: 'Kết quả công việc kỳ trước', hint: 'done' },
+        { key: 'plan', title: 'Kế hoạch kỳ tới', hint: 'next' },
+      ],
+    };
+    const out = checkEnhanced(
+      answer({
+        sections: [
+          { key: 'plan', lines: [{ note: 2 }, { text: 'Họp lại lúc 9 giờ sáng thứ hai.', seconds: 60 }] },
+          { key: 'progress', lines: [{ note: 1 }] },
+          { key: 'secret', lines: [{ note: 3 }] },
+        ],
+      }),
+      SEGMENTS,
+      NOTES,
+      template,
+    );
+    expect(out.template).toBe('briefing');
+    expect(out.enhanced.sections.map((s) => s.key)).toEqual(['progress', 'plan']);
+    // Note 3 sat in a section the template lacks (dropped there), so it is appended to the last section with lines, never lost.
+    expect((out.enhanced.sections[1] as { lines: Array<{ text: string }> }).lines.map((l) => l.text)).toEqual(['Nam gửi trước thứ sáu', 'Họp lại lúc 9 giờ sáng thứ hai.', 'hỏi lại chiết khấu']);
+    expect(out.dropped).toBe(1);
+  });
+
+  it('splits the notes into lines, asks the model once with the notes numbered and the transcript, and returns private text', async () => {
+    const fake = fakeModel(answer({ sections: [{ key: 'all', lines: [{ note: 1 }, { note: 2 }, { text: 'Chốt giữ giá cũ.', seconds: 60 }] }] }));
+    const out = await enhanceNotes({ segments: SEGMENTS, language: 'vi', notes: ' báo giá khách A 120 triệu \n\n  Nam gửi trước thứ sáu\n' }, bindPorts(A, fake.ports));
+    expect(noteLines(' a \n\n b \n')).toEqual(['a', 'b']);
+    expect(fake.seen).toHaveLength(1);
+    expect((fake.seen[0] as { user: string }).user).toContain('1: báo giá khách A 120 triệu');
+    expect((fake.seen[0] as { user: string }).user).toContain('[0:20] Nam');
+    expect(revealPrivateText(out.body)).toContain('"enhanced"');
+    expect(out.parsed.dropped).toBe(0);
+    await expect(enhanceNotes({ segments: SEGMENTS, language: 'vi', notes: '  \n ' }, bindPorts(A, fakeModel('{}').ports))).rejects.toBeInstanceOf(SummaryError);
+    await expect(enhanceNotes({ segments: [], language: 'vi', notes: 'x' }, bindPorts(A, fakeModel('{}').ports))).rejects.toBeInstanceOf(SummaryError);
+  });
+});
+

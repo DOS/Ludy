@@ -5,7 +5,7 @@ import { Chip, toneOf } from './ui';
 
 type Sales = Dictionary['modules']['sales'];
 
-// The pieces of the booking side of Ludy Engage's Customers & Sales group, drawn from the real screens with the sample
+// The pieces of the booking side of Ludy Engage's CRM group, drawn from the real screens with the sample
 // company's data: the public page a client picks a time on, the booking that reaches the host, the host's connected
 // calendar, and the sales coworker's suggestion for a client's message. Used by the Ludy Engage page.
 export function BookingSlots({ sales }: { sales: Sales }) {

@@ -37,6 +37,8 @@ let ticker: ReturnType<typeof setInterval> | undefined;
 // extension knows no meeting language before the meeting exists, so the browser's language is the default.
 let noticeLang: RecordingNoticeLanguage = T === ENGLISH ? 'en' : 'vi';
 let copyNote = '';
+// Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
+let strictOrg = false;
 
 async function copyNotice(): Promise<void> {
   try {
@@ -192,7 +194,7 @@ async function meetingsView(state: State): Promise<Node[]> {
   title.addEventListener('input', () => void (draft.title = title.value));
   const method = h('select', { id: 'method' },
     h('option', { value: '' }, T.consentChoose),
-    ...CONSENT_METHODS.map((m) => h('option', { value: m, selected: draft.consentMethod === m }, T.consentMethods[m])));
+    ...CONSENT_METHODS.filter((m) => !(strictOrg && m === 'told_at_start')).map((m) => h('option', { value: m, selected: draft.consentMethod === m }, T.consentMethods[m])));
   method.addEventListener('change', () => void (draft.consentMethod = method.value));
   const agreed = h('input', { type: 'checkbox', id: 'agreed', checked: draft.consentAgreed });
   agreed.addEventListener('change', () => void (draft.consentAgreed = agreed.checked));
@@ -217,6 +219,7 @@ async function meetingsView(state: State): Promise<Node[]> {
       h('p', { class: 'note' }, T.noticeDraft),
       h('label', { class: 'block', for: 'method' }, T.consentMethod),
       method,
+      strictOrg ? h('p', { class: 'note', id: 'strict-note' }, T.strictNote) : null,
       h('div', { class: 'row' }, agreed, h('label', { for: 'agreed' }, T.consentConfirm)),
     ),
     h('div', { class: 'row' }, video, h('label', { for: 'video' }, T.withVideo)),
@@ -283,7 +286,13 @@ async function startRecording(): Promise<void> {
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
     const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId })) as StartReply;
     if (reply.ok) draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
-    else notice = T.blockers[reply.reason];
+    else {
+      notice = T.blockers[reply.reason];
+      if (reply.reason === 'consentPolicy') {
+        strictOrg = true;
+        if (draft.consentMethod === 'told_at_start') draft.consentMethod = '';
+      }
+    }
   } catch {
     notice = T.blockers.device;
   }

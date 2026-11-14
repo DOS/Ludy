@@ -17,7 +17,7 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   const switcher = page.getByRole('complementary').getByLabel('Pháp nhân', { exact: true });
 
   await test.step('with one legal entity there is nothing to choose', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await expect(switcher).toHaveCount(0);
@@ -37,14 +37,14 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   });
 
   await test.step('the Inbox is not kept per entity, so the switcher is not shown there', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await expect(switcher).toHaveCount(0);
   });
 
   await test.step('September locked in the second entity', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
     await switcher.selectOption({ label: BRANCH });
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();

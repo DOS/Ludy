@@ -18,6 +18,8 @@ test('an imported report waits for its shipped line to be assigned, then takes t
   await page.goto('/');
   await signUp(page, newEmail('marketplace'));
   await createOrg(page, 'Công ty bán trên sàn');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
   await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
 
   await test.step('the report waits in the Inbox as a card with the counts and no buyer value', async () => {
@@ -40,7 +42,7 @@ test('an imported report waits for its shipped line to be assigned, then takes t
   });
 
   await test.step('the shipped line waits on the stock screen, and no item exists yet to assign it to', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Hàng hóa' }).click();
     await expect(page.getByRole('heading', { name: 'Hàng hóa' })).toBeVisible();
     const waiting = page.getByTestId('marketplace-unassigned-line');

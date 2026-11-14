@@ -7,6 +7,7 @@ import type { Db } from '@crove/db';
 import { resolveIdentity } from '@crove/kernel';
 import { DomainError, toDomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
 import type { Config } from './config.ts';
+import { createEmailAccess } from './auth-access.ts';
 import { createLiveCheck, type LiveCheck } from './sessions.ts';
 import { isExtensionBearer, verifyExtensionBearer, type ExtensionIdentity } from './auth-extension.ts';
 
@@ -49,7 +50,7 @@ interface SupabaseClaims extends JWTPayload {
   session_id?: unknown;
   is_anonymous?: unknown;
   amr?: unknown;
-  user_metadata?: { full_name?: unknown; name?: unknown };
+  user_metadata?: { full_name?: unknown; name?: unknown; email_verified?: unknown };
 }
 
 // `amr` methods that prove a second factor: TOTP, phone (SMS or voice) and WebAuthn, in the spellings Supabase
@@ -134,6 +135,7 @@ export function bearerIssuedToOAuthClient(authorization: string | null | undefin
 // OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client, UNAUTHENTICATED otherwise.
 export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetKey } = {}) {
   const jwks = keys.jwks ?? (config.AUTH_JWKS_URL ? createRemoteJWKSet(new URL(config.AUTH_JWKS_URL), { cacheMaxAge: 10 * 60_000 }) : null);
+  const emailAccess = createEmailAccess(config.AUTH_ALLOWED_EMAILS);
   const secret = config.AUTH_JWT_SECRET ? new TextEncoder().encode(config.AUTH_JWT_SECRET) : null;
   const options = {
     issuer: config.AUTH_ISSUER,
@@ -161,6 +163,8 @@ export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetK
     if (typeof email !== 'string' || email.trim() === '') throw invalid();
     if (typeof sessionId !== 'string' || !UUID.test(sessionId)) throw invalid();
     if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw invalid();
+    // After every claim check and before any database work: a refused address never gets a user account.
+    emailAccess(email, claims.user_metadata?.email_verified);
     const meta = claims.user_metadata;
     const name = typeof meta?.full_name === 'string' ? meta.full_name : typeof meta?.name === 'string' ? meta.name : null;
     return {
