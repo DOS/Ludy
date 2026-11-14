@@ -347,17 +347,12 @@ export async function transcriptTranslationStatusOf(
 //   1. meetings.translation.transcript_start, as the member: the deployment's switch, a transcript they read with lines left, one run at a time; then the kernel's run.start (vy.use, the
 //      kill switches, the budget) makes the member's Vy and this run. Nothing is read or sent before it succeeds;
 //   2. meetings.translation.transcript_source: the text of the batch's lines in the member's own context (a sensitive read, audited), so only what the member reads;
-//   3. each chunk to the model, outside any transaction, through the member's own meter under meetings.translate, which admits it on its projected cost before the call (a chunk that would
-//      reach a hard-stop budget is refused and the chunks finished before it are kept); the answer is checked line by line in code (packages/agent member-vy/meeting-translation.ts);
+//   3. the chunk (a request takes one) to the model, outside any transaction, through the member's own meter under meetings.translate, which admits it on its projected cost before the call (a chunk that would
+//      reach a hard-stop budget is refused before the call, and the parts earlier requests kept stay); the answer is checked line by line in code (packages/agent member-vy/meeting-translation.ts);
 //   4. the checked parts stored with kernel.member_vy.result.store in the member's own session, then meetings.translation.copy_result, the member's own command, merges them into their
 //      private row (tainted, named after the run), held to the lines and their text as they are now.
 // Neither the text nor the answer is ever logged: a failure is named by a fixed code. A translation creates no task, mail, post, webhook, search hit or export.
-export interface TranscriptTranslationDeps extends MeetingTranslationDeps {
-  // After this many milliseconds on the first chunk the second is left for the next request, so one request stays well inside any deadline in front of it.
-  slowFirstChunkMs?: number;
-}
-
-const SLOW_FIRST_CHUNK_MS = 40_000;
+export type TranscriptTranslationDeps = MeetingTranslationDeps;
 
 export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, orgId: string, actor: UserActor, meetingId: string): Promise<TranscriptTranslated> {
   const as = { actor, orgId };
@@ -396,9 +391,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
       // 3. Each chunk behind the meter, in the scope of this run; a refused or failed chunk after the first keeps the ones finished.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, ports);
-      const slowMs = deps.slowFirstChunkMs ?? SLOW_FIRST_CHUNK_MS;
-      for (const [index, lines] of planTranscriptChunks(source.lines).entries()) {
-        const began = Date.now();
+      for (const lines of planTranscriptChunks(source.lines)) {
         try {
           const done = await withDeadline(
             withAiScope({ orgId, memberRunId: runId, meter }, () => translateTranscriptChunk({ lines, from: started.from, to: started.to }, bound)),
@@ -410,7 +403,6 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
           console.log(`[meetings-translate-transcript] stopped after ${parts.length} lines: ${codeOf(error)}`);
           break;
         }
-        if (index === 0 && Date.now() - began > slowMs) break;
       }
     } catch (error: unknown) {
       // Any failure before a part exists is named by a fixed code and stored as the run's failed result (a refusal of a read included: the run must not stay open).

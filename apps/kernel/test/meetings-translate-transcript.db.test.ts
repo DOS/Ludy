@@ -146,7 +146,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
   const parts = (who: string, meetingId: string) => query<TranscriptTranslationView>(who, 'meetings.translation.transcript_get', { meetingId });
   const source = (who: string, meetingId: string, lineIds: string[]) => query<TranscriptSource>(who, 'meetings.translation.transcript_source', { meetingId, lineIds });
   // One request, as the page makes it: the route's whole flow (start, the text, the chunks behind the real member meter, the result, the member's own copy).
-  const batch = (who: string, meetingId: string, model: ModelPort = translating(), over: { slowFirstChunkMs?: number } = {}): Promise<TranscriptTranslated> =>
+  const batch = (who: string, meetingId: string, model: ModelPort = translating()): Promise<TranscriptTranslated> =>
     runTranscriptTranslation(
       {
         runtime,
@@ -155,7 +155,6 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
         budget: new DraftBudget({ perUserPerMinute: 1000, perOrgPerMinute: 1000 }),
         price: PRICE,
         timeoutMs: 5000,
-        ...over,
       },
       orgId,
       asUser(who),
@@ -232,9 +231,8 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
       requests += 1;
       expect(requests).toBeLessThan(40);
     }
-    // A request takes at most two chunks, so the whole is a handful of requests and the progress only goes up; every chunk was one call, exactly (a batch is whole chunks), and no line
-    // was sent twice.
-    expect(requests).toBe(Math.ceil(chunksTotal / 2));
+    // A request takes one chunk, so the whole is as many requests as chunks and the progress only goes up; every chunk was one call, exactly, and no line was sent twice.
+    expect(requests).toBe(chunksTotal);
     expect(progress).toEqual([...progress].sort((a, b) => a - b));
     expect(modelCalls).toBe(chunksTotal);
     expect(seen).toHaveLength(144);
@@ -264,7 +262,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(logged.join('\n')).not.toContain('doanh thu dự kiến');
   }, 300_000);
 
-  it('a chunk that would reach a hard-stop budget is refused before the call; the finished chunks are kept and the next request takes only what is left', async () => {
+  it('a chunk that would reach a hard-stop budget is refused before the call; the parts kept stay and the next request takes only what is left', async () => {
     const meetingId = await seedMeeting();
     const texts = Array.from({ length: 60 }, (_, i) => speech(1000 + i));
     await seedLines(meetingId, 'published', texts);
@@ -275,14 +273,13 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     const oneChunk = Math.ceil(((first.estimate?.inputTokens ?? 0) + (first.estimate?.outputTokens ?? 0)) / total);
     await sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', crove_kernel.ai_budget_spent($1::uuid, 'module', 'meetings') + $2::numeric, true, $3)`, [orgId, Math.floor(oneChunk * 1.5), users.owner]);
     const one = await batch('attendee', meetingId);
-    // The request stopped after its first chunk, refusing the second before its call, and kept the first: a successful request with part of its batch.
     expect(one).toMatchObject({ state: 'ready', errorCode: null });
     expect(modelCalls).toBe(1);
     const afterFirst = await rawStatus('attendee', meetingId);
     expect(afterFirst.translated).toBe(one.translated);
     expect(afterFirst.translated).toBeGreaterThan(0);
     expect(afterFirst.chunksDone).toBe(1);
-    // The next click: the first chunk is refused before its call, so the request fails with the fixed word and the parts the earlier request kept stay.
+    // The next click: the chunk would reach the hard stop, so it is refused before its call; the request fails with the fixed word and the parts the first one kept stay.
     const next = await batch('attendee', meetingId);
     expect(next).toMatchObject({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED', translated: 0 });
     expect(modelCalls).toBe(1);
@@ -291,19 +288,11 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     // The budget comes back: the requests go on from the parts kept, never asking for a line already translated.
     await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
     seen = [];
-    for (let i = 0; i < 20 && (await rawStatus('attendee', meetingId)).remaining > 0; i += 1) await batch('attendee', meetingId);
+    for (let i = 0; i < 40 && (await rawStatus('attendee', meetingId)).remaining > 0; i += 1) await batch('attendee', meetingId);
     expect((await rawStatus('attendee', meetingId)).remaining).toBe(0);
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen.length).toBe(60 - afterFirst.translated);
   }, 300_000);
-
-  it('a request that is slow on its first chunk leaves the second for the next one', async () => {
-    const meetingId = await seedMeeting();
-    await seedLines(meetingId, 'published', Array.from({ length: 30 }, (_, i) => speech(3000 + i)));
-    const out = await batch('attendee', meetingId, translating(), { slowFirstChunkMs: -1 });
-    expect(out).toMatchObject({ state: 'ready', errorCode: null });
-    expect(modelCalls).toBe(1);
-  });
 
   it("translates only the text the member reads: the recorder's draft for the recorder, the published lines for a reader; a non-reader and a forged line id meet a refusal or nothing", async () => {
     const meetingId = await seedMeeting();

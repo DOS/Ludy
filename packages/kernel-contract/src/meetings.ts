@@ -860,9 +860,9 @@ export type Translations = z.infer<typeof zTranslations>;
 // chunk, a stop, a failure) keeps what earlier ones finished and the next click goes on from there. The page asks again while it is open. The parts live in the same private row as
 // the summary's (kind 'transcript'), one row for the member, meeting, stage and language, each part named by the line it translated and the hash of that line's text (a corrected line
 // makes its part stale).
-// A chunk is about this many UTF-8 bytes of numbered JSON (a one-hour Vietnamese transcript is about twenty of them); a request takes at most this many chunks.
+// A chunk is about this many UTF-8 bytes of numbered JSON (a one-hour Vietnamese transcript is about twenty of them); a request takes at most this many chunks (one: it stays within the bound of a single model call, whatever deadline a proxy in front sets, and the page asks again).
 export const TRANSCRIPT_TRANSLATE_CHUNK_BYTES = 4500;
-export const TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN = 2;
+export const TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN = 1;
 // More lines than this is not a transcript this translates.
 export const TRANSCRIPT_TRANSLATE_LINES_MAX = 5000;
 const zPartHash = z.string().regex(/^[0-9a-f]{16}$/);
