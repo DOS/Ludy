@@ -238,6 +238,75 @@ export const zMeetingLiveChunkRecorded = z.strictObject({
 });
 export type MeetingLiveChunkRecorded = z.infer<typeof zMeetingLiveChunkRecorded>;
 
+// The recorder's click "Ghép bản ghi từ các đoạn trực tiếp" when the final recording never arrived (ADR-0052 L4a, issue #3126). Once the window of the live pieces has
+// passed with pieces and no final audio, the pieces are joined, in order, into one recording under a fresh audio key. Why a piece may not be assembled yet or at all:
+//   none                 it can be assembled now
+//   no_pieces            the meeting kept no live piece
+//   still_recording      the window (LIVE_CHUNK_WINDOW_SECONDS) has not passed: the final recording may still come
+//   audio_recorded       the final audio or video is recorded (the pieces were discarded with it)
+//   first_piece_missing  piece 0 carries the container header; without it the later pieces cannot be read
+//   expired              the meeting's audio period has ended (the pieces are shredded)
+export const LIVE_ASSEMBLE_REASONS = ['no_pieces', 'still_recording', 'audio_recorded', 'first_piece_missing', 'expired'] as const;
+export type LiveAssembleReason = (typeof LIVE_ASSEMBLE_REASONS)[number];
+export const zLiveAssembleState = z.strictObject({
+  // The pane offers the click only when this is true.
+  available: z.boolean(),
+  reason: z.enum(LIVE_ASSEMBLE_REASONS).nullable(),
+  // How many pieces the meeting holds, and the numbers missing between 0 and the last one (a gap is reported, never fatal).
+  pieces: z.number().int().min(0),
+  missing: z.array(z.number().int().min(0)).max(LIVE_CHUNK_MAX_COUNT),
+});
+export type LiveAssembleState = z.infer<typeof zLiveAssembleState>;
+
+// What the route records after it joined and sealed the pieces. The wrapped key and the storage address are ciphertext metadata; the length is crove-media's. pieces and
+// lastSeq say which set the route joined, so a set that changed meanwhile is refused instead of recorded.
+export const zMeetingLiveAssemble = zMeetingRef.extend({
+  keyId: z.string().min(1).max(64),
+  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]{120}$/),
+  storageKey: z.string().min(1).max(255),
+  generation: z.string().nullable().optional(),
+  sizeBytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  contentType: z.string().min(1).max(64),
+  lengthSeconds: z.number().int().positive(),
+  pieces: z.number().int().min(1).max(LIVE_CHUNK_MAX_COUNT),
+  lastSeq: z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1),
+  // The pieces the plan left out because their key or file is gone: they count as missing in the answer. pieces + leftOut is every piece the meeting holds.
+  leftOut: z.array(z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1)).max(LIVE_CHUNK_MAX_COUNT).default([]),
+});
+export type MeetingLiveAssemble = z.infer<typeof zMeetingLiveAssemble>;
+
+// What the plan query answers to the recorder's own route: the pieces in order with their files and wrapped keys (never plaintext), the numbers missing, and the last piece's number.
+export interface LiveAssemblePlanPiece {
+  seq: number;
+  lengthSeconds: number;
+  fileId: string;
+  storageKey: string;
+  generation: string | null;
+  sizeBytes: number;
+  sha256: string;
+  contentType: string;
+  keyId: string;
+  wrappedKey: Buffer;
+}
+export interface LiveAssemblePlan {
+  meetingId: string;
+  pieces: LiveAssemblePlanPiece[];
+  missing: number[];
+  // The pieces left out of `pieces` because their key or file is gone (also in `missing`).
+  leftOut: number[];
+  lastSeq: number;
+}
+
+export const zMeetingLiveAssembled = z.strictObject({
+  meetingId: zId,
+  fileId: zId,
+  pieces: z.number().int().min(1),
+  missing: z.array(z.number().int().min(0)).max(LIVE_CHUNK_MAX_COUNT),
+  lengthSeconds: z.number().int().positive(),
+});
+export type MeetingLiveAssembled = z.infer<typeof zMeetingLiveAssembled>;
+
 // The worker's reseal of one media key after a credential key rotation (system actor only).
 export const zMeetingMediaKeyReseal = z.strictObject({
   id: z.string().uuid(),
@@ -637,6 +706,8 @@ export const zLiveStatus = z.strictObject({
   errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
   lines: z.array(zLiveLine),
   notesUpdatedAt: z.string().nullable(),
+  // Whether the recorder may join the pieces into the recording because the final upload never arrived (#3126); only the recorder sees it.
+  assemble: zLiveAssembleState,
 });
 export type LiveStatus = z.infer<typeof zLiveStatus>;
 
@@ -708,3 +779,89 @@ export const zMeetingLinkSuggested = z.strictObject({
   deals: z.array(z.strictObject({ dealId: zId, title: z.string(), partyId: zId, partyName: z.string() })).max(MEETING_LINK_SUGGEST_MAX),
 });
 export type MeetingLinkSuggested = z.infer<typeof zMeetingLinkSuggested>;
+
+// The machine translation of a meeting's summary (meetings integrations E1, #3184, plan section 7a). The member's own Vy translates the summary, its decisions and the titles
+// of its action items between Vietnamese and English in one call; the result is kept privately for the member who asked (its own table in the meetings schema), shown beside the original
+// as "Bản dịch máy", tainted, and never the source of a task, mail, post, webhook, search hit or export. `stage` is the summary the member read: the published one (any reader) or
+// their own draft (the recorder).
+export const TRANSLATION_STAGES = ['draft', 'published'] as const;
+export const TRANSLATION_STATES = ['ok', 'warn', 'refused'] as const;
+// A fixed word for what code found: a refusal (MISSING, EMPTY, TOO_LONG, UNCHANGED, INVENTED_NUMBER, CONTACT_ADDED) or a warning (NUMBER_DROPPED, NAME_ADDED).
+export const TRANSLATION_CODES = ['MISSING', 'EMPTY', 'TOO_LONG', 'UNCHANGED', 'INVENTED_NUMBER', 'CONTACT_ADDED', 'NUMBER_DROPPED', 'NAME_ADDED'] as const;
+export const TRANSLATION_SEGMENTS_MAX = 1 + RESULT_DECISIONS_MAX + ITEMS_PER_MEETING_MAX;
+export const TRANSLATION_SEGMENT_TEXT_MAX = 12_000;
+const zTranslationStage = z.enum(TRANSLATION_STAGES);
+// 'summary', 'decision:<index>' or 'item:<id>': what a segment translates.
+const zTranslationKey = z.string().regex(/^(?:summary|decision:\d{1,3}|item:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
+const zTranslationHash = z.string().regex(/^[0-9a-f]{64}$/);
+export const zTranslationSegment = z.strictObject({
+  key: zTranslationKey,
+  // '' for a refused segment: the original shows, with a fixed word.
+  text: z.string().max(TRANSLATION_SEGMENT_TEXT_MAX),
+  state: z.enum(TRANSLATION_STATES),
+  codes: z.array(z.enum(TRANSLATION_CODES)).max(TRANSLATION_CODES.length),
+});
+export type TranslationSegment = z.infer<typeof zTranslationSegment>;
+// What a translation run stores in its result row (the body the agent package's checks produced); the sink reads it back strictly, as it reads a summary result.
+export const zTranslationResult = z.strictObject({
+  v: z.literal(1),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  stage: zTranslationStage,
+  hash: zTranslationHash,
+  segments: z.array(zTranslationSegment).min(1).max(TRANSLATION_SEGMENTS_MAX),
+});
+export type TranslationResult = z.infer<typeof zTranslationResult>;
+
+export const zTranslationRef = z.strictObject({ meetingId: zId, stage: zTranslationStage });
+// The text the caller reads and may translate: the original segments in the order the screen shows them, the language pair and the hash of the text (a changed original has another hash).
+export const zTranslationSource = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  hash: zTranslationHash,
+  segments: z.array(z.strictObject({ key: zTranslationKey, text: z.string() })).min(1).max(TRANSLATION_SEGMENTS_MAX),
+});
+export type TranslationSource = z.infer<typeof zTranslationSource>;
+export const zTranslateStarted = z.strictObject({ meetingId: zId, runId: zId });
+export const zTranslationCopy = z.strictObject({ meetingId: zId, runId: zId });
+export const zTranslationCopied = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  segments: z.number().int().min(1),
+  refused: z.number().int().min(0),
+  warned: z.number().int().min(0),
+});
+// The route the screen calls: starts the run, reads what the member reads, makes the one model call, stores the answer and keeps it for the member; says how it went in fixed words.
+export const zTranslated = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  runId: zId.nullable(),
+  state: z.enum(['ready', 'failed']),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+});
+export type Translated = z.infer<typeof zTranslated>;
+// What the translate button of a stage shows: whether it can be pressed, why not, the target language and the cost expected before the click. `estimate` is null when the deployment
+// has no price set (no figure is better than a guess).
+export const zTranslationStatus = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  enabled: z.boolean(),
+  reason: z.enum(['off', 'nothing']).nullable(),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  estimate: z.strictObject({ inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0), cost: z.string().regex(/^\d+(?:\.\d+)?$/).nullable() }).nullable(),
+});
+export type TranslationStatus = z.infer<typeof zTranslationStatus>;
+// The caller's own translations of the meeting, one per stage they asked for, with whether the original changed since (stale: "Bản dịch cũ, dịch lại").
+export const zTranslationView = z.strictObject({
+  stage: zTranslationStage,
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  stale: z.boolean(),
+  createdAt: z.string(),
+  segments: z.array(zTranslationSegment),
+});
+export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length) });
+export type Translations = z.infer<typeof zTranslations>;

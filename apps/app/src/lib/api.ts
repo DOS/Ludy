@@ -238,6 +238,13 @@ export async function sendLiveChunk(input: { meetingId: string; seq: number; len
   });
 }
 
+// Join the live pieces of a recording whose final upload never arrived (ADR-0052 L4a, #3126): the recorder's own click. The kernel reads the pieces in the recorder's
+// session, seals the join under a fresh audio key and answers how many pieces it joined and which numbers were missing.
+export async function assembleLivePieces(meetingId: string): Promise<{ meetingId: string; fileId: string; pieces: number; missing: number[]; lengthSeconds: number }> {
+  const response = await apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/live-assemble`, { method: 'POST' });
+  return (await response.json()) as { meetingId: string; fileId: string; pieces: number; missing: number[]; lengthSeconds: number };
+}
+
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.
 async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: string): Promise<Uploaded> {
