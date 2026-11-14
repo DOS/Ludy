@@ -295,7 +295,10 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     });
     // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
     // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532). 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves (#2751). 12: the posting of a stored marketplace settlement was given its approval policy (#2516). 13: the posting of a platform's payout was given its approval policy (#2516).
-    expect((approvedAudit as { policy_version?: unknown }).policy_version).toBe(13);
+    // This is a dated allowance for #2516 (slice C, step one): 13, as before, or 14, which the approval policy of the marketplace fee clearing (finance.marketplace_fee_clearing.record, a ledger
+    // proposal command) may raise it to. The change that adds the command pins the number it ends on and removes this allowance; it expires with that PR and, failing that, fails on 2027-02-28.
+    expect(Date.now(), 'the allowance of #2516 for policy_version 13 or 14 has expired: pin the number').toBeLessThan(Date.parse('2027-02-28T00:00:00Z'));
+    expect([13, 14]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
