@@ -147,3 +147,16 @@ describe('AUTH_ALLOWED_EMAILS', () => {
     expect(() => createEmailAccess([])('anyone@example.net', false)).not.toThrow();
   });
 });
+
+describe('AUTH_OAUTH_PROVIDERS (the sign-in buttons, issue #2704)', () => {
+  it('parses provider ids, lower-cases and de-duplicates them, and stops the boot on anything else', () => {
+    expect(loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: 'Google, github  google' }).AUTH_OAUTH_PROVIDERS).toEqual(['google', 'github']);
+    expect(loadConfig(BASE_ENV).AUTH_OAUTH_PROVIDERS).toEqual([]);
+    expect(loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: ' ' }).AUTH_OAUTH_PROVIDERS).toEqual([]);
+    for (const bad of ['go ogle!', 'g', 'https://evil.example', 'a1,../b', 'ünï']) {
+      expect(() => loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: bad }), bad).toThrow(/AUTH_OAUTH_PROVIDERS/);
+    }
+    const many = Array.from({ length: 13 }, (_, i) => `provider${i}`).join(',');
+    expect(() => loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: many })).toThrow(/AUTH_OAUTH_PROVIDERS/);
+  });
+});

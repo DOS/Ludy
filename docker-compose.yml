@@ -132,6 +132,8 @@ services:
       PUBLIC_AUTH_URL: ${PUBLIC_AUTH_URL:-}
       PUBLIC_AUTH_ANON_KEY: ${PUBLIC_AUTH_ANON_KEY:-}
       AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
+      # Sign-in buttons besides email and password: provider ids the identity provider has enabled (google,github).
+      AUTH_OAUTH_PROVIDERS: ${AUTH_OAUTH_PROVIDERS:-}
       # R3 (approve, membership changes) needs MFA in the last 5 minutes; the app asks for a code, or to enable
       # two-factor first. off is accepted on localhost only.
       AUTH_STEP_UP: ${AUTH_STEP_UP:-required}

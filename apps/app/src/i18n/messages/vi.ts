@@ -423,6 +423,8 @@ export const vi = {
       'Liên kết đã được xác minh. Nếu bạn vừa xác nhận email, hãy đăng nhập. Nếu bạn đặt lại mật khẩu, hãy mở liên kết trên đúng trình duyệt đã gửi yêu cầu.',
     forgotLink: 'Quên mật khẩu?',
     haveAccount: 'Đã có tài khoản? Đăng nhập',
+    or: 'hoặc',
+    continueWith: 'Tiếp tục với {provider}',
     emailRequired: 'Hãy nhập email.',
     emailInvalid: 'Email chưa đúng định dạng, ví dụ ten@congty.vn.',
     passwordRequired: 'Hãy nhập mật khẩu.',

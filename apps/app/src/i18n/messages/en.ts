@@ -425,6 +425,8 @@ export const en = {
       'The link was verified. If you just confirmed your email, sign in. If you are resetting your password, open the link in the browser you asked for it from.',
     forgotLink: 'Forgot password?',
     haveAccount: 'Already have an account? Sign in',
+    or: 'or',
+    continueWith: 'Continue with {provider}',
     emailRequired: 'Enter your email.',
     emailInvalid: 'Enter an email address such as name@company.vn.',
     passwordRequired: 'Enter your password.',

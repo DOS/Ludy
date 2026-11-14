@@ -4,6 +4,7 @@ import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
+import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
 import { parseAllowedOrigins } from './cors.ts';
@@ -234,6 +235,17 @@ const schema = z.object({
       return z.NEVER;
     }
     return entries;
+  }),
+  // The sign-in buttons the app shows besides email and password (issue #2704, auth-oauth-providers.ts): provider ids the
+  // identity provider has enabled, at most 12. They reach the app through /api/config; Ludy holds no credential for them.
+  AUTH_OAUTH_PROVIDERS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { providers, invalid } = parseOauthProviders(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not a provider id (lower-case letters, digits and _, at most ${MAX_OAUTH_PROVIDERS} of them): ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    return providers;
   }),
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),

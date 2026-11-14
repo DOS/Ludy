@@ -7,6 +7,8 @@ import { withInviteToken } from './invite.ts';
 export interface PublicConfig {
   authUrl: string;
   authAnonKey: string | null;
+  // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704); absent from an older kernel: none.
+  authProviders?: string[];
   aiEnabled: boolean;
   inboundEnabled: boolean;
   // The server mails invites (SMTP configured).

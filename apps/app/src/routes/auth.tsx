@@ -6,7 +6,8 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { ErrorText, Field, Logo, Notice, ScreenTitle, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
-import { auth, authErrorText, authFailure, callbackNoticeText, clearCallbackNotice, peekCallbackNotice, type AuthFailure, type CallbackNotice } from '../lib/auth.ts';
+import { auth, authErrorText, authFailure, callbackNoticeText, clearCallbackNotice, getConfig, peekCallbackNotice, type AuthFailure, type CallbackNotice } from '../lib/auth.ts';
+import { offeredProviders, providerLabel } from '../lib/auth-providers.ts';
 import { LegalConsent } from '../components/legal-consent.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 
@@ -69,6 +70,21 @@ export function AuthPage() {
   }
 
   const titles: Record<Mode, string> = { login: t('login'), signup: t('signup'), reset: t('reset') };
+  // Buttons for the providers the identity provider has enabled (AUTH_OAUTH_PROVIDERS, #2704).
+  const providers = offeredProviders(getConfig().authProviders);
+
+  // Leaves for the provider and comes back with the same one-time code an email link brings (settleCallback exchanges it).
+  async function continueWith(provider: string) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setCallback(null);
+    const { error: e } = await auth().signInWithOAuth({ provider: provider as Parameters<ReturnType<typeof auth>['signInWithOAuth']>[0]['provider'], options: { redirectTo: `${window.location.origin}/` } });
+    if (e) {
+      setError(authFailure(e));
+      setBusy(false);
+    }
+  }
 
   return (
     <main className="flex min-h-full flex-col items-center justify-center bg-background px-4 py-16">
@@ -125,6 +141,16 @@ export function AuthPage() {
           </Button>
           {mode === 'signup' && <LegalConsent />}
         </form>
+        {mode !== 'reset' && providers.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-center text-xs text-muted-foreground">{t('or')}</p>
+            {providers.map((provider) => (
+              <Button key={provider} type="button" variant="outline" size="lg" className="w-full" disabled={busy} onClick={() => void continueWith(provider)}>
+                {t('continueWith', { provider: providerLabel(provider) })}
+              </Button>
+            ))}
+          </div>
+        )}
         <div className="mt-4 flex justify-between text-sm">
           {mode === 'login' ? (
             <>
