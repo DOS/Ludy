@@ -156,7 +156,7 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
   });
 
   it('refuses to mark a ledger proposal executed with its audit row alone, nothing posted', async () => {
-    for (const command of ['finance.journal.reverse', 'finance.journal_voucher.record', 'finance.voucher.record', 'finance.purchase.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm', 'finance.payroll_posting.record', 'finance.payroll_payment.record', 'finance.marketplace_settlement.record', 'finance.marketplace_payout.record']) {
+    for (const command of ['finance.journal.reverse', 'finance.journal_voucher.record', 'finance.voucher.record', 'finance.purchase.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm', 'finance.payroll_posting.record', 'finance.payroll_payment.record', 'finance.marketplace_settlement.record', 'finance.marketplace_payout.record', 'finance.marketplace_fee_clearing.record']) {
       const id = await approved(command);
       const outcome = await asOwner(async (c) => {
         await ran(command, id)(c);

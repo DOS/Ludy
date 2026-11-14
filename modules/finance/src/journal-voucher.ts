@@ -126,6 +126,7 @@ export async function postJournalVoucher(
   payrollRunId: string | null = null,
   settlementId: string | null = null,
   payout: { settlementId: string; bankLineId: string } | null = null,
+  feeDocumentId: string | null = null,
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
@@ -150,6 +151,8 @@ export async function postJournalVoucher(
       ...(settlementId === null ? {} : { settlement_id: settlementId }),
       // The columns of a platform payout's posting are written only for one, as the others.
       ...(payout === null ? {} : { payout_settlement_id: payout.settlementId, payout_bank_line_id: payout.bankLineId }),
+      // The column of a marketplace fee clearing is written only for one, as the others.
+      ...(feeDocumentId === null ? {} : { fee_document_id: feeDocumentId }),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
@@ -171,7 +174,7 @@ export async function postJournalVoucher(
       memo: j.memo,
     })),
   });
-  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}), ...(settlementId ? { settlementId } : {}), ...(payout ? { payoutSettlementId: payout.settlementId, bankLineId: payout.bankLineId } : {}) });
+  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}), ...(settlementId ? { settlementId } : {}), ...(payout ? { payoutSettlementId: payout.settlementId, bankLineId: payout.bankLineId } : {}), ...(feeDocumentId ? { feeDocumentId } : {}) });
   await ctx.activity('finance.journal_voucher', voucher.id, 'journal_voucher.recorded', `Ghi sổ ${JOURNAL_VOUCHER_LABEL.toLowerCase()} ${code}`);
   await ctx.emit('finance.journal_voucher.recorded', { voucherId: voucher.id, journalEntryId, number: voucher.number });
   return { voucherId: voucher.id, journalEntryId, code };
