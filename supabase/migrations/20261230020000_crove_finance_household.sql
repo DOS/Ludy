@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.household_form_version (
   status text NOT NULL CHECK (status IN ('commentary', 'confirmed')),
   PRIMARY KEY (book, version)
 );
-CREATE INDEX IF NOT EXISTS household_form_version_date_idx ON crove_finance.household_form_version (book, effective_from);
+-- One form version is in force per book on a date: two rows on one date would make the answer depend on the order the database returns them.
+CREATE UNIQUE INDEX IF NOT EXISTS household_form_version_date_uq ON crove_finance.household_form_version (book, effective_from);
 REVOKE ALL ON crove_finance.household_threshold, crove_finance.household_trade_rate, crove_finance.household_expense_group_map, crove_finance.household_form_version FROM PUBLIC, crove_tenant;
 GRANT SELECT ON crove_finance.household_threshold, crove_finance.household_trade_rate, crove_finance.household_expense_group_map, crove_finance.household_form_version TO crove_tenant;
 SELECT crove_kernel.agent_write_guard_install('crove_finance.household_threshold');
