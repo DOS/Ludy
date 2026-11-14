@@ -109,6 +109,7 @@ import {
 import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
 import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
+import { hostedLoginTokenOrigin, hostedLoginView } from './auth-hosted-login.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
   createDbInviteChecks,

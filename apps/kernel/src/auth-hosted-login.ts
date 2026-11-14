@@ -25,7 +25,7 @@ export function checkHostedLoginUrl(name: string, raw: string): string | null {
 export function hostedLoginName(raw: string | undefined): string | null {
   if (raw === undefined) return null;
   // A label, not markup or a control sequence: the app renders it as text, but the length and characters stay plain.
-  if (raw.length > 40 || /[\u0000-\u001F\u007F<>]/.test(raw)) return null;
+  if (raw.length > 40 || [...raw].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f || c === '<' || c === '>')) return null;
   return raw;
 }
 

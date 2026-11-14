@@ -427,6 +427,7 @@ export const en = {
     haveAccount: 'Already have an account? Sign in',
     or: 'or',
     continueWith: 'Continue with {provider}',
+    continueHosted: 'Continue with your sign-in provider',
     emailRequired: 'Enter your email.',
     emailInvalid: 'Enter an email address such as name@company.vn.',
     passwordRequired: 'Enter your password.',
@@ -455,6 +456,7 @@ export const en = {
       oauth_provider_not_supported: 'This sign-in method is not available on this server.',
       bad_oauth_callback: 'Sign-in did not complete. Try again.',
       bad_oauth_state: 'Sign-in did not complete. Try again.',
+      hosted_login_failed: 'Sign-in did not complete. Start again from the sign-in screen.',
     },
   },
   legal: {

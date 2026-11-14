@@ -3,12 +3,15 @@ import type { Translate } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
+import { completeHostedLogin, readHostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
 
 export interface PublicConfig {
   authUrl: string;
   authAnonKey: string | null;
   // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704); absent from an older kernel: none.
   authProviders?: string[];
+  // The identity provider's hosted login page and token endpoint (AUTH_HOSTED_LOGIN_*, #2704); null or absent: none.
+  hostedLogin?: HostedLoginConfig | null;
   aiEnabled: boolean;
   inboundEnabled: boolean;
   // The server mails invites (SMTP configured).
@@ -195,6 +198,8 @@ const AUTH_ERRORS = [
   'oauth_provider_not_supported',
   'bad_oauth_callback',
   'bad_oauth_state',
+  // The hosted login page's return did not complete (hosted-login.ts); one message for every reason.
+  'hosted_login_failed',
 ] as const;
 type AuthErrorCode = (typeof AUTH_ERRORS)[number];
 
@@ -223,6 +228,10 @@ let callbackNotice: CallbackNotice | null = null;
 // Runs once at startup, before the router reads the URL. A failed link lands here with Supabase Auth's error.
 // A recovery link always opens the new-password screen, even if Supabase Auth redirected it elsewhere.
 export async function settleCallback(): Promise<void> {
+  // The hosted login's return (#2704) is read and taken out of the address bar before auth-js is created: auth-js reads
+  // `code` from the address on creation and would try to redeem it as its own PKCE code.
+  const hosted = readHostedCallback(window.location);
+  if (hosted) window.history.replaceState(null, '', '/');
   let recovery = false;
   const { data: listener } = auth().onAuthStateChange((event: string) => {
     if (event === 'PASSWORD_RECOVERY') recovery = true;
@@ -236,6 +245,11 @@ export async function settleCallback(): Promise<void> {
   if (/(^#|&)(error|error_code|error_description)=/.test(url.hash)) url.hash = '';
   const target = recovery ? '/reset-password' : `${url.pathname}${url.search}${url.hash}`;
   if (target !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, '', target);
+  if (hosted) {
+    const failure = await redeemHosted(hosted);
+    if (failure) callbackNotice = { error: true, code: 'hosted_login_failed' };
+    return;
+  }
   if (error) {
     // The message can come from the link's error_description, which anyone can write: show known codes only.
     callbackNotice = { error: true, code: knownCode((error as { details?: { code?: string } }).details?.code ?? error.code) };
@@ -243,6 +257,19 @@ export async function settleCallback(): Promise<void> {
     // Supabase Auth accepted the link, but the one-time code belongs to another browser (PKCE).
     callbackNotice = { error: false };
   }
+}
+
+// Redeems the hosted login's code and signs this browser in with the session it returns; the failure, or null. The tab is
+// left on the path the login started from.
+async function redeemHosted(callback: NonNullable<ReturnType<typeof readHostedCallback>>): Promise<HostedFailure | 'session' | null> {
+  const hostedConfig = getConfig().hostedLogin;
+  if (!hostedConfig) return 'missing';
+  const result = await completeHostedLogin(callback, { config: hostedConfig, origin: window.location.origin, storage: window.sessionStorage, fetchFn: (input, init) => fetch(input, init) });
+  if (!result.ok) return result.reason;
+  const { error } = await auth().setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
+  if (error) return 'session';
+  window.history.replaceState(null, '', result.returnPath);
+  return null;
 }
 
 export function peekCallbackNotice(): CallbackNotice | null {
