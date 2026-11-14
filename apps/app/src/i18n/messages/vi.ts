@@ -2294,6 +2294,13 @@ export const vi = {
     imageAlt: 'Ảnh khách gửi',
     sendState: { queued: 'Đang chờ gửi', sending: 'Đang gửi', sent: 'Đã gửi', failed: 'Gửi không được', unknown: 'Chưa rõ đã gửi hay chưa' },
     sendError: {
+      TELEGRAM_BOT_BLOCKED: 'Khách đã chặn bot, nên chưa gửi được tin này',
+      TELEGRAM_USER_GONE: 'Tài khoản Telegram của khách không còn hoạt động',
+      TELEGRAM_CHAT_NOT_FOUND: 'Telegram không tìm thấy cuộc trò chuyện này, có thể khách đã xóa nó',
+      TELEGRAM_TOKEN_REFUSED: 'Telegram không nhận mã bot của kênh này, hãy kết nối lại kênh',
+      TELEGRAM_BUSINESS_REFUSED: 'Telegram không cho bot trả lời qua tài khoản Business này, kiểm tra quyền của bot trong cài đặt Business của Telegram',
+      BUSINESS_ACCOUNT_STOPPED: 'Tài khoản Telegram Business này chưa được cho phép hoặc đã ngắt, nên không gửi được',
+      BUSINESS_ACCOUNT_READ_ONLY: 'Bot chưa có quyền trả lời của tài khoản Telegram Business này',
       ZALO_TOKEN: 'Zalo không nhận mã truy cập của kênh này, hãy kết nối lại kênh',
       ZALO_NO_TOKEN: 'Kênh này thiếu mã truy cập, hãy kết nối lại kênh',
       ZALO_QUOTA: 'Kênh Zalo đã hết số tin được gửi trong gói, chờ kỳ sau hoặc nâng gói',

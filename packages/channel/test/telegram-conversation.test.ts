@@ -436,6 +436,15 @@ describe('the state of a business connection', () => {
     expect(named('Lan\u202eTrần\u200b\nCho phép\u0000')?.name).toBe('LanTrần Cho phép');
     expect(named('@@@')?.name).toBeUndefined();
     expect(named('x'.repeat(300))?.name).toHaveLength(100);
+    // The cut is by characters: an emoji at the cut is whole or gone, never a lone half (jsonb refuses one), and the fullwidth @ goes like the plain one.
+    const emoji = named(`${'x'.repeat(99)}😀😀`)?.name as string;
+    expect(emoji.isWellFormed()).toBe(true);
+    expect(Array.from(emoji)).toHaveLength(100);
+    expect(named('Lan＠lan_tran')?.name).toBe('Lanlan_tran');
+    expect(named('Lan\ud83dx')?.name).toBe('Lanx');
+    // A customer's name is cut the same way.
+    const customer = telegramChatEvents(message({}, { first_name: `${'y'.repeat(199)}😀`, last_name: undefined, username: undefined }))[0]?.contact.name as string;
+    expect(customer.isWellFormed()).toBe(true);
     // A @username that is not a username (spaces, a length over 64) is not kept.
     expect(named('Lan', { username: 'has space' })).not.toHaveProperty('username');
     expect(named('Lan', { username: 'a'.repeat(65) })).not.toHaveProperty('username');

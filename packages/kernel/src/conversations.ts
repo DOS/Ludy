@@ -311,7 +311,7 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
     // A Telegram business thread (`b:<chat>:<business connection id>`) is stored only through the gate above, and only for the connection that gate
     // checked: a thread of that shape with no business connection, or of another one, is refused whatever the notice parser said.
     const businessThread = connection.provider === 'telegram' && event.threadId.startsWith('b:');
-    const businessMismatch = connection.provider === 'telegram' && (businessThread !== (businessConnectionId !== undefined) || (businessThread && !event.threadId.endsWith(`:${businessConnectionId}`)));
+    const businessMismatch = connection.provider === 'telegram' && (businessThread !== (businessConnectionId !== undefined) || (businessThread && BUSINESS_THREAD.exec(event.threadId)?.[1] !== businessConnectionId));
     if (!rules.kinds.includes(event.kind) || businessMismatch || (ownerUserId !== null && event.contact.id === ownerUserId)) {
       out.ignored++;
       continue;
@@ -569,6 +569,9 @@ async function ingestEvent(
     return 'duplicates';
   }
   if (event.hiddenOnly) return 'ignored';
+  // An edit of a Telegram message the core does not hold stores nothing: it would be a message the org never took in (one that came before its account was
+  // allowed, or that was purged with its thread), brought back by a replayed or late edit that carries the first date of the message.
+  if (event.edited && provider === 'telegram') return 'ignored';
   // One customer's intake and erasure take turns: erase_contact holds the same lock while it deletes and writes the tombstone, so a message
   // that was in flight is checked against the tombstone after the erasure commits, not before it.
   await customerLock(ctx, provider, event.contact.id);

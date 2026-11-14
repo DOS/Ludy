@@ -456,8 +456,9 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     // A thread of the business shape with no business connection named, or the wrong one, is refused (whatever the notice parser said).
     expect(await ingest([event(`b:2601:${CONN}`, '1')])).toMatchObject({ stored: 0, ignored: 1 });
     expect(await ingest([event(`b:2601:${OTHER_CONN}`, '2')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
-    // A business connection with a thread that is a bot chat's is refused too.
+    // A business connection with a thread that is a bot chat's is refused too, and a thread of a connection whose id merely ends with this one's is not this one's.
     expect(await ingest([event('2601', '3')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
+    expect(await ingest([event(`b:2601:X:${CONN}`, '5')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
     expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id IN ($2, '2601')", [a.orgId, `b:2601:${CONN}`])).toHaveLength(0);
     // The right pair is taken (the account is on and allowed by now).
     expect(await ingest([event(`b:2601:${CONN}`, '4')], CONN)).toMatchObject({ stored: 1, ignored: 0 });
@@ -472,6 +473,11 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect(await waiting()).toBe(1);
     await intake();
     expect((await messagesOf(a, thread)).map((m) => m.body)).toEqual(['Giá mới']);
+    // An edit of a message the org never took in (it came before the account was allowed, or went with a purged thread) stores nothing: a replayed or late edit
+    // carries the message's first date and must not bring it back as a new message.
+    expect((await post(a.hook, business('Tin chưa từng nhận', { chat: 2702, messageId: 1, field: 'edited_business_message', date: Math.floor(Date.parse(old) / 1000) }))).status).toBe(200);
+    expect(await intake()).toEqual({ stored: 0, dropped: 0 });
+    expect(await threadRow(a, `b:2702:${CONN}`)).toBeUndefined();
   });
 
   it('records accounts only while chats are on, keeps at most ten, and forgets them when the connection is disconnected', async () => {

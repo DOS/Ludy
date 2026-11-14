@@ -77,6 +77,8 @@ const NAME_MAX = 200;
 const ID_MAX = 200;
 // PostgreSQL refuses a NUL character in text, which would fail the whole notice.
 const clean = (value: string): string => value.replaceAll('\u0000', '');
+// Cut to a number of characters, not of UTF-16 units: a cut through a surrogate pair leaves a lone half, which a jsonb column refuses.
+const cut = (value: string, max: number): string => (value.length <= max ? value : Array.from(value).slice(0, max).join(''));
 const idText = (value: unknown): string | null => (typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null);
 
 // Telegram dates a message in seconds since 1970. Outside a sane range it is no event (a customer's message must not close its own window by
@@ -110,7 +112,7 @@ function nameOf(user: TelegramUser | undefined): string | undefined {
   const text = (value: unknown): string => (typeof value === 'string' ? clean(value).trim() : '');
   const full = [text(user.first_name), text(user.last_name)].filter((part) => part !== '').join(' ');
   const name = full !== '' ? full : text(user.username);
-  return name === '' ? undefined : name.slice(0, NAME_MAX);
+  return name === '' ? undefined : cut(name, NAME_MAX);
 }
 
 // Telegram Business (#3191). A business chat is independent of a bot chat with the same id [O], so its thread is `b:<chat id>:<business connection id>`; a
@@ -223,11 +225,12 @@ function scan(update: unknown): { events: InboundConversationEvent[]; via: strin
 export const telegramChatEvents = (update: unknown): InboundConversationEvent[] => scan(update).events;
 
 // An account's name as the owner is shown it to decide whether to allow the account: the name is the account's own choice, so what could pass for the screen's
-// own words is taken out: control, format (bidirectional and zero-width) and line characters, and `@`, which would let a name wear a @username it does not have.
+// own words is taken out: control, format (bidirectional and zero-width) and line characters, lone surrogates, and `@` (also its fullwidth and small forms), which
+// would let a name wear a @username it does not have.
 function accountNameOf(user: TelegramUser): string | undefined {
   const name = nameOf(user);
   if (!name) return undefined;
-  const plain = name.replace(/[\p{Zl}\p{Zp}\r\n\t]/gu, ' ').replace(/[\p{Cc}\p{Cf}@]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  const plain = cut(name.replace(/[\p{Zl}\p{Zp}\r\n\t]/gu, ' ').replace(/[\p{Cc}\p{Cf}\p{Cs}@\uFF20\uFE6B]/gu, '').replace(/\s+/g, ' ').trim(), 100);
   return plain === '' ? undefined : plain;
 }
 

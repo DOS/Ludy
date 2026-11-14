@@ -2296,6 +2296,13 @@ export const en = {
     imageAlt: 'Image the customer sent',
     sendState: { queued: 'Waiting to send', sending: 'Sending', sent: 'Sent', failed: 'Could not send', unknown: 'Not clear whether it was sent' },
     sendError: {
+      TELEGRAM_BOT_BLOCKED: 'The customer blocked the bot, so this message could not be sent',
+      TELEGRAM_USER_GONE: "The customer's Telegram account is no longer active",
+      TELEGRAM_CHAT_NOT_FOUND: 'Telegram could not find this chat, the customer may have deleted it',
+      TELEGRAM_TOKEN_REFUSED: "Telegram did not accept this channel's bot token, reconnect the channel",
+      TELEGRAM_BUSINESS_REFUSED: "Telegram does not let the bot answer through this Business account, check the bot's rights in Telegram's Business settings",
+      BUSINESS_ACCOUNT_STOPPED: 'This Telegram Business account is not allowed, or is disconnected, so nothing can be sent',
+      BUSINESS_ACCOUNT_READ_ONLY: 'The bot has no right to reply for this Telegram Business account',
       ZALO_TOKEN: "Zalo does not accept this channel's access token, reconnect the channel",
       ZALO_NO_TOKEN: 'This channel has no access token, reconnect it',
       ZALO_QUOTA: "The Zalo channel has used the messages its plan allows, wait for the next period or upgrade",
