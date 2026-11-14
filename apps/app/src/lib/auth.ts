@@ -7,6 +7,8 @@ import { withInviteToken } from './invite.ts';
 export interface PublicConfig {
   authUrl: string;
   authAnonKey: string | null;
+  // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704); absent from an older kernel: none.
+  authProviders?: string[];
   aiEnabled: boolean;
   inboundEnabled: boolean;
   // The server mails invites (SMTP configured).
@@ -186,6 +188,13 @@ const AUTH_ERRORS = [
   'signup_not_allowed',
   'signup_method_not_allowed',
   'signup_disabled',
+  // A provider sign-in that did not complete (the return from the provider's page).
+  'identity_already_exists',
+  'provider_email_needs_verification',
+  'unexpected_failure',
+  'oauth_provider_not_supported',
+  'bad_oauth_callback',
+  'bad_oauth_state',
 ] as const;
 type AuthErrorCode = (typeof AUTH_ERRORS)[number];
 

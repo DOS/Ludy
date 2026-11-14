@@ -375,6 +375,25 @@ describe('configuration guards', () => {
     expect(await config({ SUPPORT_URL: 'mailto:support@example.com' })).toBe('mailto:support@example.com');
   });
 
+  // #2704: the sign-in buttons the app shows besides email and password come from AUTH_OAUTH_PROVIDERS.
+  it('hands the sign-in provider ids to the app through /api/config, or none', async () => {
+    const providers = async (env: Record<string, string>) => {
+      const app = createHttpApp({
+        config: loadConfig({ ...base, WEB_DIST: '/nonexistent', ...env }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+      });
+      return ((await (await app.request('/api/config')).json()) as { authProviders: unknown }).authProviders;
+    };
+    expect(await providers({})).toEqual([]);
+    expect(await providers({ AUTH_OAUTH_PROVIDERS: 'google,github' })).toEqual(['google', 'github']);
+  });
+
   // #2192: a store without browser transfers (R2) can still sign a read for the platforms that fetch media by URL, and the
   // app learns it, so the composer does not hold Zalo OA, Instagram and Threads images back as if the files were local.
   it('tells the app whether the store can sign a media URL for a platform, apart from how uploads go', async () => {

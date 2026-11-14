@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Links shared by both languages. NEXT_PUBLIC_APP_URL points at a running Ludy app (the kernel serves it with the
 // sign-in page at /login); without it the sign-in link goes to the hosted app at app.ludy.vn (the owner moved the
 // domains from crove.com to ludy.vn and ludy.so on 2026-10-30; ADR-0027).
@@ -9,21 +10,24 @@ export const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://app.ludy.vn'
 export const SIGN_IN_URL = `${APP_URL}/login`;
 export const SITE_URL = 'https://ludy.vn';
 
-// The apps that have a page of their own (DESIGN.md 1.1 names), each with its one public path (the same in both
-// languages; the language comes from the visitor's choice, see src/proxy.ts), the route of its English page inside the
-// app (`enRoute`, which the proxy rewrites to and which is never a public address) and the module of the home page's
-// dictionary that names it. The sitemap, the footer links and the home page's module cards read this list, so a new
-// app page is one entry here, its copy and its two routes.
+// The apps that have a page of their own (DESIGN.md 1.1 and 6.4), in the switcher's order (#3225, #3235), each with its
+// one public path (the same in both languages; the language comes from the visitor's choice, see src/proxy.ts), the route
+// of its English page inside the app (`enRoute`, which the proxy rewrites to and which is never a public address) and the
+// module of the home page's dictionary that names it. /ke-toan and /engage keep their existing addresses; Ludy Notes
+// moved to /cong-tac when the shell regrouped into Ludy Cộng tác.
 export const APP_PAGES = {
-  accounting: { path: '/ke-toan', enRoute: '/en/accounting', module: 'finance' },
+  teamwork: { path: '/cong-tac', enRoute: '/en/teamwork', module: 'notes' },
+  finance: { path: '/ke-toan', enRoute: '/en/accounting', module: 'finance' },
   engage: { path: '/engage', enRoute: '/en/engage', module: 'social' },
-  notes: { path: '/notes', enRoute: '/en/notes', module: 'notes' },
 } as const;
 export type AppPageKey = keyof typeof APP_PAGES;
 // Addresses of pages that no longer exist, with the page that took their place. A request for one is a permanent redirect
 // (301), and so is the old /en twin of one (src/proxy.ts), so links, bookmarks and search results keep working. Ludy CRM
-// folded into Ludy Engage on 2026-11-03 (owner decision, #2435, #2440): /crm is now /engage.
-export const RETIRED_PAGES: Readonly<Record<string, string>> = { '/crm': '/engage' };
+// folded into Ludy Engage on 2026-11-03 (#2435, #2440); Ludy Notes became Ludy Cộng tác on 2026-11-14 (#3225, #3235).
+export const RETIRED_PAGES: Readonly<Record<string, string>> = {
+  '/crm': '/engage',
+  '/notes': '/cong-tac',
+};
 export const appPagePath = (key: AppPageKey) => APP_PAGES[key].path;
 
 // Pages that are not an app: legal text. Same rule as the app pages (one public path for both languages, the English tree

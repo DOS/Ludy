@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ArrowRight, Bot, CalendarCheck, Calculator, MessagesSquare, Mic, NotebookPen, type LucideIcon } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Calculator, Megaphone, Sparkles, UsersRound, type LucideIcon } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { appPagePath, type AppPageKey } from '../../content/site';
 import { Section, SectionHead } from './ui';
 
-const ICONS: Record<string, LucideIcon> = { accounting: Calculator, engage: MessagesSquare, notes: NotebookPen, bookings: CalendarCheck, meetings: Mic, vy: Bot };
+const ICONS: Record<string, LucideIcon> = { teamwork: UsersRound, finance: Calculator, engage: Megaphone, hr: BriefcaseBusiness, ai: Sparkles };
 
-// One card per app (owner request, 2026-11-12): an icon, what it does in one plain sentence, which AI coworker works in it, and a link to
-// its page where it has one. The long lists of what each app does live on those pages, not here.
+// One card per app of the regrouped shell (owner decisions 2026-11-12 and 2026-11-14, #3225, #3235): an icon, what it
+// does today, which AI coworker works in it (none on Ludy AI, which holds the team's settings), and a link to its page
+// where it has one.
 export function AppCards({ dict }: { dict: Dictionary }) {
   const { appCards } = dict;
   return (
@@ -15,7 +16,7 @@ export function AppCards({ dict }: { dict: Dictionary }) {
       <SectionHead id="apps-title" title={appCards.title} lead={appCards.lead} />
       <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {appCards.items.map((item, i) => {
-          const Icon = ICONS[item.key] ?? Bot;
+          const Icon = ICONS[item.key] ?? Sparkles;
           return (
             <li key={item.key} className="flex flex-col rounded-xl border border-line bg-surface p-5">
               <span className={`flex size-11 items-center justify-center rounded-xl ${i % 2 === 0 ? 'bg-accent-soft text-accent-ink' : 'bg-ok-soft text-ok'}`}>

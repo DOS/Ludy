@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { OG_SIZE, renderOgImage } from '../../../../components/og-image';
 import { en } from '../../../../content/en';
-import { notesEn } from '../../../../content/notes-en';
+import { teamworkEn } from '../../../../content/teamwork-en';
 
-export const alt = notesEn.meta.title;
+export const alt = teamworkEn.meta.title;
 export const size = OG_SIZE;
 export const contentType = 'image/png';
 
 export default function Image() {
-  return renderOgImage({ name: notesEn.appName, title: notesEn.ogTitle, tagline: en.footer.tagline });
+  return renderOgImage({ name: teamworkEn.appName, title: teamworkEn.ogTitle, tagline: en.footer.tagline });
 }

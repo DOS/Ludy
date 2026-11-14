@@ -11,7 +11,7 @@ const row = (slug: string, name: string, dueDate: string | null): ClientRow => (
 describe('landingFor', () => {
   it('sends a user with several orgs to the home screen, with one to its Inbox, with none to onboarding', () => {
     expect(landingFor([{ slug: 'a' }, { slug: 'b' }])).toEqual({ to: 'clients' });
-    expect(landingFor([{ slug: 'a' }])).toEqual({ to: 'inbox', slug: 'a' });
+    expect(landingFor([{ slug: 'a' }])).toEqual({ to: 'overview', slug: 'a' });
     expect(landingFor([])).toEqual({ to: 'onboarding' });
   });
 });

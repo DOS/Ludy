@@ -23,6 +23,8 @@ test.use({ viewport: { width: 1440, height: 900 } });
 test('on a wide screen the pending list stays beside the proposal, and approving opens the next one', async ({ page }) => {
   await signInNewUser(page, newEmail('inbox-split'));
   const slug = await createOrg(page, 'Công ty Màn hình rộng');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
   await page.locator('input[type=file]').setInputFiles([invoice(4101), invoice(4102)]);
   await expect(page.getByRole('main').getByRole('link', { name: SELLER })).toHaveCount(2, { timeout: 90_000 });
 

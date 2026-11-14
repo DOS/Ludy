@@ -523,7 +523,8 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(JSON.stringify(out)).not.toContain('Khach Signals');
     // The two rules that could look are `checked`; rule 3 has no data to read yet and says so, so an empty list is never mistaken for "all clear".
     expect(out.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
-    expect(out.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }]);
+    // The conversation rule (#3124) never looks over MCP: a grant's context reads no conversation, so it is named unchecked, never an empty "all clear".
+    expect(out.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }, { rule: 'conversation_unanswered', reason: 'not_available' }]);
     // One row of the daily budget per item, and the audit row names the tool.
     expect((await used()) - before).toBe(1);
     const audited = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL`));

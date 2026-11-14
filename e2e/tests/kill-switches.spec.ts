@@ -76,7 +76,8 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
   const slug = await createOrg(page, 'Công ty Diễn Tập Dừng AI');
 
   const positionId = await test.step('an owner installs an agent, with a second factor (R3)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Đội ngũ AI' }).click();
     await expect(page.getByRole('heading', { name: 'Sơ đồ tổ chức và tác tử AI' })).toBeVisible();
     await page.getByTestId('template').first().getByRole('button', { name: 'Cài', exact: true }).click();
     await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();

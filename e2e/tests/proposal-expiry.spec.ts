@@ -33,7 +33,7 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
   });
 
   await test.step('ask for a general journal voucher', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Bút toán' }).click();
     await page.getByRole('button', { name: 'Lập phiếu kế toán' }).click();
     const form = page.getByRole('form', { name: 'Phiếu kế toán khác' });
@@ -56,8 +56,8 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
   });
 
   await test.step('the Inbox lists it under "Hết hạn" with its reason, and it cannot be approved', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page.getByText('Trích trước tiền điện tháng 10')).toHaveCount(0);
     await page.getByRole('tab', { name: 'Hết hạn' }).click();
     await expect(page.getByText('Hết hạn sau 15 ngày chờ duyệt')).toBeVisible();

@@ -47,7 +47,7 @@ export function InvitePage() {
       onSuccess: async (org) => {
         forgetInvite();
         await queryClient.invalidateQueries();
-        await navigate({ to: '/o/$slug/inbox', params: { slug: org.slug } });
+        await navigate({ to: '/o/$slug/overview', params: { slug: org.slug } });
       },
     }),
   );

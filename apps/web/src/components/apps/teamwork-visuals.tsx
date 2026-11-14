@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Check, Link2, Lock, Pin, Search, Users } from 'lucide-react';
-import type { NotesCopy } from '../../content/notes-vi';
+import { Check, Link2, Lock, Mic, Pin, Search, Sparkles, Users } from 'lucide-react';
+import type { TeamworkCopy } from '../../content/teamwork-vi';
 import type { Dictionary } from '../../content/vi';
 import { NotesList, TodoList } from '../landing/notes-fragments';
 import { Chip } from '../landing/ui';
 
-// The pieces of Ludy Notes the page draws, in HTML with the home page's sample company: each is something the product
-// shows today. Panel titles are not headings, so the page's outline stays the section titles and the feature groups.
-type Props = { dict: Dictionary; copy: NotesCopy };
+// The pieces of Ludy Cộng tác the page draws, in HTML with the home page's sample company: each is something the
+// product shows today. Panel titles are not headings, so the page's outline stays the section titles and feature groups.
+type Props = { dict: Dictionary; copy: TeamworkCopy };
 
 function FauxButton({ children, primary = false }: { children: string; primary?: boolean }) {
   return (
     <span
-      className={`inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium ${primary ? 'border-line-strong/70 bg-surface-2' : 'border-line bg-surface text-muted'}`}
+      className={`inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium ${primary ? 'border-line-strong/70 bg-surface-2 text-fg' : 'border-line bg-surface text-muted'}`}
       aria-hidden="true"
     >
       {children}
@@ -22,7 +22,7 @@ function FauxButton({ children, primary = false }: { children: string; primary?:
 
 // An open note as the Notes screen draws it: the write and preview tabs, the Markdown as it renders, its tags and the
 // record it is attached to.
-function NotePreview({ copy }: { copy: NotesCopy }) {
+function NotePreview({ copy }: { copy: TeamworkCopy }) {
   const f = copy.fragments.note;
   return (
     <figure aria-label={f.label} className="flex min-w-0 flex-col rounded-md border border-line bg-bg">
@@ -77,19 +77,70 @@ function NotePreview({ copy }: { copy: NotesCopy }) {
   );
 }
 
-// The hero: the Notes screen, the list of notes with their private or shared mark beside the open note.
-export function NotesHero({ dict, copy }: Props) {
+// The hero: the four items of the Ludy Cộng tác menu, with the Notes screen open below.
+export function TeamworkHero({ dict, copy }: Props) {
   return (
     <figure aria-label={copy.fragments.screenLabel} className="rounded-lg border border-line bg-surface p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-4 text-xs text-subtle">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 text-xs text-subtle">
         <span>{dict.shell.org}</span>
         <Chip tone="neutral">{copy.fragments.sample}</Chip>
       </div>
+      <ul className="mb-4 flex flex-wrap gap-1.5 border-b border-line pb-3 text-xs" aria-hidden="true">
+        {copy.fragments.menuItems.map((item, i) => (
+          <li
+            key={item}
+            className={`rounded-md px-2.5 py-1.5 font-medium ${i === copy.fragments.activeMenuItem ? 'bg-accent-soft text-accent-ink' : 'bg-surface-2 text-muted'}`}
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         <NotesList notes={dict.modules.notes} />
         <NotePreview copy={copy} />
       </div>
     </figure>
+  );
+}
+
+// My work and Team tasks: personal to-dos by due day, handing one over to a position, and the data download panel.
+export function MyWorkVisual({ dict, copy }: Props) {
+  const f = copy.fragments.handover;
+  const d = copy.fragments.data;
+  return (
+    <div className="flex min-w-0 flex-col gap-4">
+      <span className="sr-only">{copy.fragments.sample}</span>
+      <TodoList notes={dict.modules.notes} />
+      <figure className="rounded-md border border-line bg-bg p-4 text-sm">
+        <figcaption className="font-semibold">{f.title}</figcaption>
+        <p className="mt-2 text-xs text-muted">{f.hint}</p>
+        <dl className="mt-3 flex flex-col gap-2.5 text-[13px]">
+          <div>
+            <dt className="text-xs text-subtle">{f.positionLabel}</dt>
+            <dd className="mt-0.5 rounded-sm border border-line bg-surface px-2.5 py-1.5">{f.position}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-subtle">{f.taskLabel}</dt>
+            <dd className="mt-0.5 rounded-sm border border-line bg-surface px-2.5 py-1.5">{f.task}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-subtle">{f.descLabel}</dt>
+            <dd className="mt-0.5 rounded-sm border border-line bg-surface px-2.5 py-1.5">{f.desc}</dd>
+          </div>
+        </dl>
+        <div className="mt-4 flex justify-end">
+          <FauxButton primary>{f.button}</FauxButton>
+        </div>
+      </figure>
+      <figure className="rounded-md border border-line bg-bg px-4 py-3">
+        <figcaption className="text-sm font-semibold">{d.title}</figcaption>
+        <p className="mt-1 text-xs text-subtle">{d.note}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <FauxButton primary>{d.markdown}</FauxButton>
+          <FauxButton primary>{d.json}</FauxButton>
+        </div>
+      </figure>
+    </div>
   );
 }
 
@@ -170,50 +221,60 @@ export function WorkplaceVisual({ copy }: Props) {
   );
 }
 
-// My work: the to-dos of one member by due day, and the dialog that hands one to a position as a team task.
-export function MyWorkVisual({ dict, copy }: Props) {
-  const f = copy.fragments.handover;
+// Meetings: consent-confirmed recording, private AI draft summary and action items for the recorder, and minutes view.
+export function MeetingsVisual({ copy }: Props) {
+  const m = copy.fragments.meeting;
   return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <span className="sr-only">{copy.fragments.sample}</span>
-      <TodoList notes={dict.modules.notes} />
-      <figure className="rounded-md border border-line bg-bg p-4 text-sm">
-        <figcaption className="font-semibold">{f.title}</figcaption>
-        <p className="mt-2 text-xs text-muted">{f.hint}</p>
-        <dl className="mt-3 flex flex-col gap-2.5 text-[13px]">
-          <div>
-            <dt className="text-xs text-subtle">{f.positionLabel}</dt>
-            <dd className="mt-0.5 rounded-sm border border-line bg-surface px-2.5 py-1.5">{f.position}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-subtle">{f.taskLabel}</dt>
-            <dd className="mt-0.5 rounded-sm border border-line bg-surface px-2.5 py-1.5">{f.task}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-subtle">{f.descLabel}</dt>
-            <dd className="mt-0.5 rounded-sm border border-line bg-surface px-2.5 py-1.5">{f.desc}</dd>
-          </div>
-        </dl>
-        <div className="mt-4 flex justify-end">
-          <FauxButton primary>{f.button}</FauxButton>
+    <figure aria-label={m.label} className="rounded-md border border-line bg-bg">
+      <figcaption className="border-b border-line px-4 py-3">
+        <span className="sr-only">{copy.fragments.sample}: </span>
+        <span className="block text-sm font-semibold">{m.title}</span>
+        <span className="num mt-0.5 block text-xs text-subtle">{m.when}</span>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <Chip tone="ok">
+            <Mic className="size-3" aria-hidden="true" />
+            {m.consentBadge}
+          </Chip>
+          <Chip tone="neutral">{m.retention}</Chip>
         </div>
-      </figure>
-    </div>
-  );
-}
-
-// Your data: the two downloads, and what happens to a leaving member's private notes.
-export function DataVisual({ copy }: Props) {
-  const f = copy.fragments.data;
-  return (
-    <figure className="rounded-md border border-line bg-bg">
-      <figcaption className="sr-only">{copy.fragments.sample}</figcaption>
-      <div className="px-4 py-3">
-        <p className="text-sm font-semibold">{f.title}</p>
-        <p className="mt-1 text-xs text-subtle">{f.note}</p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <FauxButton primary>{f.markdown}</FauxButton>
-          <FauxButton primary>{f.json}</FauxButton>
+      </figcaption>
+      <div className="flex flex-col gap-3 px-4 py-3 text-[13px]">
+        <div className="rounded-md border border-dashed border-accent/60 bg-surface p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-semibold">{m.summaryTitle}</span>
+            <Chip tone="accent" wrap>
+              <Sparkles className="size-3" aria-hidden="true" />
+              {m.draftBadge}
+            </Chip>
+          </div>
+          <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-muted">
+            {m.summaryPoints.map((point) => (
+              <li key={point}>{point}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <div className="text-xs font-semibold text-subtle">{m.actionsTitle}</div>
+          <ul className="mt-2 flex flex-col divide-y divide-line">
+            {m.actions.map((action) => (
+              <li key={action.text} className="flex flex-wrap items-baseline justify-between gap-2 py-2 first:pt-0">
+                <span className="min-w-0 font-medium">{action.text}</span>
+                <span className="num text-xs text-subtle">{action.who}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3 text-xs text-subtle">
+        <span className="flex items-center gap-1.5">
+          <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            {m.linkedLabel}: <span className="text-muted">{m.linked}</span>
+          </span>
+        </span>
+        <div className="flex flex-wrap gap-2">
+          <FauxButton>{m.minutesButton}</FauxButton>
+          <FauxButton primary>{m.publishButton}</FauxButton>
         </div>
       </div>
     </figure>

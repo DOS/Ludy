@@ -14,6 +14,8 @@ test('upload a ZIP of e-invoices with loose files and follow each file to its pr
     await page.goto('/');
     await signUp(page, newEmail('bulk'));
     const created = await createOrg(page, 'Công ty nhận hàng loạt');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });

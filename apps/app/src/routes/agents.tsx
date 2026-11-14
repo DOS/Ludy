@@ -866,7 +866,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
 const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'today_brief', 'ads_campaign_draft', 'finance_overview_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_followup_words', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
-function AiUse({ agents }: { agents: Agent[] }) {
+export function AiUse({ agents }: { agents: Agent[] }) {
   const t = useTranslations('agents');
   const tf = useTranslations('aiMeter.features');
   const f = useFormat();
@@ -927,7 +927,7 @@ function AiUse({ agents }: { agents: Agent[] }) {
   );
 }
 
-function Budgets({ agents, perms }: { agents: Agent[]; perms: AgentPermissions }) {
+export function Budgets({ agents, perms }: { agents: Agent[]; perms: AgentPermissions }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
   const f = useFormat();
@@ -1037,8 +1037,6 @@ export function AgentsPage() {
             )}
           </section>
           <Templates perms={perms} entities={entities} entitiesReady={entitiesReady} />
-          {perms.budgets && <AiUse agents={chart.data.agents} />}
-          {perms.budgets && <Budgets agents={chart.data.agents} perms={perms} />}
         </>
       )}
     </div>

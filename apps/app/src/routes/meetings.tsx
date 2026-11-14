@@ -251,7 +251,7 @@ export function MeetingsPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link to="/o/$slug/meetings/record" params={{ slug }} className={buttonVariants({ variant: 'outline' })}>
               {t('record.open')}
             </Link>
@@ -313,7 +313,7 @@ export function MeetingsPage() {
                   {m.hasAudio && <Badge variant="secondary">{t('badgeAudio')}</Badge>}
                   {m.hasVideo && <Badge variant="secondary">{t('badgeVideo')}</Badge>}
                 </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span>{f.date(m.createdAt)}</span>
                   <span>{t('audioKeptUntil', { date: m.audioRetentionDate })}</span>
                 </div>
