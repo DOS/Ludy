@@ -433,7 +433,7 @@ export async function runConversationAttachment(deps: AttachmentDeps, job: Conve
     if (!adapter?.media || !deps.broker) return failed(false, 'NO_MEDIA_ADAPTER');
     let opened: Opened;
     try {
-      opened = await open({ runtime: deps.runtime, broker: deps.broker, adapter: deps.adapter as (provider: string) => ConversationAdapter | undefined }, job);
+      opened = await open({ runtime: deps.runtime, broker: deps.broker }, job);
     } catch {
       return failed(true, 'CREDENTIAL_ERROR');
     }
