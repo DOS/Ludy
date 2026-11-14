@@ -110,8 +110,10 @@ export interface ConversationHistoryInput {
 export type ConversationHistoryResult =
   // `complete`: every chat read reached back to `since` (or its beginning), so no gap is left; `oldest` is the date of the oldest
   // message that was read (null when none).
-  | { kind: 'ok'; events: InboundConversationEvent[]; complete: boolean; oldest: string | null }
-  | { kind: 'failed'; retry: boolean; code?: string };
+  // `units`: the platform's quota units the pass spent, for a provider that meters its API (YouTube, #3134); the kernel counts them against the day's budget.
+  | { kind: 'ok'; events: InboundConversationEvent[]; complete: boolean; oldest: string | null; units?: number }
+  // `quotaUntil`: the platform refused for its quota, which resets at that time; nothing is asked before it.
+  | { kind: 'failed'; retry: boolean; code?: string; units?: number; quotaUntil?: Date };
 
 // Turning a provider's chats on or off at the platform (Telegram bot chats, #3132): the webhook is pointed at the deployment or taken away. The
 // adapter builds the webhook's address and secret from the connection's hook, the deployment's public address and the key the broker derives for

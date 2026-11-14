@@ -34,6 +34,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
 import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
+import { YoutubeCommentsPanel } from '../components/youtube-comments-panel.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { connectPlatforms, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
@@ -648,6 +649,7 @@ export function SocialChannelsPage() {
                       ) : null
                     )}
                     {c.provider === 'telegram' && (c.status === 'active' || c.chatState !== 'off') && c.status !== 'revoked' && <TelegramChats channel={c} canEdit={isAdmin} active={c.status === 'active'} />}
+                    {c.provider === 'youtube' && c.status === 'active' && <YoutubeCommentsPanel connectionId={c.id} isAdmin={isAdmin} onReconnect={canReconnect(c) && !start.isPending ? () => start.mutate({ provider: 'youtube' }) : undefined} />}
                     {c.provider === 'threads' && c.status === 'active' && (
                       c.scopes.includes('threads_read_replies') ? (
                         <p className="mt-1 text-xs text-subtle-foreground">{t('threadsCommentsEnabled')}</p>

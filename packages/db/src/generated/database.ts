@@ -1875,6 +1875,13 @@ export interface KernelChannelConnectionTable {
   chat_error: string | null;
   chat_bot_id: string | null;
   chat_changed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  comments_enabled: Generated<boolean>;
+  quota_reset_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  quota_poll_units: Generated<number>;
+  quota_reply_units: Generated<number>;
+  quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  history_idle_polls: Generated<number>;
 }
 
 /** crove_kernel.conversation_attachment */

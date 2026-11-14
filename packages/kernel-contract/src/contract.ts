@@ -237,6 +237,8 @@ import {
   zConversationSettle,
   zConversationAutoDraft,
   zConversationAutoDraftSet,
+  zYoutubeCommentsSet,
+  zYoutubeCommentsStatusList,
   zConversationDraftDiscard,
   zConversationDraftRequest,
   zConversationOther,
@@ -1838,6 +1840,9 @@ export const contract = {
     draftDiscard: oc.input(zConversationDraftDiscard).output(z.object({ discarded: z.boolean() })),
     autoDraft: oc.input(z.strictObject({})).output(zConversationAutoDraft),
     setAutoDraft: oc.input(zConversationAutoDraftSet).output(zConversationAutoDraft),
+    // YouTube comments (#3134): the connections' opt-in and the day's quota units, and the owner or admin's switch (reading comments spends the project's quota).
+    youtubeComments: oc.input(z.strictObject({})).output(zYoutubeCommentsStatusList),
+    setYoutubeComments: oc.input(zYoutubeCommentsSet).output(z.object({ enabled: z.boolean() })),
     // The org's saved replies: every member reads them; owners, admins and members write them.
     savedReplies: oc.input(zSavedReplyList).output(zSavedReplyListed),
     createSavedReply: oc.input(zSavedReplyInput).output(z.object({ id: zId })),
