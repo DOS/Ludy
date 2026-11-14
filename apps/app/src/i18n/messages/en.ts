@@ -1915,7 +1915,7 @@ export const en = {
         again: 'The translation is out of date, translate again',
         againFresh: 'Translate again',
         stale: 'Out-of-date translation, translate again',
-        desc: 'Vy translates what you are reading, for you only. The translation sits beside the original and never replaces it; no task, mail or post is made from it.',
+        desc: 'Vy translates what you are reading, for you only; the text is sent to the AI provider of this system, as the summary is. The translation sits beside the original and never replaces it; no task, mail or post is made from it.',
         private: 'Only you see this translation. Check it against the original, especially figures and names.',
         estimate: 'Estimated cost: {cost}',
         running: 'Vy is translating. This takes up to a minute.',

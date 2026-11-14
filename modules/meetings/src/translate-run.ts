@@ -143,6 +143,8 @@ export const translationGet = defineQuery({
   name: 'meetings.translation.get',
   input: zMeetingRef,
   access: ROLES,
+  // The translated text is read here, so each read leaves an audit row naming the meeting (as meetings.result.get does).
+  sensitive: true,
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<Translations> => {
     const userId = userOf(ctx.actor);

@@ -24,6 +24,9 @@ export const translationCopyResult = defineCommand({
     const userId = userOf(ctx.actor);
     if (!isSummaryEnabled()) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    // The meeting row is held FOR SHARE (as meetings.summary.start does), so the erasure of a person's data, which holds it FOR NO KEY UPDATE, and this copy serialize: either the copy
+    // commits first and the erasure then drops its row, or the erasure commits first and the copy re-reads the redacted original, whose hash no longer matches.
+    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     // The member's own result, read in the member's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
     const found = await ctx
       .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId: input.runId })

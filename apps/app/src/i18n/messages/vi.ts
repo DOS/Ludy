@@ -1913,7 +1913,7 @@ export const vi = {
         again: 'Bản dịch đã cũ, dịch lại',
         againFresh: 'Dịch lại',
         stale: 'Bản dịch cũ, dịch lại',
-        desc: 'Vy dịch phần bạn đang đọc, chỉ mình bạn thấy. Bản dịch nằm cạnh bản gốc và không thay bản gốc; không có việc, thư hay bài đăng nào được tạo từ bản dịch.',
+        desc: 'Vy dịch phần bạn đang đọc, chỉ mình bạn thấy; nội dung được gửi tới nhà cung cấp AI của hệ thống này, như khi tóm tắt. Bản dịch nằm cạnh bản gốc và không thay bản gốc; không có việc, thư hay bài đăng nào được tạo từ bản dịch.',
         private: 'Chỉ mình bạn thấy bản dịch này. Hãy đối chiếu với bản gốc, nhất là số liệu và tên riêng.',
         estimate: 'Ước tính chi phí: {cost}',
         running: 'Vy đang dịch. Việc này mất tối đa một phút.',

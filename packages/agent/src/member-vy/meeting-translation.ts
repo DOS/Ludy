@@ -79,11 +79,31 @@ export function digitRuns(text: string): Set<string> {
   return new Set(numbersIn(text).map((n) => n.replace(/[.,]/g, '').replace(/^0+(?=\d)/, '')));
 }
 
+interface NumberToken {
+  // The run with its separators ignored (1.250.000 and 1,250,000 are 1250000).
+  merged: string;
+  // The groups between the separators, leading zeros dropped (14.11.2026 is 14, 11 and 2026): a date or an amount written with other separators in the other language has the same groups.
+  parts: string[];
+}
+const stripZeros = (digits: string): string => digits.replace(/^0+(?=\d)/, '');
+function numberTokens(text: string): NumberToken[] {
+  return numbersIn(text).map((n) => ({ merged: stripZeros(n.replace(/[.,]/g, '')), parts: n.split(/[.,]/).map(stripZeros) }));
+}
+// Whether a token of one text is held by the other: the same run, or every group of it is a group the other writes (a date or an amount written with other separators).
+// `loose` (the check for a dropped figure) also accepts a single group of the other text's longer run; a figure the translation INVENTS never gets that (250 is not held by 1.250.000).
+function held(token: NumberToken, others: readonly NumberToken[], loose = false): boolean {
+  if (others.some((o) => o.merged === token.merged)) return true;
+  const groups = new Set(others.flatMap((o) => o.parts));
+  return (loose || token.parts.length > 1) && token.parts.every((p) => groups.has(p));
+}
+
 const trimEdge = (token: string): string => token.replace(/^[^\p{L}\p{N}@]+|[^\p{L}\p{N}/]+$/gu, '');
 
 // The ways to reach someone off the page that a text writes, normalized: a link or an email address as the token (lower case, no trailing punctuation), a phone-like run as its
 // digits. Linear scans; no backtracking pattern runs on text a model wrote.
-export function contactsIn(text: string): Set<string> {
+export function contactsIn(rawText: string): Set<string> {
+  // NFKC, so a full-width at sign or digit is read as the plain one.
+  const text = rawText.normalize('NFKC');
   const found = new Set<string>();
   for (const raw of text.split(/\s+/)) {
     const token = trimEdge(raw).toLowerCase();
@@ -99,20 +119,24 @@ export function contactsIn(text: string): Set<string> {
       }
     }
   }
-  // Phone-like runs: digits with spaces, dots and dashes between them, nine digits or more.
+  // Phone-like runs: digits with spaces, dots and dashes between them, nine DIGITS or more (not nine characters: 1.250.000 or 14.11.2026 is a figure, and the digit rule guards figures).
   let start = -1;
   let last = -1;
+  const flush = () => {
+    if (start >= 0) {
+      const digits = text.slice(start, last + 1).replace(/\D/g, '');
+      if (digits.length >= 9) found.add(`tel:${digits}`);
+    }
+    start = -1;
+    last = -1;
+  };
   for (let i = 0; i <= text.length; i += 1) {
     const c = i < text.length ? (text[i] as string) : '';
     const digit = c >= '0' && c <= '9';
     if (digit) {
       if (start < 0) start = i;
       last = i;
-    } else if (!(c === ' ' || c === '.' || c === '-')) {
-      if (start >= 0 && last - start + 1 >= 9) found.add(`tel:${text.slice(start, last + 1).replace(/\D/g, '')}`);
-      start = -1;
-      last = -1;
-    }
+    } else if (!(c === ' ' || c === '.' || c === '-')) flush();
   }
   return found;
 }
@@ -175,18 +199,13 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   if (text === '') return refuse('EMPTY');
   if (text.length > limitFor(source.key, source.text)) return refuse('TOO_LONG');
   if (squash(text) === squash(source.text)) return refuse('UNCHANGED');
-  const original = digitRuns(source.text);
-  const translated = digitRuns(text);
-  for (const run of translated) if (!original.has(run)) return refuse('INVENTED_NUMBER');
+  const original = numberTokens(source.text);
+  const translated = numberTokens(text);
+  if (translated.some((token) => !held(token, original))) return refuse('INVENTED_NUMBER');
   const known = contactsIn(source.text);
   for (const contact of contactsIn(text)) if (!known.has(contact)) return refuse('CONTACT_ADDED');
   const codes: TranslationCode[] = [];
-  for (const run of original) {
-    if (!translated.has(run)) {
-      codes.push('NUMBER_DROPPED');
-      break;
-    }
-  }
+  if (original.some((token) => !held(token, translated, true))) codes.push('NUMBER_DROPPED');
   const seen = new Set(wordsOf(source.text).map(norm));
   if (midSentenceCapitals(text).some((word) => !seen.has(norm(word)) && !KNOWN_WORDS.has(norm(word)))) codes.push('NAME_ADDED');
   return { key: source.key, text, state: codes.length > 0 ? 'warn' : 'ok', codes };
