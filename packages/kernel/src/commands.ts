@@ -101,6 +101,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.payroll_posting.record',
   // The payment of a pay run's net pay or a remittance (#2532): records a payment voucher that names the run and what it pays.
   'finance.payroll_payment.record',
+  // The posting of a stored marketplace settlement (#2516): posts the settlement's sales as a general journal voucher that names it.
+  'finance.marketplace_settlement.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',

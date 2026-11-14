@@ -9350,7 +9350,10 @@ export const en = {
       HR_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the pay account map yet; the run cannot be posted',
       MARKETPLACE_POSTING_MAP_UNCONFIRMED: 'The accountant has not confirmed the marketplace account map yet; waiting for the accountant',
       MARKETPLACE_POSTING_REGIME_UNKNOWN: 'This accounting regime has no marketplace account map',
-      MARKETPLACE_SETTLEMENT_NOT_POSTABLE: 'The settlement cannot be posted (the net revenue is not positive or the entry is invalid)',
+      MARKETPLACE_SETTLEMENT_NOT_POSTABLE: 'The settlement cannot be posted (the net revenue is zero, it was reversed, the amount is not a whole dong or the entry is invalid)',
+      MARKETPLACE_SETTLEMENT_NOT_FOUND: 'This marketplace settlement was not found',
+      MARKETPLACE_SETTLEMENT_POSTED: 'This marketplace settlement has already been posted',
+      MARKETPLACE_SETTLEMENT_MISMATCH: 'The posting proposal does not match the stored settlement; ask for it again',
       HR_PAYMENT_NEGATIVE: 'This amount is negative after the month\'s adjustments (money to give back), so it cannot be recorded here; the accountant settles it separately',
       HR_PAYMENT_NOT_POSTED: 'This pay run has not been posted yet; post it before recording the pay or a remittance',
       HR_PAYMENT_POSTING_REVERSED: 'The posting of this pay run was reversed, so the pay and the remittances cannot be recorded against it',
@@ -10438,6 +10441,10 @@ export const en = {
       marketplace_retention: {
         apply: 'Delete the original file and per-order amounts of a marketplace report decided over 90 days ago',
         key: 'Read the storage key of a marketplace report original due for deletion',
+      },
+      marketplace_settlement: {
+        prepare: "Check a marketplace platform's settlement before proposing its posting",
+        record: "Post a marketplace platform's settlement as one journal entry",
       },
       einvoice: {
         draft_from_order: 'Make a sales invoice draft from a sales order',

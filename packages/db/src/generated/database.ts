@@ -1259,6 +1259,7 @@ export interface FinanceJournalVoucherTable {
   stock_closing_month: ColumnType<string | null, string | null, NotGranted>;
   stock_count_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */

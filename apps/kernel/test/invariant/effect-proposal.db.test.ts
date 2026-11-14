@@ -113,6 +113,9 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     );
   const journalVoucher = (proposalId: string) => (c: pg.Client) =>
     c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id) VALUES ($1, '2026-10-15', 'chứng từ', $2)`, [orgId, proposalId]);
+  // The posting of a stored marketplace settlement (#2516): a journal voucher that names the settlement.
+  const settlementVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id) VALUES ($1, '2026-10-15', 'đối soát sàn', $2, $3)`, [orgId, proposalId, randomUUID()]);
   // An entry, then its reversal ordered by the proposal (source kernel.proposal), as finance.journal.reverse posts it.
   const reversal = (proposalId: string) => async (c: pg.Client) => {
     const { rows } = await c.query<{ id: string }>(
@@ -131,6 +134,7 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     { name: 'cash voucher', command: 'finance.voucher.record', write: cashVoucher },
     { name: 'payroll payment voucher', command: 'finance.payroll_payment.record', write: payrollPaymentVoucher },
     { name: 'journal voucher', command: 'finance.journal_voucher.record', write: journalVoucher },
+    { name: 'marketplace settlement voucher', command: 'finance.marketplace_settlement.record', write: settlementVoucher },
     { name: 'reversal entry', command: 'finance.journal.reverse', write: reversal },
   ] as const;
 
