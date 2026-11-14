@@ -220,3 +220,26 @@ export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
   refund: zJournalAmount,
 });
 export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
+
+// The posting of a platform's payout (#2516, ADR-0045 point 6, plan 8.4 "The payout"): ONE general journal voucher per settlement: Dr 112 for the money received, Dr 1388 for the platform's fees,
+// Dr 333 for the tax the platform withheld, Cr 131 (the platform) for what the settlement posted there. A person asks for it with the settlement and the bank line of the platform's transfer
+// (kernel.proposal.request with command `finance.marketplace_payout.record`); every amount comes from the stored settlement's lines, the bank line only has to be money in, equal to the net the
+// settlement paid, and free. The server builds the entry again when the proposal is approved. Nothing is requested or posted until the accountant has confirmed the account map (#2520), and a
+// payout whose settlement is not posted yet is refused: MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED (409). Other codes: MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_PAYOUT_NOT_POSTABLE (422),
+// MARKETPLACE_PAYOUT_BANK_LINE (409 or 422), MARKETPLACE_PAYOUT_POSTED (409), MARKETPLACE_PAYOUT_MISMATCH (422), PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
+export const MARKETPLACE_PAYOUT_COMMAND = 'finance.marketplace_payout.record';
+export const zMarketplacePayoutRequest = z.strictObject({ settlementId: zId, bankLineId: zId });
+export type MarketplacePayoutRequest = z.infer<typeof zMarketplacePayoutRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the settlement it pays, the bank line, the platform and the period, and the split in whole dong: the money received, the fees and
+// the withheld tax, so a person sees what the platform kept. The platform's party on the 131 and 1388 lines is the one the settlement's posting created.
+export const zMarketplacePayoutProposal = zJournalVoucherProposal.extend({
+  settlementId: zId,
+  bankLineId: zId,
+  platform: zMarketplacePlatform,
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  received: zJournalAmount,
+  fees: zJournalAmount,
+  taxWithheld: zJournalAmount,
+});
+export type MarketplacePayoutProposal = z.infer<typeof zMarketplacePayoutProposal>;

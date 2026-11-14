@@ -129,12 +129,17 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     ]);
   };
 
+  // The posting of a platform's payout (#2516): a journal voucher that names the settlement it pays and the bank line of the transfer.
+  const payoutVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-15', 'sàn trả', $2, $3, $4)`, [orgId, proposalId, randomUUID(), randomUUID()]);
+
   const PATHS = [
     { name: 'purchase document', command: 'finance.purchase.record', write: purchaseDocument },
     { name: 'cash voucher', command: 'finance.voucher.record', write: cashVoucher },
     { name: 'payroll payment voucher', command: 'finance.payroll_payment.record', write: payrollPaymentVoucher },
     { name: 'journal voucher', command: 'finance.journal_voucher.record', write: journalVoucher },
     { name: 'marketplace settlement voucher', command: 'finance.marketplace_settlement.record', write: settlementVoucher },
+    { name: 'marketplace payout voucher', command: 'finance.marketplace_payout.record', write: payoutVoucher },
     { name: 'reversal entry', command: 'finance.journal.reverse', write: reversal },
   ] as const;
 

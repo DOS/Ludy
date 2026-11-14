@@ -103,6 +103,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.payroll_payment.record',
   // The posting of a stored marketplace settlement (#2516): posts the settlement's sales as a general journal voucher that names it.
   'finance.marketplace_settlement.record',
+  // The posting of a platform's payout (#2516): posts the settlement's money received, fees and withheld tax as a general journal voucher that names the settlement and the bank line.
+  'finance.marketplace_payout.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',

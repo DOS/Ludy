@@ -61,17 +61,16 @@ const SIGNALS = [
   'kernel.mcp.signals:ludy.read',
 ];
 
-// The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Optional here so
-// the runtime and the command can land after this test accepts them: until then no command carries `mcp`. Any other command that carries it, or this one with another scope, fails.
+// The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
+// with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
 const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that carries `mcp` but the ones WRITES names, each with its scope and, when it exists, the narrow shape of the write context', () => {
+  it('has exactly one command that carries `mcp`, the one WRITES names, with its scope, and it is R1, internal and for owners and admins', () => {
     const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined);
-    expect(carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).filter((n) => !WRITES.includes(n))).toEqual([]);
-    // A command that carries `mcp` is pinned here whatever the runtime accepts: a weaker command cannot pass because the runtime allowed it.
+    expect(carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort()).toEqual([...WRITES].sort());
     for (const c of carrying) {
       expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
       expect((c as { mcp: { scope: string } }).mcp, c.name).toEqual({ scope: 'ludy.social.draft' });
@@ -103,7 +102,14 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('refuses at register() a command that declares `mcp`, and a query that is sensitive or open to member mode with it', () => {
     const base = { name: 'kernel.test.x', input: z.strictObject({}), risk: 'R1', sideEffect: 'internal', access: ['owner'] };
     const rt = new Runtime({} as never, { manifests: TEST_MANIFESTS });
-    expect(() => rt.register({ commands: [{ ...base, mcp: { scope: 'ludy.read' }, handler: async () => ({}) } as never], queries: [] })).toThrow();
+    // A command may declare only a write scope, and only as the narrow kind the sealed write context runs; a read scope on a command, and a write scope on a query, are refused.
+    expect(() => rt.register({ commands: [{ ...base, mcp: { scope: 'ludy.read' }, handler: async () => ({}) } as never], queries: [] })).toThrow(/scope/);
+    const draft = { ...base, access: ['owner', 'admin'], mcp: { scope: 'ludy.social.draft' }, handler: async () => ({}) };
+    expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [draft as never], queries: [] })).not.toThrow();
+    for (const bad of [{ risk: 'R2', sideEffect: 'external' }, { access: ['owner', 'member'] }, { access: ['member'] }, { access: [] }, { access: 'system' }, { sensitive: true }, { permission: 'finance.post' }, { extension: { scope: 'meetings.record' } }, { mcp: { scope: 'ludy.social.write' } }]) {
+      expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [{ ...draft, ...bad } as never], queries: [] }), JSON.stringify(bad)).toThrow();
+    }
+    expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ name: 'kernel.test.w', input: z.strictObject({}), access: ['owner'], mcp: { scope: 'ludy.social.draft' }, handler: async () => ({}) } as never] })).toThrow(/scope/);
     const q = { name: 'kernel.test.q', input: z.strictObject({}), access: ['owner'], mcp: { scope: 'ludy.read' }, handler: async () => ({}) };
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, sensitive: true } as never] })).toThrow(/MCP grant/);
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, memberVy: { reads: [] }, name: 'kernel.member_vy.q' } as never] })).toThrow(/MCP grant/);
