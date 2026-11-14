@@ -243,3 +243,24 @@ export const zMarketplacePayoutProposal = zJournalVoucherProposal.extend({
   taxWithheld: zJournalAmount,
 });
 export type MarketplacePayoutProposal = z.infer<typeof zMarketplacePayoutProposal>;
+
+// The clearing of the fees a payout put on 1388 (#2516, plan 8.4 "The payout" and section 11): ONE general journal voucher, Dr 331 / Cr 1388 with the platform's party on both lines, built from the
+// platform's fee e-invoice, a purchase document already posted (Dr expense, Dr 1331, Cr 331). A person asks for it with the document alone (kernel.proposal.request with command
+// `finance.marketplace_fee_clearing.record`); the server builds the entry and builds it again when the proposal is approved. The amount is the smaller of what the invoice still has to clear (its
+// credit to 331 less its standing clearings) and the platform's 1388 balance, in whole dong; an invoice may be cleared more than once, and the sum of its standing clearings never exceeds its
+// credit to 331. Nothing is requested or posted until the accountant has confirmed the account map (#2520). MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_FEE_DOCUMENT (422),
+// MARKETPLACE_FEE_NOTHING_TO_CLEAR (409), MARKETPLACE_FEE_MISMATCH (422), PERIOD_LOCKED (409).
+export const MARKETPLACE_FEE_CLEARING_COMMAND = 'finance.marketplace_fee_clearing.record';
+export const zMarketplaceFeeClearingRequest = z.strictObject({ purchaseDocumentId: zId });
+export type MarketplaceFeeClearingRequest = z.infer<typeof zMarketplaceFeeClearingRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the invoice it clears, the platform, and the split in whole dong: the invoice's credit to 331, what its standing clearings took
+// already, the platform's 1388 balance, and the amount cleared now.
+export const zMarketplaceFeeClearingProposal = zJournalVoucherProposal.extend({
+  purchaseDocumentId: zId,
+  platform: zMarketplacePlatform,
+  invoiceTotal: zJournalAmount,
+  alreadyCleared: zJournalAmount,
+  waiting: zJournalAmount,
+  amount: zJournalAmount,
+});
+export type MarketplaceFeeClearingProposal = z.infer<typeof zMarketplaceFeeClearingProposal>;
