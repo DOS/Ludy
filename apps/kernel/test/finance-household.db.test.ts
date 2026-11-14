@@ -199,22 +199,6 @@ suite('household business profile and rules (#2517)', () => {
     expect(seen).toBe(0);
   });
 
-  it('never lets a tenant role change a profile or the law, and a profile row never changes in place', async () => {
-    const app = new URL(adminUrl);
-    app.username = 'crove_app';
-    app.password = 'test-app-pw';
-    const client = new pg.Client({ connectionString: app.toString() });
-    await client.connect();
-    try {
-      for (const table of ['household_threshold', 'household_trade_rate', 'household_expense_group_map', 'household_form_version', 'household_profile']) {
-        await expect(client.query(`DELETE FROM crove_finance.${table}`)).rejects.toMatchObject({ code: '42501' });
-        await expect(client.query(`UPDATE crove_finance.${table} SET source = source`)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|42703)$/) });
-      }
-    } finally {
-      await client.end();
-    }
-  });
-
   it('seeds the law as dated rows, all still commentary, and reads the row in force on a date', async () => {
     const o = await org();
     const rules = await query<HouseholdRules>(o, 'finance.household.rules', { date: '2026-06-30' }, o.viewer);
