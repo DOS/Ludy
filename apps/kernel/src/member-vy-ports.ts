@@ -6,6 +6,7 @@
 import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
 import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
 import { zTranscriptTranslationResult, templateSections, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { Decimal } from '@crove/l10n-vn';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
@@ -345,6 +346,15 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
   }
 }
 
+// A price per million tokens is a decimal string: it is compared as one (the money rule), never through a JS number. A value that is not a decimal is no price.
+function isPositivePrice(value: string): boolean {
+  try {
+    return new Decimal(value).gt(0);
+  } catch {
+    return false;
+  }
+}
+
 // The button and the progress of the transcript translation (E2, #3185): the module's status plus the cost expected for the lines still to translate (their size, priced; one call a
 // chunk, each with the fixed instruction around it). The text itself is not read here. With no model in the deployment the button says why (as when the module's own switch is off).
 export async function transcriptTranslationStatusOf(
@@ -361,7 +371,7 @@ export async function transcriptTranslationStatusOf(
   const perChunk = chunkExpectedUsage(Math.ceil(bytes / calls));
   const inputTokens = perChunk.inputTokens * calls;
   const outputTokens = perChunk.outputTokens * calls;
-  const priced = deps.price !== undefined && (Number(deps.price.inputPerMTok) > 0 || Number(deps.price.outputPerMTok) > 0);
+  const priced = deps.price !== undefined && (isPositivePrice(deps.price.inputPerMTok) || isPositivePrice(deps.price.outputPerMTok));
   return { ...status, estimate: { calls, inputTokens, outputTokens, cost: priced ? aiCost([{ inputTokens, outputTokens }], deps.price) : null } };
 }
 
