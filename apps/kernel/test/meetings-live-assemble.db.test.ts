@@ -17,6 +17,7 @@ import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
+import { assembleLivePieces } from '../src/meetings-live-assemble.ts';
 import type { MediaMeasurer } from '../src/meetings-measure.ts';
 import { runMeetingsRetention, sweepMeetingMedia } from '../src/meetings-retention.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';
@@ -59,6 +60,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let store: MemoryStore;
+  let broker: CredentialBroker;
   // The stand-in for crove-media: it keeps the bytes it was asked to measure (the join, decrypted from the sealed blob) and answers a fixed length, or fails when told to.
   const measured: Buffer[] = [];
   const sandbox = { fail: false, seconds: 1800 };
@@ -159,7 +161,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
 
   beforeAll(async () => {
     store = new MemoryStore();
-    const broker = {
+    broker = {
       keyId: 'k1-assemble-test',
       keyIds: ['k1-assemble-test'],
       derive: (purpose: string) => createHash('sha256').update(`test-secret:${purpose}`).digest(),
@@ -443,6 +445,25 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     // Both failures are retryable: with the sandbox back and the object restored the click works.
     expect((await click('recorder', meetingId)).status).toBe(200);
     expect(await audioRows(meetingId)).toBe(1);
+  });
+
+  it('stops a join that runs past its time limit or whose pieces exceed the size limit, and keeps nothing', async () => {
+    const meetingId = await liveMeeting();
+    await sendAll(meetingId, [0, 1, 2]);
+    await windowPassed(meetingId);
+    const stored = store.storage.size;
+    const deps = { runtime: appRuntime, store, broker, measurer, maxBytes: 300 * 1024 * 1024 };
+    const input = { actor: userActor('recorder'), orgId, meetingId };
+    // A clock that is past the deadline at the first piece.
+    let tick = 0;
+    await refusedWith(() => assembleLivePieces({ ...deps, deadlineMs: 1000, now: () => (tick += 5000) }, input), 'LIVE_ASSEMBLE_TIMEOUT');
+    // A size limit below what the pieces hold is refused before a byte is read.
+    await refusedWith(() => assembleLivePieces({ ...deps, maxBytes: 10 }, input), 'FILE_TOO_LARGE');
+    expect(store.storage.size).toBe(stored);
+    expect(await audioRows(meetingId)).toBe(0);
+    expect(await chunkCount(meetingId)).toBe(3);
+    // Within its limits the same join works.
+    expect((await assembleLivePieces(deps, input)).pieces).toBe(3);
   });
 
   it('loses cleanly against the final upload in either order: one recording, the loser refused and its object dropped', async () => {

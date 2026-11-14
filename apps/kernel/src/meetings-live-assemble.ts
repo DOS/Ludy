@@ -20,7 +20,7 @@ import {
   type Runtime,
   type UserActor,
 } from '@crove/kernel-runtime';
-import { LIVE_CHUNK_MAX_BYTES, type LiveAssemblePlan, type LiveAssemblePlanPiece, type MeetingLiveAssembled } from '@crove/kernel-contract';
+import { LIVE_CHUNK_MAX_BYTES, LIVE_CHUNK_MAX_TOTAL_BYTES, type LiveAssemblePlan, type LiveAssemblePlanPiece, type MeetingLiveAssembled } from '@crove/kernel-contract';
 import { decryptedWindows, unavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { sealMedia } from './media-seal.ts';
 
@@ -29,9 +29,14 @@ export interface LiveAssembleDeps {
   store: BlobStore;
   broker: CredentialBroker;
   measurer: MediaMeasurer;
-  // The most plaintext a meeting's audio holds (the plan's audio cap).
+  // The most plaintext a meeting's audio holds (the plan's audio cap); the pieces' own total (LIVE_CHUNK_MAX_TOTAL_BYTES) also applies.
   maxBytes: number;
+  // The longest the join may take, reading, sealing and measuring together (default ASSEMBLE_DEADLINE_MS). A join past it is refused and nothing is kept.
+  deadlineMs?: number;
+  now?: () => number;
 }
+
+export const ASSEMBLE_DEADLINE_MS = 10 * 60_000;
 
 // A piece is at most LIVE_CHUNK_MAX_BYTES of plaintext plus the cipher's own overhead: the cap keeps a wrong row from filling memory.
 const PIECE_CIPHERTEXT_MAX = LIVE_CHUNK_MAX_BYTES + 64 * 1024;
@@ -40,9 +45,11 @@ const WRAP_INFO = 'crove.meetings.v1|wrap';
 const unreadable = (seq: number) => new DomainError('LIVE_PIECE_UNREADABLE', 409, `Live piece ${seq} could not be read from the store, so the pieces cannot be joined`);
 
 // The plaintext of the pieces, in order, one at a time. Each piece is wiped after the sealing has copied it (the encryptor holds its own copy).
-async function* piecesInOrder(deps: LiveAssembleDeps, orgId: string, meetingId: string, pieces: LiveAssemblePlanPiece[]): AsyncGenerator<Uint8Array> {
+async function* piecesInOrder(deps: LiveAssembleDeps, orgId: string, meetingId: string, pieces: LiveAssemblePlanPiece[], deadline: number): AsyncGenerator<Uint8Array> {
   const { broker } = deps;
+  const now = deps.now ?? Date.now;
   for (const piece of pieces) {
+    if (now() > deadline) throw new DomainError('LIVE_ASSEMBLE_TIMEOUT', 503, 'Joining the live pieces took too long; try again');
     const subkey = broker.deriveKey ? broker.deriveKey(piece.keyId, WRAP_INFO) : broker.derive && broker.keyId === piece.keyId ? broker.derive(WRAP_INFO) : null;
     if (!subkey) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
     const binding: BlobMediaBinding = { orgId, meetingId, kind: `live:${piece.seq}` };
@@ -79,8 +86,10 @@ export async function assembleLivePieces(deps: LiveAssembleDeps, input: { actor:
   // Known before a byte is read: each piece's plaintext length follows from its stored size, so the sealing can declare the whole length and refuse a piece that decrypts
   // to anything else.
   const expectedLength = plan.pieces.reduce((sum, p) => sum + plaintextLengthFromCiphertextLength(p.sizeBytes), 0);
-  if (expectedLength > deps.maxBytes) throw new DomainError('FILE_TOO_LARGE', 413, 'The live pieces are larger than a recording may be');
+  const cap = Math.min(deps.maxBytes, LIVE_CHUNK_MAX_TOTAL_BYTES);
+  if (expectedLength > cap) throw new DomainError('FILE_TOO_LARGE', 413, 'The live pieces are larger than a recording may be');
 
+  const deadline = (deps.now ?? Date.now)() + (deps.deadlineMs ?? ASSEMBLE_DEADLINE_MS);
   const keyId = broker.keyId;
   if (!keyId || (!broker.derive && !broker.deriveKey)) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
   const wrapSubkey = broker.deriveKey ? broker.deriveKey(keyId, WRAP_INFO) : broker.derive && broker.keyId === keyId ? broker.derive(WRAP_INFO) : null;
@@ -89,7 +98,7 @@ export async function assembleLivePieces(deps: LiveAssembleDeps, input: { actor:
   try {
     const binding: BlobMediaBinding = { orgId, meetingId, kind: 'audio' };
     const wrappedKey = wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, wrapSubkey);
-    const sealed = await sealMedia({ source: piecesInOrder(deps, orgId, meetingId, plan.pieces), expectedLength, kind: 'audio', dataKey, binding, maxBytes: deps.maxBytes, store, orgId });
+    const sealed = await sealMedia({ source: piecesInOrder(deps, orgId, meetingId, plan.pieces, deadline), expectedLength, kind: 'audio', dataKey, binding, maxBytes: cap, store, orgId });
     let lengthSeconds: number;
     try {
       lengthSeconds = await measurer.measure('audio', decryptedWindows(store, { storageKey: sealed.key, generation: sealed.generation, sizeBytes: sealed.size }, dataKey, binding));

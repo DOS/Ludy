@@ -353,6 +353,7 @@ export const KERNEL_ERROR_CODES = [
   'MEDIA_RETENTION_PASSED',
   // Joining the live pieces into the recording (#3126).
   'LIVE_NO_PIECES',
+  'LIVE_ASSEMBLE_TIMEOUT',
   'LIVE_STILL_OPEN',
   'LIVE_FIRST_PIECE_MISSING',
   'LIVE_PIECES_CHANGED',

@@ -9273,6 +9273,7 @@ export const en = {
       AUDIO_NOT_FOUND: 'This meeting has no audio recording.',
       INVALID_PURPOSE: 'This file cannot be uploaded for the purpose chosen.',
       MEDIA_RETENTION_PASSED: 'The period this meeting was to be kept has ended, so no new audio or video is accepted.',
+      LIVE_ASSEMBLE_TIMEOUT: 'Joining the pieces took too long and was stopped; nothing was changed. Try again.',
       LIVE_NO_PIECES: 'This meeting has no live pieces to join.',
       LIVE_STILL_OPEN: 'The full recording may still arrive. You can join the pieces after the longest recording time (4 hours 15 minutes) has passed.',
       LIVE_FIRST_PIECE_MISSING: 'The first piece, which holds the start of the file, is missing, so the later pieces cannot be joined.',

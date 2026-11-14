@@ -9261,6 +9261,7 @@ export const vi = {
       SUMMARY_RESULT_NOT_FOUND: 'Cuộc họp này chưa có kết quả tóm tắt.',
       SUMMARY_RESULT_NOT_READY: 'Vy chưa tóm tắt xong.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      LIVE_ASSEMBLE_TIMEOUT: 'Ghép các đoạn mất quá lâu nên đã dừng, chưa có gì bị đổi. Hãy thử lại.',
       LIVE_NO_PIECES: 'Cuộc họp này không có đoạn trực tiếp nào để ghép.',
       LIVE_STILL_OPEN: 'Bản ghi đầy đủ vẫn có thể đến. Bạn ghép được các đoạn sau khi quá thời hạn tối đa của một cuộc ghi (4 giờ 15 phút).',
       LIVE_FIRST_PIECE_MISSING: 'Thiếu đoạn đầu, đoạn giữ phần đầu của tệp, nên không ghép được các đoạn sau.',
