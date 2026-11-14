@@ -158,6 +158,9 @@ export const zConversationEvent = z.strictObject({
   // The platform says a message the org sent did not reach the customer (WhatsApp's status `failed`, #3131): the stored outbound message with this platform id
   // becomes `failed` with this short code, which the screen words for a person. An outbound event only, with no text; it never creates a message or a thread.
   deliveryFailed: z.strictObject({ code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }).optional(),
+  // How long the platform lets this thread be answered after the customer's last message, when that differs from the provider's rule (Telegram
+  // Business, #3191: 24 hours for a business chat). Whole hours; it only ever narrows what a person may send, never widens what the platform allows.
+  replyWindowHours: z.number().int().min(1).max(720).optional(),
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
   subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
   refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
@@ -175,6 +178,9 @@ export type ConversationEvent = z.infer<typeof zConversationEvent>;
 export const zConversationIngest = z.strictObject({
   connectionId: zId,
   events: z.array(zConversationEvent).min(1).max(CONVERSATION_EVENTS_MAX),
+  // Telegram Business (#3191): the business connection the events came through. They are stored only while the connection's own state lists it as
+  // enabled (an unknown or disabled one stores nothing and counts as ignored), and never when the contact is the business account's own user.
+  businessConnectionId: z.string().min(1).max(100).refine(noNul, 'NUL character').optional(),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
 // What the mail worker hands the core for one customer mail (#2439): the org is the worker's (found from the stored address), the events are
@@ -361,7 +367,7 @@ export const zConversationDetail = z.strictObject({
   // The comment thread a private reply continues, when the reader may see it.
   parentId: zId.nullable(),
   // Whether a reply can be sent now, else why not (a code the screen turns into words).
-  reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed']).nullable() }),
+  reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed', 'business_stopped', 'business_read_only']).nullable() }),
   // Events of this channel may be missing between these two times (the platform's history could not be read back far enough to fill
   // them): shown on a thread that was active after `from`.
   gap: z.strictObject({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).nullable(),

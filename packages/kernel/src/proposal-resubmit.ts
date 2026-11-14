@@ -30,6 +30,8 @@ export const PROPOSAL_PREPARERS = {
   'finance.payroll_posting.record': 'hr.payroll.posting.prepare',
   // The payment of a pay run's net pay or one of its remittances (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
   'finance.payroll_payment.record': 'hr.payroll.payment.prepare',
+  // The posting of a stored marketplace settlement (#2516), built from its lines by finance's own command: a member asks, an owner or an admin approves.
+  'finance.marketplace_settlement.record': 'finance.marketplace_settlement.prepare',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',

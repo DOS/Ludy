@@ -1259,6 +1259,7 @@ export interface FinanceJournalVoucherTable {
   stock_closing_month: ColumnType<string | null, string | null, NotGranted>;
   stock_count_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */
@@ -1942,6 +1943,7 @@ export interface KernelChannelConnectionTable {
   quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_idle_polls: Generated<number>;
+  chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.conversation_attachment */
