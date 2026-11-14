@@ -51,6 +51,7 @@ export { EINVOICE_DUE_PAGE, einvoiceDue } from './einvoice-job.ts';
 import { stockCommands, stockQueries } from './stock.ts';
 import { stockLineCommands, stockLineQueries } from './stock-lines.ts';
 import { orderHandoffCommands } from './order-handoff.ts';
+import { marketplaceSettlementCommands } from './marketplace-settlement-record.ts';
 import { payrollPaymentCommands } from './payroll-payment.ts';
 import { payrollSettlement } from './payroll-settlement.ts';
 import { payrollPostingCommands } from './payroll-posting.ts';
@@ -67,6 +68,8 @@ export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, rec
 export { MARKETPLACE_POLL_DUE_PAGE, MARKETPLACE_POLL_REQUESTED, marketplacePollDue, marketplaceAdapterOf, type MarketplacePollTarget } from './marketplace-connections.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
+export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
+export { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 export { readMarketplaceIncomeFile, recordMarketplaceIncomeReadFailure, type MarketplaceIncomeFileDeps } from './marketplace-income.ts';
 export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
 export {
@@ -180,7 +183,7 @@ export { SEARCH_LIMIT, searchAmount, type SearchResult } from './search.ts';
 export { ARCHIVE_FORMAT, type ArchiveSource, type ArchiveSourceFile, type RecordedArchive } from './year-archive.ts';
 export { type FinancialStatements, type StatementLine, type UnmappedRow } from './statements.ts';
 
-export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...householdCommands];
+export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...marketplaceSettlementCommands, ...householdCommands];
 export const financeQueries = [
   ...mcpFinanceQueries,
   financeOverdueReceivablesSignals,
