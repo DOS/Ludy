@@ -1440,6 +1440,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // deployment's; the offline sandbox's reach nothing.
   const conversationPublishers = deps.channels?.publishers;
   const conversationBroker = deps.channels?.broker;
+  // A Telegram Business connection Ludy missed is read back from Telegram (#3224), only where this deployment has the Telegram adapter and the broker that opens its
+  // token. One value for the process, so its window of asked ids lasts across passes.
+  const businessLookup =
+    conversationPublishers && conversationBroker
+      ? { broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) }
+      : undefined;
   if (conversationPublishers && conversationBroker) {
     await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
@@ -2731,7 +2737,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The notices the webhook parked (#2303): stored under their connections' orgs, then deleted. Nothing is waiting where
       // no connection has a platform that sends them.
-      await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime });
+      await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime, businessLookup });
       // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
       await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
